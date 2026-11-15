@@ -2310,6 +2310,29 @@ it("recovers omitted Dart pool strings through selection and per-call admission 
       text.includes("pool_policy.run_bytes=1024"),
     ),
   ).toBe(true);
+  // The result records each budget that left the projection partial by
+  // contract field; adapters name their own option.
+  expect(limited.report.string_pool.limits).toEqual(
+    expect.arrayContaining([
+      {
+        control_kind: "parameter",
+        parameter: "pool_policy.run_bytes",
+        effective_value: 1024,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: 1024,
+        applies_at: "next_call",
+      },
+      expect.objectContaining({
+        parameter: "pool_policy.uri_limit",
+        unit: "count",
+        effective_value: 500,
+      }),
+      expect.objectContaining({ parameter: "pool_policy.token_limit" }),
+    ]),
+  );
+  expect(limited.evidence.limitations.join(" ")).not.toContain("--pool-policy");
   const selected = await inspect({ contains: "package:tail/" });
   expect(selected.report.string_pool.package_uris).toEqual([tail]);
   expect(selected.report.string_pool.package_uri_count_at_least).toBe(1);
@@ -2324,6 +2347,7 @@ it("recovers omitted Dart pool strings through selection and per-call admission 
   expect(recovered.report.string_pool.package_uris).toContain(longUri);
   expect(recovered.report.string_pool.class_like_tokens).toContain(longToken);
   expect(recovered.report.string_pool.coverage).toBe("complete");
+  expect(recovered.report.string_pool).not.toHaveProperty("limits");
   expect(selected.report.target).toEqual(limited.report.target);
   expect(recovered.report.libapp.sha256).toEqual(limited.report.libapp.sha256);
   expect(recovered.evidence.parameters.pool_policy).toEqual({
