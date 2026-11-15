@@ -462,6 +462,17 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
+// The pattern matches the inline copy with the same expression in all three
+// places; a named local helper with this body is the same copy.
+checkCounted(
+  "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
+  "inline-error-message",
+  files,
+  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu,
+  ["src/kernel/errorMessage.ts"],
+);
+
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
 // each site state its byte-order-mark policy. A local fatal decoder silently
 // strips a leading BOM unless it remembers ignoreBOM. The pattern matches the

@@ -25,13 +25,13 @@ import {
   type BuildComputerAction,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
   planOutputTree,
   writeOutputTree,
   desktopOutputFailure,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 const RECORD = "witness.json";
@@ -113,7 +113,7 @@ const fetchRecording = async (
   try {
     manifest ??= await computer.endRecording(recordingId, signal);
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause) };
+    return { ok: false, error: errorMessage(cause) };
   }
   try {
     const segments = await computer.recordingSegments(manifest, signal);
@@ -133,7 +133,7 @@ const fetchRecording = async (
       },
     };
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause), manifest };
+    return { ok: false, error: errorMessage(cause), manifest };
   }
 };
 
@@ -189,7 +189,7 @@ const writeRecordFolder = async (
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `The witness record could not be written: ${errorText(cause)}`,
+              userMessage: `The witness record could not be written: ${errorMessage(cause)}`,
               cause,
               partialObservation: evidence,
             }),

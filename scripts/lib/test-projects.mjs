@@ -6,7 +6,7 @@ export const SOURCE_TEST_PROJECTS = [
     name: "domain",
     group: "source",
     isolate: false,
-    include: ["src/{contracts,domain,ports}/**/*.test.ts"],
+    include: ["src/{contracts,domain,kernel,ports}/**/*.test.ts"],
   },
   {
     name: "services",

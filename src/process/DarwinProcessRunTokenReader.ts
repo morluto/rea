@@ -42,6 +42,7 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -365,7 +366,7 @@ const compilerInspectionError = (
   const suffix = diagnostics
     ? `: ${diagnostics}${truncationNote}`
     : outcome === undefined
-      ? `: ${cause instanceof Error ? cause.message : String(cause)}`
+      ? `: ${errorMessage(cause)}`
       : ": no compiler diagnostics were captured";
   return new DarwinProcessOwnershipInspectionError(
     `${prefix} (${description})${suffix}`,

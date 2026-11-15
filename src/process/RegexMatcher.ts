@@ -34,6 +34,7 @@ import {
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
 import { decodeStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 /**
  * Node's Worker `resourceLimits.maxOldGenerationSizeMb` request.
  * `REA_REGEX_WORKER_HEAP_REQUEST_MIB` is that request (default 128 MiB). A positive
@@ -580,7 +581,7 @@ let expression;
 try {
   expression = new RegExp(workerData.pattern, workerData.caseSensitive ? "u" : "iu");
 } catch (cause) {
-  parentPort.postMessage({ status: "invalid_pattern", reason: cause instanceof Error ? cause.message : String(cause) });
+  parentPort.postMessage({ status: "invalid_pattern", reason: errorMessage(cause) });
 }
 if (expression !== undefined) {
   const indices = [];
