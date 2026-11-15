@@ -72,7 +72,7 @@ describe("IDA registration and MCP result boundaries", () => {
       { command: "python", workspaceRoot: "relative" },
       { command: "python", args: "server.py" },
     ]) {
-      await writeFile(path, JSON.stringify(input));
+      await writeFile(path, JSON.stringify({ ...input, protocol: "legacy" }));
       expect((await read(path)).ok).toBe(false);
     }
     await writeFile(
@@ -303,8 +303,8 @@ it.each(["env", "headers"] as const)(
     const path = join(root, "mcp.json");
     const transport =
       field === "env"
-        ? { command: "python" }
-        : { url: "http://127.0.0.1:8745/mcp" };
+        ? { command: "python", protocol: "legacy" }
+        : { url: "http://127.0.0.1:8745/mcp", protocol: "legacy" };
     for (const value of [42, null, {}]) {
       await writeFile(
         path,
