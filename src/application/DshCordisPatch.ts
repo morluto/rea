@@ -1,4 +1,5 @@
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
 import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -11,7 +12,7 @@ export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
 const SELECTOR_KEYS = new Set(["id", "name"]);
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+const isPatchRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" &&
   value !== null &&
   !Array.isArray(value) &&
@@ -133,7 +134,8 @@ export class DshCordisDocument {
             : undefined;
     const config = this.#field("config");
     // Ownership survives malformed config so uninstall can remove the source row.
-    this.config = insertions === 0 ? undefined : isRecord(config) ? config : {};
+    this.config =
+      insertions === 0 ? undefined : isPatchRecord(config) ? config : {};
   }
 
   #map(node: unknown): YAMLMap<unknown, unknown> | undefined {
@@ -209,7 +211,7 @@ export class DshCordisDocument {
           },
         ),
       );
-    if (config !== undefined && !isRecord(config))
+    if (config !== undefined && !isPatchRecord(config))
       return err(
         new ConfigurationError("Cordis REA config must be a mapping", {
           settings: [
@@ -221,7 +223,7 @@ export class DshCordisDocument {
         }),
       );
     const raw = this.config?.env;
-    if (raw !== undefined && !isRecord(raw))
+    if (raw !== undefined && !isPatchRecord(raw))
       return err(
         new ConfigurationError("Cordis server environment must be a mapping"),
       );
@@ -268,8 +270,9 @@ export class DshCordisDocument {
     const environment = this.environment(overrides);
     if (!environment.ok) return environment;
     const env = mergeEnvironmentOverrides<unknown>(
-      isRecord(this.config?.env) ? this.config.env : {},
+      isPatchRecord(this.config?.env) ? this.config.env : {},
       overrides,
+      HOST_PLATFORM.platform,
     );
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
@@ -378,7 +381,7 @@ export class DshCordisDocument {
       this.#yaml.setValue(config, key, desired[key]);
     const env = this.#map(this.#yaml.field(sourceConfig, "env"));
     const desiredEnv = desired.env;
-    if (isRecord(desiredEnv)) {
+    if (isPatchRecord(desiredEnv)) {
       const nextEnv =
         env === undefined
           ? this.#yaml.document.createNode({})

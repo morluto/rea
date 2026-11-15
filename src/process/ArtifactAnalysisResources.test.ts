@@ -32,6 +32,30 @@ import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
+import type { Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
+
+/** Providers finalize these resources through runOwned with their release as the close. */
+const finish = async <T>(
+  resources: ArtifactAnalysisResources,
+  result: Result<T, AnalysisError>,
+  partial: (value: T) => AnalysisPartialObservation,
+  operation = resources.operation,
+  signal?: AbortSignal,
+): Promise<Result<T, AnalysisError>> =>
+  finalizedResult(
+    await runOwned(async () => result, {
+      providerId: resources.providerId,
+      operation,
+      signal,
+      close: () => resources.release(),
+      partial,
+    }),
+  );
 
 it.runIf(process.platform !== "win32")(
   "offers a resolved-file retry from the shared selected-artifact boundary",
@@ -160,7 +184,8 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
   );
   resources.retain({ path: "runtime-root", close: async () => {} }, owner);
 
-  const result = await resources.finish(
+  const result = await finish(
+    resources,
     err(new ProviderAdapterError("fixture-provider", "fixture-operation")),
     () => {
       throw new Error("unexpected success observation");
@@ -242,7 +267,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
     },
   );
 
-  const result = await resources.finish(err(primary), () => {
+  const result = await finish(resources, err(primary), () => {
     throw new Error("unexpected success observation");
   });
 
@@ -282,7 +307,8 @@ it("resolves each returned cleanup error with its own retained root", async () =
       if (closesA === 1) throw new Error("root A close failure");
     },
   });
-  const first = await resources.finish(
+  const first = await finish(
+    resources,
     err(new AnalysisOutputError("fixture-operation", "primary failure")),
     () => {
       throw new Error("unexpected success observation");
@@ -307,7 +333,7 @@ it("resolves each returned cleanup error with its own retained root", async () =
       confidence: "observed",
     },
   );
-  const second = await resources.finish(ok("completed"), () => partial);
+  const second = await finish(resources, ok("completed"), () => partial);
 
   if (second.ok) throw new Error("expected root B cleanup failure");
   expect(second.error.partialObservation).toEqual(partial);
@@ -433,7 +459,7 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
     },
   });
 
-  const outer = await resources.finish(first, () => {
+  const outer = await finish(resources, first, () => {
     throw new Error("unexpected success observation");
   });
 
@@ -812,7 +838,7 @@ it("preserves typed caller cancellation through failed workspace cleanup and ret
     },
   });
   try {
-    const result = await resources.finish(err(primary), () => {
+    const result = await finish(resources, err(primary), () => {
       throw new Error("Must not produce success Evidence");
     });
     if (result.ok) throw new Error("Expected retained workspace");
@@ -936,7 +962,8 @@ it.each([false, true])(
       },
     });
     try {
-      const result = await resources.finish(
+      const result = await finish(
+        resources,
         err(primary),
         () => {
           throw new Error("Failed work must not produce success Evidence");
@@ -948,6 +975,13 @@ it.each([false, true])(
       expect(failsClose ? result.error.cleanupPrimary : result.error).toBe(
         primary,
       );
+      // The recorded failure stays primary and keeps the late cancellation.
+      expect(primary.secondaryFailures).toEqual([
+        expect.objectContaining({
+          _tag: "AnalysisCancelledError",
+          cause: { request: "late cancellation" },
+        }),
+      ]);
       denied = false;
       await resources.close();
       expect(result.error.cleanupIncomplete).toBe(false);

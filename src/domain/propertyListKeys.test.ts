@@ -266,9 +266,10 @@ it("rejects XML nesting beyond the projection limit with the limit diagnostic", 
     failure = cause;
   }
   expect(failure).toBeInstanceOf(PlistNestingLimitError);
-  expect(failure).toBeInstanceOf(RangeError);
   expect(failure).toMatchObject({
-    _tag: "PlistNestingLimitError",
+    name: "PlistNestingLimitError",
+    kind: "limit",
+    failure: { limit: { name: "plist-nesting-depth", maximum: 128 } },
     maximumDepth: 128,
     message: expect.stringMatching(/128 nesting levels.*no runtime override/iu),
   });

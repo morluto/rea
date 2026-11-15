@@ -37,6 +37,7 @@ import {
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -949,7 +950,8 @@ export class KunaProjectCache {
         if (settled) return;
         settled = true;
         leave();
-        if (entry.waiters === 0) entry.controller.abort();
+        if (entry.waiters === 0)
+          entry.controller.abort(OwnerCancellation.noLongerNeeded);
         resolve(
           err(
             cancelledBy(
