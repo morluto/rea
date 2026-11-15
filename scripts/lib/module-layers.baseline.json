@@ -22,7 +22,7 @@
     "native -> artifacts": 2
   },
   "entry": {
-    "application -> artifacts": 7,
+    "application -> artifacts": 1,
     "application -> browser": 2,
     "application -> desktop": 41,
     "application -> frida": 2,
