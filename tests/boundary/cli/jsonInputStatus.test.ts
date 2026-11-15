@@ -15,9 +15,9 @@ const JSON_COMMANDS = [
   ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
   [
     "build-reconstruction-obligation-ledger",
-    "build-reconstruction-obligation-ledger",
+    "build_reconstruction_obligation_ledger",
   ],
-  ["evaluate-reconstruction-coverage", "evaluate-reconstruction-coverage"],
+  ["evaluate-reconstruction-coverage", "evaluate_reconstruction_coverage"],
   ["project-android-application-graph", "project_android_application_graph"],
   ["project-apple-application-graph", "project_apple_application_graph"],
   ["import-managed-reconstruction", "import_managed_reconstruction"],
