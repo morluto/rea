@@ -1,4 +1,5 @@
 import { expect, it, onTestFinished } from "vitest";
+import { phaseGate, type PhaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   createAnalysisExecution,
@@ -23,7 +24,6 @@ import { err, ok, type Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
@@ -34,8 +34,7 @@ import {
 
 it("restores MCP tool availability after cancelling a target switch", async () => {
   const [first, second] = await createBinarySessionTargets();
-  const closing = createDeferred<void>();
-  const release = createDeferred<void>();
+  const providerClose = phaseGate();
   const cancellationObserved = createDeferred<void>();
   const provider = createCacheProvider([]);
   const resolveProfile = provider.resolveAnalysisProfile;
@@ -58,8 +57,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       close: async () => {
         state.closed += 1;
         if (firstClient) {
-          closing.resolve();
-          await release.promise;
+          await providerClose.hold();
         }
         return ok(null);
       },
@@ -118,10 +116,10 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       { signal: controller.signal },
     );
     const cancelled = expect(switching).rejects.toThrow();
-    await awaitAcknowledgement(closing.promise, switching, "provider close");
+    await providerClose.reached(switching, "provider close");
     controller.abort();
     await cancellationObserved.promise;
-    release.resolve();
+    providerClose.release();
     await cancelled;
 
     // Cancellation ends the client's wait before the server restores its session.
@@ -161,7 +159,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
     ]);
   } finally {
     controller.abort();
-    release.resolve();
+    providerClose.release();
     await close();
   }
 });
@@ -381,10 +379,7 @@ const refusal = (operation: string, reason: string) =>
 const heldCalls = (
   client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
 ) => {
-  const held = new Map<
-    string,
-    { readonly reply: Promise<Reply>; readonly received: () => void }
-  >();
+  const held = new Map<string, PhaseGate<void, Reply>>();
   const launched: {
     readonly release: (reply: Reply) => void;
     readonly response: Promise<unknown>;
@@ -395,18 +390,16 @@ const heldCalls = (
       const entry = held.get(operation);
       if (entry === undefined) return undefined;
       held.delete(operation);
-      entry.received();
-      return entry.reply;
+      return entry.hold();
     },
     dispatch: async (name: string, arguments_: Record<string, unknown>) => {
-      const reply = createDeferred<Reply>();
-      const received = createDeferred<void>();
-      held.set(name, { reply: reply.promise, received: received.resolve });
+      const reply = phaseGate<void, Reply>();
+      held.set(name, reply);
       const response = client.callTool({ name, arguments: arguments_ });
-      launched.push({ release: reply.resolve, response });
-      await awaitAcknowledgement(received.promise, response, name);
+      launched.push({ release: reply.release, response });
+      await reply.reached(response, name);
       return {
-        release: reply.resolve,
+        release: reply.release,
         isError: async () => (await response).isError === true,
       };
     },
