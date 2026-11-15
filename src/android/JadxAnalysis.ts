@@ -374,11 +374,33 @@ const matchingMethods = (
   return candidates;
 };
 
-const overloadChoices = (
+/** The method name matched several overloads and no overload_index chose one. */
+const ambiguousOverload = (
+  request: AndroidRequest,
   candidates: ReturnType<typeof matchingMethods>,
   external = false,
-): string =>
-  `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`;
+): never => {
+  throw new AnalysisInputError(
+    request.operation,
+    {
+      ambiguousSelector: {
+        field: ["overload_index"],
+        candidates: candidates.map((method) => ({
+          overload_index: method.overload_index,
+          reported_signature: method.reported_signature,
+          dex_descriptor: method.dex_descriptor,
+        })),
+      },
+    },
+    [
+      {
+        path: ["overload_index"],
+        reason: "invalid_value",
+        message: `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`,
+      },
+    ],
+  );
+};
 
 const inspectMethod = async (
   tools: JadxToolPort,
@@ -388,7 +410,7 @@ const inspectMethod = async (
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(request, "overload_index", overloadChoices(candidates));
+    ambiguousOverload(request, candidates);
   const index = request.input.overload_index ?? 0;
   const selected =
     candidates[index] ??
@@ -531,11 +553,7 @@ const traceReferences = async (
       "Method name is required for an overload index.",
     );
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(
-      request,
-      "overload_index",
-      overloadChoices(candidates, external),
-    );
+    ambiguousOverload(request, candidates, external);
   const index = request.input.overload_index ?? 0;
   const selected = methodName === undefined ? undefined : candidates[index];
   if (methodName !== undefined && selected === undefined)

@@ -1,0 +1,18 @@
+{
+  "src/browser/CdpElectronWorkers.ts": {
+    "Target.getTargets": 1
+  },
+  "src/browser/CdpEndpoint.ts": {
+    "Browser.getVersion": 1,
+    "Target.getTargets": 1
+  },
+  "src/browser/CdpPageCaptureWorkers.ts": {
+    "Target.getTargets": 1
+  },
+  "src/browser/PlaywrightScenarioServiceWorkers.ts": {
+    "Runtime.evaluate": 1
+  },
+  "src/browser/PlaywrightScenarioStorage.ts": {
+    "Target.sendMessageToTarget": 1
+  }
+}

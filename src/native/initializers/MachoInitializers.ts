@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
@@ -41,10 +42,6 @@ import type { SlotRelocation } from "./ElfInitializerSymbols.js";
 const S_MOD_INIT_FUNC_POINTERS = 0x9;
 const S_MOD_TERM_FUNC_POINTERS = 0xa;
 const S_INIT_FUNC_OFFSETS = 0x16;
-const LC_SYMTAB = 0x2;
-const LC_DYSYMTAB = 0xb;
-const LC_DYLD_INFO = 0x22;
-const LC_DYLD_INFO_ONLY = 0x80000022;
 const MH_OBJECT = 0x1;
 const CPU_TYPE_ARM = 12;
 const CPU_TYPE_ARM64_32 = 0x0200000c;
@@ -244,7 +241,7 @@ const readSymbols = (
     const frame = cursor.read(scan.bytes.subarray(commandAt, commandAt + 8));
     if (!frame.ok) break;
     const body = scan.bytes.subarray(commandAt, commandAt + frame.value.size);
-    if (frame.value.command !== LC_SYMTAB) continue;
+    if (frame.value.command !== LC.SYMTAB) continue;
     const table = readMachoSymtabCommand(body, little);
     if (table === null) {
       note(scan, "LC_SYMTAB is truncated.");
@@ -339,7 +336,7 @@ const uncheckedFixupReason = (
     const { command, size } = frame.value;
     if (
       !decoded &&
-      (command === LC_DYLD_INFO || command === LC_DYLD_INFO_ONLY) &&
+      (command === LC.DYLD_INFO || command === LC.DYLD_INFO_ONLY) &&
       size >= 48 &&
       // bind_size, weak_bind_size and lazy_bind_size.
       (word(commandAt + 20) !== 0 ||
@@ -348,7 +345,7 @@ const uncheckedFixupReason = (
     )
       return "LC_DYLD_INFO bind opcodes are not decoded for this image, so a pointer slot's stored word may be replaced by a bound symbol at load time.";
     // nextrel: legacy external relocations, which no decoder here applies.
-    if (command === LC_DYSYMTAB && size >= 80 && word(commandAt + 68) !== 0)
+    if (command === LC.DYSYMTAB && size >= 80 && word(commandAt + 68) !== 0)
       return "LC_DYSYMTAB external relocations are not decoded, so a pointer slot's stored word may be replaced by a bound symbol at load time.";
   }
   return null;

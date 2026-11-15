@@ -35,6 +35,30 @@ export interface SelectedNativeImage {
   readonly limitations: readonly string[];
 }
 
+/**
+ * The caller's input fields and spellings for a slice selection. Messages name
+ * selectors through `spelling`, and a selector without a spelling is never
+ * offered as a choice.
+ */
+export interface SliceSelectionInput {
+  readonly pathField: string;
+  readonly architectureField: string;
+  readonly spelling: Readonly<Partial<Record<MachoSliceArchitecture, string>>>;
+}
+
+/** The shared `path` and `architecture` inputs, spelled as the selector values. */
+export const SHARED_SLICE_SELECTION_INPUT: SliceSelectionInput = {
+  pathField: "path",
+  architectureField: "architecture",
+  spelling: {
+    x86: "x86",
+    x86_64: "x86_64",
+    arm: "arm",
+    arm64: "arm64",
+    arm64e: "arm64e",
+  },
+};
+
 /** Why no image could be selected; `architecture` issues are the caller's to correct. */
 export interface MachoSliceSelectionIssue {
   readonly kind: "architecture" | "malformed";
@@ -87,7 +111,11 @@ const addressedSlices = <Slice extends FatSlice>(
 export const selectNativeImage = (
   bytes: Buffer,
   architecture: MachoSliceArchitecture | undefined,
+  input: SliceSelectionInput = SHARED_SLICE_SELECTION_INPUT,
 ): Result<SelectedNativeImage, MachoSliceSelectionIssue> => {
+  const field = input.architectureField;
+  const spelled = (value: MachoSliceArchitecture): string =>
+    input.spelling[value] ?? value;
   const container = readUniversalMachoImage(bytes);
   if (!container.ok) return container;
   const fat = container.value;
@@ -96,7 +124,7 @@ export const selectNativeImage = (
       ? ok({ bytes, fileOffset: 0, selection: null, limitations: [] })
       : err({
           kind: "architecture",
-          message: `architecture ${architecture} was selected, but the file is not a universal Mach-O; omit architecture.`,
+          message: `${field} ${spelled(architecture)} was selected, but the file is not a universal Mach-O; omit ${field}.`,
         });
   const available = fat.slices
     .map(({ cpuType, cpuSubtype }) => cpuName(cpuType, cpuSubtype))
@@ -131,20 +159,22 @@ export const selectNativeImage = (
   if (slice === undefined || matches.length > 1) {
     const choices = familyValues(architecture).filter(
       (value) =>
-        value !== architecture && verifiedSliceFor(value) !== undefined,
+        value !== architecture &&
+        input.spelling[value] !== undefined &&
+        verifiedSliceFor(value) !== undefined,
     );
     const select =
       choices.length === 0
         ? ""
-        : ` Select architecture ${choices.join(" or ")}.`;
+        : ` Select ${field} ${choices.map(spelled).join(" or ")}.`;
     return err({
       kind: "architecture",
       message:
         sameFamily.length === 0
-          ? `Universal Mach-O holds ${available}, not ${architecture}.${select}`
+          ? `Universal Mach-O holds ${available}, not ${spelled(architecture)}.${select}`
           : matches.length === 0 && namesSubtype(architecture)
-            ? `Universal Mach-O holds ${available}; no slice has the ${architecture} subtype.${select}`
-            : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.${select}`,
+            ? `Universal Mach-O holds ${available}; no slice has the ${spelled(architecture)} subtype.${select}`
+            : `Universal Mach-O holds several ${spelled(architecture)} slices (${available}); no slice was selected.${select}`,
     });
   }
   const selected = readUniversalMachoSlice(bytes, fat, slice);
@@ -155,11 +185,13 @@ export const selectNativeImage = (
       const place = `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`;
       const issue = identityIssues.get(other);
       if (issue !== undefined)
-        return `${place} (unverified: ${issue}; no architecture value reads it)`;
+        return `${place} (unverified: ${issue}; no ${field} value reads it)`;
       const selector = familyValues(architecture).find(
-        (value) => verifiedSliceFor(value) === other,
+        (value) =>
+          input.spelling[value] !== undefined &&
+          verifiedSliceFor(value) === other,
       );
-      return `${place} (${selector === undefined ? "no architecture value selects it" : `architecture ${selector} selects it`})`;
+      return `${place} (${selector === undefined ? `no ${field} value selects it` : `${field} ${spelled(selector)} selects it`})`;
     });
   return ok({
     bytes: selected.value,
@@ -179,30 +211,31 @@ export const selectNativeImage = (
       unread.length === 0
         ? []
         : [
-            `Only the selected ${architecture} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}.`,
+            `Only the selected ${spelled(architecture)} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}.`,
           ],
   });
 };
 
 /**
  * Select the image for one inspection, or fail with the input to correct:
- * `architecture` for a missing or mismatched selection, `path` for a malformed
- * universal container.
+ * the architecture field for a missing or mismatched selection, the path field
+ * for a malformed universal container.
  */
 export const requireSelectedNativeImage = (
   operation: string,
   path: string,
   bytes: Buffer,
   architecture: MachoSliceArchitecture | undefined,
+  input: SliceSelectionInput = SHARED_SLICE_SELECTION_INPUT,
 ): SelectedNativeImage => {
-  const selected = selectNativeImage(bytes, architecture);
+  const selected = selectNativeImage(bytes, architecture, input);
   if (selected.ok) return selected.value;
   const { kind, message } = selected.error;
   throw new AnalysisInputError(operation, undefined, [
     kind === "architecture"
-      ? { path: ["architecture"], reason: "invalid_value", message }
+      ? { path: [input.architectureField], reason: "invalid_value", message }
       : {
-          path: ["path"],
+          path: [input.pathField],
           reason: "invalid_format",
           message: `Selected artifact ${path}: ${message}`,
         },

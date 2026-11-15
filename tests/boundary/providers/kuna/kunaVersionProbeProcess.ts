@@ -48,6 +48,7 @@ export const makeLauncher = (
 ) => {
   let launches = 0;
   const groups: number[] = [];
+  const exits: Promise<void>[] = [];
   const launcher = async (
     options: OwnedProviderProcessSpawnOptions,
   ): Promise<SpawnedOwnedProviderProcess> => {
@@ -62,6 +63,7 @@ export const makeLauncher = (
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    exits.push(new Promise((resolve) => child.once("exit", () => resolve())));
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);
@@ -84,6 +86,7 @@ export const makeLauncher = (
   return {
     launcher,
     groups,
+    exits,
     get launches() {
       return launches;
     },

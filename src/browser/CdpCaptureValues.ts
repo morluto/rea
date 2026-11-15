@@ -1,5 +1,4 @@
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
@@ -40,27 +39,6 @@ export const resourceContentSize = (
   return size !== undefined && size >= 0
     ? ok(size)
     : err({ _tag: "InvalidCdpResourceSize" });
-};
-
-export const requiredRecord = (value: unknown): UnknownRecord => {
-  const record = recordValue(value);
-  if (record === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return record;
-};
-
-/** Require producer source text; an absent source is distinct from an empty script. */
-export const requiredScriptSource = (
-  value: unknown,
-  operation: BrowserObservationOperation,
-): string => {
-  const source = cdpStringValue(recordValue(value)?.scriptSource);
-  if (source === undefined)
-    throw new BrowserObservationError(operation, "protocol_error", {
-      detail:
-        "Debugger.getScriptSource returned malformed source text: scriptSource must be a string.",
-    });
-  return source;
 };
 
 export const isHttpUrl = (value: string | undefined): boolean => {

@@ -9,12 +9,13 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type {
-  BinaryTarget,
-  HeaderArchitecture,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   findOverlappingFatSlices,
@@ -26,7 +27,6 @@ import {
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 import { MACHO_CPU_TYPES } from "../domain/apple/machoTargetSelection.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   HopperCancelledError,
   HopperStartError,
@@ -99,11 +99,7 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("open_binary", options.signal));
   if (target.format !== "mach-o" && target.format !== "mach-o-universal")
     return invalid("Hopper image preparation requires a Mach-O target");
   let opened: FileHandle;
@@ -162,11 +158,7 @@ const inspectAndFinalizeHopperMachOImage = async (
   }
   if (closeOutcome.kind === "closed") {
     if (result.ok && options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     return result;
   }
   return retainHopperPreflightCloseFailure({
@@ -229,15 +221,20 @@ const retainHopperPreflightCloseFailure = (options: {
               cleanup,
             },
           )
-        : new AnalysisCancelledError("open_binary", {
-            cause: options.result.error.cause,
-            cleanup,
-          });
+        : cancelledBy(
+            "open_binary",
+            carriedReason(options.result.error.cause),
+            { cleanup },
+          );
   } else if (options.cancellationBeforeClose) {
-    failure = new AnalysisCancelledError("open_binary", {
-      cause: options.signal?.reason,
-      cleanup,
-    });
+    // cancellationBeforeClose records that the caller's signal had aborted.
+    failure = cancelledBy(
+      "open_binary",
+      carriedReason(options.signal?.reason),
+      {
+        cleanup,
+      },
+    );
   } else {
     failure = new BinaryTargetError(
       options.target.path,
@@ -260,11 +257,7 @@ const retainHopperPreflightCloseFailure = (options: {
     failure.retainSecondaryFailure(cleanupError);
   }
   if (options.signal?.aborted && !cancellationIsPrimary)
-    failure.retainSecondaryFailure(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    failure.retainSecondaryFailure(cancelledBy("open_binary", options.signal));
   new AnalysisCleanupLeaseGroup(failure, [lease]);
   return err(failure);
 };
@@ -284,10 +277,7 @@ const inspectHopperMachOImage = async (
     );
   const read = (offset: number, length: number): Promise<Buffer> =>
     readFileHandleRange(file, offset, length, () => {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("open_binary", {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy("open_binary", signal);
     });
   const header = await read(0, 8);
   const fatPrefix = readFatHeaderPrefix(header);
@@ -302,14 +292,9 @@ const inspectHopperMachOImage = async (
     for await (const chunk of readFileHandleChunks(file, {
       ...(signal === undefined ? {} : { signal }),
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("open_binary", { cause: reason }),
+        cancelledBy("open_binary", carriedReason(reason)),
     })) {
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", {
-            cause: signal.reason,
-          }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       const bytes = Buffer.from(chunk);
       hash.update(bytes);
       size += bytes.length;
@@ -321,10 +306,7 @@ const inspectHopperMachOImage = async (
         prefixLength += copied;
       }
     }
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     if (prefixLength !== prefix.length)
       return invalid("Thin Mach-O header is truncated");
     const observedSha256 = hash.digest("hex");
@@ -359,6 +341,10 @@ const inspectHopperMachOImage = async (
     littleEndian,
   });
   if (parsed.status === "malformed") return invalid(parsed.reason);
+  if (target.format !== "mach-o-universal")
+    return invalid(
+      "Universal Mach-O source disagrees with its admitted format",
+    );
   if (
     target.architecture !== "x86" &&
     target.architecture !== "x86_64" &&
@@ -367,12 +353,12 @@ const inspectHopperMachOImage = async (
   )
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
-  const matches = [];
+  // Target admission chose the slice; reading another one would analyze bytes
+  // the session's Evidence does not name.
+  const admitted = target.universalSlice;
+  const matches: FatSliceDeclaration[] = [];
   for (const slice of parsed.slices) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     const rangeError = validateFatSlice(slice, size, tableEnd);
     if (rangeError !== null) return invalid(rangeError);
     if (slice.reserved !== null && slice.reserved !== 0)
@@ -393,14 +379,19 @@ const inspectHopperMachOImage = async (
       );
     const identityError = validateFatSliceIdentity(slice, identity);
     if (identityError !== null) return invalid(identityError);
-    if (slice.cpuType === MACHO_CPU_TYPES[architecture]) matches.push(slice);
+    if (slice.offset === admitted.offset && slice.size === admitted.size)
+      matches.push(slice);
   }
   if (findOverlappingFatSlices(parsed.slices) !== null)
     return invalid("FAT slices overlap");
-  const selected = selectHopperSlice(matches, architecture);
-  if (selected === undefined)
+  const [selected] = matches;
+  if (selected === undefined || matches.length > 1)
     return invalid(
-      `FAT selection for ${architecture} is ${matches.length === 0 ? "missing" : "ambiguous"}; extract the exact architecture into a thin image before opening it`,
+      `The admitted ${architecture} slice at file offset ${String(admitted.offset)} is ${selected === undefined ? "not declared by" : "declared more than once in"} the FAT table; open the stable source again`,
+    );
+  if (selected.cpuType !== MACHO_CPU_TYPES[architecture])
+    return invalid(
+      `The admitted slice at file offset ${String(admitted.offset)} is not ${architecture}; open the stable source again`,
     );
   return ok({
     method: wide ? "fat64_thin_slice" : "fat32_thin_slice",
@@ -414,28 +405,6 @@ const inspectHopperMachOImage = async (
     cpu_type: selected.cpuType,
     cpu_subtype: selected.cpuSubtype,
   });
-};
-
-/**
- * Plain arm64 (cpusubtype 0) and arm64e (cpusubtype 2) function-entry encodings
- * decode under Hopper's --aarch64; Apple's arm64e.x1 variant (cpusubtype 12)
- * does not, so it is selected only when it is the arm64 family's only candidate.
- * Every other ambiguity stays fail-closed.
- */
-const selectHopperSlice = (
-  matches: readonly FatSliceDeclaration[],
-  architecture: HeaderArchitecture,
-): FatSliceDeclaration | undefined => {
-  if (matches.length === 1) return matches[0];
-  if (architecture !== "arm64") return undefined;
-  for (const cpuSubtype of [0, 2]) {
-    const preferred = matches.filter(
-      (slice) => machoCpuSubtypeBase(slice.cpuSubtype) === cpuSubtype,
-    );
-    if (preferred.length === 1) return preferred[0];
-    if (preferred.length > 1) return undefined;
-  }
-  return undefined;
 };
 
 /** Copy a selected slice and verify the entire original source in the same pass. */

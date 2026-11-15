@@ -88,6 +88,8 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/provider-failure-classifier": "error",
+        "rea/typed-resource-refusal": "error",
         "rea/no-babel-visitor-keys": "error",
         "typescript/no-misused-promises": "error"
       }
@@ -100,6 +102,8 @@
         "src/**/*.fixture.ts"
       ],
       "rules": {
+        "rea/provider-failure-classifier": "off",
+        "rea/typed-resource-refusal": "off",
         "rea/no-babel-visitor-keys": "off",
         "max-lines": "off",
         "max-lines-per-function": [

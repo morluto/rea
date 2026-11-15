@@ -37,13 +37,13 @@ export const captureElectronWorkers = async (input: {
     {},
     input.limitations,
   );
-  if (result === undefined) {
+  if (!result.ok) {
     input.completeness.unavailable("workers");
     return [];
   }
   const workers: ElectronPageInspection["workers"] = [];
   // A missing target list or a non-record entry is unreadable, not empty.
-  const targetInfos = recordValue(result)?.targetInfos;
+  const targetInfos = recordValue(result.value)?.targetInfos;
   if (!Array.isArray(targetInfos)) {
     input.completeness.exclude("workers", "invalid_protocol_value", null);
     return [];
