@@ -48,7 +48,9 @@ import {
   type CliJsonInputCheck,
   withoutDefault,
 } from "./contractCliDescription.js";
+import { recordCliResultControls } from "./cliResultControls.js";
 import {
+  cliResultControlsIn,
   projectCliAnalysisResult,
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
@@ -346,6 +348,19 @@ export const runDirectOnTarget =
   };
 
 /**
+ * A command's output named for the CLI: renamed issue paths and failure
+ * flags (`projectCliInputFields`), and the flags of controls its result
+ * records, which the CLI renders in its own envelope.
+ */
+const projectCliResult = <Output>(
+  output: Output,
+  binding: Parameters<typeof projectCliInputFields>[1],
+): Output => {
+  recordCliResultControls(cliResultControlsIn(output, binding));
+  return projectCliInputFields(output, binding);
+};
+
+/**
  * Run the source contract on each Evidence target in argv order with the
  * source fields the caller selected, then compose the contract from that
  * Evidence. A target's failure names its positional; any failure retains
@@ -637,7 +652,7 @@ export const registerContractCommand = <
             );
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return projectCliInputFields(
+          return projectCliResult(
             await run(
               admitted.value.input as z.input<Contract["inputSchema"]>,
               {
@@ -937,7 +952,7 @@ export const registerRoutedCommand = (
             );
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return projectCliInputFields(
+          return projectCliResult(
             await route.run(admitted.value.input, {
               signal,
               operation: description.contract.name,

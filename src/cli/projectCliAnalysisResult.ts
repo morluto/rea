@@ -78,27 +78,73 @@ const renamedIssues = (
 };
 
 /**
- * The reported per-call control with the flag that sets it, or undefined
- * when the command takes no flag for it. A parameter control names it, and so
- * does a registered setting a request argument can also select. The longest
- * bound prefix of the parameter path names the flag: a flattened member
- * option, else the option of the whole field (such as `--producer-limits`
- * JSON).
+ * The request parameter a limit names, when a caller selects it per call: a
+ * parameter control, or a registered setting a request argument can also
+ * select.
  */
+const limitParameter = (limit: JsonValue | undefined): string | undefined =>
+  isObject(limit) &&
+  typeof limit.parameter === "string" &&
+  (limit.control_kind === "parameter" || typeof limit.setting === "string")
+    ? limit.parameter
+    : undefined;
+
+/**
+ * The option that sets a contract field or member on this command, or
+ * undefined when it takes no flag for it. The longest bound prefix of the
+ * parameter path names the flag: a flattened member option, else the option
+ * of the whole field (such as `--producer-limits` JSON).
+ */
+const cliFlagFor = (
+  parameter: string,
+  binding: CliInputFieldBinding,
+): string | undefined => {
+  const segments = parameter.split(".");
+  for (let length = segments.length; length > 0; length -= 1) {
+    const flag = binding.flags[segments.slice(0, length).join(".")];
+    if (flag !== undefined) return flag;
+  }
+  return undefined;
+};
+
+/** The reported per-call control with the flag that sets it. */
 const flaggedLimit = (
   limit: JsonValue | undefined,
   binding: CliInputFieldBinding,
 ): Record<string, JsonValue> | undefined => {
-  if (
-    !isObject(limit) ||
-    typeof limit.parameter !== "string" ||
-    (limit.control_kind !== "parameter" && typeof limit.setting !== "string")
-  )
-    return undefined;
-  const segments = limit.parameter.split(".");
-  for (let length = segments.length; length > 0; length -= 1) {
-    const flag = binding.flags[segments.slice(0, length).join(".")];
-    if (flag !== undefined) return { ...limit, cli_flag: flag };
+  const parameter = limitParameter(limit);
+  const flag =
+    parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+  return flag === undefined || !isObject(limit)
+    ? undefined
+    : { ...limit, cli_flag: flag };
+};
+
+/**
+ * Each per-call control a result records by contract field (a `limit` in a
+ * partial result's unknowns, coverage or retained Evidence), with the option
+ * that sets it on this command. The result is read, never changed: the CLI
+ * renders these flags in its own envelope.
+ */
+export const cliResultControlsIn = (
+  output: unknown,
+  binding: CliInputFieldBinding,
+): Record<string, string> => {
+  const controls: Record<string, string> = {};
+  const pending: unknown[] = [output];
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    if (Array.isArray(value)) {
+      for (const item of value) pending.push(item);
+      continue;
+    }
+    if (value === null || typeof value !== "object") continue;
+    const record = value as Record<string, JsonValue>;
+    const parameter = limitParameter(record);
+    const flag =
+      parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+    if (parameter !== undefined && flag !== undefined)
+      controls[parameter] = flag;
+    for (const item of Object.values(record)) pending.push(item);
   }
-  return undefined;
+  return controls;
 };
