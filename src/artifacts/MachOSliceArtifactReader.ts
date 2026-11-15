@@ -29,7 +29,10 @@ import {
   machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
-import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
+import {
+  readMachoImage,
+  type ReadAt,
+} from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";

@@ -23,7 +23,7 @@ import {
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   AnalysisAccessDeniedError,
@@ -42,7 +42,7 @@ import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js"
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   KeyedArchiveKindError,
@@ -64,7 +64,7 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */

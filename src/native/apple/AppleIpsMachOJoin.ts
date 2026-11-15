@@ -1,5 +1,5 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import { readMachoContainer } from "../../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoContainer } from "../../domain/apple/machoLoadCommandReader.js";
 import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
 import {
   readMachoLoadCommandTableHeader,
