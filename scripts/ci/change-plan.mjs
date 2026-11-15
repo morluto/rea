@@ -223,14 +223,20 @@ export function planChanges(request, repository) {
       return;
     }
     // A shared boundary is not evidence that every provider or host changed.
-    // One matching owner is path evidence. Several owners means the same
-    // registration file is listed by many lanes; fast qualification does not
-    // fan those out or start the multi-host package matrix.
+    // One lane that names the file is path evidence; a lane that only covers
+    // it through a `**` directory glob is not. Several naming lanes means the
+    // same registration file is listed by many lanes; fast qualification does
+    // not fan those out or start the multi-host package matrix.
     if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
       selected.code = true;
       selected.runtime = true;
       const owners = Object.entries(CI_LANES)
-        .filter(([, { paths }]) => matchesAny(file, paths))
+        .filter(([, { paths }]) =>
+          matchesAny(
+            file,
+            paths.filter((pattern) => !pattern.includes("**")),
+          ),
+        )
         .map(([owner]) => owner);
       if (owners.length === 1) selected[owners[0]] = true;
       reasons.push(`Shared boundary on fast tier: ${file}`);

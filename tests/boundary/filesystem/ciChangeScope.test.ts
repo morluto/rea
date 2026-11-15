@@ -1368,6 +1368,29 @@ it.each([
       browser: false,
     },
   ],
+  // One lane names it; others reach it only through `src/process/**`.
+  [
+    "src/process/RegularFileRead.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      javascript_recovery: false,
+      recorded_crash: false,
+      web_source_map: false,
+      package: false,
+    },
+  ],
+  [
+    "src/process/ownedDebuggerSession.ts",
+    {
+      code: true,
+      runtime: true,
+      reverse_tools: true,
+      javascript_recovery: false,
+      package: false,
+    },
+  ],
   [
     "src/server/createServer.ts",
     {
