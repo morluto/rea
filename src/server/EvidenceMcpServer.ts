@@ -10,7 +10,11 @@ import {
 } from "../catalogIdentity.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
-import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import {
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+} from "../config/mcpOutputSchemaProfile.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
@@ -21,8 +25,10 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
     options: McpServerOptions,
     recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     delivery: ToolResultDelivery,
-    compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-    outputSchemaProfile: McpOutputSchemaProfile = "full",
+    compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
+      undefined,
+    ),
     identity?: ReturnType<typeof createCatalogIdentity>,
     advertisedToolFamilies: ReadonlySet<string> | undefined = undefined,
   ) {

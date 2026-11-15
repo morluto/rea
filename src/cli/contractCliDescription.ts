@@ -16,6 +16,10 @@ import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { cliJsonCallerPathSchema } from "../cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalShape } from "./options.js";
+import {
+  selectCliAnalysisSelector,
+  type CliSelectorKind,
+} from "./analysisSelector.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -72,6 +76,14 @@ export interface CliContractProjection<
   /** Fields taken as positional arguments, in argv order. */
   readonly positionals?: readonly Field[];
   /**
+   * Positional selectors the caller may instead give with a named option,
+   * for values that begin with a dash. The positional becomes optional;
+   * equal values agree and different ones are refused before the target is
+   * opened, as is neither when the field is required. The contract field
+   * must refuse an empty selector.
+   */
+  readonly selectorOptions?: { readonly [Key in Field]?: CliSelectorOption };
+  /**
    * Absolute-path fields, or lists of them, the caller may spell relative to
    * the working directory. The CLI admits each nonempty, NUL-free,
    * well-formed path, then resolves it with `absoluteCallerPath` before the
@@ -85,8 +97,9 @@ export interface CliContractProjection<
   readonly jsonText?: readonly Field[];
   /**
    * Structured fields taken as JSON text that is decoded when the command
-   * runs, each with its refusal when the text is not JSON. The decoded input
-   * is then admitted by the contract input before any target is opened.
+   * runs, each with its refusal when the text is not JSON. A required field
+   * is a required option. The decoded input is then admitted by the
+   * contract input before any target is opened.
    */
   readonly runtimeJson?: { readonly [Key in Field]?: string };
   /**
@@ -148,6 +161,19 @@ export interface CliContractProjection<
   readonly cliOptionDependencies?: Readonly<
     Partial<Record<keyof CliOptions & string, readonly string[]>>
   >;
+  /**
+   * A CLI-only option whose values select another contract with the same
+   * CLI projection, such as `--kind` choosing which inventory to search.
+   * Other values, including the option's default, select the registered
+   * contract.
+   */
+  readonly operationBy?: CliOperationChoice<keyof CliOptions & string>;
+}
+
+/** Contracts a CLI-only option selects in place of the registered one. */
+export interface CliOperationChoice<Option extends string = string> {
+  readonly option: Option;
+  readonly contracts: Readonly<Record<string, ProjectedContract>>;
 }
 
 /** Schemas of the CLI-only options of one command, keyed by CLI key. */
@@ -183,6 +209,12 @@ export interface CliTargetOpening {
 export interface CliOpeningFieldProjection extends CliFieldProjection {
   /** The values this command admits: a subset of the field's enum. */
   readonly values?: readonly [string, ...string[]];
+  /**
+   * A local path the caller may spell relative to the working directory.
+   * It is admitted resolved and passed on as the caller spelled it, like the
+   * target itself.
+   */
+  readonly callerPath?: true;
 }
 
 /** An option that supplies one field of the opening contract. */
@@ -191,6 +223,8 @@ export interface ContractCliOpeningOption {
   readonly key: string;
   readonly description: string | undefined;
   readonly schema: z.ZodType;
+  /** Passed on as the caller spelled it once its resolved form is admitted. */
+  readonly callerPath: boolean;
 }
 
 /** The described session target of a contract command. */
@@ -248,6 +282,63 @@ export interface CliEvidenceDeliveryChoice {
   readonly view?: AnalysisViewRequest;
 }
 
+/** The named option of a positional selector. */
+export interface CliSelectorOption {
+  /** The option key; its flag is the kebab-case spelling. */
+  readonly name: string;
+  readonly description: string;
+  /** How the two spellings agree; `text` by default. */
+  readonly kind?: CliSelectorKind;
+  /**
+   * The command needs a selector although the contract admits omission,
+   * such as a one-shot command that has no current position to fall back on.
+   */
+  readonly required?: true;
+  /**
+   * A second named option that spells the same selector in another
+   * coordinate system, such as a file offset for a procedure. Its value is
+   * mapped to the selector's text and must agree with the other spellings.
+   */
+  readonly alternative?: CliSelectorAlternative;
+}
+
+/** Another option spelling a selector, mapped to the selector's text. */
+export interface CliSelectorAlternative {
+  /** The option key; its flag is the kebab-case spelling. */
+  readonly name: string;
+  readonly description: string;
+  /** The option's own argv grammar. */
+  readonly schema: z.ZodType<string>;
+  /** The selector text this value selects. */
+  readonly selects: (value: string) => string;
+}
+
+/** The described alternative option of a positional selector. */
+export interface ContractCliSelectorAlternative {
+  readonly key: string;
+  /** The key of the option's parsed value. */
+  readonly valueKey: string;
+  readonly schema: z.ZodType;
+  readonly selects: (value: string) => string;
+}
+
+/** The described named option of a positional selector. */
+export interface ContractCliSelectorOption {
+  readonly key: string;
+  /**
+   * The key of the option's parsed value, beside the positional's own
+   * value, which may share the option's key.
+   */
+  readonly valueKey: string;
+  readonly description: string;
+  readonly schema: z.ZodType;
+  readonly kind: CliSelectorKind;
+  /** Neither spelling may be omitted. */
+  readonly required: boolean;
+  /** Another option spelling the same selector, if any. */
+  readonly alternative: ContractCliSelectorAlternative | undefined;
+}
+
 /** One positional argument or option of a contract command. */
 export interface ContractCliParameter {
   /** The contract input field this parameter supplies. */
@@ -288,6 +379,8 @@ export interface ContractCliParameter {
   readonly nullFlag: string | undefined;
   /** The member of the object field this option supplies, if flattened. */
   readonly member: string | undefined;
+  /** The named option of a positional selector, if any. */
+  readonly selectorOption: ContractCliSelectorOption | undefined;
 }
 
 /** The contract input and delivery one invocation selected. */
@@ -454,11 +547,19 @@ const assertArgvField = (
   schema: z.ZodType,
 ) => {
   const current = core(schema);
+  // A union of text forms, such as `auto` or a provider ID, is one token.
+  const text = (member: z.ZodType): boolean =>
+    member instanceof z.ZodString ||
+    member instanceof z.ZodEnum ||
+    (member instanceof z.ZodLiteral &&
+      [...member.values].every((value) => typeof value === "string"));
   const scalar =
     current instanceof z.ZodString ||
     current instanceof z.ZodNumber ||
     current instanceof z.ZodBoolean ||
-    current instanceof z.ZodEnum;
+    current instanceof z.ZodEnum ||
+    (current instanceof z.ZodUnion &&
+      (current.options as readonly z.ZodType[]).every(text));
   const element =
     current instanceof z.ZodArray ? core(current.element as z.ZodType) : null;
   if (
@@ -786,7 +887,11 @@ const describeSessionTarget = (
     if (!admitsOmission(declared))
       throw new Error(`${opener}.${field} is required`);
     let schema: z.ZodType;
-    if (projected.values === undefined) {
+    if (projected.callerPath === true) {
+      if (!(core(declared) instanceof z.ZodString))
+        throw new Error(`${opener}.${field} is not a path`);
+      schema = localPathStringSchema.optional();
+    } else if (projected.values === undefined) {
       assertArgvField(opener, field, declared);
       schema = cliDecimalShape({ field: argvOptional(declared) }).field;
     } else {
@@ -802,6 +907,7 @@ const describeSessionTarget = (
       key: projected.name ?? camelCase(field),
       description,
       schema,
+      callerPath: projected.callerPath === true,
     };
   });
   const keyOf = new Map(options.map(({ field, key }) => [field, key]));
@@ -818,8 +924,18 @@ const describeSessionTarget = (
       );
       // The target itself was admitted as the positional.
       if (Object.keys(selected).length === 0) return ok({});
+      const callerPaths: ReadonlySet<string> = new Set(
+        options.flatMap(({ field, callerPath }) => (callerPath ? [field] : [])),
+      );
       const candidate = {
-        ...selected,
+        ...Object.fromEntries(
+          Object.entries(selected).map(([field, value]) => [
+            field,
+            callerPaths.has(field)
+              ? absoluteCallerPath(value as string)
+              : value,
+          ]),
+        ),
         [SESSION_TARGET_KEY]: absoluteCallerPath(
           values[SESSION_TARGET_KEY] as string,
         ),
@@ -843,7 +959,10 @@ const describeSessionTarget = (
       const data = admitted.data as Readonly<Record<string, unknown>>;
       return ok(
         Object.fromEntries(
-          Object.keys(selected).map((field) => [field, data[field]]),
+          Object.keys(selected).map((field) => [
+            field,
+            callerPaths.has(field) ? selected[field] : data[field],
+          ]),
         ),
       );
     },
@@ -1085,6 +1204,12 @@ export const describeContractCommand = <
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
     throw new Error(`${contract.name} has no optional input field view`);
   const positionals: readonly string[] = projection.positionals ?? [];
+  const selectorOptions: Readonly<
+    Record<string, CliSelectorOption | undefined>
+  > = projection.selectorOptions ?? {};
+  for (const field of Object.keys(selectorOptions))
+    if (!positionals.includes(field))
+      throw new Error(`${contract.name}.${field} is not a positional selector`);
   const callerPaths: ReadonlySet<string> = new Set(
     projection.callerPaths ?? [],
   );
@@ -1133,9 +1258,9 @@ export const describeContractCommand = <
     const key = projected?.name ?? camelCase(field);
     let schema: z.ZodType;
     if (runtimeJson !== undefined) {
-      if (!admitsOmission(declared))
-        throw new Error(`${contract.name}.${field} is required on the CLI`);
-      schema = z.string().optional();
+      // Argv requires the text of a required field; the contract admits
+      // what it decodes to.
+      schema = admitsOmission(declared) ? z.string().optional() : z.string();
       if (declared.description !== undefined && !viewSelection)
         schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
@@ -1168,6 +1293,38 @@ export const describeContractCommand = <
       schema = schema.describe(projected.description);
     const description = schema.description;
     const value = core(declared);
+    const selector = selectorOptions[field];
+    let selectorOption: ContractCliSelectorOption | undefined;
+    if (selector !== undefined) {
+      if (!(value instanceof z.ZodString))
+        throw new Error(`${contract.name}.${field} is not a text selector`);
+      // A selector names one object. Its contract refuses an empty one, so
+      // the CLI and MCP agree without a CLI-only rule.
+      if (value.safeParse("").success)
+        throw new Error(`${contract.name}.${field} admits an empty selector`);
+      // Either spelling may supply the selector.
+      schema = schema.optional();
+      if (description !== undefined) schema = schema.describe(description);
+      selectorOption = {
+        key: selector.name,
+        valueKey: `--${selector.name}`,
+        description: selector.description,
+        schema: schema.describe(selector.description),
+        kind: selector.kind ?? "text",
+        required: selector.required === true || !admitsOmission(declared),
+        alternative:
+          selector.alternative === undefined
+            ? undefined
+            : {
+                key: selector.alternative.name,
+                valueKey: `--${selector.alternative.name}`,
+                schema: selector.alternative.schema
+                  .optional()
+                  .describe(selector.alternative.description),
+                selects: selector.alternative.selects,
+              },
+      };
+    }
     return {
       field,
       key,
@@ -1185,6 +1342,7 @@ export const describeContractCommand = <
       runtimeJson,
       nullFlag,
       member: undefined,
+      selectorOption,
     };
   };
   const flattened: Readonly<
@@ -1226,6 +1384,7 @@ export const describeContractCommand = <
         runtimeJson: undefined,
         nullFlag: undefined,
         member,
+        selectorOption: undefined,
       };
     });
   };
@@ -1269,14 +1428,36 @@ export const describeContractCommand = <
     sessionTarget === undefined
       ? []
       : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)];
+  const selectorKeys = parameters.flatMap(({ selectorOption }) =>
+    selectorOption === undefined
+      ? []
+      : [
+          selectorOption.key,
+          ...(selectorOption.alternative === undefined
+            ? []
+            : [selectorOption.alternative.key]),
+        ],
+  );
+  // A selector option may share its positional's key: argv keeps them apart.
   const keys = new Set([
     ...sessionTargetKeys,
     ...parameters.map(({ key }) => key),
     ...cliOnlyOptions.map(({ key }) => key),
   ]);
+  const optionKeys = new Set([
+    ...sessionTargetKeys,
+    ...parameters.flatMap(({ key, positional }) => (positional ? [] : [key])),
+    ...cliOnlyOptions.map(({ key }) => key),
+    ...selectorKeys,
+  ]);
   if (
     keys.size !==
-    sessionTargetKeys.length + parameters.length + cliOnlyOptions.length
+      sessionTargetKeys.length + parameters.length + cliOnlyOptions.length ||
+    optionKeys.size !==
+      sessionTargetKeys.length +
+        parameters.filter(({ positional }) => !positional).length +
+        cliOnlyOptions.length +
+        selectorKeys.length
   )
     throw new Error(`${contract.name} projects two fields to one CLI key`);
   const cliOptionDependencies = Object.fromEntries(
@@ -1299,8 +1480,19 @@ export const describeContractCommand = <
     values: Readonly<Record<string, unknown>>,
   ): Record<string, unknown> => {
     const input: Record<string, unknown> = {};
-    for (const { field, key, callerPath, delivery, member } of parameters) {
-      const value = values[key];
+    for (const {
+      field,
+      key,
+      callerPath,
+      delivery,
+      member,
+      selectorOption,
+    } of parameters) {
+      // The named spelling is preserved when both agree.
+      const value =
+        (selectorOption === undefined
+          ? undefined
+          : values[selectorOption.valueKey]) ?? values[key];
       if (value === undefined || delivery || member !== undefined) continue;
       input[field] = !callerPath
         ? value
@@ -1424,15 +1616,67 @@ export const describeContractCommand = <
       ),
     },
     evidenceDelivery,
-    admit: (values) =>
-      admitInvocation(
+    admit: (values) => {
+      const selectedValues: Record<string, unknown> = { ...values };
+      for (const { key, selectorOption } of parameters) {
+        if (selectorOption === undefined) continue;
+        const selected = selectSpelledSelector(
+          contract.name,
+          selectorOption,
+          values[key] as string | undefined,
+          values,
+        );
+        if (!selected.ok) return selected;
+        selectedValues[selectorOption.valueKey] = selected.value;
+      }
+      return admitInvocation(
         contract,
         { evidenceDelivery, viewDelivery, parameters, shape },
-        values,
+        selectedValues,
         toContractInput,
         rename,
-      ),
+      );
+    },
   };
+};
+
+/**
+ * Select one selector from its positional, its named option and any
+ * alternative option. The named option and the alternative agree only as
+ * text; the positional then agrees with either as the selector's kind, and
+ * a conflict names the option the caller used.
+ */
+const selectSpelledSelector = (
+  operation: string,
+  selector: ContractCliSelectorOption,
+  positional: string | undefined,
+  values: Readonly<Record<string, unknown>>,
+): Result<string | undefined, AnalysisInputError> => {
+  const { alternative } = selector;
+  let named = values[selector.valueKey] as string | undefined;
+  let option = selector.key;
+  const otherSpelling =
+    alternative === undefined
+      ? undefined
+      : (values[alternative.valueKey] as string | undefined);
+  if (alternative !== undefined && otherSpelling !== undefined) {
+    const merged = selectCliAnalysisSelector(
+      named,
+      alternative.selects(otherSpelling),
+      { option: alternative.key, operation, kind: "text", required: false },
+    );
+    if (!merged.ok) return merged;
+    named = merged.value;
+    option = alternative.key;
+  }
+  const selected = selectCliAnalysisSelector(positional, named, {
+    option,
+    operation,
+    kind: selector.kind,
+    required: selector.required,
+  });
+  // The named spelling is preserved when both agree.
+  return selected.ok ? ok(named ?? positional) : selected;
 };
 
 /**
@@ -1510,4 +1754,38 @@ const admitInvocation = (
     operation: contract.name,
   });
   return refused === undefined ? ok({ input, delivery }) : err(refused);
+};
+
+/**
+ * Describe each contract an operation option selects. Each must project to
+ * the registered command's exact arguments, options and object-level option
+ * rules, so the help and schema the registered contract advertises hold for
+ * every choice.
+ */
+export const describeOperationChoices = (
+  description: ContractCliDescription,
+  projection: CliContractProjection<string, CliOptionShape>,
+): ReadonlyMap<unknown, ContractCliDescription> => {
+  const choices = new Map<unknown, ContractCliDescription>();
+  const signature = (described: ContractCliDescription): string =>
+    JSON.stringify([
+      described.parameters.map(({ key, positional, schema }) => [
+        key,
+        positional,
+        z.toJSONSchema(schema, { unrepresentable: "any" }),
+      ]),
+      described.optionConstraints ?? null,
+    ]);
+  const expected = signature(description);
+  for (const [value, contract] of Object.entries(
+    projection.operationBy?.contracts ?? {},
+  )) {
+    const described = describeContractCommand(contract, projection);
+    if (signature(described) !== expected)
+      throw new Error(
+        `${contract.name} does not project to ${description.command}'s options`,
+      );
+    choices.set(value, described);
+  }
+  return choices;
 };

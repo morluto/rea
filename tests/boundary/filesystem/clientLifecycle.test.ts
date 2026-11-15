@@ -92,7 +92,7 @@ const DETECTED_CLIENT_ORDER = [
 describe("client configuration filesystem lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
     const home = await createTestTempDirectory("rea-detect-");
-    for (const client of supportedClients(home))
+    for (const client of supportedClients(home, HOST_PLATFORM.platform))
       if (client.markerPath !== undefined)
         await mkdir(client.markerPath, { recursive: true });
     // Gemini CLI follows its own session state, not the shared .gemini root.
@@ -109,7 +109,7 @@ describe("client configuration filesystem lifecycle", () => {
 
   it("does not detect Gemini CLI from Antigravity's shared .gemini storage", async () => {
     const home = await createTestTempDirectory("rea-detect-gemini-");
-    const antigravity = supportedClients(home).find(
+    const antigravity = supportedClients(home, HOST_PLATFORM.platform).find(
       ({ name }) => name === "antigravity",
     );
     if (antigravity?.markerPath === undefined)
@@ -1563,7 +1563,7 @@ describe("Grok Bot registration", () => {
     const original =
       '{"mcpServers":{"other":{"command":"other"},"rea":{"command":"rea","args":["mcp"]}}}\n';
     await writeFile(configPath, original);
-    const client = supportedClients(home).find(
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
       ({ name }) => name === "grok_bot",
     );
     if (client === undefined) throw new Error("missing grok_bot");

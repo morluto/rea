@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
@@ -119,13 +120,13 @@ export const captureProcessScenarioFile = async (
         const prepared = await prepareProcessScenarioPlan(
           parsed.data,
           environment,
-          process.platform,
+          HOST_PLATFORM.platform,
           signal,
         );
         if (!prepared.ok) throw prepared.error;
         return createProcessScenarioPlanEvidence(
           prepared.value,
-          process.platform,
+          HOST_PLATFORM.platform,
         );
       }
       const progress = createProgressReporter(
@@ -140,7 +141,7 @@ export const captureProcessScenarioFile = async (
         const captured = await captureProcessScenario(
           parsed.data,
           signal,
-          process.platform,
+          HOST_PLATFORM.platform,
           environment,
           undefined,
           undefined,

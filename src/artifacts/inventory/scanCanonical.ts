@@ -527,6 +527,7 @@ const buildInventorySnapshot = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Missing iNES reconstruction scan",
+        { integrityCheck: "inventory-node" },
       );
     ines = await reader.verifyReconstruction(
       rootDigest.sha256,
@@ -620,6 +621,7 @@ const verifyRootDigest = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "Root artifact changed during inventory",
+      { integrityCheck: "container-identity" },
     );
 };
 

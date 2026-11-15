@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -42,9 +43,10 @@ it("returns a first-call overview and pages the unchanged source after its file 
   const { client, session } = await createHarness();
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((x) => x.name === "inspect_managed_artifact");
-  if (definition?.outputSchema === undefined)
-    throw new Error("Managed schemas are absent");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Managed schemas are absent");
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);

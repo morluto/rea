@@ -102,6 +102,8 @@ export interface MemberCore {
   readonly genericArity?: number | null;
   /** Nominal declaring type, name and decoded signature; never runtime binding. */
   readonly identitySha256?: string | null;
+  /** Parsed TypeSpec owner and member signature establish a local row, not a nominal name. */
+  readonly rowResolved?: boolean;
 }
 
 export const memberTargetIdentity = (

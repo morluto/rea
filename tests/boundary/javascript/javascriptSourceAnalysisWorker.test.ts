@@ -14,6 +14,11 @@ import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwner
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+} from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
@@ -701,7 +706,13 @@ it("formats a real worker's declined semantic budget once", async () => {
 });
 
 // The handshake mirrors the real server: only Node.js reports an enforced V8 heap limit.
-const resourceFailureWorker = (heapLimit: string) =>
+const resourceFailureWorker = (
+  heapLimit: string,
+  failure: { readonly resource: string; readonly limits: unknown } = {
+    resource: "memory",
+    limits: null,
+  },
+) =>
   new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 30_000 }, (request) =>
     spawnOwnedProviderProcess({
       ...request,
@@ -711,7 +722,7 @@ const resourceFailureWorker = (heapLimit: string) =>
 process.stdout.write(JSON.stringify({ kind: "ready", heap_limit_bytes: heap }) + "\\n");
 require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {
   const { id } = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ kind: "failure", id, reason: "resource", resource: "memory", limits: null, message: "fixture" }) + "\\n");
+  process.stdout.write(JSON.stringify({ kind: "failure", id, reason: "resource", ...${JSON.stringify(failure)}, message: "fixture" }) + "\\n");
 });`,
       ],
     }),
@@ -743,6 +754,41 @@ it("reports the worker heap limit only when the runtime enforces V8 heap flags",
                 : { worker_process_memory_limit_bytes: processLimit }),
               worker_timeout_ms: 30_000,
             },
+    });
+  } finally {
+    await worker.close();
+  }
+});
+
+it("names the fixed work allowance a worker refusal reports", async () => {
+  const worker = resourceFailureWorker(
+    'process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null',
+    {
+      resource: "cpu",
+      limits: {
+        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]:
+          JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+      },
+    },
+  );
+  try {
+    const result = await worker.analyze(
+      source("app.mjs", "export const observed = 7;"),
+      { nodes: 100, unknowns: 100 },
+    );
+    if (result.ok) throw new Error("expected a reported resource failure");
+    const error = result.error.error;
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("expected a resource constraint");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      remediationAction: undefined,
+      fixedAllowance: {
+        kind: "work",
+        limit: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+        unit: "alias states",
+      },
     });
   } finally {
     await worker.close();

@@ -58,7 +58,9 @@ describe("Qwen Code configuration paths", () => {
       QWEN_HOME: override,
     });
     expect(
-      supportedClients("/home/a").find(({ name }) => name === "qwen_code"),
+      supportedClients("/home/a", HOST_PLATFORM.platform).find(
+        ({ name }) => name === "qwen_code",
+      ),
     ).toEqual(client);
     expect(client).toMatchObject({
       configPath: join(directory, "settings.json"),

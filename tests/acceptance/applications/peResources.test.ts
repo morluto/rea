@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -435,7 +436,7 @@ cliTest(
     const call: PeResourceCall = (arguments_) =>
       client.callTool(
         { name: definition.name, arguments: arguments_ },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
     const sessionDefinition = inventory.tools.find(
       ({ name }) => name === "binary_session",
@@ -444,7 +445,7 @@ cliTest(
       throw new Error("Missing binary_session tool contract");
     const session = await client.callTool(
       { name: sessionDefinition.name, arguments: {} },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     expect(session.isError, JSON.stringify(session)).not.toBe(true);
     const status = toolContract("binary_session").outputSchema.parse(

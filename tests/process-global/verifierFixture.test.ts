@@ -289,3 +289,44 @@ it("keeps a root on request after its cleanups confirm, and names it", async () 
     /already being released/u,
   );
 });
+
+it("closes early resources now and keeps a failed one for release to retry", async () => {
+  let closes = 0;
+  const fixture = new VerifierFixture({
+    path: "/fixture/early",
+    close: async () => {
+      closes += 1;
+    },
+  });
+  const calls: string[] = [];
+  let clientFails = true;
+  const failure: unknown = await fixture
+    .closeEarly([
+      () => {
+        calls.push("client");
+        if (clientFails) throw new Error("client did not close");
+      },
+      () => {
+        calls.push("transport");
+      },
+    ])
+    .catch((cause: unknown) => cause);
+  // Both ran now, in order, and the client's failure is reported.
+  expect(calls).toEqual(["client", "transport"]);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(
+    ((failure as AggregateError).errors as Error[]).map(
+      ({ message }) => message,
+    ),
+  ).toEqual(["client did not close"]);
+  // Release retries only the client and removes the root once it confirms.
+  await expect(fixture.release()).rejects.toMatchObject({
+    cleanupLeases: [fixture],
+  });
+  expect(closes).toBe(0);
+  clientFails = false;
+  await fixture.release();
+  expect(calls).toEqual(["client", "transport", "client", "client"]);
+  expect(closes).toBe(1);
+  expect(fixture.released).toBe(true);
+});

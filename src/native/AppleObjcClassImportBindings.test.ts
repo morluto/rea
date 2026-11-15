@@ -227,14 +227,14 @@ describe("Objective-C import binding address inspection", () => {
 });
 
 describe("Objective-C import binding candidate completeness", () => {
-  it("keeps coverage partial when the candidates' completeness was not stated", () => {
+  it("reports coverage unknown when the candidates' completeness was not stated", () => {
     for (const addresses of [["0x1000", "0x1008"], []])
       expect(
         inspectObjcClassImportBindings(
           createInput({ addresses, addressesComplete: undefined }),
         ).coverage,
       ).toMatchObject({
-        status: "partial",
+        status: "unknown",
         reason: expect.stringContaining("did not state"),
       });
   });

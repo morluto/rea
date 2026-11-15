@@ -332,7 +332,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected model path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -341,6 +341,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "Model file changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const groups = new Map<
       string,

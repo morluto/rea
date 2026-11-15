@@ -138,6 +138,7 @@ it("retains the runtime limit when an authenticated status response is oversized
     expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(error instanceof AnalysisResourceConstraintError)) return false;
     expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.requestSent).toBe(true);
     expect(error.limit).toMatchObject({
       setting: "bridge.max_request_bytes",
       effective_value: 8192,
@@ -236,10 +237,7 @@ const ceilingMismatch = (error: unknown): boolean => {
     bridge_max_request_bytes: 16_777_216,
     client_max_request_bytes: 8192,
   });
-  // That no request was sent exists only in this prose.
-  expect(error.reason).toContain(
-    "No status request was sent to the mismatched session.",
-  );
+  expect(error.requestSent).toBe(false);
   return true;
 };
 
@@ -458,11 +456,11 @@ it("refuses an escaped Cutter command before serializing it", async () => {
     ).rejects.toSatisfy((error: unknown) => {
       expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
       if (!(error instanceof AnalysisResourceConstraintError)) return false;
-      expect(error.resource).toBe("transport");
-      // The frame limit and that no command was sent exist only in this prose.
-      expect(error.reason).toMatch(
-        /authenticated frame limit of 8192 bytes.*no command was sent/u,
-      );
+      expect(error).toMatchObject({
+        resource: "transport",
+        reportedLimits: { max_request_bytes: 8192 },
+        requestSent: false,
+      });
       return true;
     });
     expect(connections).toBe(0);

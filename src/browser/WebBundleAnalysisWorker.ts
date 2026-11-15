@@ -1,4 +1,5 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { javaScriptSemanticWorkAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -32,7 +33,10 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import type { StableArtifactSnapshot } from "../artifacts/readStableArtifact.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -84,6 +88,29 @@ import {
 } from "./WebBundleAnalysisWorkerProtocol.js";
 
 const OPERATION = "analyze_web_bundle";
+
+/**
+ * A worker resource refusal. A reported fixed work allowance is deterministic
+ * for the same script; any other refusal is measured memory exhaustion.
+ */
+const webBundleResourceFailure = (
+  frame: Extract<WebBundleWorkerMessage, { readonly kind: "failure" }>,
+  resultBudgetBytes: number,
+  capturedOutput?: AnalysisErrorOptions["capturedOutput"],
+): AnalysisResourceConstraintError => {
+  const limits = { ...frame.limits, result_budget_bytes: resultBudgetBytes };
+  const fixed = javaScriptSemanticWorkAllowance(frame.limits);
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    fixed === undefined ? "memory" : "cpu",
+    frame.message,
+    limits,
+    {
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      ...(fixed ?? { measuredExhaustion: true }),
+    },
+  );
+};
 const PROVIDER = "web-bundle-static-analysis";
 
 const scriptTimeout = (
@@ -384,13 +411,7 @@ export class WebBundleAnalysisWorker {
       } while (response.kind === "phase");
       if (response.kind === "failure") {
         if (response.reason === "resource")
-          throw new AnalysisResourceConstraintError(
-            OPERATION,
-            "memory",
-            response.message,
-            { result_budget_bytes: resultBudget },
-            { measuredExhaustion: true },
-          );
+          throw webBundleResourceFailure(response, resultBudget);
         throw new AnalysisOutputError(
           OPERATION,
           `Web script analysis failed (${response.reason}): ${response.message}`,
@@ -816,14 +837,10 @@ export class WebBundleAnalysisWorker {
         );
       case "frame":
         return failure.frame.reason === "resource"
-          ? new AnalysisResourceConstraintError(
-              OPERATION,
-              "memory",
-              failure.frame.message,
-              {
-                result_budget_bytes: failure.resultBudgetBytes,
-              },
-              { capturedOutput, measuredExhaustion: true },
+          ? webBundleResourceFailure(
+              failure.frame,
+              failure.resultBudgetBytes,
+              capturedOutput,
             )
           : new AnalysisOutputError(
               OPERATION,
