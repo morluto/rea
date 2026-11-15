@@ -3,7 +3,7 @@ import {
   fetchedSourceMapLimitCliOptions,
   sourceMapLimitsFromCli,
 } from "./sourceMapLimits.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+
 import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
   deliverCliAnalysisEvidence,
@@ -22,10 +22,7 @@ import {
   observeWebSession,
 } from "../application/BrowserObservationService.js";
 import { logCliCommand } from "../cliLogging.js";
-import {
-  inspectWebPageInputSchema,
-  listBrowserTargetsInputSchema,
-} from "../domain/browserObservation.js";
+import { listBrowserTargetsInputSchema } from "../domain/browserObservation.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -34,7 +31,6 @@ import { cliDomainInput } from "./domainInput.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
-  browserPageInspectionOptions,
   observationDuration,
   passiveBrowserScopeOptions,
   selectedCommandTimeout,
@@ -48,7 +44,7 @@ import {
   browserTargetProjection,
   observeThroughBrowser,
 } from "./browserContractCommands.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+
 import { cliProgressReporter } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
@@ -76,7 +72,44 @@ export const registerBrowserCommands = (
     },
     observeThroughBrowser(listTargets, listBrowserTargets),
   );
-  registerPageInspection(cli, logger);
+  const inspectPage = contractNamed(BROWSER_TOOL_CONTRACTS, "inspect_web_page");
+  registerContractCommand(
+    cli,
+    logger,
+    inspectPage,
+    {
+      command: CLI_COMMANDS.inspectWebPage,
+      description:
+        "Passively inspect one page through CDP, defaulting to its current origin",
+      ...browserTargetProjection,
+      fields: {
+        ...browserTargetProjection.fields,
+        observation_ms: {
+          description: "Observation duration in milliseconds",
+        },
+        include_accessibility_text: {
+          description: "Include accessibility text",
+        },
+        include_console_text: { description: "Include console message text" },
+        include_json_body_shapes: {
+          description: "Include structural shapes of JSON response bodies",
+        },
+        include_websocket_shapes: {
+          description: "Include structural shapes of WebSocket payloads",
+        },
+        include_script_sources: {
+          description: "Include JavaScript source text",
+        },
+        include_storage_keys: {
+          description: "Include storage key names without values",
+        },
+        include_storage_fingerprints: {
+          description: "Include content-derived storage fingerprints",
+        },
+      },
+    },
+    observeThroughBrowser(inspectPage, inspectWebPage),
+  );
   registerBundleAnalysis(cli, logger);
   const observeSession = contractNamed(
     BROWSER_TOOL_CONTRACTS,
@@ -105,66 +138,6 @@ export const registerBrowserCommands = (
       }),
     ),
   );
-};
-
-const registerPageInspection = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.inspectWebPage, {
-    description:
-      "Passively inspect one page through CDP, defaulting to its current origin",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listBrowserTargetsInputSchema.shape.cdp_endpoint,
-      ),
-      targetId: observeWebSessionInputSchema.shape.target_id.describe(
-        "Target ID from list-browser-targets",
-      ),
-    }),
-    options: browserPageInspectionOptions,
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "inspect-web-page", async () => {
-          const provider = createBrowserObservationProvider();
-          const input = {
-            cdp_endpoint: args.endpoint,
-            allowed_origins: options.allowedOrigins,
-            target_id: args.targetId,
-            observation_ms: options.observationMs,
-            include_accessibility_text: options.includeAccessibilityText,
-            include_console_text: options.includeConsoleText,
-            include_json_body_shapes: options.includeJsonBodyShapes,
-            include_websocket_shapes: options.includeWebsocketShapes,
-            include_script_sources: options.includeScriptSources,
-            include_storage_keys: options.includeStorageKeys,
-            include_storage_fingerprints: options.includeStorageFingerprints,
-            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
-            ...selectedCommandTimeout(options.commandTimeoutMs),
-          };
-          const parsed = inspectWebPageInputSchema.safeParse(input);
-          if (!parsed.success)
-            return browserCliError(
-              analysisInputErrorFromIssues(
-                "inspect_web_page",
-                parsed.error.issues,
-                input,
-              ),
-            );
-          return await finishAnalysisCommand(
-            () => inspectWebPage(provider, parsed.data, { signal }),
-            {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            provider.identity().id,
-            "inspect_web_page",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
 };
 
 const registerBundleAnalysis = (
