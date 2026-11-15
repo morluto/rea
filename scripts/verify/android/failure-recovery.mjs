@@ -28,6 +28,9 @@ export async function verifyAndroidFailureRecovery({
 }) {
   const rootFixture = await VerifierFixture.open({
     prefix: "rea-android-recovery-",
+    // A plain directory, as before: tools create directories beneath it,
+    // which a private root blocks on Windows.
+    private: false,
   });
   const root = rootFixture.path;
   const javaName = process.platform === "win32" ? "java.exe" : "java";

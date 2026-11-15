@@ -1,6 +1,7 @@
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
   VerifierFixture,
+  onceConfirmed,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
@@ -303,7 +304,13 @@ bridge.exposeInMainWorld("fixture", {
         `PASS live Electron CLI/MCP discovery, inspection, reconciliation, and active observations; active cleanup=${capture.application.cleanup}`,
       );
       if (process.platform !== "win32")
-        await verifyCancellation({ input, ready, entrypoint, root });
+        await verifyCancellation({
+          input,
+          ready,
+          entrypoint,
+          root,
+          fixture: rootFixture,
+        });
     } catch (cause) {
       throw new Error(
         `Electron public-tool verification failed: ${cause.message}\nMCP stderr:\n${serverStderr}`,
@@ -331,7 +338,7 @@ async function waitForEndpoint(application, diagnostics) {
   );
 }
 
-async function verifyCancellation({ input, ready, entrypoint, root }) {
+async function verifyCancellation({ input, ready, entrypoint, root, fixture }) {
   await rm(ready, { force: true });
   const child = spawn(
     process.execPath,
@@ -363,6 +370,41 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
   let ownership;
+  // The CLI and its Electron application run in the fixture root: the fixture
+  // removes the root only after both confirm, and they still stop early here.
+  const stopCli = fixture.releaseAfter(
+    onceConfirmed(async () => {
+      for (const signal of ["SIGTERM", "SIGKILL"]) {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.kill(signal);
+        let timer;
+        try {
+          if (
+            await Promise.race([
+              exited.then(() => true),
+              new Promise((resolve) => {
+                timer = setTimeout(() => resolve(false), 2000);
+              }),
+            ])
+          )
+            return;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw new Error(
+        "Electron verifier CLI did not exit after SIGKILL; application cleanup remains independently owned",
+      );
+    }),
+  );
+  const stopApplication = fixture.releaseAfter(
+    onceConfirmed(async () => {
+      if (ownership) {
+        const cleanup = await cleanupOwnedProcessGroup(ownership);
+        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+      }
+    }),
+  );
   await withVerifierCleanup(async () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
@@ -437,35 +479,5 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     console.log(
       `PASS real Electron CLI SIGTERM, retained cancelled actions, and owned group termination; reported code=${error.code}`,
     );
-  }, [
-    async () => {
-      for (const signal of ["SIGTERM", "SIGKILL"]) {
-        if (child.exitCode !== null || child.signalCode !== null) return;
-        child.kill(signal);
-        let timer;
-        try {
-          if (
-            await Promise.race([
-              exited.then(() => true),
-              new Promise((resolve) => {
-                timer = setTimeout(() => resolve(false), 2000);
-              }),
-            ])
-          )
-            return;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-      throw new Error(
-        "Electron verifier CLI did not exit after SIGKILL; application cleanup remains independently owned",
-      );
-    },
-    async () => {
-      if (ownership) {
-        const cleanup = await cleanupOwnedProcessGroup(ownership);
-        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-      }
-    },
-  ]);
+  }, [stopCli, stopApplication]);
 }

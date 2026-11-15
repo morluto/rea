@@ -1,6 +1,7 @@
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
   VerifierFixture,
+  onceConfirmed,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
 import assert from "node:assert/strict";
@@ -16,7 +17,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const execute = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const rootFixture = await VerifierFixture.open({ prefix: "rea-inspector-" });
+// A plain directory, as before: this verifier also runs on Windows CI.
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-inspector-",
+  private: false,
+});
 const root = rootFixture.path;
 const environment = {
   ...process.env,
@@ -63,9 +68,14 @@ await withVerifierFixture(rootFixture, async () => {
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
+    // The target runs from the fixture root: the root is removed only after
+    // it is confirmed stopped, and it still stops after its own check.
+    const stop = rootFixture.releaseAfter(
+      onceConfirmed(() => terminate(child)),
+    );
     await withVerifierCleanup(
       () => verifyTarget(child, targetPath, name),
-      [() => terminate(child)],
+      [stop],
     );
   }
 });

@@ -38,6 +38,9 @@ export const verifyAndroidMetadata = async ({
   }
   const classesFixture = await VerifierFixture.open({
     prefix: "rea-android-metadata-",
+    // A plain directory, as before: tools create directories beneath it,
+    // which a private root blocks on Windows.
+    private: false,
   });
   const classes = classesFixture.path;
   await withVerifierFixture(classesFixture, async () => {
