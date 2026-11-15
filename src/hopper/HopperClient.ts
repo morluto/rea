@@ -142,6 +142,12 @@ export interface HopperClientOptions<
   readonly logger?: Logger;
 }
 
+/** Bridge ceilings admitted when a session started, kept for its cleanup. */
+interface HopperSessionLimits {
+  readonly requestLimit: BridgeMaxRequestBytes;
+  readonly replyLimit: BridgeMaxReplyBytes;
+}
+
 type HopperStartupResult = Result<HopperServerInfo, AnalysisError>;
 type HopperStartupAttempt = SharedStartupAttempt<HopperStartupResult>;
 type HopperStartupOutcome =
@@ -190,6 +196,7 @@ export class HopperClient<
   #token: string | undefined;
   /** Reply ceiling admitted with the request on the wire; the default before any. */
   #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  #sessionLimits: HopperSessionLimits | undefined;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #closing = false;
@@ -532,6 +539,8 @@ export class HopperClient<
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
     // Admit both bridge ceilings before acquiring anything: an invalid launch
     // seed is a configuration refusal, not a failure after Hopper started.
+    // Cleanup requests reuse these, so a setting reset after startup cannot
+    // refuse the shutdown that releases Hopper's document and files.
     const requestLimit = admitBridgeRequestLimit(
       this.#options.bridgeMaxRequestBytes,
     );
@@ -540,6 +549,10 @@ export class HopperClient<
       this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
     );
     if (!replyLimit.ok) return replyLimit;
+    this.#sessionLimits = {
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
+    };
     try {
       this.#resources.runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
@@ -919,7 +932,16 @@ export class HopperClient<
         logger: this.#logger,
         onDiagnostic: this.#options.onDiagnostic,
         request: (method) =>
-          this.#request(method, {}, { timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS }),
+          this.#request(
+            method,
+            {},
+            {
+              timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+              ...(this.#sessionLimits === undefined
+                ? {}
+                : { limits: this.#sessionLimits }),
+            },
+          ),
         retainDocument: options.retainDocument === true,
         releaseTransport: () => this.#releaseTransport(),
       });
@@ -1164,6 +1186,8 @@ export class HopperClient<
       readonly signal?: AbortSignal;
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      /** Ceilings already admitted, such as the session's for cleanup. */
+      readonly limits?: HopperSessionLimits;
     },
   ): Promise<Result<JsonValue, AnalysisError>> {
     const id = this.#nextId++;
@@ -1204,13 +1228,17 @@ export class HopperClient<
     // payload is not serialized, and an admitted one is serialized only when
     // it reaches the wire. Both ceilings are admitted here, in the caller's
     // context; a queued request is written later outside it.
-    const requestLimit = admitBridgeRequestLimit(
-      this.#options.bridgeMaxRequestBytes,
-    );
+    const requestLimit =
+      options.limits === undefined
+        ? admitBridgeRequestLimit(this.#options.bridgeMaxRequestBytes)
+        : ok(options.limits.requestLimit);
     if (!requestLimit.ok) return requestLimit;
-    const replyLimit = admitBridgeReplyLimit(
-      this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
-    );
+    const replyLimit =
+      options.limits === undefined
+        ? admitBridgeReplyLimit(
+            this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+          )
+        : ok(options.limits.replyLimit);
     if (!replyLimit.ok) return replyLimit;
     const measured = jsonValueByteLength(
       payloadValue,

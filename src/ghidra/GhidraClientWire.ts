@@ -46,6 +46,7 @@ export interface GhidraWireOptions {
 export class GhidraWire {
   readonly #options: GhidraWireOptions;
   #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  #sessionLimits: GhidraAdmittedLimits | undefined;
 
   constructor(options: GhidraWireOptions) {
     this.#options = options;
@@ -72,6 +73,23 @@ export class GhidraWire {
       requestLimit: requestLimit.value,
       replyLimit: replyLimit.value,
     });
+  }
+
+  /**
+   * Admit the ceilings a session starts with and keep them for its cleanup.
+   * Cleanup must not depend on the current settings: an override reset after
+   * startup can expose a malformed launch seed, and refusing the checkpoint or
+   * shutdown request then would leave the JVM and its files behind.
+   */
+  admitSessionLimits(): Result<GhidraAdmittedLimits, GhidraSessionError> {
+    const limits = this.admitLimits();
+    if (limits.ok) this.#sessionLimits = limits.value;
+    return limits;
+  }
+
+  /** Ceilings admitted when the current session started, for its cleanup. */
+  sessionLimits(): GhidraAdmittedLimits | undefined {
+    return this.#sessionLimits;
   }
 
   #refused(cause: ConfigurationError): GhidraSessionError {

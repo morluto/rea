@@ -1007,7 +1007,8 @@ export class GhidraClient {
   ): Promise<GhidraStartResult> {
     // Admit the bridge ceilings before acquiring anything: an invalid launch
     // seed is a configuration refusal, not a failure after Ghidra started.
-    const limits = this.#wire.admitLimits();
+    // The admitted ceilings are kept for this session's cleanup requests.
+    const limits = this.#wire.admitSessionLimits();
     if (!limits.ok) return limits;
     let packedProgram: GhidraPackedProgram | undefined;
     try {
@@ -1195,10 +1196,16 @@ export class GhidraClient {
     if (owner === undefined || runtime === undefined) return;
     await this.#finishCheckpointStaging(signal);
     const path = join(runtime.path, `checkpoint-${randomUUID()}.gzf`);
+    // Checkpoints run at startup and during close, so they use the session's
+    // admitted ceilings rather than the current settings.
+    const limits = this.#wire.sessionLimits();
     const saved = await this.#wire.request(
       "checkpoint_program",
       { path, force },
-      signal === undefined ? {} : { signal },
+      {
+        ...(signal === undefined ? {} : { signal }),
+        ...(limits === undefined ? {} : { limits }),
+      },
     );
     if (!saved.ok) {
       if (saved.error.kind === "remote")
@@ -1401,8 +1408,16 @@ export class GhidraClient {
       }
       const socket = this.#socket;
       if (!forceStop && socket !== undefined && !socket.destroyed) {
+        const limits = this.#wire.sessionLimits();
         const shutdown = await this.#wire
-          .request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS })
+          .request(
+            "shutdown",
+            {},
+            {
+              timeoutMs: SHUTDOWN_TIMEOUT_MS,
+              ...(limits === undefined ? {} : { limits }),
+            },
+          )
           .catch((cause: unknown) =>
             err(
               this.#failure("process", "Ghidra shutdown request failed", cause),

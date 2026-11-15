@@ -420,6 +420,34 @@ describe("HopperClient reply framing", () => {
     ).toBe(true);
   });
 
+  it("shuts the bridge down under the session's ceilings after its seed is refused", async () => {
+    // Cleanup must not depend on the current settings: a refused seed would
+    // otherwise block the shutdown that releases Hopper's document and files.
+    const refusal = new ConfigurationError("invalid bridge ceiling seed");
+    let seedRefused = false;
+    const setting = (value: number) => ({
+      get maximumBytes(): number {
+        if (seedRefused) throw refusal;
+        return value;
+      },
+      source: "runtime" as const,
+    });
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, {
+      bridgeMaxRequestBytes: setting(16 * MIB),
+      bridgeMaxReplyBytes: setting(4 * MIB),
+    });
+    seedRefused = true;
+
+    const closed = await client.close();
+
+    expect(closed.ok ? undefined : closed.error).toBeUndefined();
+    expect(
+      launcher.requests.map(({ method }) => method),
+      "the shutdown request reached the bridge",
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/^shutdown/u)]));
+  });
+
   it("bounds each reply by the ceiling its own request admitted", async () => {
     // The getter-backed runtime setting reads whichever caller admits next.
     const limit = { maximumBytes: 4 * MIB, source: "runtime" as const };
