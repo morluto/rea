@@ -278,8 +278,9 @@ processTest(
       }
       const update = tools.find((tool) => tool.name === "patch_books_by_id")!;
       const create = tools.find((tool) => tool.name === "post_books")!;
-      expect(update.inputSchema.required).not.toContain("notify");
-      expect(create.inputSchema.required).not.toContain("notify");
+      // The advertised dialect omits an empty `required` list.
+      expect(update.inputSchema.required ?? []).not.toContain("notify");
+      expect(create.inputSchema.required ?? []).not.toContain("notify");
       expect(update.inputSchema.properties?.["notify"]).not.toHaveProperty(
         "enum",
       );
