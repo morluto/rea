@@ -73,6 +73,7 @@ export class BuildComputerLongRuns {
     };
     this.#jobs.add(job);
     const deadline = performance.now() + options.timeoutS * 1000;
+    let observedCommand: JsonValue | undefined;
     try {
       const started = answerSchema.parse(
         await runBuildController(
@@ -128,6 +129,14 @@ export class BuildComputerLongRuns {
               ? answer.error
               : "The REA command did not report its outcome.",
           );
+        if (answer.settled === false) {
+          observedCommand = this.#receipt(job, answer);
+          throw new Error(
+            typeof answer.error === "string"
+              ? answer.error
+              : "The REA command did not confirm that its process had exited.",
+          );
+        }
         this.#jobs.delete(job);
         if (answer.timed_out === true || typeof answer.error === "string") {
           const failure = new ProviderAdapterError(
@@ -167,19 +176,25 @@ export class BuildComputerLongRuns {
             });
       if (signal.aborted && cause instanceof AnalysisError && cause !== primary)
         primary.retainSecondaryFailure(cause);
+      if (observedCommand !== undefined)
+        primary.retainDiagnostics({ completed_command: observedCommand });
       if (!this.#jobs.has(job)) throw primary;
       const released = await this.#cancel(job);
+      const completed = released.completed ?? observedCommand;
       if (signal.aborted && !(primary instanceof AnalysisCancelledError)) {
         const cancelled = cancelledBy(OPERATION, signal);
         cancelled.retainSecondaryFailure(primary);
         primary = cancelled;
       }
       if (released.verified) {
-        if (released.completed !== undefined)
-          primary.retainDiagnostics({ completed_command: released.completed });
+        if (completed !== undefined)
+          primary.retainDiagnostics({ completed_command: completed });
         throw primary;
       }
-      throw this.#cleanupFailure(released.reason, primary, job);
+      const failure = this.#cleanupFailure(released.reason, primary, job);
+      if (completed !== undefined)
+        failure.retainDiagnostics({ completed_command: completed });
+      throw failure;
     }
   }
 
@@ -199,11 +214,21 @@ export class BuildComputerLongRuns {
         };
   }
 
-  async #cancel(
-    job: Job,
-  ): Promise<
+  /** Clear retained jobs after a verified computer teardown removed their processes. */
+  resolveAfterVerifiedComputerTeardown(): void {
+    for (const job of this.#jobs) {
+      for (const reference of job.failures) reference.deref()?.resolveCleanup();
+    }
+    this.#jobs.clear();
+  }
+
+  async #cancel(job: Job): Promise<
     | { readonly verified: true; readonly completed?: JsonValue }
-    | { readonly verified: false; readonly reason: string }
+    | {
+        readonly verified: false;
+        readonly reason: string;
+        readonly completed?: JsonValue;
+      }
   > {
     try {
       const answer = answerSchema.parse(
@@ -218,6 +243,21 @@ export class BuildComputerLongRuns {
           { timeoutS: CANCEL_S },
         ),
       );
+      if (answer.finished === true && answer.settled === false) {
+        const completed = this.#receipt(job, answer);
+        for (const reference of job.failures)
+          reference
+            .deref()
+            ?.retainDiagnostics({ completed_command: completed });
+        return {
+          verified: false,
+          reason:
+            typeof answer.error === "string"
+              ? answer.error
+              : "The REA command did not confirm that its process had exited.",
+          completed,
+        };
+      }
       if (answer.absent !== true && answer.finished !== true)
         return {
           verified: false,
@@ -252,9 +292,9 @@ export class BuildComputerLongRuns {
       ...(typeof answer.stdout_bytes === "number"
         ? { stdout_bytes: answer.stdout_bytes }
         : {}),
-      ...(typeof answer.exit_code === "number"
-        ? { exit_code: answer.exit_code }
-        : {}),
+      ...(answer.exit_code === undefined
+        ? {}
+        : { exit_code: answer.exit_code }),
       ...(typeof answer.stderr === "string" ? { stderr: answer.stderr } : {}),
       ...(typeof answer.error === "string" ? { error: answer.error } : {}),
       ...(answer.timed_out === undefined
@@ -263,6 +303,7 @@ export class BuildComputerLongRuns {
       ...(answer.cancelled === undefined
         ? {}
         : { cancelled: answer.cancelled }),
+      ...(answer.settled === undefined ? {} : { settled: answer.settled }),
     };
   }
 
