@@ -8,8 +8,10 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { createSystemDoctorHost } from "../../../../src/doctorRuntime.js";
 import { runDoctorOwned } from "../../../../src/application/Doctor.js";
-import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
-import { STARTUP_OWNER_CLOSED } from "../../../../src/process/SharedStartupAttempt.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../../../../src/domain/analysisErrorCore.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -303,7 +305,7 @@ it.each(["caller", "host"] as const)(
         throw new Error("Expected Kuna inspection cancellation");
       expect(failure.operation).toBe("doctor");
       expect(failure.cause).toBe(
-        source === "caller" ? reason : STARTUP_OWNER_CLOSED,
+        source === "caller" ? reason : OwnerCancellation.startupOwnerClosed,
       );
       // Cancellation only settles once execFile has reaped its direct child.
       expect(() => process.kill(probe.pid, 0)).toThrowError(

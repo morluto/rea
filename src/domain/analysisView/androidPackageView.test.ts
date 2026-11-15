@@ -24,6 +24,16 @@ const component = (name: string, extra: Record<string, JsonValue> = {}) => ({
   foreground_service_type: null,
   authorities: null,
   target_activity: null,
+  declaration_coverage: "complete",
+  declaration_index: 0,
+  location: null,
+  enabled: null,
+  enabled_declaration: null,
+  process: null,
+  grant_uri_permissions: null,
+  grant_uri_permissions_declaration: null,
+  intent_filters: [],
+  meta_data: [],
   ...extra,
 });
 const report = (
@@ -148,19 +158,37 @@ it("keeps parent ordinals, duplicate declarations and coverage after filtering, 
   expect(JSON.stringify(source)).toBe(before);
 });
 
-it("keeps omitted historical facts unknown even with empty or expanded field selections", () => {
-  const source = parent(report([component("legacy.Class")]));
-  for (const fields of [[], ["enabled", "intent_filters", "location"]]) {
-    const page = androidComponentsViewResultSchema.parse(
-      project(source, { kind: "android", facet: "components", fields }),
-    );
-    expect(page.items).toEqual([
-      { source_index: 0, declaration_coverage: "unknown" },
-    ]);
-  }
+it("refuses a component without its declaration facets instead of reporting them unknown", () => {
+  const { declaration_coverage: _coverage, ...unrecorded } =
+    component("unrecorded.Class");
+  const result = projectAnalysisView(
+    parent({
+      ...report(),
+      components: { status: "complete", items: [unrecorded], limitations: [] },
+    } as unknown as ReturnType<typeof report>),
+    analysisViewRequestSchema.parse({ kind: "android", facet: "components" }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: [
+            "source",
+            "normalized_result",
+            "components",
+            "items",
+            0,
+            "declaration_coverage",
+          ],
+        },
+      ],
+    },
+  });
 });
 
-it("counts explicit exported declarations separately from defaults and unknown historical coverage", () => {
+it("counts explicit exported declarations separately from defaults and declaration coverage", () => {
   const source = parent();
   const summary = androidComponentSummaryViewResultSchema.parse(
     project(source, { kind: "android", facet: "component-summary" }),
@@ -176,7 +204,7 @@ it("counts explicit exported declarations separately from defaults and unknown h
     },
     exported_declarations: { true: 1, false: 1, unknown: 1 },
     exported_defaults: { true: 1, false: 0, unknown: 2 },
-    declaration_coverage: { complete: 1, partial: 1, unknown: 1 },
+    declaration_coverage: { complete: 2, partial: 1 },
   });
   const explicit = androidComponentsViewResultSchema.parse(
     project(source, {
@@ -237,7 +265,7 @@ it("bounds selected row serialization and lets field selection recover without c
     project(source, { kind: "android", facet: "components", fields: ["name"] }),
   );
   expect(small.items).toEqual([
-    { source_index: 0, name: "large.Class", declaration_coverage: "unknown" },
+    { source_index: 0, name: "large.Class", declaration_coverage: "complete" },
   ]);
 });
 

@@ -4,10 +4,7 @@ import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
 import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
-import {
-  inspectMachoSchema,
-  retainedInspectMachoSchema,
-} from "../native/nativeInspection.js";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -91,13 +88,13 @@ export const machoSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
-type MachoReport = z.output<typeof retainedInspectMachoSchema>;
+type MachoReport = z.output<typeof inspectMachoSchema>;
 
 /** Admit a well-formed report whose recorded subject, if any, is a Mach-O. */
 const parseMachoReport = (
   parent: AnalysisViewParent,
 ): Result<MachoReport, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(retainedInspectMachoSchema, parent);
+  const parsed = parseAnalysisViewResult(inspectMachoSchema, parent);
   if (!parsed.ok) return parsed;
   if (parent.subject != null && !isMachOFormat(parent.subject.format))
     return err(

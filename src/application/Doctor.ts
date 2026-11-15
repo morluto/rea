@@ -4,13 +4,13 @@ import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
@@ -935,7 +935,7 @@ export const systemDoctorHost = (
         resources,
       ),
     close: async () => {
-      controller.abort(STARTUP_OWNER_CLOSED);
+      controller.abort(OwnerCancellation.startupOwnerClosed);
       try {
         await resources.close();
         return undefined;
