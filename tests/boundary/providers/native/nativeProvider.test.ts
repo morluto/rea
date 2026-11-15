@@ -493,7 +493,7 @@ describe("native command failure capture and limits", () => {
       { signal: controller.signal },
     );
     const result = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(ready, pending, "command output", 10_000);
+      await awaitAcknowledgement(ready, pending, "command output");
       controller.abort();
       return await pending;
     }, [
@@ -1593,13 +1593,16 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
   expect(await readFile(path, "utf8")).toBe("fixture");
 });
 
-/** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
-class PrototypeEntitlementsRunner extends FixtureRunner {
+/** Emit the given entitlements plist for `codesign --entitlements`. */
+class EntitlementsRunner extends FixtureRunner {
+  constructor(readonly entitlements: string) {
+    super();
+  }
+
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
     if (!result.ok || !arguments_.includes("--entitlements")) return result;
-    const stdout =
-      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>';
+    const stdout = this.entitlements;
     return ok({
       ...result.value,
       stdout,
@@ -1615,7 +1618,9 @@ describe("native signature entitlements", () => {
     await writeFile(executable, "fixture");
     const client = new NativeMacOSProvider(
       {},
-      new PrototypeEntitlementsRunner(),
+      new EntitlementsRunner(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>',
+      ),
       "darwin",
     ).createClient(await nativeMachoTargetForFile(executable));
 
@@ -1634,6 +1639,33 @@ describe("native signature entitlements", () => {
     ).toBe(true);
     expect(signature.value.limitations).not.toContainEqual(
       expect.stringContaining("omitted"),
+    );
+  });
+});
+
+describe("native signature repeated entitlement keys", () => {
+  it("keeps the last value and reports the repeated key as a limitation", async () => {
+    directory = await createTestTempDirectory("rea-signature-repeated-");
+    const executable = join(directory, "fixture");
+    await writeFile(executable, "fixture");
+    const client = new NativeMacOSProvider(
+      {},
+      new EntitlementsRunner(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/><key>com.apple.security.get-task-allow</key><false/></dict></plist>',
+      ),
+      "darwin",
+    ).createClient(await nativeMachoTargetForFile(executable));
+
+    const signature = await client.execute("inspect_signature", {});
+
+    if (!signature.ok) throw signature.error;
+    expect(signature.value.result).toMatchObject({
+      entitlements: { "com.apple.security.get-task-allow": false },
+    });
+    expect(signature.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /^Entitlements: 1 dictionary\(ies\) declare a key more than once \("com\.apple\.security\.get-task-allow"\)\. REA kept the last value for each key; 1 earlier value\(s\) are not reported/u,
+      ),
     );
   });
 });
@@ -2054,6 +2086,58 @@ it("reports the selected command deadline when preparation times out", async () 
     );
     marker.resolveCleanup();
     expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await client.close();
+  }
+});
+
+it("projects an ownership-helper compile timeout independently from the command deadline", async () => {
+  const inspection = new DarwinProcessOwnershipInspectionError(
+    "ownership-helper compilation timed out",
+    {
+      compilerOutcome: {
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        signal: "SIGINT",
+        stderr: "",
+        stderrTruncated: false,
+        outputTruncated: false,
+        killed: true,
+        timeoutMs: 1,
+      },
+    },
+  );
+  const failure = new NativeCommandFailure("swift-demangle", "io", null, {
+    cause: inspection,
+  });
+  const runner: NativeCommandRunner = { run: async () => err(failure) };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    machoTarget("/fixture"),
+  );
+  try {
+    const result = await client.execute("demangle_swift", {
+      symbols: ["fixture"],
+      native_command_timeout_ms: 60_000,
+    });
+    if (result.ok) throw new Error("Expected ownership-helper timeout");
+    expect(result.error).toMatchObject({ _tag: "AnalysisTimeoutError" });
+    expect(result.error.diagnostics).toMatchObject({
+      compiler_outcome: { outcome: "timed_out", timeout_ms: 1 },
+    });
+
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      category: "timeout",
+      retryable: true,
+    });
+    expect(projected.message).toContain("of 1 ms");
+    expect(projected.remediation.action).toContain(
+      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "native_command_timeout_ms",
+    );
   } finally {
     await client.close();
   }

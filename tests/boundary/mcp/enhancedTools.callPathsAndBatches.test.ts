@@ -678,7 +678,13 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const evidence = contract.outputSchema.parse(result.structuredContent);
     expect(evidence.normalized_result).toMatchObject({
       items: [
-        { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
+        // Successful text keeps its own observation's caveats (#8350).
+        {
+          address: "0x1",
+          status: "ok",
+          pseudocode: answers["0x1"]?.result,
+          limitations: answers["0x1"]?.limitations,
+        },
         {
           address: "0x2",
           status: "unavailable",
@@ -725,9 +731,9 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const { items } = batchDecompileResultSchema.parse(
       evidence.normalized_result,
     );
-    // Successful text, a caveat-free null and a typed provider failure carry
-    // no item caveats; the batch Evidence aggregates every observation's.
-    for (const index of [0, 2, 5])
+    // A caveat-free null and a typed provider failure carry no item caveats;
+    // the batch Evidence aggregates every observation's.
+    for (const index of [2, 5])
       expect(items[index]).not.toHaveProperty("limitations");
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([

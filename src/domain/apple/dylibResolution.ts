@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
-import { AnalysisCancelledError } from "../analysisErrorCore.js";
+import { cancelledBy } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -21,6 +21,7 @@ import {
   isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
+import { appendAll } from "../appendAll.js";
 
 /**
  * Normalized path below the analyzed root: nonempty segments joined by single
@@ -630,10 +631,7 @@ const traceProcess = async (
     { image: context.root, chain: [context.root], conditional: false },
   ];
   while (pending.length > 0) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("trace_dylib_resolution", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("trace_dylib_resolution", signal);
     const next = pending.pop();
     if (next === undefined || expanded.has(next.image)) continue;
     const loader = next.image;
@@ -823,8 +821,9 @@ export const traceDylibLoading = async (
         environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       rootSlices.push({ image: root, slice });
-      edges.push(
-        ...(await traceProcess(
+      appendAll(
+        edges,
+        await traceProcess(
           {
             view,
             root,
@@ -847,7 +846,7 @@ export const traceDylibLoading = async (
           },
           slice,
           request.signal,
-        )),
+        ),
       );
     }
   }

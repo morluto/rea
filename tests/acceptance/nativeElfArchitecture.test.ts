@@ -88,5 +88,4 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );

@@ -17,6 +17,12 @@ import {
 } from "../metadata/NativeSectionDirectory.js";
 import { readPeImage } from "../metadata/PeImage.js";
 import {
+  allKeyed,
+  keyedBy,
+  uniqueKeyed,
+  type Keyed,
+} from "../../domain/keyedCollection.js";
+import {
   MAX_NATIVE_EXPORT_ROWS,
   decodeElfExportName,
   type ElfExport,
@@ -45,10 +51,29 @@ const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
     0,
   );
 
+/** Which fixed export inventory allowance refused the image. */
+export type NativeExportLimit = "rows" | "retained_text";
+
+/**
+ * A fixed inventory allowance was exhausted. `limit` identifies the exhausted
+ * allowance so consumers derive its units from the producer, not from text:
+ * `rows` is an entry count and `retained_text` a byte budget.
+ */
+export class NativeExportLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly limit: NativeExportLimit,
+    allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "NativeExportLimitFailure";
+  }
+}
+
 const checkRetainedText = (bytes: number): void => {
   if (bytes > MAXIMUM_RETAINED_TEXT_BYTES)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "retained_text",
       MAXIMUM_RETAINED_TEXT_BYTES,
       `Export names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
     );
@@ -76,8 +101,8 @@ const hex = (value: bigint | number) => `0x${value.toString(16)}`;
 
 const rowBudget = (count: number, label: string): void => {
   if (count > MAX_NATIVE_EXPORT_ROWS)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "rows",
       MAX_NATIVE_EXPORT_ROWS,
       `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
     );
@@ -100,6 +125,38 @@ const coverage = (
 const failureMessage = (cause: unknown): string => {
   if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
+};
+
+/**
+ * `.dynsym` entry 0 is the reserved undefined symbol. The gABI requires every
+ * field, including `st_name`, to be zero. A nonzero name does not by itself
+ * define a symbol, so the inventory continues and the deviation is recorded.
+ * Any other nonzero field means the reserved slot holds a real symbol.
+ */
+const reservedElfDynamicSymbolNote = (
+  bytes: Uint8Array,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  fileOffset: number,
+): string | null => {
+  const parsed = readElfSymbol(bytes, bits, littleEndian);
+  if (!parsed.ok)
+    throw new BinaryFormatFailure(parsed.error.kind, parsed.error.message);
+  const symbol = parsed.value;
+  if (
+    symbol.binding !== 0 ||
+    symbol.type !== 0 ||
+    symbol.other !== 0 ||
+    symbol.section_index !== 0 ||
+    symbol.value !== 0n ||
+    symbol.size !== 0n
+  )
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
+  if (symbol.name_offset === 0) return null;
+  return `ELF dynamic symbol 0 at file offset ${hex(fileOffset)} has nonzero st_name ${hex(symbol.name_offset)}. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.`;
 };
 
 const PE_LIMITATIONS = [
@@ -130,7 +187,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
@@ -390,6 +447,27 @@ const createVersionNameReader = () => {
   return readName;
 };
 
+/**
+ * The one GNU version section of a type: undefined when absent, null when
+ * declared more than once. A repeat is recorded; neither table is chosen.
+ */
+const versionSection = (
+  byType: Keyed<NativeSection, number>,
+  type: number,
+  label: string,
+  issues: NativeExportIssue[],
+): NativeSection | null | undefined => {
+  const selected = uniqueKeyed(byType, type);
+  if (selected.ok) return selected.value;
+  const [first] = allKeyed(byType, type);
+  issues.push({
+    code: "version_unresolved",
+    location: hex(first!.offset),
+    message: `${label}: the ELF declares ${String(selected.error.ordinals.length)} sections of this type, so none was read`,
+  });
+  return null;
+};
+
 function* readVersionNames(
   reader: BinaryReader,
   sections: readonly NativeSection[],
@@ -418,10 +496,16 @@ function* readVersionNames(
     namesByIndex.set(index, decoded);
     textBytes = nextTextBytes;
   };
-  const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
+  const byType = keyedBy(sections, ({ type }) => type);
+  const verneed = versionSection(
+    byType,
+    SHT_GNU_VERNEED,
+    "Version requirements",
+    issues,
+  );
   // sh_info is the requirement count. An empty region contributes no names,
   // so its compressed storage is not a failed requirement read.
-  if (verneed !== undefined && verneed.info !== 0) {
+  if (verneed !== undefined && verneed !== null && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -498,10 +582,17 @@ function* readVersionNames(
     }
   }
   // GNU lookup installs requirement names first, then definition names.
-  const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
+  const verdef = versionSection(
+    byType,
+    SHT_GNU_VERDEF,
+    "Version definitions",
+    issues,
+  );
+  // Either repeated definition table may replace any requirement index.
+  if (verdef === null) namesByIndex.clear();
   // sh_info is the definition count. Zero definitions cannot replace a
   // requirement index, so compressed storage of that empty table is unread.
-  if (verdef !== undefined && verdef.info !== 0) {
+  if (verdef !== undefined && verdef !== null && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -585,7 +676,7 @@ function* parseElfExports(
   artifact: Artifact,
 ): Generator<void, NativeExports> {
   const directory = readElfDirectoryFromBuffer(bytes);
-  const reader = new BinaryReader(bytes, directory.little);
+  const reader = new BinaryReader(bytes, directory.little, "elf");
   const result = {
     artifact,
     format: "elf" as const,
@@ -594,7 +685,14 @@ function* parseElfExports(
     byte_order: directory.little ? ("little" as const) : ("big" as const),
   };
   const { sections } = directory;
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  const byType = keyedBy(sections, ({ type }) => type);
+  const selectedDynsym = uniqueKeyed(byType, SHT_DYNSYM);
+  if (!selectedDynsym.ok)
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF image has more than one SHT_DYNSYM",
+    );
+  const dynsym = selectedDynsym.value;
   if (
     sections.length === 0 ||
     (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
@@ -672,13 +770,14 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
-    );
+  // Entry zero is skipped only after it is observed to be the undefined
+  // symbol. A stray st_name is recorded; any other nonzero field is refused.
+  const nullSymbolNote = reservedElfDynamicSymbolNote(
+    bytes.subarray(table, table + width),
+    directory.bits,
+    directory.little,
+    table,
+  );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -689,12 +788,18 @@ function* parseElfExports(
     nameRange.offset + nameRange.size,
   );
   const issues: NativeExportIssue[] = [];
-  const versym = sections.find(
-    ({ type, link }) => type === SHT_GNU_VERSYM && link === dynsym.index,
+  const linkedVersym = allKeyed(byType, SHT_GNU_VERSYM).filter(
+    ({ link }) => link === dynsym.index,
   );
+  const versym = linkedVersym[0];
   let versions: number | null = null;
   if (versym !== undefined) {
     try {
+      if (linkedVersym.length > 1)
+        throw new BinaryFormatFailure(
+          "malformed",
+          `${String(linkedVersym.length)} symbol version tables link to the dynamic symbol table`,
+        );
       if (versym.compressed)
         throw new BinaryFormatFailure(
           "unsupported",
@@ -814,7 +919,10 @@ function* parseElfExports(
     exports,
     coverage: coverage(issues, count - 1, exports.length),
     issues,
-    limitations: ELF_LIMITATIONS,
+    limitations: [
+      ...ELF_LIMITATIONS,
+      ...(nullSymbolNote === null ? [] : [nullSymbolNote]),
+    ],
   };
 }
 

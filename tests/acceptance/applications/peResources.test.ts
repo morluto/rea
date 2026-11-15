@@ -1,19 +1,15 @@
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
   arguments_: Record<string, unknown>,
@@ -26,7 +22,7 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   readonly reason: "invalid_format" | "invalid_value";
 }) => {
   const { cli, call, path, reason } = input;
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -117,7 +113,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
       );
       const path = join(root, `word-aligned-${plus}-${index}.exe`);
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-pe-resources", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -208,7 +204,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
       });
       continue;
     }
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, name).toBe(0);
@@ -266,9 +262,7 @@ const expectPeInventoriesAcrossAdapters = async (
     };
     // Keep an independent public-wrapper process for both PE32 and PE32+.
     // The empty-payload variants reuse only compiled-command startup.
-    const result = await (empty
-      ? runFileCli(cli, invocation)
-      : cli.run(invocation));
+    const result = await (empty ? cli.run(invocation) : cli.run(invocation));
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
@@ -348,7 +342,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
       shared ? "shared-empty64.exe" : "empty-branches32.exe",
     );
     await writeFile(path, fixture.bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -422,114 +416,97 @@ cliTest(
   "inspects PE32/PE32+ resources through compiled CLI and real stdio MCP without an active target",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-resource-acceptance-");
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-      stderr: "pipe",
-    });
-    const client = new Client({ name: "pe-resource-acceptance", version: "1" });
-    try {
-      await client.connect(transport);
-      const inventory = await client.listTools();
-      const definition = inventory.tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (definition === undefined)
-        throw new Error("Missing PE resource tool contract");
-      expect(inventory.tools).toContainEqual(
-        expect.objectContaining({
-          name: contract.name,
-          annotations: expect.objectContaining({
-            readOnlyHint: false,
-            openWorldHint: false,
-          }),
+    const { client } = await connectLocalToolsMcp();
+    const inventory = await client.listTools();
+    const definition = inventory.tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (definition === undefined)
+      throw new Error("Missing PE resource tool contract");
+    expect(inventory.tools).toContainEqual(
+      expect.objectContaining({
+        name: contract.name,
+        annotations: expect.objectContaining({
+          readOnlyHint: false,
+          openWorldHint: false,
         }),
+      }),
+    );
+    const call: PeResourceCall = (arguments_) =>
+      client.callTool(
+        { name: definition.name, arguments: arguments_ },
+        { toolDefinition: definition },
       );
-      const call: PeResourceCall = (arguments_) =>
-        client.callTool(
-          { name: definition.name, arguments: arguments_ },
-          { toolDefinition: definition },
-        );
-      const sessionDefinition = inventory.tools.find(
-        ({ name }) => name === "binary_session",
-      );
-      if (sessionDefinition === undefined)
-        throw new Error("Missing binary_session tool contract");
-      const session = await client.callTool(
-        { name: sessionDefinition.name, arguments: {} },
-        { toolDefinition: sessionDefinition },
-      );
-      expect(session.isError, JSON.stringify(session)).not.toBe(true);
-      const status = toolContract("binary_session").outputSchema.parse(
-        session.structuredContent,
-      ).result;
-      expect(
-        status.tool_availability.groups.find((group) =>
-          group.names.includes("inspect_pe_resources"),
-        ),
-      ).toMatchObject({ available: true });
-      await expectPeInventoriesAcrossAdapters(cli, call, root);
-      await expectPeEmptyBranchesAcrossAdapters(cli, call, root);
-      await expectPeWordAlignedRecordsAcrossAdapters({
-        cli,
-        call,
-        root,
-      });
-      await expectPeMappingOwnershipAcrossAdapters(cli, call, root);
-      await expectPePaddingFailureAcrossAdapters({
-        cli,
-        call,
-        path: join(root, "raw-padding.exe"),
-      });
-      await expectPeInputFailuresAcrossAdapters({
-        cli,
-        call,
-        root,
-      });
-      const absent = peResourceFixture();
-      absent.bytes.fill(0, absent.directoryAt, absent.directoryAt + 8);
-      const path = join(root, "absent.exe");
-      await writeFile(path, absent.bytes);
-      const empty = await call({ path });
-      expect(empty.isError).not.toBe(true);
-      expect(
-        contract.outputSchema.parse(empty.structuredContent).normalized_result,
-      ).toMatchObject({
-        directory: null,
-        directories: [],
-        resources: [],
-        coverage: { status: "complete", resources: 0 },
-      });
-      for (const arguments_ of [
-        { path, max_file_bytes: 64 },
-        { path: "relative.exe" },
-        { path, extra: true },
-      ]) {
-        const rejected = await call(arguments_);
-        expect(rejected.isError).toBe(true);
-        expect(
-          contract.outputSchema.safeParse(rejected.structuredContent).success,
-        ).toBe(false);
-      }
-      const damaged = peResourceFixture();
-      damaged.bytes.writeUInt32LE(17, damaged.directoryAt + 4);
-      const badPath = join(root, "damaged.exe");
-      await writeFile(badPath, damaged.bytes);
-      const rejected = await call({ path: badPath });
+    const sessionDefinition = inventory.tools.find(
+      ({ name }) => name === "binary_session",
+    );
+    if (sessionDefinition === undefined)
+      throw new Error("Missing binary_session tool contract");
+    const session = await client.callTool(
+      { name: sessionDefinition.name, arguments: {} },
+      { toolDefinition: sessionDefinition },
+    );
+    expect(session.isError, JSON.stringify(session)).not.toBe(true);
+    const status = toolContract("binary_session").outputSchema.parse(
+      session.structuredContent,
+    ).result;
+    expect(
+      status.tool_availability.groups.find((group) =>
+        group.names.includes("inspect_pe_resources"),
+      ),
+    ).toMatchObject({ available: true });
+    await expectPeInventoriesAcrossAdapters(cli, call, root);
+    await expectPeEmptyBranchesAcrossAdapters(cli, call, root);
+    await expectPeWordAlignedRecordsAcrossAdapters({
+      cli,
+      call,
+      root,
+    });
+    await expectPeMappingOwnershipAcrossAdapters(cli, call, root);
+    await expectPePaddingFailureAcrossAdapters({
+      cli,
+      call,
+      path: join(root, "raw-padding.exe"),
+    });
+    await expectPeInputFailuresAcrossAdapters({
+      cli,
+      call,
+      root,
+    });
+    const absent = peResourceFixture();
+    absent.bytes.fill(0, absent.directoryAt, absent.directoryAt + 8);
+    const path = join(root, "absent.exe");
+    await writeFile(path, absent.bytes);
+    const empty = await call({ path });
+    expect(empty.isError).not.toBe(true);
+    expect(
+      contract.outputSchema.parse(empty.structuredContent).normalized_result,
+    ).toMatchObject({
+      directory: null,
+      directories: [],
+      resources: [],
+      coverage: { status: "complete", resources: 0 },
+    });
+    for (const arguments_ of [
+      { path, max_file_bytes: 64 },
+      { path: "relative.exe" },
+      { path, extra: true },
+    ]) {
+      const rejected = await call(arguments_);
       expect(rejected.isError).toBe(true);
       expect(
         contract.outputSchema.safeParse(rejected.structuredContent).success,
       ).toBe(false);
-      await client.ping();
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
     }
+    const damaged = peResourceFixture();
+    damaged.bytes.writeUInt32LE(17, damaged.directoryAt + 4);
+    const badPath = join(root, "damaged.exe");
+    await writeFile(badPath, damaged.bytes);
+    const rejected = await call({ path: badPath });
+    expect(rejected.isError).toBe(true);
+    expect(
+      contract.outputSchema.safeParse(rejected.structuredContent).success,
+    ).toBe(false);
+    await client.ping();
   },
-  30_000,
 );

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 
 /** Commands the macOS bundle fixture needs from Command Line Tools. */
-export const MACOS_BUNDLE_FIXTURE_COMMANDS = [
+const MACOS_BUNDLE_FIXTURE_COMMANDS = [
   ["/usr/bin/xcrun", ["--find", "clang"]],
   ["/usr/bin/xcrun", ["--find", "codesign"]],
   ["/usr/bin/ditto", ["-h"]],

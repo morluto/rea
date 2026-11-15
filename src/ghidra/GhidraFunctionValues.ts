@@ -48,6 +48,7 @@ import {
 } from "../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import {
   ghidraIdentifierSchema,
   ghidraInputAddressSchema,
@@ -409,7 +410,12 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge returned an invalid function observation envelope for this operation",
-          envelope.success ? undefined : { cause: envelope.error },
+          envelope.success
+            ? undefined
+            : {
+                cause: envelope.error,
+                diagnostics: outputContractDiagnostics(envelope.error, value),
+              },
         ),
       );
     observation = envelope.data;
@@ -452,7 +458,13 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge output did not match the function-analysis contract",
-          { cause: parsed.error },
+          {
+            cause: parsed.error,
+            diagnostics: outputContractDiagnostics(
+              parsed.error,
+              observation.value,
+            ),
+          },
         ),
       );
 };

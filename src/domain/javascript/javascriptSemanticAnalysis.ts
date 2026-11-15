@@ -9,6 +9,7 @@ import {
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
   semanticOpaqueBindingReadMayHaveChanged,
+  semanticBindingMayHaveOpaqueEffect,
 } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,8 +89,8 @@ import {
 import {
   createAmbientPathResolver,
   indexJavaScriptAmbientWritesSteps,
-  isUnmodifiedGlobalReference,
 } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
@@ -522,7 +523,6 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
  * Receiver identity facts for the overloaded `.open` syntax, plus
  * `configuration` for `.get` reads of a `getConfiguration(...)` result.
  */
-export type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 
 /** Lexical receiver identities that select static endpoint interpretations. */
 export interface JavaScriptReceiverFacts {
@@ -882,17 +882,7 @@ export function* indexJavaScriptElectronIdentitySteps(
   const originAvailableAtRead = (
     binding: JavaScriptSemanticBindingState,
     read: t.Node,
-  ): boolean => {
-    if (
-      binding.directOrigins.length > 0 ||
-      semanticStableInitializer(binding, state) === undefined
-    )
-      return true;
-    const access = semanticBindingAtRead(binding, read, state);
-    // An unresolved activation can still carry a possible identity, while an
-    // ordered read before its initializer cannot refer to that value.
-    return access.status !== "ordered" || access.hasDefiniteInitializer;
-  };
+  ): boolean => originAvailableAt(binding, read, state);
   const rootOrigin = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
@@ -1139,9 +1129,35 @@ const electronRequireOrigin = (
   semanticRequireOrigin(node, state) ??
   semanticBundledRequireOrigin(node, state);
 
+/** Whether a read can see the binding's stable origin rather than an earlier value. */
+const originAvailableAt = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    binding.directOrigins.length > 0 ||
+    semanticStableInitializer(binding, state) === undefined
+  )
+    return true;
+  const access = semanticBindingAtRead(binding, read, state);
+  // An unresolved activation can still carry a possible identity, while an
+  // ordered read before its initializer cannot refer to that value.
+  return access.status !== "ordered" || access.hasDefiniteInitializer;
+};
+
+/**
+ * General provenance only knows literal `require`, so a bundled external held
+ * in one binding and destructured from another (`const s=n(K);const{X}=s`)
+ * is followed here through stable lexical aliases. Like provenance, a hop
+ * stops at a rebindable binding that direct eval may have changed, and at an
+ * alias read that runs before the aliased binding's initializer. The chain has
+ * one alias per hop, so one visited set serves the whole walk.
+ */
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
+  visited: Set<string> = new Set(),
 ): JavaScriptModuleOrigin | undefined => {
   if (binding.directOrigins.length > 0)
     return binding.directOrigins.length === 1
@@ -1149,7 +1165,30 @@ const bindingOrigin = (
       : undefined;
   const initializer = semanticStableInitializer(binding, state);
   if (initializer === undefined) return undefined;
-  const origin = electronRequireOrigin(initializer.node, state)?.origin;
+  const source = unwrapJavaScriptExpression(initializer.node).node;
+  const alias =
+    t.isIdentifier(source) &&
+    !semanticResolutionBlocked(state, source, source.name)
+      ? resolveSemanticBindingState(state, source, source.name)
+      : undefined;
+  // The alias walk shares the caller-selectable alias budget; running out is a
+  // reported resource limit, not a silent absence of the origin.
+  const exhausted =
+    alias !== undefined && visited.size >= state.precision.alias_selections;
+  if (exhausted) state.valueResourceLimits.add("alias-selections");
+  const origin =
+    alias === undefined
+      ? electronRequireOrigin(initializer.node, state)?.origin
+      : visited.has(alias.bindingId) ||
+          exhausted ||
+          !originAvailableAt(alias, source, state) ||
+          [binding, alias].some(
+            (hop) =>
+              semanticBindingCanBeRebound(hop) &&
+              semanticBindingMayHaveOpaqueEffect(hop, state),
+          )
+        ? undefined
+        : bindingOrigin(alias, state, visited.add(binding.bindingId));
   const projection = initializer.projection;
   return origin === undefined ||
     !projection.every((key): key is string => typeof key === "string")

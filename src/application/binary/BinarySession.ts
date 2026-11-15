@@ -7,7 +7,10 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import {
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -18,6 +21,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -39,7 +43,6 @@ import type {
   BinarySessionPort,
   BinaryOpenResult,
   OpenSelectionReceipt,
-  SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
@@ -1750,7 +1753,7 @@ export class BinarySession
   ): Promise<T> {
     if (options.abortPrompts !== false)
       for (const controller of this.#promptCompletionControllers)
-        controller.abort();
+        controller.abort(OwnerCancellation.noLongerNeeded);
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;

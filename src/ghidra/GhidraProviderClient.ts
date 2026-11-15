@@ -24,10 +24,11 @@ import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js"
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
-  GHIDRA_RESTRICTED_TEMP_REMEDIATION,
-  ghidraJavaHomeSaveDenial,
-} from "./GhidraTemporaryDirectory.js";
+  ghidraMissingProgramNames,
+  type GhidraLauncherFailure,
+} from "./GhidraDiagnostics.js";
 
 import {
   createAnalysisExecution,
@@ -75,6 +76,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -120,6 +123,7 @@ import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
+import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
@@ -130,6 +134,8 @@ import {
   ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
+  ghidraFunctionSeedRecovery,
+  ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -139,6 +145,10 @@ import {
   isGhidraInputFailureCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
+import {
+  ghidraByteSearchCursorMismatch,
+  isGhidraByteSearchCursorMismatch,
+} from "./GhidraByteSearchCursorFailure.js";
 import {
   ghidraFileOffsetOutcome,
   ghidraFileOffsetUnavailable,
@@ -151,8 +161,14 @@ import {
   ghidraExtensionLimitations,
 } from "./extensions/GhidraExtensions.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import {
+  JVM_EXHAUSTION_DETAILS,
+  RUNTIME_EXHAUSTION_AREAS,
+  type RuntimeExhaustionArea,
+} from "../process/RuntimeExhaustion.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
+import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -284,6 +300,25 @@ const emptyReferenceCaveat = (
     ];
   }
   return [];
+};
+
+/**
+ * Caveat for a containing-procedure lookup in mapped memory that found no
+ * function: the function inventory lacks the address, which does not establish
+ * that its bytes are not code. An outside-segments answer has no such recovery.
+ */
+const containingProcedureAbsenceCaveat = (
+  operation: AnalysisOperation,
+  normalized: JsonValue,
+  source: GhidraSessionSource,
+): readonly string[] => {
+  if (operation !== "resolve_containing_procedure") return [];
+  const resolution = parseContainingProcedureResolution(normalized);
+  return resolution.ok &&
+    !resolution.value.found &&
+    resolution.value.reason === "not_in_procedure"
+    ? [ghidraNotInProcedureLimitation(source)]
+    : [];
 };
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
@@ -586,8 +621,7 @@ export const createGhidraProviderClient = (input: {
         : [];
   if (input.signal.aborted)
     return err(
-      new AnalysisCancelledError("create_analysis_client", {
-        cause: input.signal.reason,
+      cancelledBy("create_analysis_client", input.signal, {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
@@ -1074,17 +1108,21 @@ export const createGhidraProviderClient = (input: {
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
-      const unresolvedReferences = isGhidraFunctionOperation(operation)
+      const absenceCaveats = isGhidraFunctionOperation(operation)
         ? emptyReferenceCaveat(operation, normalized)
-        : [];
-      if (unresolvedReferences.length > 0) {
-        // An empty list is the provider's observation, not proof: distinguish
-        // "no references were resolved" from "there are no references".
+        : containingProcedureAbsenceCaveat(
+            operation,
+            normalized,
+            projection.source,
+          );
+      if (absenceCaveats.length > 0) {
+        // An absent answer is the provider's observation, not proof: distinguish
+        // "this analysis resolved none" from "there are none".
         executionMetadata = {
           ...executionMetadata,
           limitations: [
             ...(executionMetadata.limitations ?? []),
-            ...unresolvedReferences,
+            ...absenceCaveats,
           ],
         };
       }
@@ -1426,6 +1464,14 @@ const projectPrimarySessionError = (
       typeof request?.address === "string" ? request.address : undefined,
       context,
     );
+  // A schema-valid cursor for another bound context is not a malformed
+  // argument. The one-way digest cannot name the differing component.
+  if (
+    operation === "search_bytes" &&
+    failure.kind === "remote" &&
+    isGhidraByteSearchCursorMismatch(failure.remoteCode)
+  )
+    return ghidraByteSearchCursorMismatch(operation, failure.message, context);
   if (
     operation === "annotate_native_function" &&
     failure.kind === "remote" &&
@@ -1460,7 +1506,8 @@ const projectPrimarySessionError = (
           "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
-            : "");
+            : "") +
+          ` ${ghidraFunctionSeedRecovery(source)}`;
     }
     return new AnalysisInputError(
       operation,
@@ -1485,14 +1532,18 @@ const projectPrimarySessionError = (
   if (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  )
-    return new AnalysisCancelledError(operation, {
-      ...context,
-      cause:
+  ) {
+    const { cause: _failure, ...cancellationContext } = context;
+    return cancelledBy(
+      operation,
+      carriedReason(
         failure.cancellation === undefined
           ? failure
           : failure.cancellation.reason,
-    });
+      ),
+      cancellationContext,
+    );
+  }
   if (failure.kind === "remote" && failure.remoteCode === "decompile_failed")
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1577,22 +1628,11 @@ const projectPrimarySessionError = (
     failure.kind === "remote" &&
     failure.remoteCode === "invalid_regex_pattern"
   )
-    return new AnalysisInputError(
-      operation,
-      {
-        ...context,
-        userMessage: failure.message,
-        remediationAction:
-          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
-      },
-      [
-        {
-          path: ["pattern"],
-          reason: "invalid_format",
-          message: failure.message,
-        },
-      ],
-    );
+    // The bridge message already names the pattern and Java's syntax error.
+    return invalidRegexPatternError(operation, failure.message, {
+      ...context,
+      userMessage: failure.message,
+    });
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },
@@ -1618,21 +1658,35 @@ const projectPrimarySessionError = (
     output,
   );
   const uncertainty =
-    output?.complete === false
-      ? "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out."
-      : undefined;
+    [
+      ...(output?.complete === false
+        ? [
+            "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out.",
+          ]
+        : []),
+      ...(output?.launcherFailuresTruncated === true
+        ? [
+            "The launcher failure-line summary is incomplete; a more specific cause may be omitted.",
+          ]
+        : []),
+    ].join(" ") || undefined;
   if (memoryFailure !== undefined) return memoryFailure;
   if (
     programName !== undefined &&
-    output?.text.some((text) => reportsMissingProgram(text, programName))
+    output?.launcherFailures.some(
+      (observed) =>
+        observed.kind === "missing_program" &&
+        ghidraMissingProgramNames(observed, programName),
+    )
   )
     return missingProjectProgram(
       programName,
       limits.ghidraExistingProject?.programName !== undefined,
       context,
     );
-  const javaHomeSave =
-    output === undefined ? undefined : ghidraJavaHomeSaveDenial(output.text);
+  const javaHomeSave = output?.launcherFailures.find(
+    (observed) => observed.kind === "java_home_save_denied",
+  );
   if (javaHomeSave !== undefined)
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1688,29 +1742,38 @@ const observedJvmFailureSchema = z.object({
   stream: z.enum(["stdout", "stderr"]),
   offset: z.number().int().nonnegative(),
   line: z.string().min(1),
+  area: z.enum(RUNTIME_EXHAUSTION_AREAS).optional(),
 });
 
 interface GhidraFailureOutputView {
-  readonly oomText: string | undefined;
+  /** Memory areas the supervisor parsed from each observed OOME line. */
+  readonly oomAreas: ReadonlySet<RuntimeExhaustionArea | undefined> | undefined;
   readonly complete: boolean | undefined;
-  readonly text: readonly string[];
+  readonly launcherFailures: readonly GhidraLauncherFailure[];
+  readonly launcherFailuresTruncated: boolean;
 }
 
-/** Ghidra's headless refusal when `-process` names no program in the project. */
-const GHIDRA_MISSING_PROGRAM = "Requested project program file(s) not found: ";
-
-/**
- * Match only the exact name REA passed to `-process`, so a longer program name
- * or unrelated output cannot be read as this refusal.
- */
-const reportsMissingProgram = (text: string, programName: string): boolean =>
-  text.split(/\r?\n/u).some((line) => {
-    const needle = `${GHIDRA_MISSING_PROGRAM}${programName}`;
-    const at = line.indexOf(needle);
-    if (at === -1) return false;
-    const next = line.charAt(at + needle.length);
-    return next === "" || next === " ";
-  });
+const launcherFailureEvidence = {
+  stream: z.enum(["stdout", "stderr"]),
+  line: z.string().min(1),
+};
+const launcherFailuresSchema = z.object({
+  failures: z.array(
+    z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("missing_program"),
+        ...launcherFailureEvidence,
+        requested: z.string(),
+      }),
+      z.object({
+        kind: z.literal("java_home_save_denied"),
+        ...launcherFailureEvidence,
+        path: z.string().min(1),
+      }),
+    ]),
+  ),
+  truncated: z.boolean(),
+});
 
 /** Guidance for a `-process` name that selects no root program in the project. */
 export const ghidraMissingProgramGuidance = (
@@ -1753,24 +1816,26 @@ const readGhidraFailureOutput = (
 ): GhidraFailureOutputView | undefined => {
   if (scoped === null || typeof scoped !== "object" || Array.isArray(scoped))
     return undefined;
-  const observedLines = Array.isArray(scoped.observed_oome)
+  const observedAreas = Array.isArray(scoped.observed_oome)
     ? scoped.observed_oome.flatMap((observed) => {
         const parsed = observedJvmFailureSchema.safeParse(observed);
-        return parsed.success ? [parsed.data.line] : [];
+        return parsed.success ? [parsed.data.area] : [];
       })
     : [];
+  const launcherFailures = launcherFailuresSchema.safeParse(
+    scoped.launcher_failures,
+  );
   return {
-    oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
+    oomAreas: observedAreas.length === 0 ? undefined : new Set(observedAreas),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
-    text: [scoped.stdout, scoped.stderr].flatMap((stream) =>
-      stream !== null &&
-      typeof stream === "object" &&
-      !Array.isArray(stream) &&
-      typeof stream.text === "string"
-        ? [stream.text]
-        : [],
-    ),
+    launcherFailures: launcherFailures.success
+      ? launcherFailures.data.failures
+      : [],
+    // An unreadable failure list is not evidence that no launcher failure occurred.
+    launcherFailuresTruncated: launcherFailures.success
+      ? launcherFailures.data.truncated
+      : scoped.launcher_failures !== undefined,
   };
 };
 
@@ -1787,19 +1852,13 @@ const projectObservedJvmMemoryFailure = (
   },
   scoped: GhidraFailureOutputView | undefined,
 ): AnalysisResourceConstraintError | undefined => {
-  const output = scoped?.oomText;
-  if (output === undefined) return undefined;
-  const threadCapacity = /unable to create native thread/iu.test(output);
-  const heapExhaustion = /Java heap space|GC overhead limit exceeded/iu.test(
-    output,
-  );
-  const detail = [
-    "Java heap space",
-    "GC overhead limit exceeded",
-    "Metaspace",
-    "Requested array size exceeds VM limit",
-    "unable to create native thread",
-  ].find((candidate) => output.includes(candidate));
+  const areas = scoped?.oomAreas;
+  if (areas === undefined) return undefined;
+  const threadCapacity = areas.has("native-thread");
+  const heapExhaustion = areas.has("heap") || areas.has("gc-overhead");
+  const detail = JVM_EXHAUSTION_DETAILS.find(([, area]) =>
+    areas.has(area),
+  )?.[0];
   if (threadCapacity)
     return new AnalysisResourceConstraintError(
       operation,

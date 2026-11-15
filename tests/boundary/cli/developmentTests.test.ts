@@ -434,7 +434,6 @@ describe("development test runner cancellation", () => {
         await closed;
       }
     },
-    20_000,
   );
 });
 
@@ -510,7 +509,7 @@ describe("development test runner public CLI", () => {
     expect(changed.stdout).toContain("1 passed");
     const focused = await testCommand(root, "focused", "src/value.test.ts");
     expect(focused.stdout).toContain("1 passed");
-  }, 60_000);
+  });
 
   it("reports a missing comparison base and rejects missing or compiled-boundary paths", async () => {
     const root = await fixture();

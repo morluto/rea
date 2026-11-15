@@ -52,6 +52,7 @@ import {
   GhidraFixtureLauncher as FixtureLauncher,
   ghidraFixturePath as fixturePath,
 } from "./ghidraClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.4";
@@ -1383,7 +1384,7 @@ it.each([0, 1])(
         cancelled = result;
       });
       controllers[cancelledIndex]?.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { kind: "cancelled" },
@@ -1545,7 +1546,7 @@ it("applies one startup deadline and removes the private runtime", async () => {
   const pending = client.start();
   const child = await launcher.started;
   await vi.advanceTimersByTimeAsync(30);
-  const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+  const result = await waitFor(() => pending);
   vi.useRealTimers();
 
   expect(result).toMatchObject({
@@ -1610,7 +1611,7 @@ describe("GhidraClient established requests", () => {
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -1675,7 +1676,7 @@ describe("GhidraClient runtime removal failures", () => {
             { document: null, procedure: "fixture_main" },
             { signal: controller.signal },
           );
-          await vi.waitFor(() =>
+          await waitFor(() =>
             expect(launcher.requests).toContain("procedure_pseudo_code"),
           );
           const queued = client.callTool("procedure_info", {
@@ -1769,7 +1770,7 @@ describe("GhidraClient cleanup and diagnostics", () => {
       client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({ ok: true });
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(client.diagnostics()).toMatchObject({
         diagnostic_truncated: true,
       });
@@ -1993,6 +1994,31 @@ describe("GhidraClient process output drain before startup failure", () => {
       output_incomplete: true,
       stdout: { text: oomeOutput },
     });
+  });
+
+  it("drains output under a finalize budget after the startup deadline expires", async () => {
+    const { launcher, finishOutput } = preExitedProcessLauncher({
+      output: oomeOutput,
+      closeOutput: true,
+      // Output closes 700 ms after launch: after the 400 ms startup deadline
+      // whenever launch beat it, and inside the 1 s finalize budget.
+      outputDelayMs: 700,
+    });
+    onTestFinished(finishOutput);
+    const client = clientFor(launcher, { startupTimeoutMs: 400 });
+    const result = await client.start();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.diagnostics).toMatchObject({
+      exit_code: 73,
+      stdout: { text: oomeOutput },
+      failure_output: { complete: true, stdout: { text: oomeOutput } },
+    });
+    expect(result.error.diagnostics).not.toHaveProperty(
+      "output_incomplete",
+      true,
+    );
   });
 
   it("preserves an observed process exit when cancellation interrupts diagnostic drain", async () => {
@@ -2416,7 +2442,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -2498,7 +2524,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     const client = clientFor(launcher, { startupTimeoutMs: 10000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    await vi.waitFor(() => expect(observed).toHaveBeenCalled());
+    await waitFor(() => expect(observed).toHaveBeenCalled());
     controller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected startup cancellation");

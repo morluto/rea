@@ -1,9 +1,9 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { MAX_BROWSER_DEADLINE_MS } from "../domain/browserDeadline.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
@@ -270,7 +270,7 @@ export class CdpTargetSessionOwner {
             ? {}
             : { maxPayloadBytes: limits.maxPayloadBytes }),
           commandTimeoutMs: limits.commandTimeoutMs,
-          handshakeTimeoutMs: MAX_BROWSER_DEADLINE_MS,
+          handshakeTimeoutMs: MAX_NODE_TIMER_DELAY_MS,
         },
       );
       if (this.#pendingBrowserSockets.get(url) === pending)

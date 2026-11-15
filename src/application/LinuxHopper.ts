@@ -226,6 +226,7 @@ export type LinuxHopperInstallResult =
         | "archive_write"
         | "launcher_inspection"
         | "integrity"
+        | "launcher_digest_mismatch"
         | "authorization_or_package_manager"
         | "launcher_missing"
         | "runtime_dependencies"

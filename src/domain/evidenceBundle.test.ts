@@ -4,6 +4,7 @@ import { createEvidence } from "./evidence.js";
 import { ANALYSIS_SNAPSHOT_TARGET } from "./analysisSnapshot.fixture.js";
 import {
   createEvidenceBundle,
+  type EvidenceBundle,
   createImmutableEvidenceBundle,
   evidenceBundleForTarget,
   parseEvidenceBundle,
@@ -68,9 +69,41 @@ describe("evidence bundle failure classification", () => {
     expect(parsed.error.kind).toBe("invalid-bundle");
     expect(parsed.error.cause).toMatchObject({
       name: "NonCanonicalEvidenceBundleError",
-      message: "Evidence bundle manifests are not canonical",
+      message: "Evidence bundle sections are not canonical: records",
     });
   });
+
+  it.each([
+    ["providers", (bundle: EvidenceBundle) => ({ ...bundle, providers: [] })],
+    [
+      "providers, records",
+      (bundle: EvidenceBundle) => ({
+        ...bundle,
+        providers: [],
+        records: [...bundle.records].reverse(),
+      }),
+    ],
+  ] as const)(
+    "names only the noncanonical sections (%s)",
+    (sections, change) => {
+      const records = ["first", "second"].map((label) =>
+        createEvidence(undefined, provider, {
+          operation: "observe",
+          parameters: { label },
+          result: { label },
+        }),
+      );
+      const parsed = safeParseEvidenceBundle(
+        change(createEvidenceBundle(records)),
+      );
+      expect(parsed.ok).toBe(false);
+      if (parsed.ok) return;
+      expect(parsed.error.cause).toMatchObject({
+        name: "NonCanonicalEvidenceBundleError",
+        message: `Evidence bundle sections are not canonical: ${sections}`,
+      });
+    },
+  );
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {
     const record = createEvidence(undefined, provider, {

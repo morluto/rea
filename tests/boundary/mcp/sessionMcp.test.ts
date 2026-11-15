@@ -29,6 +29,7 @@ import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import {
+  LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
@@ -170,7 +171,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         })
       ).isError,
     ).not.toBe(true);
-  }, 10_000);
+  });
 });
 
 describe("public provider availability", () => {
@@ -296,9 +297,7 @@ describe("owned-process prerequisite during status discovery", () => {
         reason: "provider_unavailable",
       });
       // Discovery carries the prerequisite owner's repair, not its failure text.
-      expect(apktool?.remediation).toBe(
-        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
-      );
+      expect(apktool?.remediation).toBe(LINUX_PROCESS_OWNERSHIP_REMEDIATION);
       expect(
         availability.groups.find(({ names }) =>
           names.includes("inspect_adb_client"),
@@ -451,7 +450,7 @@ describe("target-free MCP lifecycle", () => {
       path: canonicalTargetPath,
       sha256: z.object({ sha256: z.string() }).parse(second).sha256,
     });
-  }, 30_000);
+  });
 });
 
 describe("snapshot receipt after MCP cleanup", () => {
@@ -702,7 +701,7 @@ describe("MCP snapshot open ordering", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open":false');
-  }, 10_000);
+  });
 });
 
 describe("session filesystem path boundaries over MCP", () => {
@@ -755,7 +754,7 @@ describe("session filesystem path boundaries over MCP", () => {
       },
     });
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  });
 });
 
 describe("json depth bounds over MCP", () => {
@@ -809,7 +808,7 @@ describe("json depth bounds over MCP", () => {
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
     expect(recovered.structuredContent).toEqual(baseline.structuredContent);
     expect(createClient).not.toHaveBeenCalled();
-  }, 10_000);
+  });
 });
 
 const client = (path: string, closed: string[]): AnalysisClient => ({

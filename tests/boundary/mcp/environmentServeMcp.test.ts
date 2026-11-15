@@ -22,7 +22,6 @@ import {
   type TestProcesses,
 } from "../../support/process/processFixture.js";
 
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
 /** SHA-256 of the 14,519-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
@@ -89,7 +88,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -123,7 +121,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -153,7 +150,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -199,7 +195,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve --replay-only", () => {
@@ -264,7 +259,6 @@ describe("rea environment-serve --replay-only", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -307,7 +301,6 @@ describe("rea environment-serve --replay-only", () => {
       });
       expect(started.stderr()).toContain('"transport":"streamable-http"');
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -426,6 +419,5 @@ describe("rea environment-serve", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });

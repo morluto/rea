@@ -138,13 +138,14 @@ describe.skipIf(process.platform === "win32")(
             observed_oome: [
               {
                 stream: "stderr",
+                area: "heap",
                 line: expect.stringContaining("java.lang.OutOfMemoryError"),
               },
             ],
           },
         },
       });
-    }, 30_000);
+    });
 
     it.each([
       ["process exit", "flood_then_exit_tools"],
@@ -167,7 +168,6 @@ describe.skipIf(process.platform === "win32")(
           diagnostics: { failure_output: { observed_oome: [] } },
         });
       },
-      30_000,
     );
 
     it("does not mistake a budget-cut identifier prefix for an OOME", async () => {
@@ -190,7 +190,7 @@ describe.skipIf(process.platform === "win32")(
           },
         },
       });
-    }, 30_000);
+    });
 
     it("keeps a startup timeout after budget-exhausting output", async () => {
       const projected = await failedOperation("flood_silent", {
@@ -201,7 +201,7 @@ describe.skipIf(process.platform === "win32")(
       expect(projected.remediation.action).not.toContain(
         "GHIDRA_HEADLESS_MAXMEM",
       );
-    }, 30_000);
+    });
   },
 );
 

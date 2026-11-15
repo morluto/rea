@@ -37,7 +37,7 @@ cliTest(
         ],
       ] as const) {
         const selected = operation === "inspect_managed_members";
-        const output = await cli.sharedCliRun!({
+        const output = await cli.run({
           arguments: [
             command,
             path,

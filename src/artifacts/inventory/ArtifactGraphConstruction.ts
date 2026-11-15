@@ -1,17 +1,5 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
-import { hasUImageMagic } from "../../domain/uimageFormat.js";
-import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
-import {
-  hasWxapkgEncryptedMagic,
-  hasWxapkgHeader,
-} from "../../domain/wxapkgFormat.js";
-import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
-import { recognizeEspImage } from "../../domain/firmware/espImage.js";
-import { hasUf2Block } from "../../domain/firmware/uf2.js";
-import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
-import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
-import { hasMftFileRecordHeader } from "../../domain/windows/ntfsMft.js";
+import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -40,7 +28,6 @@ import type {
   ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
 import {
-  hasZipSignature,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
@@ -48,12 +35,8 @@ import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
-import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../../domain/inesContainer.js";
+import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -623,36 +606,31 @@ export const classifyArtifactBytes = (
   fileSize: number,
 ): ArtifactNode["format"] => {
   const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
-  // A header-only region has the signature but not the declared cartridge
-  // extent. Keep it as a file instead of inventing another container.
-  if (
-    nesContainerFormat(prefix) === "ines" &&
-    parseInesLayout(prefix, fileSize).ok
+  // A refused claim falls through: a header-only iNES region, for example,
+  // has the signature but not the declared cartridge extent, so it stays a
+  // file instead of becoming another container. A claim that needs more
+  // bytes falls through too: the scan holds a bounded prefix and the trailer,
+  // so it cannot locate an ESP flash partition table, and a flash dump is
+  // classified by its first image.
+  const input = { prefix, fileSize, suffix };
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
   )
-    return "ines";
-  if (hasZipSignature(prefix)) return "zip";
-  if (hasGodotPckHeader(prefix)) return "godot-pck";
-  if (hasUnityFsHeader(prefix)) return "unityfs";
-  if (hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix))
-    return "wxapkg";
-  if (hasUImageMagic(prefix)) return "uimage";
-  const hexRecords = detectHexRecordEncoding(prefix);
-  if (hexRecords !== undefined) return hexRecords;
-  if (hasUf2Block(prefix)) return "uf2";
-  if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
-    return "dfuse";
-  if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
-  if (hasFitImagesNode(prefix)) return "fit";
-  if (hasMftFileRecordHeader(prefix)) return "ntfs-mft";
-  if (hasBinaryPlistSignature(prefix)) return "plist";
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
-  if (prefix.length >= 4) {
-    if (readMachoHeaderPrefixFacts(prefix).format !== null) return "mach-o";
-    if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-      return "elf";
-  }
+  // Admit ELF and thin Mach-O as target resolution does: a magic number
+  // whose header does not decode is not an executable REA can open.
+  const native = readNativeHeaderFormat(prefix, fileSize);
+  if (!native.ok) return "unknown";
+  if (native.value !== null) return native.value;
   if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
     if (
       !Number.isSafeInteger(fileSize) ||

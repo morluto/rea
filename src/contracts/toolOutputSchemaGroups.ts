@@ -20,7 +20,7 @@ import {
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";

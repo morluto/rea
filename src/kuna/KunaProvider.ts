@@ -9,7 +9,7 @@ import type {
   ProviderAvailability,
   ProviderTargetSupport,
 } from "../application/AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
@@ -197,11 +197,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("kuna:profile", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("kuna:profile", options.signal));
     let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
     const resourceScope = options?.resourceScope;
     if (resourceScope === undefined)

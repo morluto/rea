@@ -7,7 +7,7 @@ import {
   javaScriptRoutesViewResultSchema,
   webBundleSummaryViewResultSchema,
   webBundlePageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,

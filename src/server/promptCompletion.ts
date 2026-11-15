@@ -6,16 +6,13 @@ import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import { parseProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
+import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
 import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
 import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";
 
 const documentListSchema = z.array(z.string().min(1));
-const procedureInventorySchema = z.array(
-  addressedValueSchema.pick({ address: true, value: true }),
-);
 const providerStatusSchema = z.object({
   analysis_provider_candidates: z.array(
     z.object({ provider: z.object({ id: z.string().min(1) }) }),
@@ -116,7 +113,7 @@ const procedureCandidates = async (
   );
   if (result === undefined) return [];
   if (result.ok) {
-    const parsed = procedureInventorySchema.safeParse(result.value.result);
+    const parsed = listProceduresFact.schema.safeParse(result.value.result);
     if (parsed.success)
       for (const { address, value: name } of parsed.data) {
         addresses.add(address);

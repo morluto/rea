@@ -88,7 +88,7 @@ it("runs the production private-display timeout cleanup through the Linux host",
       : []),
   ];
   state.ps.mockImplementation(async (command) => {
-    expect(command).toBe("ps");
+    expect(command).toMatch(/(?:^|\/)ps$/u);
     return { stdout: rows().join("\n"), stderr: "" };
   });
   state.readFile.mockImplementation(async (path) => {

@@ -83,5 +83,4 @@ cliTest(
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
   },
-  60_000,
 );
