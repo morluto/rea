@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { createMessage, generateKey, readPrivateKey, sign } from "openpgp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   LinuxHopperPublisher,
@@ -1073,14 +1073,7 @@ portableTar(
       await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toMatchObject({ ok: true });
 
-    let reachedMetadataClose!: () => void;
-    const metadataCloseStarted = new Promise<void>((resolve) => {
-      reachedMetadataClose = resolve;
-    });
-    let releaseMetadataClose!: () => void;
-    const metadataCloseGate = new Promise<void>((resolve) => {
-      releaseMetadataClose = resolve;
-    });
+    const metadataClose = phaseGate();
     const metadataIdentity = await stat(join(f.cache, "release.json"));
     const launcherIdentity = await stat(f.launcher);
     let metadataOwner: OwnedFileHandle | undefined;
@@ -1099,8 +1092,7 @@ portableTar(
           observed.ino === metadataIdentity.ino
         ) {
           metadataOwner = this;
-          reachedMetadataClose();
-          await metadataCloseGate;
+          await metadataClose.hold();
         }
         if (
           hashActive &&
@@ -1118,11 +1110,7 @@ portableTar(
       });
     const inspection = f.publisher.inspectLauncher(f.launcher);
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        metadataCloseStarted,
-        inspection,
-        "metadata close",
-      );
+      await metadataClose.reached(inspection, "metadata close");
       hashActive = true;
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
@@ -1140,7 +1128,7 @@ portableTar(
       expect(hashOwner?.handle.fd).toBeGreaterThanOrEqual(0);
       expect(hashCloseAttempts).toBeGreaterThanOrEqual(2);
       allowHashClose = true;
-      releaseMetadataClose();
+      metadataClose.release();
       await expect(inspection).resolves.toMatchObject({
         ok: true,
         value: { source: "signed_package_cache" },
@@ -1151,7 +1139,7 @@ portableTar(
     }, [
       () => {
         allowHashClose = true;
-        releaseMetadataClose();
+        metadataClose.release();
       },
       async () => {
         await inspection;

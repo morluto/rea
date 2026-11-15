@@ -228,7 +228,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -262,7 +262,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;

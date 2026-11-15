@@ -65,7 +65,7 @@ it.each([
       });
     try {
       if (held !== undefined) {
-        await held.firstRead;
+        await held.reached(running, "first file read");
         process.emit(signal);
         held.release();
       }

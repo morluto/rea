@@ -1,7 +1,7 @@
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
@@ -21,24 +21,14 @@ import {
 } from "./ArtifactReader.js";
 import { translateArtifactFailure } from "../artifacts/ArtifactOperationFailure.js";
 
-const deferred = <T>() => {
-  let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-};
-
 it("waits for admitted operations and shares concurrent close", async () => {
   const scope = new ArtifactResourceScope();
-  const started = deferred<void>();
-  const finish = deferred<void>();
+  const admitted = phaseGate();
   const operation = scope.run(async () => {
-    started.resolve();
-    await finish.promise;
+    await admitted.hold();
   });
   try {
-    await awaitAcknowledgement(started.promise, operation, "scope admission");
+    await admitted.reached(operation, "scope admission");
     const close = scope.close();
     expect(scope.close()).toBe(close);
     await expect(scope.run(async () => undefined)).rejects.toMatchObject({
@@ -52,12 +42,12 @@ it("waits for admitted operations and shares concurrent close", async () => {
     await Promise.resolve();
     expect(closed).toBe(false);
 
-    finish.resolve();
+    admitted.release();
     await operation;
     await close;
     expect(closed).toBe(true);
   } finally {
-    finish.resolve();
+    admitted.release();
     try {
       await operation;
     } finally {
@@ -728,13 +718,11 @@ it("tracks diagnostic work outside admission and joins it before a cleanup retry
       },
     },
   });
-  const started = deferred<void>();
-  const finish = deferred<void>();
+  const tracked = phaseGate();
   let lateReleases = 0;
   // A pending owner neither delays nor fails tracked work.
   const sample = scope.track(async () => {
-    started.resolve();
-    await finish.promise;
+    await tracked.hold();
     scope.retain({
       kind: "lease",
       resource: "sampled",
@@ -747,7 +735,7 @@ it("tracks diagnostic work outside admission and joins it before a cleanup retry
     return "sample";
   });
   try {
-    await awaitAcknowledgement(started.promise, sample, "tracked work");
+    await tracked.reached(sample, "tracked work");
     earlierReleased = true;
     let retried = false;
     const retry = scope.retryCleanup().then(() => {
@@ -755,7 +743,7 @@ it("tracks diagnostic work outside admission and joins it before a cleanup retry
     });
     await Promise.resolve();
     expect(retried).toBe(false);
-    finish.resolve();
+    tracked.release();
     await expect(sample).resolves.toBe("sample");
     await retry;
     // The drain joined the tracked work, so the owner it retained was retried.
@@ -763,39 +751,35 @@ it("tracks diagnostic work outside admission and joins it before a cleanup retry
     expect(scope.cleanupResources).toEqual([]);
   } finally {
     earlierReleased = true;
-    finish.resolve();
+    tracked.release();
     await scope.close();
   }
 });
 
 it("joins diagnostic work admitted while a cleanup retry releases an earlier owner", async () => {
   const scope = new ArtifactResourceScope();
-  const releasing = deferred<void>();
-  const allowRelease = deferred<void>();
+  const earlierRelease = phaseGate();
   scope.retain({
     kind: "lease",
     resource: "earlier",
     lease: {
       release: async () => {
-        releasing.resolve();
-        await allowRelease.promise;
+        await earlierRelease.hold();
       },
     },
   });
   let lateReleases = 0;
-  const started = deferred<void>();
-  const finish = deferred<void>();
+  const tracked = phaseGate();
   let retried = false;
   const retry = scope.retryCleanup().then(() => {
     retried = true;
   });
   let sample: Promise<string> | undefined;
   try {
-    await awaitAcknowledgement(releasing.promise, retry, "earlier release");
+    await earlierRelease.reached(retry, "earlier release");
     // Admitted after the drain already found no active work.
     sample = scope.track(async () => {
-      started.resolve();
-      await finish.promise;
+      await tracked.hold();
       scope.retain({
         kind: "lease",
         resource: "sampled",
@@ -807,18 +791,18 @@ it("joins diagnostic work admitted while a cleanup retry releases an earlier own
       });
       return "sample";
     });
-    await awaitAcknowledgement(started.promise, sample, "tracked work");
-    allowRelease.resolve();
+    await tracked.reached(sample, "tracked work");
+    earlierRelease.release();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(retried).toBe(false);
-    finish.resolve();
+    tracked.release();
     await expect(sample).resolves.toBe("sample");
     await retry;
     expect(lateReleases).toBe(1);
     expect(scope.hasPending).toBe(false);
   } finally {
-    allowRelease.resolve();
-    finish.resolve();
+    earlierRelease.release();
+    tracked.release();
     await Promise.allSettled(sample === undefined ? [retry] : [retry, sample]);
     await scope.close();
   }

@@ -44,7 +44,6 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
-import { registerWebScriptTool } from "./registerWebScriptTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
@@ -460,6 +459,7 @@ export const createServer = (
       registerServiceTools(
         server,
         {
+          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -618,10 +618,11 @@ export const createServer = (
         analysisAdmission,
         artifactResources,
       );
-      registerWebScriptTool(server, { ...common, artifactResources });
       registerServiceTools(
         server,
         {
+          webScripts: artifactResources,
+          guidance: artifactResources,
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,

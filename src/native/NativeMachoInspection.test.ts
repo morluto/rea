@@ -14,7 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 import { layoutFor } from "./AppleMachoSelection.fixture.js";
-import { selectMachoSlice } from "./metadata/MachoSliceSelection.js";
+import { selectMachoSlice } from "../domain/apple/machoSliceSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import type { MachoSliceEncryption } from "../domain/apple/machoEncryption.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";

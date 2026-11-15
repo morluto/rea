@@ -2,33 +2,30 @@ import {
   malformedInput,
   truncatedInput,
   unsupportedInput,
-} from "../domain/parseFailure.js";
-import { LC } from "../domain/apple/machoLoadCommandCodes.js";
-import type {
-  FileMapping,
-  ZeroFillMapping,
-} from "../domain/virtualFileMapping.js";
+} from "../parseFailure.js";
+import { LC } from "./machoLoadCommandCodes.js";
+import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
-} from "../domain/apple/machoDylibCommand.js";
-import { readMachoSectionHeader } from "../domain/apple/machoSectionHeader.js";
+} from "./machoDylibCommand.js";
+import { readMachoSectionHeader } from "./machoSectionHeader.js";
 import {
   admitMachoSegmentMapping,
   readMachoSegmentHeader,
-} from "../domain/apple/machoSegmentHeader.js";
+} from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,
-} from "../domain/apple/machoLoadCommands.js";
+} from "./machoLoadCommands.js";
 import {
   BinaryFormatFailure,
   createFileMappingIndex,
-} from "../domain/binaryContainer.js";
+} from "../binaryContainer.js";
 
-import type { FixupCommands } from "./AppleMachoFixups.js";
-import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";
-import type { SelectedNativeImage } from "./metadata/MachoSliceSelection.js";
+import type { FixupCommands } from "./appleMachoFixups.js";
+import { decodeMachoFixedName, decodeMachoName } from "./appleMachoNames.js";
+import type { SelectedNativeImage } from "./machoSliceSelection.js";
 
 /** One mapped Mach-O segment with file-backed VA range. */
 export interface Segment {

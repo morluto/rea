@@ -3,19 +3,17 @@ import {
   DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   type DotnetBundleReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 import {
   readArtifactFileChunks,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../../resources/index.js";
-import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
-import { abortIfNeeded } from "../../resources/index.js";
 
 /** SHA-256 marker embedded by Microsoft's apphost; the preceding UInt64 is the header offset. */
 export const DOTNET_BUNDLE_SIGNATURE = Buffer.from(

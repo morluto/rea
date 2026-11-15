@@ -5,11 +5,11 @@ import {
   projectObjcClassMethods,
   type ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
-import type { Segment, Section } from "./AppleMachoSelection.js";
+import type { Segment, Section } from "../domain/apple/appleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
-import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import type { DecodeIssue } from "../domain/apple/appleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
   BinaryMetadataEvidence,

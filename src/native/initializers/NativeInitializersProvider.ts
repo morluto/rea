@@ -32,8 +32,8 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
-import { ElfPointerRelocationFailure } from "../metadata/ElfPointerRelocations.js";
-import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
+import { ElfPointerRelocationFailure } from "../../domain/native/elfPointerRelocations.js";
+import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
 

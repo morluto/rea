@@ -24,20 +24,15 @@
     "artifacts -> javascript": 1,
     "artifacts -> native": 1,
     "browser -> artifacts": 4,
-    "browser -> javascript": 1,
     "captures -> pcap": 2,
     "desktop -> browser": 1,
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
-    "go -> native": 2,
     "gpu -> artifacts": 2,
     "il2cpp -> ghidra": 1,
-    "il2cpp -> native": 5,
     "inspector -> browser": 2,
-    "kuna -> native": 2,
     "model -> artifacts": 1,
-    "native -> artifacts": 2,
-    "rust -> native": 2
+    "native -> artifacts": 2
   },
   "entry": {
     "application -> artifacts": 9,

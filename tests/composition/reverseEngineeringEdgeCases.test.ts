@@ -430,7 +430,7 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
   await withVerifierCleanup(async () => {
     const rejection = service.executeRizinCommand({ path, command: "iI" });
     await awaitAcknowledgement(
-      rejection.then(() => {}),
+      rejection,
       Promise.all(admitted),
       "capacity response",
     );
