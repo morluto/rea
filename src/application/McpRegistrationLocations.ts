@@ -5,7 +5,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
+import type { ClientInlineConfiguration } from "./ClientConfigurationDocument.js";
 
 export interface McpRegistrationLocationContext {
   readonly home: string;
@@ -17,16 +17,11 @@ export interface McpRegistrationLocationContext {
   readonly signal?: AbortSignal;
 }
 
-export interface McpRegistrationInlineConfiguration {
-  readonly origin: "KILO_CONFIG_CONTENT";
-  readonly parsed: ClientConfigurationDocument;
-}
-
 export interface McpRegistrationLocation {
   readonly configPath: string;
   /** Complete known file layers in native precedence; configPath alone grants write authority. */
   readonly configPaths?: readonly string[];
-  readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
+  readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
 export interface McpRegistrationGlobalLocation extends McpRegistrationLocation {

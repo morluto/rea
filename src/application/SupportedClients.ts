@@ -3,7 +3,10 @@ import type {
   ClientRegistrationProfile,
   NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
-import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
+import type {
+  ClientConfigurationFormat,
+  ClientInlineConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
@@ -44,6 +47,8 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
+  /** Read-only configuration the client merges over every file layer. */
+  readonly inlineConfiguration?: ClientInlineConfiguration;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -147,6 +152,7 @@ interface ClientLayeredLocation {
   readonly configPath: string;
   /** Every file layer in load order, including `configPath`. */
   readonly configPaths: readonly string[];
+  readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
 /** One resolved configuration location and its detection evidence. */
@@ -1048,8 +1054,13 @@ const kiloLayeredLocation = async (
 ): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
   const kilo = kiloTableContext(context);
   try {
-    const { configPath, configPaths } = await kiloGlobalLocation(kilo);
-    return ok({ configPath, configPaths });
+    const { configPath, configPaths, inlineConfiguration } =
+      await kiloGlobalLocation(kilo);
+    return ok({
+      configPath,
+      configPaths,
+      ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    });
   } catch (cause: unknown) {
     if (cause instanceof ConfigurationError)
       return err({

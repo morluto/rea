@@ -11,6 +11,7 @@ import {
   supportedClients,
 } from "../../../src/application/SupportedClients.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
+import { inspectClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -158,4 +159,72 @@ it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async ()
     expect.objectContaining({ name: "kilo", status: "removed" }),
   );
   expect(await readFile(target, "utf8")).not.toContain('"rea"');
+});
+
+it("reads KILO_CONFIG_CONTENT as Kilo's top read-only layer", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const target = join(root, "kilo.json");
+  const registered = JSON.stringify({
+    mcp: { rea: { type: "local", command, enabled: true } },
+  });
+  await writeFile(target, registered);
+  const status = async (environment: NodeJS.ProcessEnv) =>
+    (
+      await readClientRegistrationStatuses(home, command[1], {
+        platform,
+        environment,
+      })
+    ).find(({ client }) => client === "kilo");
+  // An inline layer that leaves REA alone keeps the file registration current.
+  const peer = {
+    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { other: { command: ["x"] } } }),
+  };
+  expect(await status(peer)).toMatchObject({ state: "aligned" });
+  const row = await kiloRow(home, peer);
+  if (row === undefined) throw new Error("Kilo row is missing");
+  expect(await inspectClientConfiguration(row, {}, command)).toMatchObject({
+    status: "already_current",
+  });
+  const remediation = async (environment: NodeJS.ProcessEnv) => {
+    const overridden = await kiloRow(home, environment);
+    if (overridden === undefined) throw new Error("Kilo row is missing");
+    expect(overridden.configPath).toBe(target);
+    const inspection = await inspectClientConfiguration(
+      overridden,
+      {},
+      command,
+    );
+    if (inspection.status !== "invalid")
+      throw new Error(`Setup admitted the override: ${inspection.status}`);
+    return inspection.remediation;
+  };
+  // An inline launcher replaces the one setup wrote; its owner is unknown.
+  const launcher = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { command: ["/opt/other/rea", "mcp"] } },
+    }),
+  };
+  expect((await status(launcher))?.state).not.toBe("aligned");
+  expect(await remediation(launcher)).toContain(
+    "has unknown ownership and was not changed",
+  );
+  expect(await remediation(launcher)).toContain("KILO_CONFIG_CONTENT");
+  // An inline setting overrides the registration setup would write.
+  const disabled = {
+    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { enabled: false } } }),
+  };
+  expect(await remediation(disabled)).toContain(
+    "KILO_CONFIG_CONTENT overrides REA's rea registration",
+  );
+  expect(await readFile(target, "utf8")).toBe(registered);
+});
+
+it("refuses Kilo's location while KILO_CONFIG_CONTENT cannot be parsed", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-malformed-");
+  const row = await kiloRow(home, { KILO_CONFIG_CONTENT: "{" });
+  expect(row?.configPathError).toContain(
+    "KILO_CONFIG_CONTENT cannot be admitted",
+  );
 });
