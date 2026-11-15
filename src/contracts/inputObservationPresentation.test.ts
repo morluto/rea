@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import {
   advertisedInputJsonSchema,
   COMPLETE_OBSERVATION_GUIDANCE,
@@ -197,7 +197,7 @@ it.each(
       type: "object",
       ...schema,
     };
-    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const advertised = presentOutputJsonSchema(canonical);
     const create = () =>
       dialect === "draft-07"
         ? new Ajv({ strict: false })
@@ -229,7 +229,7 @@ it("keeps an upper contains bound from rejecting canonical items after reference
       },
     },
   };
-  const advertised = presentInputJsonSchema(canonical, () => undefined);
+  const advertised = presentOutputJsonSchema(canonical);
   const input = { values: ["x", "y"] };
   expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
   expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(true);
@@ -249,7 +249,7 @@ it.each([false, true])(
       ...(referenced ? { $ref: "#/definitions/conditional" } : conditional),
       unevaluatedProperties: false,
     };
-    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const advertised = presentOutputJsonSchema(canonical);
     const input = { flag: "😀", extra: "kept" };
     expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
     expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(
@@ -273,7 +273,7 @@ it("retains item annotations when only the unsafe contains maximum leaves", () =
       },
     },
   };
-  const advertised = presentInputJsonSchema(canonical, () => undefined);
+  const advertised = presentOutputJsonSchema(canonical);
   const input = { values: ["😀"] };
   expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
   expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(true);
@@ -298,7 +298,7 @@ it("keeps unaffected root property annotations strict when a child conditional w
     },
     unevaluatedProperties: false,
   };
-  const advertised = presentInputJsonSchema(canonical, () => undefined);
+  const advertised = presentOutputJsonSchema(canonical);
   const validate = new Ajv2020({ strict: false }).compile(advertised);
   expect(validate({ child: true })).toBe(true);
   expect(validate({ child: true, unknown: "reject" })).toBe(false);
@@ -321,7 +321,7 @@ it.each(["draft-07", "draft-2020-12"] as const)(
       },
       properties: { value: { not: { $ref: "#/definitions/alias" } } },
     };
-    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const advertised = presentOutputJsonSchema(canonical);
     const create = () =>
       dialect === "draft-07"
         ? new Ajv({ strict: false, ignoreKeywordsWithRef: true })
@@ -361,7 +361,7 @@ it.each(["draft-07", "draft-2020-12"] as const)(
       },
       unevaluatedProperties: false,
     };
-    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const advertised = presentOutputJsonSchema(canonical);
     const create = () =>
       dialect === "draft-07"
         ? new Ajv({ strict: false })
@@ -396,7 +396,7 @@ it("does not treat unused definitions as validation dependencies", () => {
       },
     },
   };
-  const advertised = presentInputJsonSchema(canonical, () => undefined);
+  const advertised = presentOutputJsonSchema(canonical);
   expect(advertised).toHaveProperty("properties.value.not.type", "number");
   const validate = new Ajv2020({ strict: false }).compile(advertised);
   expect(validate({ value: "kept" })).toBe(true);
