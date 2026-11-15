@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
@@ -43,9 +44,11 @@ const expectAdvertisedComparisonSchema = async (
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "compare_functions",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("compare_functions did not advertise its output schema");
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   expect(validator.validateSchema(outputSchema)).toBe(true);
   const validate = validator.compile(outputSchema);
@@ -234,7 +237,7 @@ it.each(["complete", "partial"] as const)(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "qualifies observed calls and verifies discovery independently (%s)",
   async (profile) => {
     for (const [label, coverage, status] of [

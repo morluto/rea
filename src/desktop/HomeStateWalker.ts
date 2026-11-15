@@ -1,3 +1,4 @@
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -142,7 +143,7 @@ export const walkHomeState = async (
     checkedRoots.add(root);
   }
   while (progress.pending.length > 0 && !progress.truncated) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const directory = progress.pending.pop();
     if (directory === undefined) break;
     let names: string[];

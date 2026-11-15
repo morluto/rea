@@ -1,15 +1,22 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  type AnalysisInputIssue,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
+import {
+  describeValidationFailure,
+  firstValidationIssue,
+} from "../../domain/validationFailure.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
   analysisInputErrorFromIssues,
@@ -20,6 +27,7 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   compareParsedProcessEvidence,
   readProcessComparisonSource,
+  unsupportedProcessCaptureProvider,
 } from "./ProcessComparisonService.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
@@ -28,6 +36,7 @@ import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.j
 import {
   createProcessCaptureEvidence,
   createProcessScenarioPlanEvidence,
+  wrongWorkflowIssueFacts,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
@@ -36,6 +45,7 @@ import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
@@ -44,17 +54,7 @@ import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
-  ...(failure.userMessage === undefined
-    ? {}
-    : { userMessage: failure.userMessage }),
-  ...(failure.resolvedPath === undefined
-    ? {}
-    : { resolvedPath: failure.resolvedPath }),
-  ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
-  ...(failure.admission === undefined ? {} : { admission: failure.admission }),
-  ...(failure.readerLimit === undefined
-    ? {}
-    : { readerLimit: failure.readerLimit }),
+  ...failure.primaryFacts(),
   ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
   ...(failure.partialObservation === undefined
     ? {}
@@ -70,6 +70,7 @@ class RetainedProcessCaptureFailure extends ArtifactReaderFailure {
     failure: ArtifactReaderFailure,
     readonly outcome: Result<Evidence, unknown>,
     readonly owner: AnalysisCleanupLease,
+    readonly primary: AnalysisError | undefined,
   ) {
     super(
       failure.reason,
@@ -119,13 +120,13 @@ export const captureProcessScenarioFile = async (
         const prepared = await prepareProcessScenarioPlan(
           parsed.data,
           environment,
-          process.platform,
+          HOST_PLATFORM.platform,
           signal,
         );
         if (!prepared.ok) throw prepared.error;
         return createProcessScenarioPlanEvidence(
           prepared.value,
-          process.platform,
+          HOST_PLATFORM.platform,
         );
       }
       const progress = createProgressReporter(
@@ -140,7 +141,7 @@ export const captureProcessScenarioFile = async (
         const captured = await captureProcessScenario(
           parsed.data,
           signal,
-          process.platform,
+          HOST_PLATFORM.platform,
           environment,
           undefined,
           undefined,
@@ -149,7 +150,7 @@ export const captureProcessScenarioFile = async (
         );
         captureOutcome = captured.ok
           ? ok(createProcessCaptureEvidence(parsed.data, captured.value))
-          : err(captured.error);
+          : captured;
       } catch (cause: unknown) {
         captureOutcome = err(cause);
       }
@@ -176,11 +177,11 @@ export const captureProcessScenarioFile = async (
           : original instanceof AnalysisError && cause instanceof AnalysisError
             ? original instanceof ProcessCaptureError
               ? original.withFinalization({ cleanupFailure: cause })
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   original,
                   cause,
                   "capture_process_scenario",
-                ).bindCleanupDependencies([original, cause])
+                )
             : new AggregateError(
                 [original, cause],
                 "Process capture and cleanup failed",
@@ -195,7 +196,12 @@ export const captureProcessScenarioFile = async (
           captureOutcome.ok ? captureOutcome.value : undefined,
           priorIncomplete ? undefined : [owner],
         );
-        throw new RetainedProcessCaptureFailure(failure, captureOutcome, owner);
+        throw new RetainedProcessCaptureFailure(
+          failure,
+          captureOutcome,
+          owner,
+          primary instanceof AnalysisError ? primary : undefined,
+        );
       }
       if (!captureOutcome.ok) throw captureOutcome.error;
       return captureOutcome.value;
@@ -278,15 +284,10 @@ const projectCaptureFileFailure = (
         "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
         [side],
         "invalid_value",
+        wrongWorkflowIssueFacts(failure),
       );
     case "unsupported-provider":
-      return new AnalysisInputError("compare_process_captures", undefined, [
-        {
-          path: [side, "provider"],
-          reason: "invalid_value",
-          message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-        },
-      ]);
+      return unsupportedProcessCaptureProvider(side, failure);
     case "invalid-capture":
       return invalidCaptureEvidence(failure.cause, side);
   }
@@ -306,13 +307,26 @@ const parseTraceSpecification = (input: unknown) => {
   );
 };
 
-const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") =>
-  processInputFailure(
+const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") => {
+  const issue = firstValidationIssue(cause);
+  return processInputFailure(
     "compare_process_captures",
     `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
     [side],
     "invalid_value",
+    issue === undefined
+      ? undefined
+      : {
+          observed: {
+            issue_path: ["normalized_result", ...issue.path],
+            ...(issue.constraint === undefined
+              ? {}
+              : { constraint: issue.constraint }),
+            remaining_issue_count: issue.remainingIssueCount,
+          },
+        },
   );
+};
 
 const readJson = async (
   path: string,
@@ -320,14 +334,12 @@ const readJson = async (
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
 ): Promise<unknown> => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok && loaded.error instanceof AnalysisCancelledError)
-    throw new AnalysisCancelledError(operation, { cause: loaded.error.cause });
+    throw cancelledBy(operation, carriedReason(loaded.error.cause));
   if (loaded.ok) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
     return loaded.value;
   }
   if (loaded.error._tag !== "EvidenceFileError") throw loaded.error;
@@ -342,6 +354,8 @@ const readJson = async (
         : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
+    // Read and parse failures share one issue reason; name which one occurred.
+    { observed: { file_reason: loaded.error.reason } },
   );
 };
 
@@ -350,9 +364,10 @@ const processInputFailure = (
   userMessage: string,
   path: readonly (string | number)[],
   reason: "invalid_value" | "missing_argument",
+  facts?: Pick<AnalysisInputIssue, "expected" | "observed">,
 ): AnalysisInputError =>
   new AnalysisInputError(operation, { userMessage }, [
-    { path, reason, message: userMessage },
+    { path, reason, message: userMessage, ...facts },
   ]);
 
 const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
@@ -360,12 +375,25 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
+/** Project retained input cleanup only when the CLI delivers the error. */
+export const projectProcessCliInputCleanupError = (
+  cause: unknown,
+): ProcessCliErrorOutput => {
+  if (
+    !(cause instanceof ProviderAdapterError) ||
+    !(cause.cause instanceof ArtifactReaderFailure) ||
+    cause.cause.cleanup === undefined
+  )
+    throw cause;
+  return cliAnalysisError(cause);
+};
+
 /**
  * This catch includes target execution, and the projection stays non-retryable.
  * Tell the user what happened; do not ask them to run the command again.
  */
-const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
-  "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+  "Do not repeat this command. Tell the user the process command could not complete, give them the reported reason, and ask them to check the scenario or capture files it read. If those files are valid, report the failure with its diagnostics.";
 
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
 const projectProcessCliError = (
@@ -384,10 +412,7 @@ const projectProcessCliError = (
         });
   return cliAnalysisError(
     signal?.aborted
-      ? analysisErrorWithCancellation(
-          failure,
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        )
+      ? analysisErrorWithCancellation(failure, cancelledBy(operation, signal))
       : failure,
   );
 };
@@ -435,10 +460,11 @@ const withProcessInputResources = async (
       resources.cleanupResources,
     );
     const cancellation = signal?.aborted
-      ? new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          ...(outcome.ok ? { partialObservation: outcome.value } : {}),
-        })
+      ? cancelledBy(
+          operation,
+          signal,
+          outcome.ok ? { partialObservation: outcome.value } : {},
+        )
       : undefined;
     const primary = outcome.ok
       ? cancellation === undefined
@@ -476,28 +502,42 @@ const withProcessInputResources = async (
       inherited === undefined || local === undefined
         ? undefined
         : [...new Set([...inherited, ...local])];
-    const failure = ArtifactReaderFailure.withCleanup(
+    let failure = ArtifactReaderFailure.withCleanup(
       primary,
       cleanup,
       outcome.ok ? outcome.value : undefined,
       leases,
     );
-    if (leases !== undefined || !(cause instanceof ArtifactReaderFailure))
-      throw failure;
-    // Preserve the independently owned local leases even when the primary's
-    // full retry authority is unknown. Do not claim they cover both failures.
-    throw new ArtifactReaderFailure(
-      failure.reason,
-      failure.message,
-      {
-        cause: new AggregateError(
-          [failure, cause],
-          "Process and input cleanup remain incomplete",
-        ),
-        ...artifactFailureFacts(failure),
-      },
-      failure.details,
-    );
+    if (leases === undefined && cause instanceof ArtifactReaderFailure) {
+      // Keep local retry authority reachable when coverage of the primary is unknown.
+      failure = new ArtifactReaderFailure(
+        failure.reason,
+        failure.message,
+        {
+          cause: new AggregateError(
+            [failure, cause],
+            "Process and input cleanup remain incomplete",
+          ),
+          ...artifactFailureFacts(failure),
+        },
+        failure.details,
+      );
+    }
+    const typedPrimary =
+      primary instanceof AnalysisError
+        ? primary
+        : primary instanceof RetainedProcessCaptureFailure
+          ? primary.primary
+          : undefined;
+    const error = new ProviderAdapterError(PROCESS_PROVIDER.id, operation, {
+      cause: failure,
+      cleanupPrimary: typedPrimary,
+      cleanup: failure.cleanup,
+      partialObservation: failure.partialObservation,
+      userMessage: failure.userMessage ?? failure.message,
+    });
+    bindArtifactFileCleanup(failure, error);
+    throw error;
   }
   if (
     !outcome.ok &&

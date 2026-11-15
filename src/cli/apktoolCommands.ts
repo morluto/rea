@@ -9,6 +9,7 @@ import {
   apktoolInputSchemas,
   type ApktoolOperation,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
@@ -59,7 +60,7 @@ export const registerApktoolCommands = (
     description:
       "Decode one APK's manifest, metadata, and string resources with apktool",
     args: z.object({
-      path: z.string().min(1).describe("Local APK file to decode"),
+      path: localPathStringSchema.describe("Local APK file to decode"),
     }),
     // The locale grammar and the string-projection default belong to the
     // apktool input owner. Read them from that schema rather than restating a

@@ -30,7 +30,6 @@ import type {
 } from "../AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
-export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =

@@ -11,6 +11,7 @@ import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
 } from "./apple/machoLoadCommands.js";
+import { LC } from "./apple/machoLoadCommandCodes.js";
 import { digestSchema } from "./digests.js";
 import { localPathStringSchema } from "./localPath.js";
 import { err, ok, type Result } from "./result.js";
@@ -34,7 +35,6 @@ export type MachODebugCompanionCommitment = z.infer<
   typeof machODebugCompanionCommitmentSchema
 >;
 
-const LC_UUID = 0x1b;
 const UUID_BYTES = 16;
 
 /**
@@ -102,7 +102,7 @@ export function* machoUuidReads(
     const commandHeader = yield { offset: commandOffset, length: 8 };
     const frame = commands.read(commandHeader);
     if (!frame.ok) return frame;
-    if (frame.value.command === LC_UUID) {
+    if (frame.value.command === LC.UUID) {
       if (frame.value.size < 8 + UUID_BYTES)
         return err("LC_UUID load command is truncated");
       if (observed !== null)

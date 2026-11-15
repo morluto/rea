@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
@@ -36,6 +37,11 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+  javaScriptMemberMutationRefusal,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -64,7 +70,7 @@ const sourceWorkerProgram = (
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script) => {
+  const analyze = (script, precision, allowance) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -74,7 +80,7 @@ const sourceWorkerProgram = (
     }
     if (${JSON.stringify(stderrMarker)} !== undefined)
       process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
-    return analyzeCapturedWebScript(script);
+    return analyzeCapturedWebScript(script, precision, allowance);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -110,6 +116,7 @@ type TestMode =
         | "malformed"
         | "wrong-job-failure"
         | "resource-failure"
+        | "work-refusal"
         | "final-frame-held-pipe"
         | "zero-exit-held-pipe"
         | "heap-exit";
@@ -128,6 +135,7 @@ const protocolWorkerProgram = (
     | "malformed"
     | "wrong-job-failure"
     | "resource-failure"
+    | "work-refusal"
     | "final-frame-held-pipe"
     | "zero-exit-held-pipe"
     | "heap-exit",
@@ -165,19 +173,22 @@ const protocolWorkerProgram = (
                       : failure === "resource-failure"
                         ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
                  setInterval(() => {}, 1_000);`
-                        : failure === "final-frame-held-pipe"
-                          ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
+                        : failure === "work-refusal"
+                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "work allowance" });
+                 setInterval(() => {}, 1_000);`
+                          : failure === "final-frame-held-pipe"
+                            ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
                const program = "setTimeout(() => { process.stdout.write(" + JSON.stringify(frame + "\\n") + "); setInterval(() => {}, 1000); }, 100);";
                spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
                process.exit(7);`
-                          : failure === "late-failure"
-                            ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
+                            : failure === "late-failure"
+                              ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
            setInterval(() => {}, 1_000);`
-                            : failure === "wrong-id"
-                              ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
-                              : failure === "oversized-control"
-                                ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
-                                : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
+                              : failure === "wrong-id"
+                                ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
+                                : failure === "oversized-control"
+                                  ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
+                                  : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
     }
   });
 `;
@@ -302,36 +313,39 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
   });
 };
 
-it("preserves physical ownership inspection failure when cancellation follows", async () => {
-  const controller = new AbortController();
-  const reason = { cancelled: "late" };
-  const physical = new Error("inspection physically failed");
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockImplementation(async () => {
-      controller.abort(reason);
-      throw physical;
-    });
-  const worker = new WebBundleAnalysisWorker();
-  try {
-    const result = await worker.analyze(
-      makeScript("0"),
-      5_000,
-      controller.signal,
-    );
-    const error = failureOf(result);
-    expect(error).toBeInstanceOf(AnalysisOutputError);
-    expect(error.cause).toBe(physical);
-    expect(
-      error.secondaryFailures.some((failure) => failure.cause === reason),
-    ).toBe(true);
-  } finally {
-    prepare.mockRestore();
-    await worker.close();
-  }
-});
+it.each([false, true])(
+  "preserves physical ownership inspection failure when cancellation follows (same reason: %s)",
+  async (sameReason) => {
+    const controller = new AbortController();
+    const physical = new Error("inspection physically failed");
+    const reason = sameReason ? physical : { cancelled: "late" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw physical;
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBe(physical);
+      expect(
+        error.secondaryFailures.some((failure) => failure.cause === reason),
+      ).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
 
-it.each(["reason", "native-abort"] as const)(
+it.each(["reason", "normalized-exec"] as const)(
   "retains %s cancellation from ownership inspection",
   async (kind) => {
     const controller = new AbortController();
@@ -341,8 +355,10 @@ it.each(["reason", "native-abort"] as const)(
       .mockImplementation(async () => {
         controller.abort(reason);
         throw kind === "reason"
-          ? reason
-          : new ExecFileOutputCancelledError(reason);
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : ProcessOwnershipInspectionCancelled.from(
+              new ExecFileOutputCancelledError(reason),
+            );
       });
     const worker = new WebBundleAnalysisWorker();
     try {
@@ -372,7 +388,7 @@ it("retains ownership-helper cleanup until worker close retries it", async () =>
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -413,7 +429,7 @@ it("retains failed helper cleanup without caller cancellation", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const physical = new DarwinProcessOwnershipInspectionError(
@@ -435,6 +451,60 @@ it("retains failed helper cleanup without caller cancellation", async () => {
     expect(error.cleanupIncomplete).toBe(false);
   } finally {
     prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("keeps a refused script's syntax facts and states the allowance the host sent", async () => {
+  // Four conditional self-selections before one member write (#8294); the
+  // Map lookup makes the analyzer index member mutations.
+  const source = [
+    "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
+    ...Array.from(
+      { length: 4 },
+      (_, index) =>
+        `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+    ),
+    "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/refused'); return m; }",
+  ].join(" ");
+  const script = makeScript(source);
+  const allowance = { aliasStates: 8, source: "runtime" } as const;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      script,
+      10_000,
+      undefined,
+      undefined,
+      allowance,
+    );
+    if (!result.ok) throw result.error.error;
+    const refusal = javaScriptMemberMutationRefusal(
+      "analyze_web_bundle",
+      allowance,
+    );
+    expect(result.value).toEqual({
+      status: "unavailable",
+      script_key: script.script_key,
+      reason: "resource_constraint",
+      detail: expect.stringContaining("more than 8 alias states"),
+      limit: refusal.limit,
+      remediation: refusal.remediationAction,
+      partial: {
+        refused_phase: "member-mutations",
+        parse_status: "parsed",
+        inferences: [
+          expect.objectContaining({
+            kind: "bundle_runtime",
+            value: "webpack",
+          }),
+        ],
+      },
+    });
+  } finally {
     await worker.close();
   }
 });
@@ -813,6 +883,42 @@ it("does not let a failure frame for another job replace cancellation", async ()
     expect(error).toBeInstanceOf(AnalysisCancelledError);
     expect(error.cause).toBe(reason);
     expect(error.secondaryFailures).toHaveLength(0);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({ kind: "protocol", failure: "work-refusal" }),
+  );
+  try {
+    const error = failureOf(
+      await worker.analyze(
+        makeScript("fetch('/work');"),
+        5_000,
+        undefined,
+        undefined,
+        { aliasStates: 2048, source: "setting" },
+      ),
+    );
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a worker resource constraint failure");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 2048,
+        source: "setting",
+      },
+    });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.reportedLimits).toMatchObject({
+      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 2048,
+      sent_source: "setting",
+    });
   } finally {
     await worker.close();
   }
@@ -1242,3 +1348,52 @@ it("retries independent browser workers once while an earlier exact owner remain
     await cleanup.retry();
   }
 });
+
+it.each(["typed", "physical"] as const)(
+  "preserves %s ownership-admission facts from the recording worker launcher",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical worker admission failure");
+    const reason =
+      kind === "physical" ? physical : { caller: "cancel worker admission" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const launcher = vi.fn<typeof spawnOwnedProviderProcess>(
+      async (options) => {
+        expect(options.signal).toBeDefined();
+        controller.abort(reason);
+        expect(options.signal?.reason).toBe(reason);
+        throw kind === "typed"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
+      },
+    );
+    const worker = new WebBundleAnalysisWorker(128, launcher);
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      if (kind === "typed")
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+      else {
+        expect(error).toBeInstanceOf(AnalysisOutputError);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      }
+      expect(error.cause).toBe(reason);
+      expect(launcher).toHaveBeenCalledOnce();
+      launcher.mockImplementationOnce(launcherFor({ kind: "source" }));
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after-admission');"),
+        5_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);

@@ -1,13 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
-import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../domain/inesContainer.js";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
@@ -16,16 +13,20 @@ import {
   OwnedRegularFileOperationFailure,
 } from "../filesystem/OwnedRegularFile.js";
 import {
-  bindRegularFileCleanup,
+  regularFileCleanupLeases,
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
 } from "./RegularFileRead.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
-import { createHash } from "node:crypto";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -35,9 +36,12 @@ import {
   RegularFileChangedError,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
+import { hashStableRegularFileDescriptor } from "../filesystem/StableFileHash.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   BinaryTarget,
@@ -85,37 +89,17 @@ import {
 } from "../domain/dosMz.js";
 import {
   createXmlPlistSignatureProbe,
-  hasBinaryPlistSignature,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
-import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
-import { hasUImageMagic } from "../domain/uimageFormat.js";
-import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
-import {
-  hasWxapkgEncryptedMagic,
-  hasWxapkgHeader,
-} from "../domain/wxapkgFormat.js";
-import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
-import { hasUf2Block } from "../domain/firmware/uf2.js";
-import {
-  DFUSE_SUFFIX_BYTES,
-  hasDfuSePrefix,
-  isDfuSeFile,
-} from "../domain/firmware/dfuse.js";
-import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
-import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
+import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
-  ESP8266_REFUSAL,
-  recognizeEspImage,
-} from "../domain/firmware/espImage.js";
-import {
-  hasZipSignature,
   locateTrailingZipArchive,
   isZipPackageFormat,
   zipRootPackageFormat,
@@ -191,11 +175,7 @@ export const parseBinaryTarget = async (
   const admitted = localPathStringSchema.safeParse(input);
   if (!admitted.success) {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("resolve_binary_target", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("resolve_binary_target", signal));
     return err(
       new BinaryTargetError(
         input,
@@ -216,11 +196,12 @@ export const parseBinaryTarget = async (
     const canonical = await realpath(candidate);
     stage = "read";
     // Windows native admission must inspect the caller-selected reparse components.
-    const sourcePath = process.platform === "win32" ? candidate : canonical;
+    const sourcePath =
+      HOST_PLATFORM.platform === "win32" ? candidate : canonical;
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
-    if (!resolved.ok) return err(resolved.error);
+    if (!resolved.ok) return resolved;
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
@@ -260,9 +241,7 @@ export const parseBinaryTarget = async (
   } catch (cause: unknown) {
     // A caller-selected abort value never transfers file ownership.
     if (signal?.aborted === true && cause === signal.reason)
-      return err(
-        new AnalysisCancelledError("resolve_binary_target", { cause }),
-      );
+      return err(cancelledBy("resolve_binary_target", carriedReason(cause)));
     if (cause instanceof RegularFileCleanupFailure) {
       const fileFailure = cause as RegularFileCleanupFailure<TargetResolution>;
       if (options.resources === undefined)
@@ -304,7 +283,7 @@ export const parseBinaryTarget = async (
           partialObservation: cause.partialObservation,
         },
       );
-      bindRegularFileCleanup(cause, error);
+      bindTargetCleanupLeases(cause, error);
       return err(error);
     }
     return targetResolutionFailure(cause, candidate, stage, signal);
@@ -338,9 +317,10 @@ const readOpenedBinaryTarget = async (
     path,
     sourcePath,
     ...bundle,
-    sha256: await sha256Handle(handle, path, metadata, signal),
+    sha256: await sha256Handle(source, path, signal),
   });
-  const hostArchitecture = options.hostArchitecture ?? process.arch;
+  const hostArchitecture =
+    options.hostArchitecture ?? HOST_PLATFORM.architecture;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
   const dsymPath = options.dsymPath;
   throwIfTargetResolutionCancelled(signal);
@@ -694,11 +674,27 @@ const finalizedTargetResolution = (
 ): TargetResolution => {
   if (!result.ok || signal?.aborted !== true) return result;
   return err(
-    new AnalysisCancelledError("resolve_binary_target", {
-      cause: signal.reason,
+    cancelledBy("resolve_binary_target", signal, {
       diagnostics: { completed_target: jsonValueSchema.parse(result.value) },
     }),
   );
+};
+
+const targetCleanupLeases = new WeakMap<
+  AnalysisError,
+  readonly AnalysisCleanupLease[]
+>();
+
+const bindTargetCleanupLeases = (
+  cause: unknown,
+  error: AnalysisError,
+): readonly AnalysisCleanupLease[] => {
+  const leases = regularFileCleanupLeases(cause) ?? [];
+  if (leases.length > 0) {
+    new AnalysisCleanupLeaseGroup(error, leases);
+    targetCleanupLeases.set(error, leases);
+  }
+  return leases;
 };
 
 const composeTargetCleanupError = (input: {
@@ -725,7 +721,12 @@ const composeTargetCleanupError = (input: {
       cause,
       cleanup: ownCleanup,
     });
-    bindRegularFileCleanup(cause, ownError);
+    const ownLeases = bindTargetCleanupLeases(cause, ownError);
+    const primaryLeases =
+      targetCleanupLeases.get(primary) ??
+      regularFileCleanupLeases(primary.cause) ??
+      [];
+    const combinedLeases = [...new Set([...primaryLeases, ...ownLeases])];
     const mergedCleanup = {
       reason:
         primary.cleanup?.reason !== undefined
@@ -747,7 +748,10 @@ const composeTargetCleanupError = (input: {
         extraDiagnostics ?? {},
       ),
     });
-    error.bindCleanupDependencies([primary, ownError]);
+    if (combinedLeases.length > 0) {
+      new AnalysisCleanupLeaseGroup(error, combinedLeases);
+      targetCleanupLeases.set(error, combinedLeases);
+    }
     return error;
   }
   const error = new BinaryTargetError(path, reason, {
@@ -759,7 +763,7 @@ const composeTargetCleanupError = (input: {
       extraDiagnostics ?? {},
     ),
   });
-  bindRegularFileCleanup(cause, error);
+  bindTargetCleanupLeases(cause, error);
   return error;
 };
 
@@ -830,9 +834,10 @@ const targetFileCleanupError = (
               physical.cleanup !== undefined
             ? companionDirectoryCleanupError(physical, candidate)
             : cancellation !== undefined
-              ? new AnalysisCancelledError("resolve_binary_target", {
-                  cause: cancellation.reason,
-                })
+              ? cancelledBy(
+                  "resolve_binary_target",
+                  carriedReason(cancellation.reason),
+                )
               : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
                 new BinaryTargetError(
                   failure.path,
@@ -841,12 +846,13 @@ const targetFileCleanupError = (
                 ));
   } else if (completed?.ok === false) primary = completed.error;
   else if (cancellation !== undefined)
-    primary = new AnalysisCancelledError("resolve_binary_target", {
-      cause: cancellation.reason,
-      ...(completedTarget === undefined
+    primary = cancelledBy(
+      "resolve_binary_target",
+      carriedReason(cancellation.reason),
+      completedTarget === undefined
         ? {}
-        : { diagnostics: { completed_target: completedTarget } }),
-    });
+        : { diagnostics: { completed_target: completedTarget } },
+    );
   return composeTargetCleanupError({
     path: failure.path,
     reason,
@@ -902,15 +908,14 @@ const targetResolutionFailure = (
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)
       return err(
-        new AnalysisCancelledError("resolve_binary_target", {
-          cause: cancellation.reason,
-        }),
+        cancelledBy(
+          "resolve_binary_target",
+          carriedReason(cancellation.reason),
+        ),
       );
   }
   if (signal?.aborted === true && physical === signal.reason)
-    return err(
-      new AnalysisCancelledError("resolve_binary_target", { cause: physical }),
-    );
+    return err(cancelledBy("resolve_binary_target", carriedReason(physical)));
   const failure = classifyTargetFilesystemFailure(candidate, physical, stage);
   if (failure === undefined) throw physical;
   return err(failure);
@@ -980,16 +985,14 @@ const targetFailureReason = (
 
 const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("resolve_binary_target", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("resolve_binary_target", signal);
 };
 
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
-  signal?: AbortSignal,
-  sourcePath = path,
+  signal: AbortSignal | undefined,
+  sourcePath: string,
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
@@ -1029,56 +1032,53 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
-  if (nesContainerFormat(magic) !== undefined) {
-    const parsed = parseInesLayout(magic, initial.size);
+  // The shared recognizer table decides; this route reads the trailer or
+  // locates an ESP flash layout only when a recognizer asks for it, and
+  // refuses a file whose header names a format it cannot open.
+  let suffix: Uint8Array | undefined;
+  let espFlashLayout: boolean | undefined;
+  const recognitionInput = () => ({
+    prefix: magic,
+    fileSize: initial.size,
+    suffix,
+    espFlashLayout,
+  });
+  let recognition = recognizeArtifactFormat(recognitionInput());
+  while (recognition !== undefined) {
     throwIfTargetResolutionCancelled(signal);
-    if (!parsed.ok)
-      throw new BinaryTargetError(path, parsed.error, {
+    if (recognition.state === "recognized")
+      return recognition.format === "zip"
+        ? zipRootPackageFormat(lower)
+        : recognition.format;
+    if (recognition.state === "refused")
+      throw new BinaryTargetError(path, recognition.reason, {
         constraint: "file_format_rejected",
       });
-    return "ines";
+    if (recognition.format === "dfuse")
+      suffix =
+        initial.size < DFUSE_SUFFIX_BYTES
+          ? new Uint8Array(0)
+          : await readHandleRange(
+              handle,
+              initial.size - DFUSE_SUFFIX_BYTES,
+              DFUSE_SUFFIX_BYTES,
+              signal,
+            );
+    else
+      espFlashLayout = (
+        await locateEspFlashLayout(
+          initial.size,
+          (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          {},
+          { explicit: false, ...(signal === undefined ? {} : { signal }) },
+        )
+      ).ok;
+    recognition = recognizeArtifactFormat(
+      recognitionInput(),
+      recognition.index,
+    );
   }
-  if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
-  if (hasGodotPckHeader(magic)) return "godot-pck";
-  if (hasUnityFsHeader(magic)) return "unityfs";
-  if (hasWxapkgEncryptedMagic(magic) || hasWxapkgHeader(magic)) return "wxapkg";
-  if (hasUImageMagic(magic)) return "uimage";
-  const hexRecords = detectHexRecordEncoding(magic);
-  if (hexRecords !== undefined) return hexRecords;
-  if (hasUf2Block(magic)) return "uf2";
-  if (
-    hasDfuSePrefix(magic) &&
-    initial.size >= DFUSE_SUFFIX_BYTES &&
-    isDfuSeFile(
-      magic,
-      await readHandleRange(
-        handle,
-        initial.size - DFUSE_SUFFIX_BYTES,
-        DFUSE_SUFFIX_BYTES,
-        signal,
-      ),
-      initial.size,
-    )
-  )
-    return "dfuse";
-  // A C3 or S3 dump begins with its bootloader, so a layout comes first.
-  const flash = await locateEspFlashLayout(
-    initial.size,
-    (position, length) => readHandleRange(handle, position, length, signal),
-    {},
-    { explicit: false, ...(signal === undefined ? {} : { signal }) },
-  );
-  if (flash.ok) return "esp-flash-image";
-  const esp = recognizeEspImage(magic, initial.size);
-  if (esp === "esp8266")
-    throw new BinaryTargetError(path, ESP8266_REFUSAL, {
-      constraint: "file_format_rejected",
-    });
-  if (esp === "esp-image") return "esp-image";
-  if (hasFitImagesNode(magic)) return "fit";
-  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
-  // Binary plists, including keyed archives, often use other extensions.
-  if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
@@ -1212,36 +1212,20 @@ const readLeadingBytes = async (
   return bytes;
 };
 
+/** The admitted target's SHA-256 from the descriptor that was classified. */
 const sha256Handle = async (
-  handle: FileHandle,
+  source: StableRegularFileDescriptor,
   path: string,
-  initial: Stats,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const hash = createHash("sha256");
-  const chunk = Buffer.allocUnsafe(64 * 1024);
-  let position = 0;
-  while (true) {
-    throwIfTargetResolutionCancelled(signal);
-    const observed = await handle.read(
-      chunk,
-      0,
-      Math.min(chunk.length, initial.size - position + 1),
-      position,
-    );
-    throwIfTargetResolutionCancelled(signal);
-    if (observed.bytesRead === 0) break;
-    hash.update(chunk.subarray(0, observed.bytesRead));
-    position += observed.bytesRead;
-    if (position > initial.size)
-      throw new BinaryTargetError(path, "target grew while being read");
-  }
-  throwIfTargetResolutionCancelled(signal);
   try {
-    await assertStableRegularFileIdentity(handle, path, initial, {
-      symlinks: "reject",
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return (
+      await hashStableRegularFileDescriptor(source, path, {
+        // Target admission refuses a symbolic-link final component.
+        symlinks: "reject",
+        ...(signal === undefined ? {} : { signal }),
+      })
+    ).sha256;
   } catch (cause: unknown) {
     throwIfTargetResolutionCancelled(signal);
     if (cause instanceof RegularFileChangedError)
@@ -1250,10 +1234,6 @@ const sha256Handle = async (
       });
     throw cause;
   }
-  throwIfTargetResolutionCancelled(signal);
-  if (position !== initial.size)
-    throw new BinaryTargetError(path, "target changed while being read");
-  return hash.digest("hex");
 };
 
 const resolveAppBundle = async (

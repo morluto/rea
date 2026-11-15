@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../../fixtures/processCaptureResourceScope.js";
 import { createHash } from "node:crypto";
 import { Dir, type Dirent } from "node:fs";
 import {
@@ -885,6 +886,7 @@ it.skipIf(process.platform === "win32").for([
         },
         cleanup,
       },
+      createTestProcessCaptureResourceScope(),
     ).then(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),

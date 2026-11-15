@@ -1,3 +1,18 @@
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  javaScriptMemberMutationAllowanceField,
+  javaScriptMemberMutationRefusal,
+  reportsJavaScriptMemberMutationRefusal,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../../providers/OwnedCommandCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
@@ -31,6 +46,7 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -59,11 +75,11 @@ import {
 } from "../../process/ProviderDeadline.js";
 import {
   readJavaScriptAnalysisTransfer,
-  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   javaScriptForwardedTransferRemediation,
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
 import {
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
   JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
@@ -116,6 +132,7 @@ type WorkerPrimaryFailure =
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
   readonly #runtime: OwnedWorkerRuntime;
+  readonly #inspectionResources = new ArtifactResourceScope();
   #ready = false;
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
@@ -190,7 +207,14 @@ export class JavaScriptAnalysisWorker {
     this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
-      launcher,
+      launcher: (options) =>
+        this.#inspectionResources.run(async () => {
+          try {
+            return await launcher(options);
+          } catch (cause: unknown) {
+            throw this.#inspectionFailure(cause, this.#deadline);
+          }
+        }),
       cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
@@ -205,7 +229,7 @@ export class JavaScriptAnalysisWorker {
       limits.heapMb > JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM ||
       !Number.isSafeInteger(limits.timeoutMs) ||
       limits.timeoutMs <= 0 ||
-      limits.timeoutMs > 2_147_483_647
+      limits.timeoutMs > MAX_NODE_TIMER_DELAY_MS
     )
       throw new RangeError(
         "JavaScript worker requires valid heap and execution limits",
@@ -238,6 +262,7 @@ export class JavaScriptAnalysisWorker {
       this.#pending === "" &&
       this.#runtime.inputFailure === undefined &&
       !this.#runtime.hasPendingCleanup &&
+      !this.#inspectionResources.hasPending &&
       this.#runtime.supervisor !== undefined
     );
   }
@@ -314,14 +339,19 @@ export class JavaScriptAnalysisWorker {
       JavaScriptSourceAnalysisFailure
     >;
     try {
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
       if (!file.text.included || file.kind !== "javascript")
         throw new TypeError(
           "JavaScript analysis worker requires included JavaScript text",
         );
       // Host ownership preparation is outside the parser execution deadline.
-      await prepareProcessOwnershipInspection(signal);
+      await this.#inspectionResources.run(async () => {
+        try {
+          await prepareProcessOwnershipInspection(signal);
+        } catch (cause: unknown) {
+          throw this.#inspectionFailure(cause);
+        }
+      });
       await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
@@ -351,6 +381,10 @@ export class JavaScriptAnalysisWorker {
         ...(this.limits.semanticPrecision === undefined
           ? {}
           : { semantic_precision: this.limits.semanticPrecision }),
+        member_mutation_allowance: javaScriptMemberMutationAllowanceField(
+          this.limits.memberMutationAllowance ??
+            DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+        ),
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
         package_type: packageType,
@@ -538,16 +572,21 @@ export class JavaScriptAnalysisWorker {
       if (this.#primaryFailure?.kind === "memory")
         throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
-      const error = this.#failure(cause, file.path, deadline, signal);
-      if (
-        this.#primaryFailure !== undefined &&
-        deadline?.interruption === "cancelled"
-      )
-        error.retainSecondaryFailure(
-          new AnalysisCancelledError(OPERATION, {
-            cause: deadline.signal.reason,
+      const error = this.#failure(cause, file.path, deadline);
+      if (deadline?.interruption === "cancelled")
+        analysisErrorWithCancellation(
+          error,
+          cancelledBy(OPERATION, deadline.signal, {
             capturedOutput: this.#captured(),
           }),
+        );
+      else if (
+        deadline?.interruption === "timeout" &&
+        !(error instanceof AnalysisTimeoutError)
+      )
+        // The primary failure already carries the captured output.
+        error.retainSecondaryFailure(
+          this.#timeoutError(deadline.signal.reason, false),
         );
       this.#lastFailure = error;
       // Complete checkpoints remain readable after a child crash or cancellation.
@@ -585,8 +624,7 @@ export class JavaScriptAnalysisWorker {
         const primary = signal?.aborted
           ? analysisErrorWithCancellation(
               previous,
-              new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
+              cancelledBy(OPERATION, signal, {
                 capturedOutput: this.#captured(),
               }),
             )
@@ -604,10 +642,7 @@ export class JavaScriptAnalysisWorker {
     if (signal?.aborted === true) {
       const error = analysisErrorWithCancellation(
         result.ok ? undefined : result.error.error,
-        new AnalysisCancelledError(OPERATION, {
-          cause: signal.reason,
-          capturedOutput: this.#captured(),
-        }),
+        cancelledBy(OPERATION, signal, { capturedOutput: this.#captured() }),
       );
       if (result.ok) this.#lastFailure = error;
       result = err({ error, javascript, module, projection });
@@ -646,6 +681,35 @@ export class JavaScriptAnalysisWorker {
 
   /** Verify process cleanup, then release the private runtime; failed close is retryable. */
   async close(): Promise<void> {
+    const [inspection, runtime] = await Promise.allSettled([
+      this.#inspectionResources.close(),
+      this.#closeRuntime(),
+    ]);
+    const inspectionError =
+      inspection.status === "rejected"
+        ? this.#failure(
+            inspection.reason,
+            "process ownership inspection",
+            undefined,
+          )
+        : undefined;
+    if (runtime.status === "rejected") {
+      const runtimeError =
+        runtime.reason instanceof AnalysisError
+          ? runtime.reason
+          : this.#failure(runtime.reason, "worker close", undefined);
+      if (inspectionError !== undefined)
+        throw analysisErrorWithCleanupFailure(
+          runtimeError,
+          inspectionError,
+          OPERATION,
+        ).bindCleanupDependencies([runtimeError, inspectionError]);
+      throw runtimeError;
+    }
+    if (inspectionError !== undefined) throw inspectionError;
+  }
+
+  async #closeRuntime(): Promise<void> {
     try {
       await this.#runtime.close();
       this.#ready = false;
@@ -951,7 +1015,7 @@ export class JavaScriptAnalysisWorker {
         limit: analysisSettingLimit(
           "javascript.max_heap_mb",
           this.limits.heapMb,
-          undefined,
+          this.limits.heapSource,
         ),
         remediationAction: javaScriptWorkerHeapRemediation(this.limits.heapMb),
       },
@@ -1142,25 +1206,36 @@ export class JavaScriptAnalysisWorker {
   #interruptionFailure(
     path: string,
     deadline: ProviderStartupDeadline,
+    inspectionFailure?: unknown,
   ): AnalysisError {
     if (this.#primaryFailure !== undefined)
       return this.#projectPrimaryFailure(path);
     return deadline.interruption === "timeout"
-      ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
-          limit: analysisSettingLimit(
-            "javascript.analysis_timeout_ms",
-            this.limits.timeoutMs,
-            undefined,
-          ),
-          capturedOutput: this.#captured(),
-          userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
-          remediationAction:
-            "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
-        })
-      : new AnalysisCancelledError(OPERATION, {
-          cause: deadline.signal.reason,
+      ? this.#timeoutError(inspectionFailure)
+      : cancelledBy(OPERATION, deadline.signal, {
           capturedOutput: this.#captured(),
         });
+  }
+  /**
+   * The per-source deadline failure, with the setting that raises it and its
+   * effective value. Every path that reports this deadline uses it.
+   */
+  #timeoutError(
+    cause: unknown,
+    withCapturedOutput = true,
+  ): AnalysisTimeoutError {
+    return new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+      ...(cause === undefined ? {} : { cause }),
+      limit: analysisSettingLimit(
+        "javascript.analysis_timeout_ms",
+        this.limits.timeoutMs,
+        this.limits.timeoutSource,
+      ),
+      ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
+      userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
+      remediationAction:
+        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+    });
   }
   #workerExitFailure(
     path: string,
@@ -1185,7 +1260,7 @@ export class JavaScriptAnalysisWorker {
                 limit: analysisSettingLimit(
                   "javascript.max_heap_mb",
                   this.limits.heapMb,
-                  undefined,
+                  this.limits.heapSource,
                 ),
               }
             : {}),
@@ -1258,6 +1333,15 @@ export class JavaScriptAnalysisWorker {
         (parentBudget
           ? JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION
           : undefined);
+      // The member-mutation allowance names its own setting; worker heap
+      // and other remediation do not admit the same source.
+      if (reportsJavaScriptMemberMutationRefusal(reported))
+        return javaScriptMemberMutationRefusal(
+          OPERATION,
+          this.limits.memberMutationAllowance ??
+            DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+          limits,
+        );
       return new AnalysisResourceConstraintError(
         OPERATION,
         response.resource ?? "memory",
@@ -1272,27 +1356,37 @@ export class JavaScriptAnalysisWorker {
       { capturedOutput: this.#captured() },
     );
   }
+  #inspectionFailure(
+    cause: unknown,
+    deadline?: ProviderStartupDeadline,
+  ): AnalysisError {
+    const failure = this.#failure(
+      cause,
+      "process ownership inspection",
+      undefined,
+    );
+    const primary =
+      failure instanceof AnalysisCancelledError &&
+      deadline?.interruption === "timeout"
+        ? this.#interruptionFailure(
+            "process ownership inspection",
+            deadline,
+            cause,
+          )
+        : failure;
+    return retainProcessInspectionCleanup(
+      cause,
+      primary,
+      this.#inspectionResources,
+      OPERATION,
+    );
+  }
+
   #failure(
     cause: unknown,
     path: string,
     deadline: ProviderStartupDeadline | undefined,
-    signal: AbortSignal | undefined,
   ): AnalysisError {
-    if (
-      this.#phase !== "checkpoint-read" &&
-      deadline?.interruption === "cancelled" &&
-      cause === deadline.signal.reason
-    )
-      return this.#interruptionFailure(path, deadline);
-    if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      cause === signal.reason
-    )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
     if (cause instanceof OwnedWorkerRuntimeCleanupError) {
       const error = this.#cleanupError(
         cause.message,
@@ -1303,23 +1397,35 @@ export class JavaScriptAnalysisWorker {
       cause.bindCleanupFailure(error);
       return error;
     }
-    // Checkpoint reads do not receive an AbortSignal. A rejected physical
-    // read or validation owns its failure even if the caller cancelled later.
-    // Ownership preparation remains abortable before the deadline exists.
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    if (cancellation !== undefined)
+      return deadline?.interruption === "timeout"
+        ? this.#timeoutError(cause)
+        : cancellation.capturedOutput === undefined
+          ? cancellation.retainCapturedOutput(this.#captured())
+          : cancellation;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const error = new ProviderCleanupError(
+        PROVIDER,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { operation: OPERATION, cause },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
+    if (
+      cause instanceof AnalysisError &&
+      (deadline === undefined || this.#phase === "startup")
+    )
+      return cause;
+    // Protocol waits retain the owned deadline; inspection/launch failures were
+    // already normalized at their producing boundary above.
     if (
       this.#phase !== "checkpoint-read" &&
       deadline?.interruption !== undefined
     )
       return this.#interruptionFailure(path, deadline);
-    if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      !(cause instanceof ProviderCleanupError)
-    )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
     const inputFailure = this.#runtime.inputFailure;
     if (inputFailure !== undefined)
       return new AnalysisOutputError(

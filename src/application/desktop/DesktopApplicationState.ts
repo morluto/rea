@@ -10,11 +10,13 @@ import { join } from "node:path";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -70,6 +72,8 @@ const OPERATION = "inspect_desktop_application_state";
 /**
  * Readers for formats that need a tool or worker, supplied by composition. Each
  * database is staged with its retained log in a private directory the caller removes.
+ * Expected format/read failures return an error result. Cancellation throws a typed
+ * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
   readonly sqlite: (
@@ -144,12 +148,14 @@ export const readDesktopCapture = async (
       OPERATION,
       "Desktop capture input",
     );
-    if (outcome.ok && !signal?.aborted)
+    if (outcome.ok && !isAborted(signal))
       throw cleanup.retainPartialObservation(outcome.value.evidence);
     const primary = outcome.ok
-      ? new AnalysisCancelledError(OPERATION, {
-          cause: signal?.reason,
-        }).retainPartialObservation(outcome.value.evidence)
+      ? cancelledBy(
+          OPERATION,
+          // A completed outcome reaches here only after the caller aborted.
+          carriedReason(signal?.reason),
+        ).retainPartialObservation(outcome.value.evidence)
       : desktopOperationFailure(
           outcome.error,
           undefined,
@@ -157,15 +163,8 @@ export const readDesktopCapture = async (
           "Desktop capture input",
         );
     if (!outcome.ok && signal?.aborted)
-      analysisErrorWithCancellation(
-        primary,
-        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-      );
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
+      analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
+    throw analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
   if (!outcome.ok) {
     if (!signal?.aborted) throw outcome.error;
@@ -176,13 +175,13 @@ export const readDesktopCapture = async (
         OPERATION,
         "Desktop capture input",
       ),
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      cancelledBy(OPERATION, signal),
     );
   }
   if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: signal.reason,
-    }).retainPartialObservation(outcome.value.evidence);
+    throw cancelledBy(OPERATION, signal).retainPartialObservation(
+      outcome.value.evidence,
+    );
   return outcome.value;
 };
 
@@ -399,7 +398,8 @@ const readVersion = async (
   path: string,
   context: ViewContext,
 ): Promise<void> => {
-  context.signal?.throwIfAborted();
+  if (context.signal?.aborted === true)
+    throw cancelledBy(OPERATION, context.signal);
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -550,7 +550,7 @@ const inspectState = async (
     paths,
     limitations,
   };
-  signal?.throwIfAborted();
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,

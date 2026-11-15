@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  jebMcpTimeoutGuidance,
+  selectedJebMcpTimeout,
+} from "./JebMcpDeadline.js";
 import { JebProvider } from "./JebProvider.js";
 import { decodeJebToolResult } from "./JebMcpConnection.js";
 import type {
@@ -104,13 +110,44 @@ describe("JebProvider live availability", () => {
     await provider.close();
   });
 
+  it("keeps the selected JEB deadline source", () => {
+    expect(selectedJebMcpTimeout(undefined)).toEqual({
+      ms: 60_000,
+      source: "default",
+    });
+    expect(selectedJebMcpTimeout(900_000)).toEqual({
+      ms: 900_000,
+      source: "setting",
+    });
+    expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "jeb.mcp_timeout_ms": 1500 } },
+        () => selectedJebMcpTimeout(900_000),
+      ),
+    ).toEqual({ ms: 1500, source: "runtime" });
+    expect(
+      jebMcpTimeoutGuidance("tools/call", 1500, "runtime").limit,
+    ).toMatchObject({
+      setting: "jeb.mcp_timeout_ms",
+      effective_value: 1500,
+      source: "runtime",
+      update_mode: "runtime",
+      pending_restart: false,
+    });
+    expect(
+      jebMcpTimeoutGuidance("discovery", 60_000, "default").limit,
+    ).toMatchObject({ source: "default", update_mode: "runtime" });
+  });
+
   it("rejects an invalid JEB timeout before constructing its MCP connection", async () => {
     let constructed = false;
     const provider = createJebAnalysisProvider(
       { REA_JEB_MCP_TIMEOUT_MS: "0" },
       () => {
         constructed = true;
-        return scriptedConnection({});
+        return scriptedConnection({
+          get_client_information: { success: true, version: "5.48.0" },
+        });
       },
     );
     expect(constructed).toBe(false);
@@ -118,6 +155,16 @@ describe("JebProvider live availability", () => {
       status: "unavailable",
       diagnostics: { setting: "REA_JEB_MCP_TIMEOUT_MS" },
     });
+    const accepted = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "jeb.mcp_timeout_ms": 1500 } },
+      () =>
+        provider.execute({
+          operation: "inspect_jeb_client",
+          input: {},
+        }),
+    );
+    expect(constructed).toBe(true);
+    expect(accepted.ok).toBe(true);
     await provider.close();
   });
 
@@ -505,6 +552,8 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     async close() {},
     async call(_name, _args, signal) {
       entered();
+      if (signal!.aborted)
+        throw new AnalysisCancelledError(_name, { cause: signal!.reason });
       await new Promise<void>((_resolve, reject) =>
         signal!.addEventListener(
           "abort",
@@ -522,13 +571,22 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     { operation: "inspect_jeb_client", input: {} },
     { signal: controller.signal },
   );
-  await started;
-  controller.abort();
-  const result = await pending;
-  expect(result.ok).toBe(false);
-  if (!result.ok) {
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(controller.signal.reason);
+  try {
+    await awaitAcknowledgement(started, pending, "JEB MCP call");
+    controller.abort();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(controller.signal.reason);
+    }
+  } finally {
+    controller.abort();
+    try {
+      await pending;
+    } finally {
+      await provider.close();
+    }
   }
 });
 

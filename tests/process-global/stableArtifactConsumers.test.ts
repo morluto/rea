@@ -1,4 +1,6 @@
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
+import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
 import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
@@ -187,7 +189,7 @@ it.each(
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "selected-test",
       "inspect_signal_recording",
       readStableArtifact,
@@ -1013,6 +1015,7 @@ const stableArtifactProviders = [
   ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
+  ["release exposure", () => new ReleaseExposureReader()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
   ["Windows shortcut", () => new WindowsShortcutProvider()],
@@ -1106,6 +1109,8 @@ const inspectFileFailure = (
       inspectPeResourcesInputSchema.parse({ path }),
       options,
     );
+  if (provider instanceof ReleaseExposureReader)
+    return provider.inspect({ path }, options, () => undefined);
   return provider.inspect({ path }, options);
 };
 

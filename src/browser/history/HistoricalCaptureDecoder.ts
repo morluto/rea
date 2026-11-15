@@ -1,14 +1,21 @@
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
   decodeCaptureProtobuf,
   prepareCaptureProtobuf,
 } from "./protobuf/ProtobufCapture.js";
-import { CaptureFormatError } from "./CaptureFormatError.js";
+import {
+  CAPTURE_LIMITS,
+  CaptureFormatError,
+  captureLimitForReply,
+} from "./CaptureFormatError.js";
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
+  protobufCaptureFailure,
   withCaptureReaderCleanup,
 } from "./CaptureFailures.js";
 import {
@@ -16,10 +23,7 @@ import {
   resolveCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
-import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  captureDecoderProcessMemoryLimitBytes,
-} from "./CaptureRelease.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -43,6 +47,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -63,6 +68,10 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -138,7 +147,10 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    const selectedEnvironment = snapshotEnvironment(this.environment);
+    const selectedEnvironment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     const runtimeResources = new ArtifactResourceScope();
     let processLease: AnalysisCleanupLease | undefined;
@@ -212,6 +224,8 @@ export class HistoricalCaptureDecoder {
             input.capture_timeout_ms,
           ),
           diagnosticBytes: 1024 * 1024,
+          // Node adapters declare their V8 heap; the mitmproxy decoder is Python.
+          ...(adapter.heap === undefined ? {} : { runtime: "v8" as const }),
         },
         options?.signal === undefined ? {} : { signal: options.signal },
       );
@@ -243,19 +257,17 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
-        if (reply.reason === "input-limit")
+        const limit = captureLimitForReply(reply.reason);
+        if (limit !== undefined) {
+          const { parameter, expected } = CAPTURE_LIMITS[limit];
+          const budget = webNetworkCaptureBudgetFacts(input, parameter);
           throw new AnalysisInputError(
             OPERATION,
             {
-              diagnostics: {
-                budget: webNetworkCaptureBudgetFacts(
-                  input,
-                  "max_nesting_depth",
-                ),
-              },
+              diagnostics: { budget },
               remediationAction: webNetworkCaptureBudgetRecovery(
                 input,
-                "max_nesting_depth",
+                parameter,
               ),
             },
             [
@@ -263,35 +275,11 @@ export class HistoricalCaptureDecoder {
                 path: ["capture_path", reply.pointer],
                 reason: "out_of_range",
                 message: reply.message,
-                expected: {
-                  maximum_capture_nesting: captureBudgets().depth,
-                },
+                expected: { [expected]: budget.effective_value },
               },
             ],
           );
-        if (reply.reason === "expanded-limit")
-          throw new AnalysisInputError(
-            OPERATION,
-            {
-              diagnostics: {
-                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
-              },
-              remediationAction: webNetworkCaptureBudgetRecovery(
-                input,
-                "max_input_bytes",
-              ),
-            },
-            [
-              {
-                path: ["capture_path", reply.pointer],
-                reason: "out_of_range",
-                message: reply.message,
-                expected: {
-                  maximum_expanded_capture_bytes: captureBudgets().inputBytes,
-                },
-              },
-            ],
-          );
+        }
         if (reply.reason === "resource-limit")
           throw captureMemoryFailure(
             input,
@@ -386,37 +374,15 @@ export class HistoricalCaptureDecoder {
           );
         } catch (cause) {
           const error =
-            cause instanceof CaptureFormatError && cause.reason === "limit"
-              ? new AnalysisResourceConstraintError(
-                  OPERATION,
-                  "capacity",
-                  cause.message,
-                  {
-                    maximum_encoded_capture_bytes: captureBudgets().outputBytes,
-                  },
-                  {
-                    retryable: false,
-                    remediationAction: webNetworkCaptureBudgetRecovery(
-                      input,
-                      "max_reply_bytes",
-                    ),
-                  },
-                )
-              : cause instanceof CaptureFormatError
-                ? new AnalysisInputError(OPERATION, undefined, [
-                    {
-                      path: ["protobuf"],
-                      reason: "invalid_format",
-                      message: cause.message,
-                    },
-                  ])
-                : historicalCaptureFailure(
-                    input,
-                    cause,
-                    phase,
-                    options,
-                    reportedHeap,
-                  );
+            cause instanceof CaptureFormatError
+              ? protobufCaptureFailure(input, cause)
+              : historicalCaptureFailure(
+                  input,
+                  cause,
+                  phase,
+                  options,
+                  reportedHeap,
+                );
           if (safePartialSource) error.retainPartialObservation(result.value);
           throw error;
         }
@@ -456,12 +422,21 @@ export class HistoricalCaptureDecoder {
           lease: processLease,
         });
       }
-      const error = historicalCaptureFailure(
-        input,
-        cause,
-        phase,
-        options,
-        reportedHeap,
+      // Preparation transfers independent helper/descriptor owners. Keep that
+      // typed stage separate from the decoder supervisor lease above: its
+      // historical error already follows the post-launch completion owner.
+      const error = retainProcessInspectionCleanup(
+        processInspectionFailure(cause),
+        historicalCaptureFailure(
+          input,
+          cause,
+          phase,
+          options,
+          reportedHeap,
+          processLease,
+        ),
+        runtimeResources,
+        OPERATION,
       );
       if (
         replyFinalization?.reason === "cancelled" &&
@@ -541,11 +516,7 @@ export class HistoricalCaptureDecoder {
       }
     }
     if (result.ok && options?.signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      result = err(cancelledBy(OPERATION, options.signal));
     if (cleanupFailure !== undefined) {
       const cleanupError = new ProviderCleanupError(
         input.format,
@@ -607,9 +578,7 @@ const nodeMemoryLimitation = (heap: CaptureDecoderHeap): string => {
   const recovery = captureDecoderHeapRecovery(heap);
   if (NODE_CAPTURE_HEAP_ENFORCED)
     return `HAR/SAZ/qlog use a ${String(heap.oldGenerationMiB)} MiB Node old-generation heap (source ${heap.source}). ${recovery}`;
-  const commitLimit = captureDecoderProcessMemoryLimitBytes(
-    heap.oldGenerationMiB,
-  );
+  const commitLimit = javaScriptWorkerMemoryLimitBytes(heap.oldGenerationMiB);
   return commitLimit === null
     ? `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags. ${recovery}`
     : `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags, under a ${String(commitLimit)}-byte Windows Job Object commit limit. ${recovery}`;

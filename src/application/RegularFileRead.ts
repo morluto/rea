@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
@@ -366,9 +367,7 @@ export const readRegularFileTextSnapshot = (
 
 const decodeFileText = (path: string, bytes: Buffer): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return decodeStrictUtf8(bytes, "preserve");
   } catch (cause: unknown) {
     if (!(cause instanceof TypeError)) throw cause;
     throw new InvalidUtf8FileError(path, cause);

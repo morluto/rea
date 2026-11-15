@@ -60,6 +60,23 @@ describe("parseDesktopEntry", () => {
       error: "missing_desktop_entry_group",
     });
   });
+
+  it.each(["\u2028", "\u2029"])(
+    "keeps Unicode separator %j inside string and list values",
+    (separator) => {
+      const parsed = parseDesktopEntry(
+        `[Desktop Entry]\nType=Application\nName=${separator}Notes${separator}\nExec=notes --title "A${separator}B"\nCategories=Utility;A${separator}B;\n`,
+      );
+      expect(parsed).toMatchObject({
+        ok: true,
+        value: {
+          name: `${separator}Notes${separator}`,
+          exec: `notes --title "A${separator}B"`,
+          categories: ["Utility", `A${separator}B`],
+        },
+      });
+    },
+  );
 });
 
 describe("tokenizeDesktopExec", () => {

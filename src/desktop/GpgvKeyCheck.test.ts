@@ -118,9 +118,15 @@ describe("withGpgvKeyCheck cleanup", () => {
           return verified;
         },
       );
-      await expect(result).rejects.toBe(
-        completion === "failed" ? primary : reason,
-      );
+      if (completion === "failed") await expect(result).rejects.toBe(primary);
+      else {
+        const failure = await result.catch((cause: unknown) => cause);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected typed keyring cleanup cancellation");
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cause).toBe(reason);
+      }
       expect(path).toBeDefined();
       await expect(access(path ?? "")).rejects.toMatchObject({
         code: "ENOENT",

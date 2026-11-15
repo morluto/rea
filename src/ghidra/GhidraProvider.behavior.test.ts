@@ -1,3 +1,10 @@
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
+import { bridgeRequestOversizeError } from "../config/bridgeMaxRequestBytes.js";
 import { z } from "zod";
 import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
@@ -9,15 +16,23 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
+  ghidraFunctionSeedRecovery,
+  ghidraNotInProcedureLimitation,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
-import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
+import {
+  ProcessOutputTokenScanner,
+  type ProviderProcessOutputToken,
+} from "../process/ProcessOutputTokenScanner.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
+  AnalysisError,
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
@@ -70,24 +85,18 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import type { GhidraTargetSnapshot } from "./GhidraClient.js";
+import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
-  GHIDRA_ANNOTATIONS_RETAINED,
-  GHIDRA_SESSION_RETAINED,
   ghidraDecompileTimeoutRecovery,
   ghidraMissingProgramGuidance,
   ghidraStartupTimeoutGuidance,
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
-import {
-  GhidraLaunchError,
-  type GhidraHeadlessLauncher,
-} from "./GhidraLauncher.js";
+import { GhidraLaunchError, GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
-import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
@@ -100,12 +109,14 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   createFunctionCoordinateContext,
   functionCoordinateContextsEqual,
 } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { existingGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
@@ -113,7 +124,13 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
+const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
+const GHIDRA_ANNOTATIONS_RETAINED =
+  "The active analysis session and annotations remain available.";
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 afterEach(() => vi.restoreAllMocks());
 const installationHost = (
@@ -160,6 +177,133 @@ const createElfClient = async (ghidra: GhidraProvider) => {
     throw new Error("Expected a bound Ghidra profile");
   return ghidra.createClient(target, resolved.value.profile);
 };
+
+it.each(["mixed-inspection", "held-inspection", "ordinary-launch"] as const)(
+  "preserves public %s failure through a real client",
+  async (kind) => {
+    const root = await mkdtemp(
+      join(tmpdir(), "rea-ghidra-inspection-projection-"),
+    );
+    const path = join(root, "inert.elf");
+    const bytes = elf(2, 1, 62);
+    await writeFile(path, bytes);
+    const held =
+      kind === "held-inspection"
+        ? await failedInspectionDescriptor(root)
+        : undefined;
+    const physical = new Error("physical native identity read failure");
+    const reason = { caller: "stop after physical identity failure" };
+    const observations = new Map([
+      [
+        44,
+        {
+          state: "unavailable" as const,
+          reason: "completed sibling observation",
+        },
+      ],
+    ]);
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [
+        { pid: 42, requestIndex: 0, cause: physical },
+        {
+          pid: 43,
+          requestIndex: 1,
+          cause: new ProcessOwnershipInspectionCancelled(reason),
+        },
+        ...(held === undefined
+          ? []
+          : [{ pid: 45, requestIndex: 2, cause: held.failure }]),
+      ],
+      observations,
+    );
+    const source = kind === "ordinary-launch" ? physical : batch;
+    let attempts = 0;
+    const ghidra = provider(
+      {
+        ...installationHost(),
+        readText: () =>
+          "application.version=12.1.4\napplication.release.name=PUBLIC\napplication.java.min=21\n",
+      },
+      (options) => {
+        if (!(options.launcher instanceof GhidraHeadlessLauncher))
+          throw new Error("Expected the production headless launcher");
+        return new GhidraClient({
+          ...options,
+          launcher: new GhidraHeadlessLauncher({
+            ...options.launcher.options,
+            javaLaunch: async () => ({
+              command: "/must-not-execute",
+              arguments: [],
+              environment: {},
+            }),
+            spawnProcess: async () => {
+              attempts++;
+              throw source;
+            },
+          }),
+        });
+      },
+    );
+    const target: BinaryTarget = {
+      ...executableTarget("elf", "x86_64"),
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected a bound profile");
+    const client = ghidra.createClient(target, resolved.value.profile);
+    try {
+      const result = await client.execute("health", {});
+      if (result.ok) throw new Error("Expected startup failure");
+      expect(attempts).toBe(1);
+      expect(result.error.cleanupIncomplete).toBe(held !== undefined);
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe(
+        held === undefined ? "execution_failure" : "cleanup_incomplete",
+      );
+      if (kind !== "ordinary-launch") {
+        const primary = primaryAnalysisError(result.error);
+        expect(primary).toMatchObject({ operation: "health" });
+        const [cancelled, ...rest] = primary.secondaryFailures;
+        expect(rest).toEqual([]);
+        if (cancelled === undefined || !("inspectionFailure" in cancelled))
+          throw new Error("Lost normalized mixed cancellation");
+        expect(cancelled.cause).toBe(reason);
+        expect(cancelled.inspectionFailure).toBe(batch);
+        expect(batch.observations).toBe(observations);
+        if (!(primary.cause instanceof AnalysisError))
+          throw new Error("Missing normalized physical primary");
+        expect(primary.cause.cause).toBe(batch);
+        held?.allow();
+        const closed = await client.close();
+        if (!closed.ok) throw closed.error;
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "execution_failure",
+          details: {
+            secondary_failures: [
+              expect.objectContaining({ code: "cancelled" }),
+            ],
+          },
+        });
+        expect(primaryAnalysisError(result.error).secondaryFailures[0]).toBe(
+          cancelled,
+        );
+      } else {
+        expect(result.error.secondaryFailures).toEqual([]);
+        expect(result.error.cause).toBeInstanceOf(GhidraSessionError);
+        expect(projected.details?.diagnostics).toMatchObject({
+          failure_kind: "start",
+        });
+      }
+    } finally {
+      held?.allow();
+      await client.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it.each(["readiness", "client"] as const)(
   "keeps completed Java prerequisite failure primary across late cancellation in %s",
@@ -473,6 +617,35 @@ describe("Ghidra provider", () => {
   });
 });
 
+describe("Ghidra Xtensa ELF support", () => {
+  it("admits parsed Xtensa targets through profile selection", async () => {
+    const parsed = parseExecutableHeader(elf(1, 1, 94), "x64");
+    if (!parsed.ok) throw new Error("Expected valid Xtensa ELF target");
+    const target: BinaryTarget = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      ...parsed.value,
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "elf",
+          architecture: "xtensa",
+          loader: "auto-from-header",
+          language_id: "auto-from-header",
+          compiler_spec_id: "auto-default",
+        },
+      },
+    });
+  });
+});
+
 describe("Ghidra raw-binary profile", () => {
   it("admits raw 6502 on Windows and binds its 16-bit language without mutation authority", async () => {
     const ghidra = provider(installationHost("win32"));
@@ -605,6 +778,7 @@ describe("Ghidra Mach-O slice support", () => {
         "riscv",
         "powerpc",
         "hexagon",
+        "xtensa",
         "6502",
         "m68k",
       ]),
@@ -721,6 +895,48 @@ describe("Ghidra platform support", () => {
     }
   });
 
+  it("versions loader relocation semantics by database-mutation authority", async () => {
+    const semantics = async (platform: NodeJS.Platform) => {
+      const resolved = await provider(
+        installationHost(platform),
+      ).resolveAnalysisProfile(peTarget("x86_64"));
+      if (!resolved.ok) throw resolved.error;
+      return resolved.value.profile?.parameters.loader_relocation_semantics;
+    };
+    // Windows P0 cannot mark blocks volatile, so its snapshots must not replay
+    // as volatile-protected pseudocode.
+    expect(await semantics("win32")).toBe(
+      "read-only-relocation-limitations-v1",
+    );
+    expect(await semantics("linux")).toBe(
+      "volatile-unapplied-relocation-blocks-v1",
+    );
+    // A caller's existing project is read-only too, so its saved results must
+    // not match a profile that predates the relocation limitation.
+    expect(
+      existingGhidraAnalysisProfile(
+        peTarget("x86_64"),
+        { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        { project_name: "fixture" },
+      ).parameters.loader_relocation_semantics,
+    ).toBe("read-only-relocation-limitations-v1");
+  });
+
+  it("keeps Windows annotation mutation unavailable independently of native controls", () => {
+    const ghidra = provider(installationHost("win32"));
+    expect(
+      ghidra
+        .capabilities()
+        .find(({ operation }) => operation === "annotate_native_function"),
+    ).toMatchObject({
+      available: false,
+      reason: "Windows Ghidra P0 does not admit database mutation.",
+      availabilityCode: "unsupported_host",
+    });
+  });
+});
+
+describe("Ghidra PE analysis profile identity", () => {
   it("commits the PE role and managed classification to profile identity", async () => {
     const ghidra = provider(installationHost("win32"));
     const application = peTarget("x86_64");
@@ -742,9 +958,10 @@ describe("Ghidra platform support", () => {
         executable_role: target.executableRole,
         managed: target.managed,
         native_aot_metadata: {
-          contract_revision: "rtr-9.1-x64-pe-read-only-v10",
+          contract_revision: "rtr-9.1-x64-pe-read-only-v11",
           source_bytes: 128 * 1024 * 1024,
-          work_units: 64 * 1024 * 1024,
+          base_work_units: 64 * 1024 * 1024,
+          work_units_per_source_byte: 8,
           working_memory_bytes: 64 * 1024 * 1024,
           report_bytes: 4 * 1024 * 1024,
         },
@@ -760,19 +977,6 @@ describe("Ghidra platform support", () => {
     expect(nonPe.value.profile.parameters).not.toHaveProperty(
       "native_aot_metadata",
     );
-  });
-
-  it("keeps Windows annotation mutation unavailable independently of native controls", () => {
-    const ghidra = provider(installationHost("win32"));
-    expect(
-      ghidra
-        .capabilities()
-        .find(({ operation }) => operation === "annotate_native_function"),
-    ).toMatchObject({
-      available: false,
-      reason: "Windows Ghidra P0 does not admit database mutation.",
-      availabilityCode: "unsupported_host",
-    });
   });
 });
 
@@ -1321,6 +1525,7 @@ describe("Ghidra client projection", () => {
       call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
       native_value_flow_projection: "accepted-runtime-budgets-v1",
+      loader_relocation_semantics: "volatile-unapplied-relocation-blocks-v1",
     });
 
     const result = await ghidra
@@ -1343,15 +1548,7 @@ describe("Ghidra client projection", () => {
       {
         operation: "list_procedures",
         input: { document: null },
-        options: {
-          decompileTimeoutSeconds: null,
-          decompileMaxPayloadMiB: null,
-          valueFlowLimits: {
-            max_operations: 3000,
-            max_inputs_per_operation: 64,
-            max_edges: 12000,
-          },
-        },
+        options: {},
       },
     ]);
     expect(result).toMatchObject({
@@ -1550,6 +1747,13 @@ describe("Ghidra procedure lookup projection", () => {
       qualification: "does not prove",
     },
     {
+      code: "procedure_not_found",
+      selector: "0x14b0c",
+      message: "No procedure exists at the requested address: 0x14b0c",
+      remedy: "list_procedures",
+      qualification: "does not prove",
+    },
+    {
       code: "file_offset_unmapped",
       selector: "file-offset:0xdeadbeef",
       message: "File offset 0xdeadbeef has no loaded source mapping",
@@ -1573,7 +1777,7 @@ describe("Ghidra procedure lookup projection", () => {
       qualification: "does not select one automatically",
     },
   ])(
-    "reports $code without schema repair",
+    "reports $code for $selector without schema repair",
     async ({ code, selector, message, remedy, qualification }) => {
       const client = await createElfClient(remoteFailure(code, message));
       try {
@@ -1601,6 +1805,10 @@ describe("Ghidra procedure lookup projection", () => {
         expect(projected.remediation.action).not.toContain(
           "REA_GHIDRA_PROJECT_PATH",
         );
+        // Code that auto-analysis never reached has a declared-entry recovery.
+        expect(
+          projected.remediation.action.includes("REA_GHIDRA_SEED_FILE"),
+        ).toBe(code === "procedure_not_found");
       } finally {
         await client.close();
       }
@@ -1657,6 +1865,10 @@ describe("Ghidra procedure lookup projection", () => {
         );
         expect(projected.remediation.action).toContain(
           "will not include the selected project's annotations or other edits",
+        );
+        // Seeds apply only to that fresh import, never to the selected project.
+        expect(projected.remediation.action).toContain(
+          ghidraFunctionSeedRecovery("existing-project"),
         );
       } finally {
         await client.close();
@@ -1765,6 +1977,111 @@ describe("Ghidra file-offset outcome projection", () => {
   );
 });
 
+describe("Ghidra byte-search cursor projection", () => {
+  const CURSOR_MISMATCH = "byte_search_cursor_mismatch";
+  const MESSAGE =
+    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.";
+
+  it("reports a cursor binding mismatch without schema repair", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              MESSAGE,
+              { remote_code: CURSOR_MISMATCH },
+              { remoteCode: CURSOR_MISMATCH },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("search_bytes", {
+      pattern: "00",
+      cursor: "other-context",
+    });
+    if (result.ok) throw new Error("Expected a cursor binding refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      message: MESSAGE,
+      remediation: {
+        action: expect.stringContaining("without the cursor"),
+      },
+      details: {
+        operation: "search_bytes",
+        issues: [
+          {
+            path: ["cursor"],
+            reason: "invalid_value",
+            message: MESSAGE,
+            observed: {
+              differing_component: "unknown",
+              bound_to: [
+                "target",
+                "analysis_profile",
+                "pattern",
+                "mask",
+                "bounds",
+                "document",
+              ],
+            },
+          },
+        ],
+        diagnostics: { remote_code: CURSOR_MISMATCH },
+      },
+    });
+    expect(projected).not.toHaveProperty("recovery");
+    expect(projected.message).toContain("analysis profile");
+    expect(projected.message).toContain("project");
+    expect(projected.message).not.toContain("Analysis input is invalid");
+    expect(projected.remediation.action).toContain("pattern");
+    expect(projected.remediation.action).not.toContain("schema");
+    expect(projected.remediation.action).not.toContain("tools/list");
+    const bridge = await readFile(
+      new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+      "utf8",
+    );
+    expect(bridge).toContain(`"${CURSOR_MISMATCH}"`);
+    await client.close();
+  });
+
+  it("keeps schema recovery for an ordinary search_bytes refusal", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              "Fixture bridge rejected the request",
+              { remote_code: "invalid_request" },
+              { remoteCode: "invalid_request" },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("search_bytes", { pattern: "00" });
+    if (result.ok) throw new Error("Expected an input refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      message: "Analysis input is invalid. Check the arguments and try again.",
+      recovery: { kind: "inspect_input_contract", operation: "search_bytes" },
+      details: {
+        issues: [{ path: [], message: "Fixture bridge rejected the request" }],
+      },
+    });
+    await client.close();
+  });
+});
+
 describe("Ghidra decompiler failure projection", () => {
   it("reports a procedure decompiler failure without blaming the environment", async () => {
     const code = "decompile_failed";
@@ -1868,7 +2185,8 @@ describe("Ghidra decompiler failure projection", () => {
             applies_at: "next_operation",
             agent_editable: true,
             scope: "rea-runtime",
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
         },
       });
@@ -1883,6 +2201,36 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).not.toContain("rea doctor");
     }
   });
+});
+
+it("preserves a bridge request limit when reattributing a Ghidra session failure", async () => {
+  const refusal = bridgeRequestOversizeError(
+    "procedure_pseudo_code",
+    { maximumBytes: 8192, source: "runtime" },
+    9000,
+    "Ghidra",
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () =>
+      Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "protocol",
+            "Bridge request refused",
+            {},
+            { cause: refusal },
+          ),
+        ),
+      ),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const client = await createElfClient(ghidra);
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected bridge limit refusal");
+  expect(result.error.limit).toEqual(refusal.limit);
 });
 
 describe("Ghidra decompile deadline for a finished invocation", () => {
@@ -1983,7 +2331,8 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         minimum: 1,
         maximum: 2_147_483,
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       };
       expect(invocation.details?.limit).toEqual({
         ...enforced,
@@ -3852,6 +4201,61 @@ describe("Ghidra empty instruction reference facets", () => {
   });
 });
 
+describe("Ghidra containing-procedure absence", () => {
+  const containing = async (result: JsonValue) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok(result)),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("resolve_containing_procedure", {
+        address: "0x401000",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.result).toEqual(result);
+      return execution.value.limitations;
+    } finally {
+      await client.close();
+    }
+  };
+
+  it("names the declared-entry recovery when the address is not in a Ghidra function", async () => {
+    const limitations = await containing({
+      query_address: "0x401000",
+      found: false,
+      procedure: null,
+      reason: "not_in_procedure",
+    });
+    expect(
+      limitations.filter((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toHaveLength(1);
+    expect(limitations).toContain(
+      ghidraNotInProcedureLimitation("fresh-import"),
+    );
+  });
+
+  it.each([
+    {
+      query_address: "0x401000",
+      found: false,
+      procedure: null,
+      reason: "outside_segments",
+    },
+    {
+      query_address: "0x401000",
+      found: true,
+      procedure: ghidraFunctionIdentity(),
+    },
+  ])("adds no seed recovery to $reason$found", async (result) => {
+    const limitations = await containing(result);
+    expect(
+      limitations.some((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra PDB coverage", () => {
   it.each([
     { name: "missing bridge report", pdb: undefined, warns: true },
@@ -4360,12 +4764,49 @@ it.each([
   },
 );
 
+it("keeps a refused setting's configuration error through the provider boundary", async () => {
+  const refusal = new ConfigurationError("invalid bridge reply ceiling", {
+    settings: [
+      {
+        setting: "REA_BRIDGE_MAX_REPLY_BYTES",
+        constraint: "a positive decimal integer",
+      },
+    ],
+  });
+  const failure = new GhidraSessionError(
+    "admission",
+    refusal.message,
+    {},
+    { cause: refusal },
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => err(failure),
+    callTool: async () => err(failure),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected profile");
+
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+
+  expect(result.ok ? undefined : result.error).toBe(refusal);
+  expect(projectAnalysisError(refusal).code).toBe("configuration_invalid");
+});
+
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {
     setting: "ghidra.startup_timeout_ms",
     effective_value: 250,
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   };
   const invocationLimit = {
     ...startupLimit,
@@ -4422,6 +4863,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
@@ -4472,76 +4929,96 @@ describe("Ghidra startup deadline for a finished invocation", () => {
   });
 });
 
-describe("Ghidra missing project program", () => {
-  const startFailure = async (
-    stdout: string,
-    environment: Readonly<Record<string, string>> = {},
-    stderr = "",
-  ) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
-    onTestFinished(async () => {
-      await rm(root, { recursive: true, force: true });
-    });
-    await mkdir(join(root, "selected.rep"));
-    await writeFile(join(root, "selected.gpr"), "marker");
-    const failure = new GhidraSessionError(
-      "start",
-      "Ghidra exited before the bridge was ready",
-      {
-        failure_kind: "start",
-        exit_code: 1,
-        failure_output: failureOutput(stdout, stderr),
-      },
-    );
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: async () => err(failure),
-        callTool: async () => err(failure),
-        close: async () => ok(null),
-      }),
-      {
-        REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
-        ...environment,
-      },
-    );
-    onTestFinished(async () => {
-      await ghidra.closeOwnedResources();
-    });
-    const target = executableTarget("elf", "x86_64");
-    const profile = await ghidra.resolveAnalysisProfile(target);
-    if (!profile.ok || profile.value.profile === null)
-      throw new Error("Expected Ghidra analysis profile");
-    const result = await ghidra
-      .createClient(target, profile.value.profile)
-      .execute("list_documents", {});
-    if (result.ok) throw new Error("Expected a Ghidra start failure");
-    return projectAnalysisError(result.error);
-  };
-  const abort = (name: string) =>
-    `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
-
-  const expectMissingProgram = (
-    projected: Awaited<ReturnType<typeof startFailure>>,
-    programName: string,
-    configured: boolean,
-  ) => {
-    const guidance = ghidraMissingProgramGuidance(programName, configured);
-    expect(projected).toMatchObject({
-      code: "configuration_invalid",
-      details: {
-        settings: [
-          {
-            setting: "REA_GHIDRA_PROGRAM_NAME",
-            constraint: guidance.constraint,
+const startFailure = async (
+  stdout: string,
+  environment: Readonly<Record<string, string>> = {},
+  stderr = "",
+) => {
+  const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
+  onTestFinished(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, "selected.rep"));
+  await writeFile(join(root, "selected.gpr"), "marker");
+  const failure = new GhidraSessionError(
+    "start",
+    "Ghidra exited before the bridge was ready",
+    {
+      failure_kind: "start",
+      exit_code: 1,
+      failure_output: ghidraFailureOutput(
+        {
+          snapshot: {
+            stdout: {
+              text: stdout,
+              bytes: Buffer.byteLength(stdout),
+              observedBytes: Buffer.byteLength(stdout),
+            },
+            stderr: {
+              text: stderr,
+              bytes: Buffer.byteLength(stderr),
+              observedBytes: Buffer.byteLength(stderr),
+            },
+            exitCode: 1,
+            signal: null,
           },
-        ],
-      },
-    });
-    expect(projected.remediation.action).toBe(guidance.remediationAction);
-    expect(projected.message).toContain(JSON.stringify(programName));
-  };
+          complete: true,
+        },
+        undefined,
+        false,
+      ),
+    },
+  );
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: async () => err(failure),
+      callTool: async () => err(failure),
+      close: async () => ok(null),
+    }),
+    {
+      REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+      ...environment,
+    },
+  );
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected Ghidra analysis profile");
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+  if (result.ok) throw new Error("Expected a Ghidra start failure");
+  return projectAnalysisError(result.error);
+};
+const abort = (name: string) =>
+  `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
 
+const expectMissingProgram = (
+  projected: Awaited<ReturnType<typeof startFailure>>,
+  programName: string,
+  configured: boolean,
+) => {
+  const guidance = ghidraMissingProgramGuidance(programName, configured);
+  expect(projected).toMatchObject({
+    code: "configuration_invalid",
+    details: {
+      settings: [
+        {
+          setting: "REA_GHIDRA_PROGRAM_NAME",
+          constraint: guidance.constraint,
+        },
+      ],
+    },
+  });
+  expect(projected.remediation.action).toBe(guidance.remediationAction);
+  expect(projected.message).toContain(JSON.stringify(programName));
+};
+
+describe("Ghidra missing project program", () => {
   it("reports the program name defaulted from the target as REA_GHIDRA_PROGRAM_NAME", async () => {
     expectMissingProgram(
       await startFailure(abort("fixture")),
@@ -4555,6 +5032,16 @@ describe("Ghidra missing project program", () => {
       REA_GHIDRA_PROGRAM_NAME: "program_gamma",
     });
     expectMissingProgram(projected, "program_gamma", true);
+  });
+
+  it("keeps the missing-program diagnosis when later output exceeds the excerpt", async () => {
+    expectMissingProgram(
+      await startFailure(
+        `${abort("fixture")}\n${"later output\n".repeat(7000)}`,
+      ),
+      "fixture",
+      false,
+    );
   });
 
   it("keeps the generic start failure when Ghidra names a different program", async () => {
@@ -4587,6 +5074,17 @@ describe("Ghidra missing project program", () => {
     );
   });
 
+  it("keeps the java_home.save denial when later output exceeds the excerpt", async () => {
+    const path = "C:\\temp\\java_home.save";
+    const projected = await startFailure(
+      "",
+      {},
+      `java.io.FileNotFoundException: ${path} (Access is denied)\n${"later output\n".repeat(7000)}`,
+    );
+    expect(projected.message).toContain(path);
+    expect(projected.message).toContain("Win32 error 5");
+  });
+
   it("keeps the generic start failure for other denied paths", async () => {
     const projected = await startFailure(
       "",
@@ -4600,7 +5098,7 @@ describe("Ghidra missing project program", () => {
 });
 
 describe("Ghidra changed project", () => {
-  const launchFailure = async (cause: unknown) => {
+  const launchFailure = async (cause: unknown, viaLauncher = true) => {
     const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
     onTestFinished(async () => {
       await rm(root, { recursive: true, force: true });
@@ -4612,9 +5110,9 @@ describe("Ghidra changed project", () => {
       "Ghidra headless launch failed",
       { failure_kind: "start" },
       {
-        cause: new GhidraLaunchError("Ghidra headless launch failed", {
-          cause,
-        }),
+        cause: viaLauncher
+          ? new GhidraLaunchError("Ghidra headless launch failed", { cause })
+          : cause,
       },
     );
     const ghidra = provider(
@@ -4646,9 +5144,12 @@ describe("Ghidra changed project", () => {
   it("projects a source project changed before its verified copy as artifact_changed", async () => {
     const path = "/projects/selected";
     const reason = GHIDRA_PROJECT_PROFILE_MISMATCH;
-    const { error, projected } = await launchFailure(
-      new AnalysisArtifactChangedError("open_binary", path, reason),
+    const physical = new AnalysisArtifactChangedError(
+      "open_binary",
+      path,
+      reason,
     );
+    const { error, projected } = await launchFailure(physical);
     expect(projected).toMatchObject({
       code: "artifact_changed",
       details: {
@@ -4663,8 +5164,30 @@ describe("Ghidra changed project", () => {
         new AnalysisArtifactChangedError("list_documents", path, reason),
       ).remediation.action,
     );
-    expect(error.cause).toBeInstanceOf(GhidraSessionError);
+    expect(error.cause).toBe(physical);
   });
+
+  it.each([true, false])(
+    "keeps the integrity check a changed artifact named (via launcher: %s)",
+    async (viaLauncher) => {
+      const { projected } = await launchFailure(
+        new AnalysisArtifactChangedError(
+          "open_binary",
+          "/projects/selected",
+          GHIDRA_PROJECT_PROFILE_MISMATCH,
+          { integrityCheck: "container-identity" },
+        ),
+        viaLauncher,
+      );
+      expect(projected).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          operation: "list_documents",
+          integrity_check: "container-identity",
+        },
+      });
+    },
+  );
 
   it("keeps the generic start failure for other launch failures", async () => {
     const { projected } = await launchFailure(new Error("spawn failed"));
@@ -5554,6 +6077,14 @@ const output = (text: string) => ({
   bytes: Buffer.byteLength(text),
   retained_bytes: Buffer.byteLength(text),
 });
+/** The memory area the supervisor's JVM runtime parses from a marker. */
+const runtimeExhaustionFacts = (
+  stream: "stdout" | "stderr",
+  marker: ProviderProcessOutputToken,
+) => {
+  const { area } = runtimeExhaustion("jvm", stream, marker);
+  return area === undefined ? {} : { area };
+};
 const failureOutput = (stdout = "", stderr = "") => ({
   stdout: output(stdout),
   stderr: output(stderr),
@@ -5572,6 +6103,7 @@ const failureOutput = (stdout = "", stderr = "") => ({
             offset: observed.offset,
             line: observed.line,
             truncated: observed.truncated,
+            ...runtimeExhaustionFacts(stream, observed),
           },
         ];
   }),
@@ -5810,6 +6342,7 @@ describe("Ghidra OOME beyond the retention budget", () => {
             stream: "stderr",
             offset: 9_000_000,
             line: "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space",
+            area: "heap",
           },
         ],
       },
@@ -6159,6 +6692,14 @@ it("refuses a changed installation before creating a target-bound native client"
         current_installation: { provider_version: "12.1.5" },
       },
     });
+    // The actionable reason reaches the caller, not only details.
+    const projected = projectAnalysisError(result.error);
+    expect(projected.message).toContain(
+      "installation version differs from the selected analysis profile",
+    );
+    expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).toContain("close_binary");
+    expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);
   } finally {
@@ -6344,6 +6885,7 @@ it.each([false, true])(
                   stream: "stderr",
                   offset: 0,
                   line: "java.lang.OutOfMemoryError: Metaspace",
+                  area: "metaspace",
                 },
               ]
             : []),
@@ -6418,7 +6960,7 @@ it("session-observation failure clears only its resolved cleanup dependency afte
       close: async () => {
         closes++;
         if (closes === 1) return err(retained);
-        retained.resolveCleanup();
+        releaseOwnedCleanup(retained);
         return ok(null);
       },
     }),
@@ -6990,6 +7532,120 @@ it.each(namingReplyCases)(
       expect(result.value.rawResult).toMatchObject({
         failures: reply.failures,
       });
+    } finally {
+      await client.close();
+      await ghidra.closeOwnedResources();
+    }
+  },
+);
+
+it.each([
+  [
+    "ghidra.decompile_timeout_seconds",
+    "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+    null,
+  ],
+  [
+    "ghidra.decompile_max_payload_mib",
+    "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
+    null,
+  ],
+  [
+    "ghidra.value_flow_max_operations",
+    "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
+    100,
+  ],
+  [
+    "ghidra.value_flow_max_inputs_per_operation",
+    "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
+    100,
+  ],
+  ["ghidra.value_flow_max_edges", "REA_GHIDRA_VALUE_FLOW_MAX_EDGES", 100],
+] as const)(
+  "admits unrelated Ghidra work with invalid %s, and rejects only its owning operation",
+  async (setting, environmentName, override) => {
+    const environment = {
+      GHIDRA_INSTALL_DIR: INSTALL,
+      [environmentName]: "invalid",
+    };
+    const parsed = parseConfig(environment);
+    if (!parsed.ok) throw parsed.error;
+    const settings = new AnalysisSettings(environment);
+    let created = 0;
+    const called: string[] = [];
+    const ghidra = new GhidraProvider(
+      runtimeAnalysisConfig(parsed.value, settings.read),
+      silentLogger,
+      {},
+      installationHost(),
+      (options) => {
+        created += 1;
+        return {
+          start: async () => {
+            const info = sessionInfo();
+            return ok({
+              ...info,
+              profile_digest: options.profileDigest,
+              target: { ...info.target, sha256: options.targetSha256 },
+            });
+          },
+          callTool: async (operation) => {
+            called.push(operation);
+            return operation === "address_name"
+              ? ok("fixture")
+              : err(new GhidraSessionError("protocol", "fixture reached"));
+          },
+          close: async () => ok(null),
+        };
+      },
+    );
+    const target = executableTarget("elf", "x86_64");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected bound Ghidra profile");
+    const client = ghidra.createClient(target, resolved.value.profile);
+    const analyze = () =>
+      settings.run(() =>
+        client.execute("analyze_function", { procedure: "0x1000" }),
+      );
+    try {
+      expect(
+        await settings.run(() => client.execute("health", {})),
+      ).toMatchObject({ ok: true });
+      expect(created).toBe(1);
+      expect(
+        await settings.run(() =>
+          client.execute("address_name", { address: "0x1000" }),
+        ),
+      ).toMatchObject({ ok: true });
+      const refused = await analyze();
+      expect(refused).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ConfigurationError",
+          settings: [expect.objectContaining({ setting: environmentName })],
+        },
+      });
+      expect(called).toEqual(["address_name"]);
+      expect(
+        settings.update({
+          changes: [{ setting, action: "set", value: override }],
+        }).ok,
+      ).toBe(true);
+      const accepted = await analyze();
+      expect(accepted).not.toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
+      expect(called).toEqual(["address_name", "analyze_function"]);
+      expect(
+        settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+      ).toBe(true);
+      expect(await analyze()).toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
+      expect(called).toEqual(["address_name", "analyze_function"]);
     } finally {
       await client.close();
       await ghidra.closeOwnedResources();

@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -25,6 +26,8 @@ import type {
   ReferenceSourceRead,
 } from "../reference/ReferenceSourceReaderTypes.js";
 import { typescriptEmittedSourceCandidates } from "./TypeScriptEmittedSourceCandidates.js";
+import { appendAll } from "../domain/appendAll.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 export interface ParsedReferenceSourceEntries {
   readonly entries: HistoricalSourceGraphInput["entries"];
@@ -34,7 +37,7 @@ export interface ParsedReferenceSourceEntries {
 }
 
 /** Preserve the observed reader failure and add entry-specific recovery guidance. */
-export const projectReferenceSourceEntryFailure = (
+const projectReferenceSourceEntryFailure = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
 ): string => `${entry.message} ${entryRecoveryGuidance(entry)}`;
 
@@ -151,7 +154,8 @@ const readPackageMetadata = (
     }
     try {
       const manifest: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes),
+        // npm and Node both accept a BOM-signed package.json.
+        decodeStrictUtf8(entry.bytes, "strip-signature"),
       );
       if (
         typeof manifest !== "object" ||
@@ -245,6 +249,7 @@ interface SpecifierContext {
   readonly packages: ReadonlyMap<string, PackageMetadata>;
   readonly packageManifestPathLookup: ReferenceSourcePathLookup;
   readonly unobservedPath: (path: string) => boolean;
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
 }
 
 /** Earlier unobserved candidates must not be treated as absent. */
@@ -553,6 +558,7 @@ const appendFile = (
           entry.bytes,
           language,
           packageTypeForFile(entry.path, context),
+          context.memberMutationAllowance,
         );
   output.entries.push({
     path: entry.path,
@@ -565,7 +571,7 @@ const appendFile = (
     limitations: [...(parsed?.limitations ?? [])],
   });
   if (parsed === undefined) return;
-  output.limitations.push(...parsed.limitations);
+  appendAll(output.limitations, parsed.limitations);
   for (const relationship of parsed.relationships) {
     const { resolutionStrategy, resolutionBasePath, ...graphRelationship } =
       relationship;
@@ -599,7 +605,7 @@ const appendFile = (
       resolution: resolved.resolution,
     });
   }
-  output.parseFailures.push(...parsed.parse_failures);
+  appendAll(output.parseFailures, parsed.parse_failures);
 };
 
 const appendReadEntry = (
@@ -644,6 +650,7 @@ export const parseReferenceSourceEntries = (
   read: ReferenceSourceRead,
   exclusions: HistoricalSourceGraphInput["exclusions"],
   signal?: AbortSignal,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ParsedReferenceSourceEntries => {
   const output: ParsedReferenceSourceEntries = {
     entries: [],
@@ -670,6 +677,9 @@ export const parseReferenceSourceEntries = (
     unobservedPath,
     packages: packageInventory.packages,
     packageManifestPathLookup: packageInventory.pathLookup,
+    ...(memberMutationAllowance === undefined
+      ? {}
+      : { memberMutationAllowance }),
   };
   for (const entry of read.entries) {
     if (signal?.aborted === true) break;

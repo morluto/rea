@@ -1,12 +1,23 @@
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
 import {
+  createPlistDuplicateKeyCollector,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
+import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
+import type { ParsedPropertyList } from "../../domain/propertyListKeys.js";
+import {
+  binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   type BinaryPlistScalarMetadata,
 } from "./PlistScalars.js";
-import type { PlistDecodePreflight } from "./PropertyListDecodeBudget.js";
+import {
+  preflightPropertyListDecode,
+  type PlistDecodePreflight,
+} from "./PropertyListDecodeBudget.js";
 
 /** Build one array of source scalar references; upstream never constructs a dictionary. */
 const scalarArrayInput = (
@@ -17,7 +28,7 @@ const scalarArrayInput = (
   // belong to the compatible decoder copy, not the original source plan.
   const compatibleLayoutResult = readBinaryPlistLayout(bytes);
   if (!compatibleLayoutResult.ok)
-    throw new RangeError("binary plist trailer is truncated");
+    throw invariantViolation("binary plist decoder copy lost its trailer");
   const compatibleLayout = compatibleLayoutResult.value;
   const referenceWidth = compatibleLayout.referenceWidth;
   const objectCount = Number(compatibleLayout.objectCount);
@@ -69,6 +80,34 @@ const scalarOccurrence = (
   return value;
 };
 
+/**
+ * Keys each stored dictionary declares more than once. The decoded value
+ * keeps one property per key, the last, so this reads the planned source keys.
+ */
+export const binaryPlistDuplicateKeys = (
+  plan: PlistDecodePreflight,
+): PlistDuplicateKeys => {
+  const duplicates = createPlistDuplicateKeyCollector();
+  for (const container of plan.binaryValuePlan?.containers ?? [])
+    if (container.kind === "dictionary" && container.keys !== undefined)
+      duplicates.dictionary(container.keys);
+  return duplicates.result();
+};
+
+/**
+ * A binary plist decoded with the source facts an XML or OpenStep decode
+ * carries: number literals and the keys a dictionary repeats.
+ */
+export const decodeBinaryPropertyList = (
+  bytes: Buffer,
+  plan: PlistDecodePreflight,
+  metadata: BinaryPlistScalarMetadata = scanBinaryPlistScalars(bytes, plan),
+): ParsedPropertyList => ({
+  value: decodeBinaryPlistValue(bytes, plan, metadata),
+  numberLiterals: metadata.literals,
+  duplicateKeys: binaryPlistDuplicateKeys(plan),
+});
+
 /** Decode validated source containers without losing dictionary keys or alias occurrence identity. */
 export const decodeBinaryPlistValue = (
   bytes: Buffer,
@@ -77,7 +116,7 @@ export const decodeBinaryPlistValue = (
 ): unknown => {
   const source = plan.binaryValuePlan;
   if (source === undefined)
-    throw new TypeError("Binary plist source plan is missing");
+    throw invariantViolation("Binary plist source plan is missing");
   const compatible = decodeBinaryPlistScalars(bytes, metadata, plan);
   const scalars = parseBinary(
     scalarArrayInput(
@@ -102,7 +141,7 @@ export const decodeBinaryPlistValue = (
     if (container === undefined) {
       const index = scalarIndex.get(entry.object);
       if (index === undefined)
-        throw new TypeError("Binary plist scalar source is missing");
+        throw invariantViolation("Binary plist scalar source is missing");
       value = scalarOccurrence(
         scalars[index],
         source.scalars[index]!.uid,
@@ -127,4 +166,98 @@ export const decodeBinaryPlistValue = (
     });
   }
   return root.value;
+};
+
+/** The payload of one stored string or data object, or null for any other type. */
+const storedPlistPayload = (
+  bytes: Buffer,
+  offset: number,
+  objectEnd: number,
+  referenceWidth: number,
+):
+  | { readonly type: number; readonly payload: Buffer }
+  | "unreadable"
+  | null => {
+  const marker = bytes[offset];
+  if (marker === undefined) return "unreadable";
+  const type = marker >> 4;
+  if (type !== 4 && type !== 5 && type !== 6 && type !== 7) return null;
+  const end = binaryPlistObjectEnd(bytes, offset, objectEnd, referenceWidth);
+  if (end === undefined) return "unreadable";
+  const start =
+    (marker & 0x0f) === 0x0f
+      ? offset + 2 + (1 << (bytes[offset + 1]! & 0x0f))
+      : offset + 1;
+  return { type, payload: bytes.subarray(start, end) };
+};
+
+/** The text a data payload holds, honoring a byte order mark; null when no reader scans it. */
+const storedDataText = (payload: Buffer): string | null => {
+  const encoding = byteOrderMarkEncoding(payload);
+  if (encoding === "utf-32") return null;
+  return encoding === null
+    ? payload.toString("utf8")
+    : new TextDecoder(encoding).decode(payload);
+};
+
+/**
+ * Decode a payload `storedPlistPayload` found; call only once it fits the
+ * budget. Null when its encoding cannot be scanned.
+ */
+const storedPlistText = (type: number, payload: Buffer): string | null =>
+  type === 5
+    ? payload.toString("latin1")
+    : type === 6
+      ? Buffer.from(payload).swap16().toString("utf16le")
+      : type === 4
+        ? storedDataText(payload)
+        : payload.toString("utf8");
+
+/** The text a binary plist stores; `complete` is false when part of it went unread. */
+export interface BinaryPlistText {
+  readonly text: string;
+  readonly complete: boolean;
+}
+
+/**
+ * Decode every string, dictionary key and data payload a binary plist stores.
+ * Its strings are stored per object as ASCII, UTF-16BE or UTF-8, so the raw
+ * bytes do not show them all. This reads the object table rather than the
+ * decoded value, because a value drops objects its root no longer references
+ * and entries a later duplicate key replaced, and those bytes still ship.
+ * A stored object it cannot read, or text past `maxBytes` from table entries
+ * that overlap, leaves the result incomplete and keeps the text already read.
+ * Throws on a plist that cannot be decoded within `maxBytes`.
+ */
+export const decodeBinaryPlistText = (
+  bytes: Buffer,
+  maxBytes: number,
+): BinaryPlistText => {
+  decodeBinaryPlistValue(bytes, preflightPropertyListDecode(bytes, maxBytes));
+  const layout = readBinaryPlistLayout(bytes);
+  if (!layout.ok)
+    throw invariantViolation(
+      "binary plist trailer was not validated by its preflight",
+    );
+  const texts: string[] = [];
+  let decoded = 0;
+  let complete = true;
+  for (const offset of new Set(layout.value.objectOffsets())) {
+    const stored = storedPlistPayload(
+      bytes,
+      Number(offset),
+      layout.value.trailerOffset,
+      layout.value.referenceWidth,
+    );
+    if (stored === null) continue;
+    if (stored === "unreadable" || decoded + stored.payload.length > maxBytes) {
+      complete = false;
+      continue;
+    }
+    decoded += stored.payload.length;
+    const text = storedPlistText(stored.type, stored.payload);
+    if (text === null) complete = false;
+    else texts.push(text);
+  }
+  return { text: texts.join("\n"), complete };
 };

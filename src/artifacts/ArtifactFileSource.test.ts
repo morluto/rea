@@ -2,6 +2,10 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  phaseGate,
+  settledCause,
+} from "../../tests/support/lifecycleHarness.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 
 it("retries an admission cancelled after opening and closing the selected descriptor", async () => {
@@ -103,14 +107,7 @@ it("lets another caller continue when shared admission is cancelled", async () =
   const observed = await open(path, "r");
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const stat = prototype.stat;
-  let entered!: () => void;
-  let resume!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const admission = phaseGate();
   let firstStat = true;
   const spy = vi.spyOn(prototype, "stat").mockImplementation(async function (
     this: FileHandle,
@@ -119,31 +116,25 @@ it("lets another caller continue when shared admission is cancelled", async () =
     const result = await stat.apply(this, args);
     if (firstStat) {
       firstStat = false;
-      entered();
-      await gate;
+      await admission.hold();
     }
     return result;
   });
   try {
     const first = source.read(controller.signal);
-    const rejected = first.then(
-      () => {
-        throw new Error("Expected cancellation");
-      },
-      (cause: unknown) => cause,
-    );
-    await started;
+    const rejected = settledCause(first);
+    await admission.reached(first, "artifact source admission");
     const second = source.read();
     await Promise.resolve();
     controller.abort(reason);
-    resume();
+    admission.release();
     expect(await rejected).toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
     expect((await second).initial.size).toBe(6);
   } finally {
-    resume();
+    admission.release();
     spy.mockRestore();
     await observed.close();
     await source.close();

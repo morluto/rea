@@ -1,6 +1,8 @@
+import { malformedInput } from "../../domain/parseFailure.js";
 import { TraceMap, decodedMappings } from "@jridgewell/trace-mapping";
 import {
-  SourceMapFormatFailure,
+  SOURCE_MAP_FORMAT,
+  sourceMapSectionOverlap,
   type SourceMapLeaf,
 } from "./SourceMapFormat.js";
 
@@ -40,8 +42,7 @@ export const decodeValidatedSourceMapLeaves = (
         const generatedColumn =
           segment[0] + (line === 0 ? leaf.offset.column : 0);
         if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
-          throw new SourceMapFormatFailure(
-            "section-overlap",
+          throw sourceMapSectionOverlap(
             "Embedded source-map mappings overlap the following section boundary.",
           );
         if (
@@ -52,8 +53,8 @@ export const decodeValidatedSourceMapLeaves = (
           (segment.length !== 1 && segment[1] >= leaf.map.sources.length) ||
           (segment.length === 5 && segment[4] >= leaf.map.names.length)
         )
-          throw new SourceMapFormatFailure(
-            "format",
+          throw malformedInput(
+            SOURCE_MAP_FORMAT,
             "Decoded local or absolute position, source index or name index is invalid.",
           );
       }

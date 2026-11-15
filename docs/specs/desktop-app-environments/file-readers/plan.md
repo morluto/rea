@@ -10,8 +10,8 @@
 4. Verifier: `appTaskPython.ts` renders `READER_RUNNER`, `READERS`,
    `_reader_views` and `evaluate_with_readers` only for a task with readers,
    so a task without renders as before.
-5. Application: `readTaskReaderViews` and `readerViewsOfBytes` in
-   `DesktopTaskReaders.ts`; `runReaderHere` in `src/desktop/TaskReaderProcess.ts`;
+5. Application: `readerViewsOfBytes` in `DesktopTaskReaders.ts`;
+   `runReaderHere` in `src/desktop/TaskReaderProcess.ts`;
    the witness runs readers through `AgentEnvComputer.exec`; the export runs
    them on `shippedSeedBytes` and the end's retained content.
 6. Docs: the tasks reference, the witness page, the build skill's recipes for

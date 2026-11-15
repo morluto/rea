@@ -1,3 +1,4 @@
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  regularFileCancellation,
   withOwnedFileHandle,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
@@ -80,6 +82,11 @@ export class DesktopContentStore {
   /** Where retained content is stored. */
   get directory(): string {
     return this.#directory;
+  }
+
+  /** The existing capture cleanup owner also retains failed inspection resources. */
+  get resourceScope(): ArtifactResourceScope {
+    return this.#unclosed;
   }
 
   /**
@@ -208,7 +215,16 @@ export class DesktopContentStore {
       );
       return { kind: "read", bytes };
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Desktop content read cancelled",
+          {
+            cause: cancellation.reason,
+            cancellation,
+          },
+        );
       if (cause instanceof ChangedSinceWalk)
         return { kind: "omitted", reason: "changed_since_walk" };
       // The read finished or failed but its close did not; the owner is kept.

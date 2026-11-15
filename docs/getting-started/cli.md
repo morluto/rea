@@ -531,8 +531,7 @@ is inflated and searched; other payload codecs are unsupported and name
 `external_decompression` as the next probe. See
 [Linux kernel build config](../guides/native/kernel-build-config.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
-3.15 headers are qualified but their marshal layout is not pinned)
+Inspect a CPython 3.7–3.15 `.pyc` header and nested marshal code objects
 without executing bytecode or installing Python:
 
 ```bash
@@ -690,6 +689,12 @@ A snapshot retains successful analysis results for later queries. REA reuses
 an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
+
+Malformed snapshot headers or entries remain integrity failures. The diagnostic
+keeps the first schema issue's location and message, plus the number of further
+issues, rather than replacing it with a constant validation reason. File-selection
+and JSON-syntax failures remain distinct; internal exception objects and stacks
+are not serialized into the public error.
 
 A binary CLI replay reports the current invocation's selected path while leaving
 the saved Evidence and snapshot query unchanged. See
@@ -973,9 +978,10 @@ as `node_modules/`, `dist/`, and `*.log`. Pattern-based exclusions record the
 matched pattern and whether it came from project, default, caller, or sensitive
 path policy. Links into excluded paths retain their internal target metadata;
 the exclusion explains why the target has no inventory entry, and the inventory
-remains partial. Exclusions record `entry_kind` when the importer observed it;
-older saved exclusions without that field have unknown kind. An excluded
-ancestor proves an internal descendant only when its kind is `directory`.
+remains partial. Every exclusion records `entry_kind` (`unknown` when the
+importer could not observe the kind); a saved graph whose exclusion lacks it is
+malformed. An excluded ancestor proves an internal descendant only when its kind
+is `directory`.
 Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to mark selected paths as sensitive; those patterns are
 reported separately as configured-secret exclusions.
@@ -1289,13 +1295,65 @@ backing up client settings or starting registration. Its `--agent` and
 `--command`/`-c` options accept spaced and equals forms. Values must be nonempty; a following flag does not satisfy a spaced option's
 missing value.
 
+Registration command text is a launcher format, not a shell program. ASCII spaces
+separate words; single and double quotes delimit adjacent fragments of a word.
+Backslashes, tabs, variables and shell punctuation are literal data. Quoted empty
+arguments are preserved, including an empty argument after the executable. An
+empty executable, unfinished quote or NUL character fails before registration. For example:
+
+```sh
+rea mcp add --agent cursor --command '"/path with spaces/server" "" --mcp' --json
+```
+
+The registered executable is `/path with spaces/server`, with arguments `""` and
+`--mcp`. Windows backslashes use the same literal rules after the invoking shell
+has passed the option value. With no `--command`, REA uses its exact current
+runtime and entrypoint arguments without converting them to text and parsing them
+again. No package acquisition or server execution occurs during registration.
+`--no-global` refuses any selection requiring global storage before writing files.
+
+`rea mcp add --schema --json` returns the named input and output JSON Schemas.
+Successful and partial registration reports contain the exact `command`, `args`
+and a `clients` outcome list. `ok` is true only when every selected client is
+configured or unchanged. Failed clients retain actionable errors; cancellation
+marks remaining clients `not_started`. A failed client does not erase a successful
+sibling's receipt. Existing settings and environment overrides survive refresh;
+backups identify the original bytes, and identical repeats create no new backup.
+Client IDs are case-insensitive for the helper-compatible catalog; documented
+aliases include `droid`/`factory`, `gemini`, `grok`, `kilo`/`kilocode`, `kimi`,
+`kiro`, `mastra`, `pi-agent`, `hermes-agent`, `cline-vscode`, and
+`codeium`/`cascade`. `github-copilot` selects VS Code; use
+`github-copilot-cli` for Copilot CLI. Amp uses `--agent amp`.
+
+Kilo project registration follows its native configuration layers and requires a
+verified Git worktree. Selected `KILO_CONFIG`, `KILO_CONFIG_DIR` and
+`KILO_CONFIG_CONTENT` overrides remain authoritative. A conflicting higher-priority
+source must be updated before registration can succeed; readonly layers are never
+copied into the selected file. An unknown project root fails before writing and
+does not fall back to global settings.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
+
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
 bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.
 `stderr_bytes` counts all observed bytes, including omitted output;
 `stderr_truncated` indicates that output exceeded the retention limit. The same
 diagnostics appear inside the report when `--full-output` is selected. Log
-truncation alone does not change the diagnostic health or exit status.
+truncation alone does not change the diagnostic health or exit status. More than
+32 MiB of combined child stdout and stderr stops the child and fails the check
+in progress.
+
+Doctor owns the server's process group on POSIX hosts, or its Job Object on
+Windows. Before reporting, it stops that process family, including POSIX
+descendants in other process groups that inherited its run token. If that
+cleanup cannot be confirmed, the report keeps its earlier checks and adds a
+failed `cleanup` check with the reason and retained run identifier.
 
 The default terminal format is TOON. Use `--json` when saving results for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
@@ -1384,6 +1442,7 @@ the CLI result should use JSON; either argument order is accepted.
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`       | The operation completed. Its result may include partial evidence, warnings or unresolved questions.                                                                                                                                                                                                                                                                                    |
 | `1`       | The operation could not complete. Structured output identifies invalid input, permissions, cancellation, timeouts or another failure when available.                                                                                                                                                                                                                                   |
+| `3`       | `audit-release-exposure` completed with `--fail_on` and an exposed check meets that severity. Unknown and unassessed checks do not change this status.                                                                                                                                                                                                                                 |
 | `128 + N` | Signal-derived status. An unhandled signal may have ended the process, with the shell or runtime preserving the conventional status; a command may instead have handled the signal, waited for its operation and cleanup to settle, and assigned the same status (`130` for SIGINT, `143` for SIGTERM). In the handled case, it may also have printed a structured `cancelled` result. |
 
 `rea mcp --http` is long-running and prints no structured result. It exits
@@ -1517,6 +1576,18 @@ Bun standalone executables use the existing `inspect-artifact` and
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](../bun-standalone.md) for layout coverage and limits.
 
+### Release exposure
+
+```sh
+rea audit-release-exposure /absolute/path/to/MyApp.app --json
+rea audit-release-exposure ./dist/MyApp.app --fail_on high --json
+```
+
+Reports what static analysis of a shipped `.app`, install directory, ASAR, or
+executable recovers. `--fail_on high|medium|low` exits `3` when a completed
+audit has an exposed check at that severity. Unknown and unassessed checks stay
+in the report and do not change the exit status. See
+[Release exposure](../release-exposure.md).
 Deno compile executables use the same commands to inventory and materialize the
 embedded virtual filesystem, remote modules, and recorded options. Inventory retains
 embedded environment-file values and certificate bytes in local Evidence with their

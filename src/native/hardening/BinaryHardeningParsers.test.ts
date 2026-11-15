@@ -1089,14 +1089,74 @@ it("leaves GNU property rows unknown behind a compressed note section", () => {
   });
 });
 
+/**
+ * Count the array elements an operation walks, through iteration and the
+ * element-visiting array methods. Throws once past `allowed`, so a quadratic
+ * walk stops at the bound instead of running on. The methods are patched
+ * directly: a spy's own bookkeeping iterates arrays and would count itself.
+ */
+const countArrayVisits = <T>(
+  allowed: number,
+  run: () => T,
+): { readonly result: T; readonly visited: number } => {
+  const keys: readonly (string | symbol)[] = [
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "map",
+    "reduce",
+    "some",
+    "sort",
+    "toSorted",
+    Symbol.iterator,
+  ];
+  const prototype = Array.prototype as unknown as Record<
+    PropertyKey,
+    (this: readonly unknown[], ...args: unknown[]) => unknown
+  >;
+  const originals = keys.map((key) => [key, prototype[key]!] as const);
+  let visited = 0;
+  let counting = true;
+  for (const [key, original] of originals)
+    prototype[key] = function (...args) {
+      if (counting && (visited += this.length) > allowed) {
+        counting = false;
+        throw new Error("array elements walked past bound");
+      }
+      return original.apply(this, args);
+    };
+  let result: T;
+  let walked: number;
+  try {
+    result = run();
+  } finally {
+    counting = false;
+    walked = visited;
+    for (const [key, original] of originals) prototype[key] = original;
+  }
+  return { result, visited: walked };
+};
+
 it("admits a hostile section table without rescanning every span", () => {
-  const started = performance.now();
-  const image = readElfHardening(
-    elfHardeningFixture({ disjointNoteSections: 65000 }),
+  // Each section header is walked a fixed number of times while sections are
+  // parsed, sorted and indexed. Rescanning the note spans for every span
+  // walks sections^2 elements.
+  const sections = 65_000;
+  const bytes = elfHardeningFixture({ disjointNoteSections: sections });
+  const allowed = 64 * sections;
+  const { result: image, visited } = countArrayVisits(allowed, () =>
+    readElfHardening(bytes),
   );
-  expect(performance.now() - started).toBeLessThan(5000);
+  expect(visited).toBeLessThanOrEqual(allowed);
   expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-}, 60000);
+});
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";
@@ -1106,6 +1166,19 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(row).toMatchObject({ state: "enabled", location: { bytes: 7 } });
   const at = row.location?.offset ?? 0;
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
+});
+
+it("treats the __chk_fail handler import as a FORTIFY sign", () => {
+  const bytes = elfHardeningFixture({
+    fortify: true,
+    fortifyName: "__chk_fail",
+  });
+  const image = readElfHardening(bytes);
+  const row = findRow(image.rows, "fortify");
+  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
+  expect(row.basis).toContain("__chk_fail");
+  const at = row.location?.offset ?? 0;
+  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
 });
 
 it("keeps malformed name offsets malformed in both formats", async () => {

@@ -1,9 +1,14 @@
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import * as processOutput from "../process/ExecFileOutput.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -27,6 +32,8 @@ import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
+import { waitFor } from "../../tests/support/testWait.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -98,19 +105,34 @@ it.each([false, true])(
 it.each(["prepare", "baseline"] as const)(
   "classifies cancellation from ownership %s without masking physical failure",
   async (stage) => {
-    for (const kind of ["reason", "native-abort", "physical"] as const) {
+    for (const kind of [
+      "reason",
+      "normalized-exec",
+      "physical",
+      "same-reason",
+    ] as const) {
       const controller = new AbortController();
-      const reason = { cancelled: stage };
       const physical = new Error("ownership inspection failed");
+      const reason = kind === "same-reason" ? physical : { cancelled: stage };
       const launch = vi.fn(async () => {
         throw new Error("must not launch");
       });
       const fail = async () => {
         controller.abort(reason);
-        if (kind === "native-abort")
-          throw new ExecFileOutputCancelledError(reason);
-        throw kind === "reason" ? reason : physical;
+        if (kind === "normalized-exec")
+          throw ProcessOwnershipInspectionCancelled.from(
+            new ExecFileOutputCancelledError(reason),
+          );
+        throw kind === "reason"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
       };
+      const preparation =
+        stage === "baseline"
+          ? vi
+              .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+              .mockResolvedValue()
+          : undefined;
       const spy =
         stage === "prepare"
           ? vi
@@ -136,7 +158,7 @@ it.each(["prepare", "baseline"] as const)(
         );
         if (result.ok) throw new Error("Expected inspection failure");
         expect(launch).not.toHaveBeenCalled();
-        if (kind === "physical") {
+        if (kind === "physical" || kind === "same-reason") {
           expect(result.error.userCategory).not.toBe("cancelled");
           expect(primaryAnalysisError(result.error).cause).toBe(physical);
           expect(
@@ -145,11 +167,12 @@ it.each(["prepare", "baseline"] as const)(
             ),
           ).toBe(true);
         } else {
-          expect(result.error.userCategory).toBe("cancelled");
+          expect(projectAnalysisError(result.error).code).toBe("cancelled");
           expect(result.error.cause).toBe(reason);
         }
       } finally {
         spy.mockRestore();
+        preparation?.mockRestore();
         await provider.close();
       }
     }
@@ -163,15 +186,13 @@ it("preserves an independent AbortError from actual ownership baseline inspectio
     "independent inspector failure",
     "AbortError",
   );
+  vi.spyOn(processOutput, "execFileOutput").mockImplementation(async () => {
+    controller.abort(reason);
+    throw physical;
+  });
   const host = ownershipObservation.createSystemProcessOwnershipHost(
     "linux",
     {},
-    {
-      execFileOutput: async () => {
-        controller.abort(reason);
-        throw physical;
-      },
-    },
   );
   const prepare = vi
     .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
@@ -216,7 +237,7 @@ it("retains failed ownership-helper cleanup until provider close retries it", as
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -305,7 +326,7 @@ it("joins a late launch acknowledgement and its cleanup after shutdown", async (
   expect(application.close).toHaveBeenCalledOnce();
   expect(closed).toBe(true);
   if (result.ok) throw new Error("Expected launch cancellation");
-  expect(result.error.userCategory).toBe("cancelled");
+  expect(projectAnalysisError(result.error).code).toBe("cancelled");
   expect(result.error.cause).toBe(reason);
 });
 
@@ -394,6 +415,10 @@ it("passes required Windows runtime variables without inheriting unrelated value
 let ownership: PersistentOwnedProcessGroup;
 
 beforeEach(() => {
+  // Fake applications have no hook to announce a refused lock.
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    new AbortController().signal,
+  );
   ownership = {
     runId: "run",
     leaderPid: 4242,
@@ -418,6 +443,7 @@ const emptyHookSnapshot = () => ({
   observed_ipc: 0,
   observed_runtime: 0,
   hook_error: false,
+  single_instance_lock_refused: false,
 });
 
 it.each([
@@ -668,6 +694,148 @@ it("retains the initial snapshot when the final state read fails", async () => {
       limitations: expect.arrayContaining([
         expect.stringContaining("initial pre-action snapshot"),
       ]),
+    },
+  });
+});
+
+it.each(["initial", "final"] as const)(
+  "refuses an application handed off to a running instance at the %s snapshot",
+  async (stage) => {
+    const state = (refused: boolean) => ({
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: {
+        ...emptyHookSnapshot(),
+        single_instance_lock_refused: refused,
+      },
+    });
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+      state(stage === "initial"),
+    );
+    vi.spyOn(
+      electronActions,
+      "readFinalApplicationState",
+    ).mockResolvedValueOnce(state(stage === "final"));
+    const runActions = vi
+      .spyOn(electronActions, "runElectronActions")
+      .mockResolvedValue({ actions: [] });
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+    };
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+    });
+
+    if (result.ok) throw new Error("Expected the handed-off launch to fail");
+    expect(runActions).toHaveBeenCalledTimes(stage === "initial" ? 0 : 1);
+    expect(application.close).toHaveBeenCalled();
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "application_already_running",
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      message: expect.stringContaining("The application is already running"),
+      remediation: {
+        action: expect.stringContaining("Close the running application"),
+      },
+    });
+    // A refusal first seen in the final snapshot keeps that snapshot, which
+    // holds the blocked lock request and the action effects.
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "electron-active-observation",
+      capture: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            stage === "initial"
+              ? "initial pre-action snapshot"
+              : "failed after its final snapshot",
+          ),
+        ]),
+      },
+    });
+  },
+);
+
+it("stops pending actions when the lock is refused while they wait", async () => {
+  const state = (refused: boolean) => ({
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: {
+      ...emptyHookSnapshot(),
+      single_instance_lock_refused: refused,
+    },
+  });
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+    state(false),
+  );
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValueOnce(
+    state(true),
+  );
+  // The refused path never opens the window the action waits for.
+  const refusal = new AbortController();
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    refusal.signal,
+  );
+  const windows = vi.fn(() => []);
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows,
+  };
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    async () =>
+      application as unknown as Awaited<
+        ReturnType<typeof import("playwright-core")._electron.launch>
+      >,
+  );
+
+  const capture = provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [
+        { step_id: "open", kind: "click", window_index: 0, selector: "#go" },
+      ],
+    }),
+    application_root: dirname(process.execPath),
+  });
+  let result: Awaited<typeof capture>;
+  try {
+    await waitFor(() => expect(windows).toHaveBeenCalled());
+    refusal.abort();
+    result = await capture;
+  } finally {
+    // A failed wait still stops and joins the capture before mocks restore.
+    await provider.close();
+    await capture;
+  }
+
+  if (result.ok) throw new Error("Expected the handed-off launch to fail");
+  expect(application.close).toHaveBeenCalled();
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "application_already_running",
+    partialObservation: {
+      capture: { actions: [{ step_id: "open", status: "cancelled" }] },
     },
   });
 });
@@ -1032,7 +1200,7 @@ it("reports an expired final state grace period as the caller's cancellation", a
     };
 
     const capture = captureWithController(controller, application, []);
-    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    await waitFor(() => expect(evaluate).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await capture;
 
@@ -1373,6 +1541,73 @@ it.each(["process", "transport"] as const)(
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
     } finally {
       denied = false;
+      await provider.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains baseline batch observations and cancellation without ambient abort (mixed: %s)",
+  async (mixed) => {
+    const reason = { caller: "cancel native identity request" };
+    const observations = new Map([
+      [401, { state: "readable", identity: "recorded-native-start" } as const],
+    ]);
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [
+        {
+          pid: 402,
+          requestIndex: 1,
+          cause: new ProcessOwnershipInspectionCancelled(reason),
+        },
+        ...(mixed
+          ? [
+              {
+                pid: 403,
+                requestIndex: 2,
+                cause: new Error("physical native read failure"),
+              },
+            ]
+          : []),
+      ],
+      observations,
+    );
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const baseline = vi
+      .spyOn(ownershipObservation.systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(batch);
+    const launch = vi.fn(async () => {
+      throw new Error("must not launch");
+    });
+    const provider = new PlaywrightElectronActiveProvider({}, launch);
+    try {
+      const result = await provider.capture({
+        ...electronActiveObservationInputSchema.parse({
+          executable_path: process.execPath,
+          application_path: process.execPath,
+        }),
+        application_root: dirname(process.execPath),
+      });
+      if (result.ok) throw new Error("Expected failed native identity batch");
+      const error = primaryAnalysisError(result.error);
+      if (mixed) {
+        expect(error.userCategory).not.toBe("cancelled");
+        expect(error.cause).toBe(batch);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      } else {
+        expect(projectAnalysisError(error).code).toBe("cancelled");
+        expect(error.cause).toBe(reason);
+        expect(error).toHaveProperty("inspectionFailure", batch);
+      }
+      expect(batch.observations).toBe(observations);
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+      baseline.mockRestore();
       await provider.close();
     }
   },

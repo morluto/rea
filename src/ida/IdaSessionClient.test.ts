@@ -11,6 +11,7 @@ import {
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   createIdaTarget,
   RecordingIdaMcp,
@@ -32,6 +33,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 const roots: string[] = [];
 const windowsRuntimes = new Set<WindowsPrivateRuntime>();
@@ -86,7 +88,7 @@ const fixture = async (
       args: [],
       env: {},
       mode,
-      ...(protocol === undefined ? {} : { protocol }),
+      protocol: protocol ?? (mode === "attached" ? "legacy" : "modern"),
       timeoutMs,
       workspaceRoot: root,
     },
@@ -122,6 +124,7 @@ it.each([
         url: selected,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
       },
       target,
@@ -156,6 +159,7 @@ it.each([
         url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
       },
       target,
@@ -188,7 +192,8 @@ it.each(["initialize", "transport"])(
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       diagnostics: { producer_fact: "retained" },
     });
@@ -779,7 +784,6 @@ describe("attached IDA regex supervision", () => {
         await client.close();
       }
     },
-    15_000,
   );
   it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
     const { producer, client } = await fixture();
@@ -825,7 +829,7 @@ describe("attached IDA regex supervision", () => {
     } finally {
       await client.close();
     }
-  }, 15_000);
+  });
 });
 
 describe("attached IDA function failure handling", () => {
@@ -914,16 +918,26 @@ describe("attached IDA function failure handling", () => {
       { procedure: "main" },
       { signal: controller.signal },
     );
-    await started;
-    controller.abort();
-    const close = client.close();
-    expect(producer.closes).toBe(0);
-    release?.();
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
-    expect((await close).ok).toBe(true);
-    expect(producer.closes).toBe(1);
+    try {
+      await awaitAcknowledgement(started, call, "IDA read-only call");
+      controller.abort();
+      const close = client.close();
+      expect(producer.closes).toBe(0);
+      release?.();
+      const result = await call;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect((await close).ok).toBe(true);
+      expect(producer.closes).toBe(1);
+    } finally {
+      controller.abort();
+      release?.();
+      try {
+        await call;
+      } finally {
+        await client.close();
+      }
+    }
   });
 });
 
@@ -2312,16 +2326,17 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     url: "http://127.0.0.1:12345/mcp",
     headers: {},
     mode: "attached" as const,
+    protocol: "legacy" as const,
     timeoutMs: 30,
   };
   const client = new IdaSessionClient(
     config,
     target,
-    createIdaMcpConnection(config, {}),
+    createIdaMcpConnection(config, {}, idaConnectionDependencies()),
   );
   const executing = client.execute("health", {});
   try {
-    await started;
+    await awaitAcknowledgement(started, executing, "IDA HTTP acquisition");
     const result = await executing;
     expect(result).toMatchObject({
       ok: false,

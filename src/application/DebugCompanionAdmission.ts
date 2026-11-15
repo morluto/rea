@@ -16,6 +16,8 @@ import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   BinaryArchitecture,
@@ -53,7 +55,7 @@ import {
   hasDuplicateMachoCpuSubtype,
   MACHO_ARCHITECTURE_POLICIES,
   selectRankedMachoSlice,
-} from "../native/MachoArchitectureSelection.js";
+} from "../domain/apple/machoArchitecturePolicy.js";
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
@@ -217,9 +219,7 @@ const companionIoFailure = (
 
 const throwIfCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("resolve_binary_target", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("resolve_binary_target", signal);
 };
 
 const readUuidWindow = async (
@@ -468,9 +468,7 @@ const dwarfDirectoryCleanupPrimary = (
   if (rejection !== undefined)
     return debugCompanionRejectedError(state.targetPath, rejection);
   if (state.signal?.aborted === true)
-    return new AnalysisCancelledError("resolve_binary_target", {
-      cause: state.signal.reason,
-    });
+    return cancelledBy("resolve_binary_target", state.signal);
   return undefined;
 };
 
@@ -593,7 +591,7 @@ const enumerateDwarfMembers = async (
   } catch (cause: unknown) {
     failure =
       state.signal?.aborted === true && cause === state.signal.reason
-        ? new AnalysisCancelledError("resolve_binary_target", { cause })
+        ? cancelledBy("resolve_binary_target", state.signal)
         : (companionIoFailure(
             dwarfDirectory,
             "reading the dSYM DWARF directory",
@@ -904,9 +902,7 @@ const normalizeMemberFailure = (
   )
     return {
       kind: "failed",
-      cause: new AnalysisCancelledError("resolve_binary_target", {
-        cause: state.signal.reason,
-      }),
+      cause: cancelledBy("resolve_binary_target", state.signal),
     };
   if (
     rawCause instanceof AnalysisCancelledError ||
@@ -917,9 +913,10 @@ const normalizeMemberFailure = (
   if (rawCause instanceof RegularFileOperationCancelled)
     return {
       kind: "failed",
-      cause: new AnalysisCancelledError("resolve_binary_target", {
-        cause: rawCause.reason,
-      }),
+      cause: cancelledBy(
+        "resolve_binary_target",
+        carriedReason(rawCause.reason),
+      ),
     };
   if (
     rawCause instanceof RegularFileChangedError ||
@@ -949,9 +946,7 @@ const normalizeMemberFailure = (
     return state.signal?.aborted === true
       ? {
           kind: "failed",
-          cause: new AnalysisCancelledError("resolve_binary_target", {
-            cause: state.signal.reason,
-          }),
+          cause: cancelledBy("resolve_binary_target", state.signal),
         }
       : { kind: "skip" };
   }
@@ -1023,9 +1018,10 @@ const readMemberWithBorrowedResources = async (
     );
     if (!completion.value.ok) return completion.value;
     if (completion.cancellation !== undefined)
-      throw new AnalysisCancelledError("resolve_binary_target", {
-        cause: completion.cancellation.reason,
-      });
+      throw cancelledBy(
+        "resolve_binary_target",
+        carriedReason(completion.cancellation.reason),
+      );
     throwIfCancelled(state.signal);
     return completion.value;
   } catch (cause: unknown) {
@@ -1075,9 +1071,10 @@ const readMemberWithBorrowedResources = async (
     if (!completed.ok) return completed;
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)
-      throw new AnalysisCancelledError("resolve_binary_target", {
-        cause: cancellation.reason,
-      });
+      throw cancelledBy(
+        "resolve_binary_target",
+        carriedReason(cancellation.reason),
+      );
     throwIfCancelled(state.signal);
     return completed;
   }

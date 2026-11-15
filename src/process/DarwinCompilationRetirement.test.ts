@@ -1,3 +1,9 @@
+import { readNativeProcessIdentityMap } from "./ProcessOwnershipObservation.js";
+import {
+  readProcessRunToken,
+  readProcessRunTokens,
+} from "./ProcessRunTokenObservations.js";
+import { ExecFileOutputCancelledError } from "./ExecFileOutput.js";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeFile } from "node:fs/promises";
@@ -66,7 +72,8 @@ const fixture = vi.hoisted(() => {
         start();
         await gate;
         if (mode === "abort-error") throw compilerAbortError;
-        if (mode !== "failure") throw options.signal?.reason;
+        if (mode !== "failure")
+          throw new ExecFileOutputCancelledError(options.signal?.reason);
         throw compilerFailure;
       }
       const output = args[args.indexOf("-o") + 1];
@@ -123,7 +130,10 @@ it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
       await expect(first).rejects.toMatchObject({
         cause: expect.objectContaining({ message: "first caller left" }),
       });
-    else await expect(first).rejects.toThrow("first caller left");
+    else
+      await expect(first).rejects.toMatchObject({
+        reason: expect.objectContaining({ message: "first caller left" }),
+      });
     if (mode === "failure" || mode === "abort-error") {
       await expect(second).rejects.toMatchObject({
         cause:
@@ -142,6 +152,42 @@ it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
         throw new Error("expected cleanup owner");
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
       expect(fixture.calls).toBe(1);
+      const rows = [
+        {
+          pid: 42,
+          parentPid: 1,
+          processGroupId: 42,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const fail = async (): Promise<never> => {
+        throw failure;
+      };
+      const host = {
+        listProcesses: async () => rows,
+        environment: fail,
+        runTokens: fail,
+        processIdentities: fail,
+        signalGroup: () => {
+          throw new Error("Unexpected signal");
+        },
+      };
+      const batch = async () => {
+        for await (const _row of readProcessRunTokens(host, rows)) {
+          throw new Error(
+            "Retained inspector must not produce unavailable rows",
+          );
+        }
+      };
+      const observations = await Promise.all(
+        [
+          readNativeProcessIdentityMap(rows, host),
+          readProcessRunToken(host, 42),
+          batch(),
+        ].map((pending) => pending.catch((cause: unknown) => cause)),
+      );
+      for (const observation of observations) expect(observation).toBe(failure);
       await failure.cleanupOwner?.close();
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
     } else {

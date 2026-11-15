@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { dexDescriptorSchema } from "./dexTypes.js";
 
@@ -18,23 +19,32 @@ export const androidNativeDeclarationSchema = z.strictObject({
   method_index: count,
 });
 
+/** Split requirements the bridge reads from the root manifest, or why they are unknown. */
+export const androidManifestSplitsSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("observed"),
+    required_split_types: z.array(z.string().min(1)),
+    split_required: z.boolean(),
+  }),
+  z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) }),
+]);
+
 /** Scope is standard root classes*.dex members, never runtime-loaded code. */
 export const androidNativeDeclarationsSchema = z.strictObject({
   scope: z.literal("apk-root-dex-declarations"),
   methods: z.array(androidNativeDeclarationSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial", "unknown"]),
+    status: coverageStatusSchema,
     dex_entries: count,
     examined_dex_entries: count,
     examined_classes: count,
     examined_methods: count,
   }),
   unknowns: z.array(z.string()),
+  /** Root manifest split requirements; required splits can carry native libraries. */
+  manifest_splits: androidManifestSplitsSchema,
 });
 
-export type AndroidNativeDeclaration = z.infer<
-  typeof androidNativeDeclarationSchema
->;
 export type AndroidNativeDeclarations = z.infer<
   typeof androidNativeDeclarationsSchema
 >;

@@ -1,5 +1,8 @@
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
+import {
+  machoSelectionAnswersArchitecture,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { RustBinaryPort } from "./RustBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -54,11 +57,18 @@ export class RustBinaryService {
     const inspected = await this.provider.inspect(parameters, options);
     if (!inspected.ok) return inspected;
     const report = rustBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.value.path)
+    if (
+      !report.success ||
+      report.data.artifact.path !== input.value.path ||
+      !machoSelectionAnswersArchitecture(
+        report.data.selected_slice,
+        input.value.architecture,
+      )
+    )
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "Rust dependency reader returned malformed metadata or changed the selected artifact identity.",
+          "Rust dependency reader returned malformed metadata or changed the selected artifact or slice identity.",
         ),
       );
     const completed = completeProviderEvidence(

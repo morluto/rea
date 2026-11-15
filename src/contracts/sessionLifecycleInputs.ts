@@ -136,3 +136,44 @@ export const resetInvestigationInputSchema = z.strictObject({
     .optional(),
   overwrite: z.boolean().default(false),
 });
+
+/**
+ * The target interpretation an `open_binary` input selects, in the spelling
+ * every target open takes. MCP and CLI commands that open a target with these
+ * fields share this mapping.
+ */
+export const openBinaryTargetSelection = (
+  input: Pick<
+    z.output<typeof openBinaryInputSchema>,
+    | "format"
+    | "architecture"
+    | "entry_point"
+    | "dsym_path"
+    | "flash_offset"
+    | "partition_table_offset"
+  >,
+) => ({
+  ...(input.format === undefined ? {} : { formatHint: input.format }),
+  ...(input.architecture === undefined
+    ? {}
+    : { architecture: input.architecture }),
+  ...(input.entry_point === undefined ? {} : { entryPoint: input.entry_point }),
+  ...(input.dsym_path === undefined ? {} : { dsymPath: input.dsym_path }),
+  ...(input.flash_offset === undefined &&
+  input.partition_table_offset === undefined
+    ? {}
+    : {
+        espFlash: {
+          ...(input.flash_offset === undefined
+            ? {}
+            : { flashOffset: parseEspFlashAddress(input.flash_offset) }),
+          ...(input.partition_table_offset === undefined
+            ? {}
+            : {
+                partitionTableOffset: parseEspFlashAddress(
+                  input.partition_table_offset,
+                ),
+              }),
+        },
+      }),
+});

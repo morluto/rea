@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -16,7 +17,10 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
-import { ExecFileOutputCancelledError } from "../../process/ExecFileOutput.js";
+import {
+  processInspectionCancellationError,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -152,7 +156,7 @@ type WakaruCommandContext = {
   signal?: AbortSignal;
   launcher?: WakaruLauncher;
   staging?: string;
-  resources?: ArtifactResourceScope;
+  resources: ArtifactResourceScope;
 };
 
 /** Run one bounded command and verify cleanup before consuming its output. */
@@ -179,28 +183,34 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     env: { TMPDIR: context.cwd, RAYON_NUM_THREADS: "1", NO_COLOR: "1" },
   }).catch((cause: unknown) => {
-    const signal = context.signal;
-    if (
-      signal?.aborted === true &&
-      (Object.is(cause, signal.reason) ||
-        (cause instanceof ExecFileOutputCancelledError &&
-          Object.is(cause.cause, signal.reason)))
-    )
-      throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
-    const failure = new ProviderAdapterError("wakaru", OPERATION, {
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    let primary: AnalysisError;
+    if (cancellation !== undefined) {
+      primary = cancellation;
+    } else {
+      const physical = new ProviderAdapterError("wakaru", OPERATION, {
+        cause,
+        diagnostics: {
+          reason:
+            "Failed to launch configured Wakaru through util-linux prlimit",
+          command: context.command,
+          detail: recoveryFailureMessage(cause),
+        },
+      });
+      primary =
+        context.signal?.aborted === true
+          ? analysisErrorWithCancellation(
+              physical,
+              cancelledBy(OPERATION, context.signal),
+            )
+          : physical;
+    }
+    throw retainProcessInspectionCleanup(
       cause,
-      diagnostics: {
-        reason: "Failed to launch configured Wakaru through util-linux prlimit",
-        command: context.command,
-        detail: recoveryFailureMessage(cause),
-      },
-    });
-    throw signal?.aborted === true
-      ? analysisErrorWithCancellation(
-          failure,
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-        )
-      : failure;
+      primary,
+      context.resources,
+      OPERATION,
+    );
   });
   let oversized = false;
   const supervisor = new ProviderProcessSupervisor(
@@ -258,9 +268,7 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
   if (context.signal?.aborted === true) {
-    const cancelled = new AnalysisCancelledError(OPERATION, {
-      cause: context.signal.reason,
-    });
+    const cancelled = cancelledBy(OPERATION, context.signal);
     if (failure === undefined || failure instanceof AnalysisError)
       failure = analysisErrorWithCancellation(failure, cancelled);
   }

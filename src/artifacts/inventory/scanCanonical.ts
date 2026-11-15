@@ -145,6 +145,7 @@ const scanCanonical = async (
       options.asarHeaderAdmission,
       selectedPath,
       options.readerLimits,
+      options.integrity,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -170,6 +171,7 @@ const scanCanonical = async (
       options.signal,
       options.integrity,
       options.asarHeaderAdmission,
+      options.acquisitionLimits,
     );
     outcome = {
       kind: "completed",
@@ -254,7 +256,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
-            userMessage: cause.userMessage,
+            ...cause.primaryFacts(),
             ...(retained === undefined
               ? {}
               : {
@@ -525,6 +527,7 @@ const buildInventorySnapshot = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Missing iNES reconstruction scan",
+        { integrityCheck: "inventory-node" },
       );
     ines = await reader.verifyReconstruction(
       rootDigest.sha256,
@@ -618,6 +621,7 @@ const verifyRootDigest = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "Root artifact changed during inventory",
+      { integrityCheck: "container-identity" },
     );
 };
 

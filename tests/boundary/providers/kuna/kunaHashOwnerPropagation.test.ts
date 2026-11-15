@@ -205,6 +205,7 @@ import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallat
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import { run, session } from "./kunaSessionFixture.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 it.skipIf(process.platform === "win32").each([
   { operation: "list_strings", input: {}, command: "strings" },
@@ -374,7 +375,11 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
@@ -416,11 +421,13 @@ it.skipIf(process.platform === "win32")(
     injected.fingerprintReads = 0;
     injected.failReadStage = "fingerprint";
     try {
-      const result = await cache.build({
-        installation: installed.value,
-        targetPath: fixture.target.path,
-        targetSha256: fixture.target.sha256,
-      });
+      const result = await cache.build(
+        withKunaProjectDeadline({
+          installation: installed.value,
+          targetPath: fixture.target.path,
+          targetSha256: fixture.target.sha256,
+        }),
+      );
       if (result.ok) throw new Error("injected export hash read passed");
       const originatingError = result.error;
       expect(originatingError).toMatchObject({
@@ -458,7 +465,11 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
@@ -505,7 +516,11 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
@@ -555,7 +570,11 @@ it.skipIf(process.platform === "win32")(
           installation: installed.value,
           operation: "list_procedures",
           arguments: (input) => ["functions", input, "--json"],
-          deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+          deadline: {
+            setting: "REA_KUNA_TIMEOUT_MS",
+            source: "setting",
+            ms: 10_000,
+          },
           outputBytes: 1024 * 1024,
           signal: controller.signal,
           releaseRun: () => {
@@ -611,7 +630,11 @@ it.skipIf(process.platform === "win32")(
           installation: installed.value,
           operation: "list_procedures",
           arguments: (input) => ["functions", input, "--json"],
-          deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+          deadline: {
+            setting: "REA_KUNA_TIMEOUT_MS",
+            source: "setting",
+            ms: 10_000,
+          },
           outputBytes: 1024 * 1024,
           signal: controller.signal,
         });
@@ -751,7 +774,9 @@ it.skipIf(process.platform === "win32")(
         process.platform,
         { resourceScope },
       );
-      expect(inspection.checks[0]).toMatchObject({
+      expect(
+        inspection.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
         ok: false,
         code: "cleanup_incomplete",
       });
@@ -968,10 +993,14 @@ it.skipIf(process.platform === "win32").each(
         ).then(
           (inspection) => {
             expect(closeRefusal).toBe(true);
-            expect(inspection.checks[0]).toMatchObject({
+            expect(
+              inspection.checks.find(({ name }) => name === "version"),
+            ).toMatchObject({
               code: "cleanup_incomplete",
             });
-            diagnostics = inspection.checks[0]?.details;
+            diagnostics = inspection.checks.find(
+              ({ name }) => name === "version",
+            )?.details;
           },
           (cause: unknown) => {
             if (!(cause instanceof AnalysisError)) throw cause;

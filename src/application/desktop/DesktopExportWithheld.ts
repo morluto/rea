@@ -28,7 +28,7 @@ import {
   planOutputTree,
   writeOutputTree,
   type DesktopOutputPlan,
-  type FailedRelease,
+  type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
 import {
   withRetainedContent,
@@ -270,7 +270,7 @@ const writeWithheldCopy = (
   directory: DesktopOutputPlan,
   files: ReadonlyMap<string, Buffer>,
   signal: AbortSignal | undefined,
-): Promise<FailedRelease | undefined> =>
+): Promise<DesktopOutputCompletion> =>
   writeOutputTree(
     directory,
     async (tree) => {
@@ -317,7 +317,7 @@ export const withheldCopy = async (
   signal: AbortSignal | undefined,
 ): Promise<{
   readonly bundle: DesktopOutputPlan;
-  readonly write: () => Promise<FailedRelease | undefined>;
+  readonly write: () => Promise<DesktopOutputCompletion | undefined>;
 }> => {
   const directory = request.withheldCopy;
   const withheld = plan.withheld ?? [];

@@ -9,6 +9,7 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 
+import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   decodeZipEntryText,
   ZIP_READER_OPTIONS,
@@ -75,7 +76,7 @@ const readEntry = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     return unreadZipEntry(header, DAMAGED_ZIP_ENTRY);
   }
   return zipEntry(header, bytes, policy);
@@ -108,7 +109,7 @@ export const readZipView = async (
     for await (const entry of reader.getEntriesGenerator({
       decodeText: decodeZipEntryText,
     })) {
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (entry.directory) continue;
       const name = zipEntryPath(entry);
       const header: ZipEntryHeader = {
@@ -127,7 +128,7 @@ export const readZipView = async (
       );
     }
   } catch {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     return err(UNREADABLE_ZIP);
   } finally {
     await reader.close();

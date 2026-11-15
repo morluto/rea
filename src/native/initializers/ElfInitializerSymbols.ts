@@ -10,6 +10,7 @@ import { MAX_NATIVE_INITIALIZER_NAME_BYTES } from "../../domain/native/nativeIni
 import type { NativeInitializerResolution } from "../../domain/native/nativeInitializers.js";
 import {
   elfAbsoluteRelocationType,
+  elfCopyRelocationType,
   elfRelativeRelocationType,
   elfRelocationWidth,
 } from "../metadata/ElfPointerRelocations.js";
@@ -22,6 +23,8 @@ export interface ElfInitializerSymbol {
   readonly value: bigint;
   readonly section: number;
   readonly type: number;
+  /** `st_size`: the bytes a COPY relocation against this symbol writes. */
+  readonly size: bigint;
 }
 
 /** Defined exact-address names plus per-section symbol arrays. */
@@ -191,6 +194,7 @@ const readTable = (
       value: parsed.value.value,
       section: parsed.value.section_index,
       type: parsed.value.type,
+      size: parsed.value.size,
     });
   }
   return { symbols, truncated, incomplete: nameMissing || strings === null };
@@ -408,6 +412,16 @@ const firstOverlap = (
   return low;
 };
 
+/**
+ * Bytes a linked image's COPY record writes: its symbol's `st_size`. Undefined
+ * when that symbol was not read, so the write's extent is not established.
+ */
+const copySize = (
+  symbols: readonly ElfInitializerSymbol[] | undefined,
+  symbolIndex: number,
+): bigint | undefined =>
+  symbolIndex === 0 ? undefined : symbols?.[symbolIndex]?.size;
+
 /** Section relocations found for wanted slots, and whether every applicable record was read. */
 export interface SectionRelocationScan {
   readonly found: ReadonlyMap<string, SlotRelocation>;
@@ -480,6 +494,34 @@ export const sectionRelocations = async (
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
+  const relative = elfRelativeRelocationType(input.machine);
+  const copy = elfCopyRelocationType(input.machine);
+  // Slot visits grow with each COPY span, so the spans together are limited to
+  // the file size, as in the dynamic walk.
+  let copyAllowance = input.bytes.length;
+  /**
+   * Bytes a linked image's COPY record writes, taken from its symbol. Null when
+   * that size is not established: the word assumed instead is no proof of what
+   * else the record reaches, so its table counts as not fully read.
+   */
+  const copySpan = (
+    section: NativeSection,
+    symbols: readonly ElfInitializerSymbol[] | undefined,
+    symbolIndex: number,
+  ): number | null => {
+    const size = copySize(symbols, symbolIndex);
+    if (size !== undefined && size <= BigInt(copyAllowance)) {
+      copyAllowance -= Number(size);
+      return Number(size);
+    }
+    input.notes.add(
+      size === undefined
+        ? "A section COPY relocation's write size is not established; slots without a relocation are unresolved."
+        : "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
+    );
+    skip(section);
+    return null;
+  };
   for (const [position, section] of input.sections.entries()) {
     const encoding = applicable(input, section);
     if (encoding === null) continue;
@@ -535,14 +577,33 @@ export const sectionRelocations = async (
         skip(section);
         break;
       }
+      const copied =
+        !input.relocatable && parsed.value.type === copy
+          ? copySpan(section, symbols, parsed.value.symbolIndex)
+          : null;
+      // Bytes the record is known to write: a sized COPY's symbol, one word
+      // for RELATIVE, or the fixed width of another decoded kind.
+      const extent =
+        copied ??
+        (parsed.value.type === relative
+          ? word
+          : elfRelocationWidth(input.machine, parsed.value.type));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
-      const span = elfRelocationWidth(input.machine, parsed.value.type) ?? word;
+      const span = extent ?? word;
       if (span === 0) continue;
+      const written = parsed.value.offset + (target?.address ?? 0n);
       if (recordTarget(input, target, parsed.value.offset, 1) === null) {
-        skip(section);
+        // A linked image's write to memory without file bytes, such as COPY
+        // into .bss, cannot change a slot outside its known extent.
+        const reached = wanted[firstOverlap(wanted, written, word)];
+        if (
+          input.relocatable ||
+          extent === undefined ||
+          (reached !== undefined && reached.va < written + BigInt(span))
+        )
+          skip(section);
         continue;
       }
-      const written = parsed.value.offset + (target?.address ?? 0n);
       const writtenFileOffset = recordTarget(
         input,
         target,

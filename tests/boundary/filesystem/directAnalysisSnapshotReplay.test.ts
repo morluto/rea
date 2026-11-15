@@ -1,5 +1,8 @@
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  parseEvidenceBundle,
+  createEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -15,14 +18,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import type {
-  AnalysisProvider,
-  CapabilityDescriptor,
-  ProviderIdentity,
+import {
+  createAnalysisExecution,
+  type AnalysisProvider,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   readAnalysisSnapshot,
@@ -33,7 +36,6 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import {
@@ -150,6 +152,7 @@ const expectSourceSnapshotRetained = (snapshot: AnalysisSnapshot) => {
 
 interface SnapshotProviderTrace {
   readonly starts: string[];
+  readonly sources: Map<string, Evidence>;
   readonly queries: Array<{
     readonly operation: string;
     readonly parameters: Readonly<Record<string, unknown>>;
@@ -256,25 +259,24 @@ const makeProvider = (
               `Unmodeled snapshot provider operation: ${operation}`,
             );
           const result = results[operation];
+          const source = options.sourceEvidence
+            ? createEvidence(target, profile.provider, {
+                operation: "health",
+                parameters: {},
+                result: "fixture source",
+                ...(options.sourceMissingLink
+                  ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
+                  : {}),
+              })
+            : undefined;
+          if (source !== undefined)
+            trace.sources.set(source.evidence_id, source);
           return ok(
             createAnalysisExecution(result, profile.provider, {
               analysisProfile: profile,
               rawResult: result,
               limitations: options.limitations ?? [],
-              ...(options.sourceEvidence
-                ? {
-                    sourceEvidence: [
-                      createEvidence(target, profile.provider, {
-                        operation: "health",
-                        parameters: {},
-                        result: "fixture source",
-                        ...(options.sourceMissingLink
-                          ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
-                          : {}),
-                      }),
-                    ],
-                  }
-                : {}),
+              ...(source === undefined ? {} : { sourceEvidence: [source] }),
             }),
           );
         },
@@ -293,6 +295,7 @@ const createSnapshotReplayFixture = async (
   const snapshotPath = join(directory, snapshotRelativePath);
   await writeFile(path, "fixture");
   const starts: string[] = [];
+  const sources = new Map<string, Evidence>();
   const queries: SnapshotProviderTrace["queries"] = [];
   const resolutions: string[] = [];
 
@@ -300,13 +303,14 @@ const createSnapshotReplayFixture = async (
     path,
     snapshotPath,
     starts,
+    sources,
     get calls() {
       return queries.map(({ operation }) => operation);
     },
     queries,
     resolutions,
     createProvider(options: SnapshotProviderOptions = {}): AnalysisProvider {
-      return makeProvider({ starts, queries, resolutions }, options);
+      return makeProvider({ starts, sources, queries, resolutions }, options);
     },
     dependencies(provider: AnalysisProvider): DirectAnalysisDependencies {
       return {
@@ -1075,7 +1079,7 @@ describe("Ghidra composed workflow runtime-budget admission", () => {
 });
 
 describe("binary overview snapshot replay", () => {
-  it("replays the identical binary overview without provider startup or calls", async () => {
+  it("replays bound overviews without provider work and recomposes unbound history", async () => {
     const fixture = await createSnapshotReplayFixture("rea-workflow-snapshot-");
     const provider = fixture.createProvider();
     const dependencies = fixture.dependencies(provider);
@@ -1159,6 +1163,47 @@ describe("binary overview snapshot replay", () => {
         (record) => record.evidence_id === firstEvidence.evidence_id,
       )?.caller_input_path,
     ).toBe(fixture.path);
+
+    // Historical observations remain importable data without a replay binding.
+    // Retain the primitive entries and one current-profile historical overview,
+    // but omit its workflow entry and the bound current overview record.
+    const historicalOnly = withEarlierHistoricalEvidence(
+      loaded.value,
+      fixture.path,
+      current,
+    );
+    const unboundPath = join(dirname(fixture.snapshotPath), "unbound.json");
+    const unboundWritten = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        {
+          ...historicalOnly,
+          workflow_entries: [],
+          evidence_bundle: createEvidenceBundle(
+            historicalOnly.evidence_bundle.records.filter(
+              (record) => record.evidence_id !== current.evidence_id,
+            ),
+          ),
+        },
+        unboundPath,
+        false,
+        resources,
+      ),
+    );
+    if (!unboundWritten.ok) throw unboundWritten.error;
+    const recomposed = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "binary_overview",
+        {},
+        { snapshotPath: unboundPath },
+      ).then(projectCliAnalysisResult),
+    );
+    expect(recomposed.operation).toBe("binary_overview");
+    expect(recomposed.normalized_result).toEqual(
+      firstEvidence.normalized_result,
+    );
+    expect(recomposed.caller_input_path).toBe(fixture.path);
   });
 });
 
@@ -2279,6 +2324,8 @@ it("publishes captured function sources when completed parent admission fails", 
     { includeEvidenceSources: true },
   );
   expect(result.ok).toBe(false);
+  const sourceIds = [...fixture.sources.keys()];
+  expect(sourceIds).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
   const output = await publishCliAnalysisEvidence(result, {
     providerId: IDENTITY.id,
@@ -2299,8 +2346,9 @@ it("publishes captured function sources when completed parent admission fails", 
     (record) => record.operation === "analyze_function",
   );
   expect(parent).toBeDefined();
+  expect(parent?.evidence_links).toEqual(sourceIds);
   expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
-    [parent!.evidence_id, ...parent!.evidence_links].sort(),
+    [parent!.evidence_id, ...sourceIds].sort(),
   );
 });
 
