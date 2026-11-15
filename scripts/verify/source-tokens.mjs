@@ -41,8 +41,22 @@ const regexAllowedAfter = (token) =>
   token === undefined ||
   token.opensSubstitution === true ||
   token.keyword === true ||
+  token.closesBlock === true ||
   (token.kind === "punct" && token.controlHead === true) ||
   (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text));
+
+// A `{` opens a statement block at the start of a statement, after the `)`
+// of a control or function head, an arrow, another brace or `;`, a block
+// keyword, or a declaration name or return type (`class A {`,
+// `function f(): T {`). Anywhere else it opens an object literal or type,
+// whose `}` ends an operand, so a `/` after it divides.
+const opensBlock = (previous) =>
+  previous === undefined ||
+  (previous.kind === "punct" && /^(?:[);{}]|=>)$/u.test(previous.text)) ||
+  (previous.kind === "id" &&
+    (previous.keyword !== true ||
+      previous.text === "do" ||
+      previous.text === "else"));
 
 /**
  * End of a template's text from `at` (after a backtick or a substitution's
@@ -189,10 +203,13 @@ const scan = (source, keepTokens) => {
         !isMemberAccess(tokens.at(-1))
       )
         token.keyword = true;
+      if (token.text === "{")
+        braces.push(opensBlock(tokens.at(-1)) ? "block" : "object");
+      // After a statement block a new statement starts.
+      else if (token.text === "}" && braces.pop() === "block")
+        token.closesBlock = true;
       tokens.push(token);
       if (!keepTokens && tokens.length > 64) tokens.splice(0, 62);
-      if (token.text === "{") braces.push("block");
-      else if (token.text === "}") braces.pop();
     }
   }
   return { tokens, comments };
@@ -220,7 +237,8 @@ export const blankComments = (
   let last = 0;
   for (const { text, end } of comments) {
     parts.push(source.slice(last, end - text.length));
-    parts.push(text.replace(/[^\n]/gu, " "));
+    // One space per UTF-16 unit, so offsets after the comment stay the same.
+    parts.push(text.replace(/[^\n]+/gu, (run) => " ".repeat(run.length)));
     last = end;
   }
   parts.push(source.slice(last));

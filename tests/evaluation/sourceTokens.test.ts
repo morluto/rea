@@ -23,9 +23,29 @@ it("keeps code after a regular expression or template that holds one", () => {
   ).toBe(1);
 });
 
+it("reads a regular expression after a statement block", () => {
+  for (const block of [
+    "if (ready) {}",
+    "function f(): T {}",
+    "x => {}",
+    "else {}",
+  ])
+    expect(
+      count(
+        `${block} /[/*]/.test(v); const r = "--pool-policy"; /* real comment */`,
+      ),
+    ).toBe(1);
+  // An object literal's `}` ends an operand, so `/` after it divides.
+  expect(
+    count(
+      'const r = { n: 1 } / 2; const h = "--pool-policy"; const g = "a/b";',
+    ),
+  ).toBe(1);
+});
+
 it("blanks line and block comments in place", () => {
   const source =
-    "/* --pool-policy\n   block */ const a = 1; // --pool-policy\n// --pool-policy\nconst b = 2;";
+    "/* --pool-policy 😀\n   block */ const a = 1; // --pool-policy\n// --pool-policy\nconst b = 2;";
   const code = blankComments(source);
   expect(code).toHaveLength(source.length);
   expect(code.split("\n")).toHaveLength(source.split("\n").length);

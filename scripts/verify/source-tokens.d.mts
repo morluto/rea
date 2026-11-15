@@ -4,6 +4,8 @@ export interface SourceToken {
   readonly start: number;
   /** An expression keyword such as `return`, not a property name. */
   keyword?: true;
+  /** The `}` that closes a statement block rather than an object literal. */
+  closesBlock?: true;
   /** The `)` that closes a control head such as `if (…)`. */
   controlHead?: true;
   /** Template text that opens a `${` substitution. */
