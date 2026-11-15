@@ -315,6 +315,8 @@ const MIGRATED_COMMANDS = [
   "inspect-plist",
   "demangle-swift",
   "analyze",
+  "inspect-managed-artifact",
+  "inspect-managed-native-boundaries",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
