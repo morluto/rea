@@ -771,6 +771,9 @@ describe("JSON-document contract commands", () => {
         "build-reconstruction-obligation-ledger",
         "evaluate-reconstruction-coverage",
         "observe-native-calls",
+        "compare-static-and-observed-endpoints",
+        "capture-browser-scenario",
+        "validate-browser-scenario",
       ]),
     );
   });
@@ -790,7 +793,8 @@ describe("JSON-document contract commands", () => {
       expect(advertised?.contentMediaType).toBe("application/json");
       const content = advertised?.contentSchema as Record<string, unknown>;
       expect(content).toEqual(jsonInputContentSchema(description.content));
-      // Every contract field reaches the document unless omitted with a reason.
+      // Every contract field reaches the document unless omitted with a
+      // reason or taken as an option beside it.
       const input = inputJsonSchema(description.contract.inputSchema);
       const fields = new Set(
         reachable(input, []).flatMap((branch) =>
@@ -802,16 +806,26 @@ describe("JSON-document contract commands", () => {
       for (const field of fields)
         expect(
           reachable(content, [field]).length > 0 ||
-            Object.hasOwn(description.omitted, field),
+            Object.hasOwn(description.omitted, field) ||
+            Object.hasOwn(description.flagged, field),
           field,
         ).toBe(true);
-      for (const field of Object.keys(description.omitted))
+      for (const field of [
+        ...Object.keys(description.omitted),
+        ...Object.keys(description.flagged),
+      ])
         expect(reachable(content, [field]), field).toEqual([]);
+      const options = [
+        ...description.deliveryOptions,
+        ...description.cliOnlyOptions,
+      ].map(({ key }) => key);
+      for (const key of Object.values(description.flagged))
+        expect(options, key).toContain(key);
       expect(
         Object.keys(
           (command.options as z.ZodObject | undefined)?.shape ?? {},
         ).toSorted(),
-      ).toEqual(description.cliOnlyOptions.map(({ key }) => key).toSorted());
+      ).toEqual(options.toSorted());
     },
   );
 
@@ -872,5 +886,95 @@ describe("JSON-document contract commands", () => {
     expect(
       Object.keys(inputJsonSchema(described.content).properties as object),
     ).toEqual(["required"]);
+  });
+});
+
+describe("JSON-document delivery options", () => {
+  const contract = {
+    name: "probe",
+    inputSchema: z.object({
+      required: z.string(),
+      optional: z.string().optional(),
+    }),
+  };
+  const projection = {
+    command: "probe",
+    description: "Probe",
+    document: "Probe JSON",
+  };
+
+  it("takes detail and view beside the document and admits them before the handler", () => {
+    expect(() =>
+      describeContractDocumentCommand(contract, {
+        ...projection,
+        evidenceDelivery: true,
+      }),
+    ).toThrow("probe.detail is not an optional field");
+    const delivered = {
+      name: "probe",
+      inputSchema: contract.inputSchema.extend({
+        detail: z.enum(["complete", "summary"]).default("complete"),
+        view: z.object({ offset: z.number() }).optional(),
+      }),
+    };
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        viewDelivery: { invalidJson: "view must be JSON" },
+      }),
+    ).toThrow("probe view delivery requires evidenceDelivery");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        omit: { detail: "never" },
+      }),
+    ).toThrow("probe.detail is both omitted and an option");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        cliOptions: { evidence_output: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    const flagged = describeContractDocumentCommand(delivered, {
+      ...projection,
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be JSON" },
+    });
+    expect(
+      Object.keys(inputJsonSchema(flagged.content).properties as object),
+    ).toEqual(["required", "optional"]);
+    expect(flagged.admitDelivery({ detail: "complete" })).toEqual({
+      ok: true,
+      value: { detail: "complete", evidenceOutput: undefined },
+    });
+    expect(
+      flagged.admitDelivery({
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":2}',
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        detail: "summary",
+        evidenceOutput: "out.json",
+        view: { offset: 2 },
+      },
+    });
+    for (const values of [
+      { detail: "complete", view: '{"offset":2}' },
+      { detail: "summary", evidence_output: "out.json", view: "{" },
+      {
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":"2"}',
+      },
+      { detail: "summary" },
+    ])
+      expect(flagged.admitDelivery(values).ok, JSON.stringify(values)).toBe(
+        false,
+      );
   });
 });
