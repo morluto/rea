@@ -6,6 +6,7 @@ import {
   readIdaConfiguration,
   type IdaConfiguration,
 } from "./IdaConfiguration.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Result } from "../domain/result.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import {
@@ -59,9 +60,12 @@ export const inspectIdaRegistration = async (
           : parsed !== undefined && !parsed.ok
             ? parsed.error.message
             : "IDA MCP registration is not configured.",
+        // An invalid registration carries the repair runtime readiness reports.
         remediation: valid
           ? null
-          : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
+          : parsed !== undefined && !parsed.ok
+            ? projectAnalysisError(parsed.error).remediation.action
+            : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
         classification:
           path === undefined ? "missing_analysis_engine" : "config_drift",
       },

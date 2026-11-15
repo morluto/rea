@@ -55,6 +55,19 @@ it.each([
       expect(snapshot.availability.diagnostics).not.toHaveProperty(
         "configuration_remediation",
       );
+      // Doctor reports the runtime's repair for a selected registration.
+      if (selected && snapshot.availability.status === "unavailable") {
+        const doctor = await inspectIdaRegistration(path, {
+          retain: () => undefined,
+          run: (operation) => operation(),
+        });
+        expect(
+          doctor.checks.find(({ name }) => name === "registration"),
+        ).toMatchObject({
+          ok: false,
+          remediation: snapshot.availability.remediation,
+        });
+      }
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
