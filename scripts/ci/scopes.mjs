@@ -278,6 +278,9 @@ const PATH_SCOPES = {
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
     "src/contracts/advertisedDialect*.ts",
     "tests/boundary/mcp/advertisedDialect.test.ts",
+    // The advertised absolute-path pattern is host-specific (#7151).
+    "src/domain/localPath*.ts",
+    "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
