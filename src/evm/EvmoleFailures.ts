@@ -25,6 +25,7 @@ import {
   EVM_WORKER_HEAP_MIB,
 } from "./EvmoleRelease.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_evm_interface";
 
@@ -153,10 +154,7 @@ export const evmFailureDialect = (
         cause: unrecognised,
         diagnostics: {
           ...evmWorkerDiagnostics(context),
-          reason:
-            unrecognised instanceof Error
-              ? unrecognised.message
-              : String(unrecognised),
+          reason: errorMessage(unrecognised),
         },
       }),
   };

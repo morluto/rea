@@ -1,6 +1,5 @@
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   androidManifestSplitsSchema,
@@ -16,6 +15,7 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const count = z.int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -173,7 +173,7 @@ export const androidJniReportSchema = z.strictObject({
 export type AndroidJniReport = z.infer<typeof androidJniReportSchema>;
 export const ANDROID_JNI_REPORT_BYTES = 16 * 1024 * 1024;
 const id = (kind: string, parts: readonly unknown[]): string =>
-  `${kind}_${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
+  `${kind}_${sha256Hex(JSON.stringify(parts))}`;
 
 /** JNI escaping is over UTF-16 code units; it can fail for non-Java-source names. */
 export const expectedJniNames = (

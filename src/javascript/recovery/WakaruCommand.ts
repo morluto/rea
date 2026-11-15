@@ -36,9 +36,9 @@ import {
   checkRecoveryDeadline,
   inventoryRecoveryFiles,
   fingerprintRecoveryFile,
-  recoveryFailureMessage,
 } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 const WAKARU_REQUIREMENT =
@@ -133,7 +133,7 @@ export const resolveWakaruCommand = async (
         (cause.cleanup !== undefined || cause.reason === "cancelled"))
     )
       throw cause;
-    const reason = `Configured Wakaru or util-linux prlimit is unavailable: ${recoveryFailureMessage(cause)}`;
+    const reason = `Configured Wakaru or util-linux prlimit is unavailable: ${errorMessage(cause)}`;
     throw new AnalysisCapabilityUnavailableError("wakaru", OPERATION, reason, {
       cause,
       userMessage: reason,
@@ -189,7 +189,7 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
           reason:
             "Failed to launch configured Wakaru through util-linux prlimit",
           command: context.command,
-          detail: recoveryFailureMessage(cause),
+          detail: errorMessage(cause),
         },
       });
       primary =

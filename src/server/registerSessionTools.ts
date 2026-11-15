@@ -42,6 +42,7 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -454,7 +455,7 @@ export const registerSessionTools = (
     } finally {
       void processResources.close().catch((cause: unknown) => {
         logger.error(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Process capture cleanup failed during server shutdown",
         );
       });

@@ -32,6 +32,7 @@ import {
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
 import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OPERATION = "inspect_wasm_artifact";
 
@@ -148,8 +149,6 @@ export const wabtFailureDialect = (
     execution?.observedOutput === undefined
       ? {}
       : { capturedOutput: execution.observedOutput };
-  const reasonOf = (cause: unknown) =>
-    cause instanceof Error ? cause.message : String(cause);
   const capturedOutput =
     (kind: ProviderOutcome["kind"]) => (snapshot: ProviderProcessSnapshot) =>
       kind === "output-limit"
@@ -300,7 +299,7 @@ export const wabtFailureDialect = (
         }
       : {}),
     unclassified: (unrecognised, details) => {
-      const reason = reasonOf(unrecognised);
+      const reason = errorMessage(unrecognised);
       if (phase === "configuration") {
         const admission =
           unrecognised instanceof WabtAdmissionError ? unrecognised : undefined;

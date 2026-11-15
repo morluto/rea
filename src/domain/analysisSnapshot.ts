@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -53,6 +51,7 @@ import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
 const formatSchema = z.enum([
@@ -657,9 +656,7 @@ export const analysisQueryId = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
-  `query_${createHash("sha256")
-    .update(canonicalJson({ target, binding, operation, parameters }))
-    .digest("hex")}`;
+  `query_${sha256Hex(canonicalJson({ target, binding, operation, parameters }))}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */
 export const createAnalysisSnapshotEntry = (input: {

@@ -71,6 +71,7 @@ import {
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
@@ -233,7 +234,7 @@ const inputFailureMessage = (path: string, cause: unknown): string => {
     return `Selected APK does not exist: ${path}`;
   if (cause instanceof NonRegularFileReadError)
     return `Selected APK is not a regular file: ${path}`;
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return `The APK could not be read as a package: ${path}: ${message}`;
 };
 
@@ -592,17 +593,13 @@ export class FlutterBuildProvider {
       FLUTTER_PROVIDER_IDENTITY.id,
       [root],
       {
-        reason: causes
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: causes.map((cause) => errorMessage(cause)).join("; "),
         retained_roots: [
           {
             path: root,
             failures: causes.map((cause) => ({
               name: cause instanceof Error ? cause.name : "UnknownError",
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
               ...(cause instanceof Error &&
               "code" in cause &&
               typeof cause.code === "string"

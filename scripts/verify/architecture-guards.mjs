@@ -324,7 +324,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     if (owners.includes(file.path)) continue;
     const count =
       typeof pattern === "function"
-        ? pattern(file.content)
+        ? pattern(file.content, file.path)
         : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
@@ -482,6 +482,51 @@ checkCounted(
   files,
   /\b_source\s*\.\s*layers\b/gu,
   ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
+// The pattern matches the inline copy with the same expression in all three
+// places; a named local helper with this body is the same copy.
+// Copies that run in another realm cannot import the owner and are excluded by
+// name, so no slice rewrites them: the regex worker's source string and a
+// fetch run inside the browser page through page.evaluate.
+const ISOLATED_ERROR_MESSAGE_COPIES = new Map([
+  ["src/browser/PlaywrightScenarioRequest.ts", 1],
+  ["src/process/RegexMatcher.ts", 1],
+]);
+const inlineErrorMessage =
+  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
+  "inline-error-message",
+  files,
+  (content, path) =>
+    Math.max(
+      0,
+      (content.match(inlineErrorMessage)?.length ?? 0) -
+        (ISOLATED_ERROR_MESSAGE_COPIES.get(path) ?? 0),
+    ),
+  ["src/kernel/errorMessage.ts"],
+);
+
+// Two hexadecimal digits for one byte have one owner, src/kernel/byteToHex.ts.
+checkCounted(
+  "inline byte-to-hex formatting (use byteToHex from src/kernel/byteToHex)",
+  "inline-byte-hex",
+  files,
+  /\.toString\(16\)\s*\.padStart\(\s*2\s*,\s*"0"\s*\)/gu,
+  ["src/kernel/byteToHex.ts"],
+);
+
+// A one-shot SHA-256 hex digest of an in-memory value has one owner,
+// src/kernel/sha256Hex.ts. Incremental and streamed hashing (a Hash updated
+// more than once) is not counted.
+checkCounted(
+  "one-shot SHA-256 hex digest (use sha256Hex from src/kernel/sha256Hex)",
+  "inline-sha256-hex",
+  files,
+  /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
+  ["src/kernel/sha256Hex.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes

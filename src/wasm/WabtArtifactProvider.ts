@@ -75,6 +75,7 @@ import {
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type AcquiredGlue =
@@ -780,7 +781,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           WABT_PROVIDER_IDENTITY.id,
           [runtime.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             previous_error: result.ok
               ? null
               : projectAnalysisError(result.error),
@@ -817,9 +818,7 @@ const resourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
     WABT_PROVIDER_IDENTITY.id,
     cleanup?.resources ?? ["artifact-resources"],
     {
-      reason:
-        cleanup?.reason ??
-        (cause instanceof Error ? cause.message : String(cause)),
+      reason: cleanup?.reason ?? errorMessage(cause),
     },
     { operation: OPERATION, cause },
   );

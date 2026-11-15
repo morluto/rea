@@ -45,6 +45,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { readPwntoolsFailureEvidence } from "../pwntools/PwntoolsResourceLimits.js";
 import type { PwntoolsCommand } from "../pwntools/PwntoolsDecoder.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_recorded_crash";
 const replySchema = z.discriminatedUnion("ok", [
@@ -75,7 +76,7 @@ interface ConfiguredPathRefusal {
 }
 
 const hostPathRefusal = (cause: unknown): ConfiguredPathRefusal => ({
-  reason: cause instanceof Error ? cause.message : String(cause),
+  reason: errorMessage(cause),
   cause,
 });
 
@@ -284,7 +285,7 @@ export const inspectPwndbgCore = async ({
       }
       const error = new AnalysisOutputError(
         OPERATION,
-        `Core-only debugger reply failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Core-only debugger reply failed: ${errorMessage(cause)}`,
         {
           cause,
           ...(cause instanceof ArtifactReaderFailure && cause.reason === "limit"

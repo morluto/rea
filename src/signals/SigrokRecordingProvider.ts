@@ -86,6 +86,7 @@ import {
 } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "decode_signal_recording";
 
@@ -540,7 +541,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         ),
       observedOutput,
       unclassified: (cause) => {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         if (phase === "workspace")
           return privateWorkspaceFailure(
             SIGROK_PROVIDER_IDENTITY.id,

@@ -24,7 +24,6 @@ import {
   metadataTokenFact,
   type MetadataTokenFact,
   readMetadataBlob,
-  sha256Bytes,
 } from "../domain/managed/managedMetadataHeaps.js";
 import {
   readLocalSignatureFacts,
@@ -33,6 +32,7 @@ import {
 import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const EMPTY_CATCH_TOKENS: ReadonlyMap<number, MetadataTokenFact> = new Map();
 
@@ -313,9 +313,8 @@ export const methodBody = (
       local_var_sig_token: localSignature?.token ?? null,
       local_var_signature: localVarSignature,
       il_size: header.ilSize,
-      il_sha256: sha256Bytes(il),
-      normalized_il_sha256:
-        status === "present" ? sha256Bytes(normalized) : null,
+      il_sha256: sha256Hex(il),
+      normalized_il_sha256: status === "present" ? sha256Hex(normalized) : null,
       instruction_count: decoded.count,
       decoded_instruction_count: decoded.parsed.length,
       truncated_instructions: decoded.truncated,

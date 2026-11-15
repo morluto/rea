@@ -82,6 +82,7 @@ import {
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (
@@ -543,7 +544,7 @@ export class PwntoolsDecoder<
         }
         const error = new AnalysisOutputError(
           OPERATION,
-          `Owned pwntools decoder reply failed for ${input.path}: ${cause instanceof z.ZodError ? cause.issues[0]?.message + " at " + (cause.issues[0]?.path.map(String).join(".") ?? "root") : cause instanceof Error ? cause.message : String(cause)}`,
+          `Owned pwntools decoder reply failed for ${input.path}: ${cause instanceof z.ZodError ? cause.issues[0]?.message + " at " + (cause.issues[0]?.path.map(String).join(".") ?? "root") : errorMessage(cause)}`,
           {
             cause,
             capturedOutput,
@@ -808,7 +809,7 @@ export class PwntoolsDecoder<
           failure = new ProviderCleanupError(
             this.identity.id,
             [this.#pendingCleanup?.root?.path ?? "pwntools decoder"],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation: this.profile.operation, cause },
           );
         }
@@ -876,7 +877,7 @@ export class PwntoolsDecoder<
             ]
           : ownedCommandResources(ownership, pending.root?.path),
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           captured_output: {
             ...(pending.diagnostics ??
               capturedProviderOutput(process.supervisor.snapshot())),
@@ -950,7 +951,7 @@ export class PwntoolsDecoder<
           this.identity.id,
           [root.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             ...(pending.diagnostics === undefined
               ? {}
               : { captured_output: { ...pending.diagnostics } }),

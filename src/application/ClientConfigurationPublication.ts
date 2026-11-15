@@ -17,6 +17,7 @@ import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Facts captured where a configuration write operation failed. */
 export interface ClientConfigurationWriteProblem {
@@ -43,7 +44,7 @@ export class ClientConfigurationWriteError extends Error {
     cause: unknown,
     requestedOwnership?: { readonly uid: number; readonly gid: number },
   ) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = errorMessage(cause);
     super(`Configuration ${operation} failed at ${path}: ${detail}`, { cause });
     const code: unknown =
       cause instanceof Error ? Reflect.get(cause, "code") : undefined;

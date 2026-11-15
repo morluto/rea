@@ -50,9 +50,6 @@ export type CommandOutput =
   | { readonly kind: "result"; readonly result: unknown }
   | ({ readonly kind: "failure" } & CommandFailure);
 
-export const errorText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 export const adapterError = (
   operation: string,
   userMessage: string,

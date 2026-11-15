@@ -7,6 +7,7 @@ import {
   issue,
   type DecodeIssue,
 } from "../domain/apple/appleDispatchDecodeFacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 
@@ -154,7 +155,7 @@ export const readObjcPropertyList = (
       if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       issues.push({
         code: "property_decode_failed",
-        message: `property ${String(index)} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `property ${String(index)} could not be decoded: ${errorMessage(cause)}`,
         location,
       });
     }
@@ -199,7 +200,7 @@ export const readObjcPropertiesOf = (
       issue(
         "objc_properties_categories",
         "property_decode_failed",
-        `${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `${context.owner}: ${errorMessage(cause)}`,
         location,
       ),
     );

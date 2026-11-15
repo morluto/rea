@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -9,6 +7,7 @@ import type {
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
 import { rawBinaryEntryPointSchema } from "./rawBinary.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
 const fatCpuSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
@@ -205,7 +204,7 @@ export const targetIdentityKey = (identity: TargetIdentity): string => {
   const encoded = canonicalize(identity);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected a target identity");
-  return `target_${createHash("sha256").update(encoded).digest("hex")}`;
+  return `target_${sha256Hex(encoded)}`;
 };
 
 /** Whether two identities name the same target. */

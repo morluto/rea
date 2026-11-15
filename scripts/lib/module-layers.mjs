@@ -4,7 +4,8 @@
  * layer. An undeclared unit fails the check, so a new directory must choose
  * its layer when it is added.
  *
- * The order follows docs/architecture/architecture.mermaid: domain and
+ * The order follows docs/architecture/architecture.mermaid: the dependency-free
+ * kernel helpers that every layer may use, domain and
  * contracts at the centre, the process/filesystem foundation, the ports
  * that providers implement and application consumes, the shared provider
  * core (src/providers), provider adapters,
@@ -12,6 +13,7 @@
  * MCP entry points.
  */
 export const LAYER_ORDER = Object.freeze([
+  "kernel",
   "domain",
   "contracts",
   "foundation",
@@ -27,6 +29,7 @@ const units = (layer, names) => names.map((name) => [name, layer]);
 
 export const UNIT_LAYERS = Object.freeze(
   Object.fromEntries([
+    ...units("kernel", ["kernel"]),
     ...units("domain", ["domain"]),
     ...units("contracts", ["contracts"]),
     ...units("foundation", [
