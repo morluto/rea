@@ -28,6 +28,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
   OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import {
@@ -491,9 +493,7 @@ export class ReverseEngineeringService {
   }): Promise<Result<Evidence, AnalysisError>> {
     const { operation, signal, outputBudgetBytes } = request;
     if (signal?.aborted)
-      return Promise.resolve(
-        err(new AnalysisCancelledError(operation, { cause: signal.reason })),
-      );
+      return Promise.resolve(err(cancelledBy(operation, signal)));
     if (this.#closing)
       return Promise.resolve(
         err(
@@ -558,9 +558,7 @@ export class ReverseEngineeringService {
           ? err(
               analysisErrorWithCancellation(
                 result.error,
-                new AnalysisCancelledError(operation, {
-                  cause: operationSignal.reason,
-                }),
+                cancelledBy(operation, operationSignal),
               ),
             )
           : result,
@@ -587,10 +585,7 @@ export class ReverseEngineeringService {
       outputBudgetBytes,
     } = request;
     const { executable: command, arguments: args } = profile;
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
     const absolutePath =
@@ -608,9 +603,10 @@ export class ReverseEngineeringService {
       const code = commandFailureCode(cause);
       if (preflightCancelled(signal, cause, code))
         return err(
-          new AnalysisCancelledError(operation, {
-            cause: callerCancellationCause(signal, cause),
-          }),
+          cancelledBy(
+            operation,
+            carriedReason(callerCancellationCause(signal, cause)),
+          ),
         );
       if (code === "EACCES" || code === "EPERM") {
         const deniedPath = absolutePath === undefined ? command : absolutePath;
@@ -880,9 +876,10 @@ export class ReverseEngineeringService {
             ...reverseCommandTimeoutGuidance(timeoutMs),
           });
         } else if (darwinFailure.cancellation !== undefined) {
-          earlyFailure = new AnalysisCancelledError(operation, {
-            cause: darwinFailure.cancellation?.reason,
-          });
+          earlyFailure = cancelledBy(
+            operation,
+            carriedReason(darwinFailure.cancellation?.reason),
+          );
         } else {
           const setting =
             operation === "inspect_with_objdump"
@@ -971,10 +968,11 @@ export class ReverseEngineeringService {
           code === "ERR_PROVIDER_LAUNCH")
       ) {
         if (commandCancelled(signal, cause, code))
-          earlyFailure = new AnalysisCancelledError(operation, {
-            cause: callerCancellationCause(signal, cause),
-            ...ownedCleanupOptions(cause),
-          });
+          earlyFailure = cancelledBy(
+            operation,
+            carriedReason(callerCancellationCause(signal, cause)),
+            { ...ownedCleanupOptions(cause) },
+          );
         else if (code === "ETIMEDOUT")
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
@@ -1027,11 +1025,11 @@ export class ReverseEngineeringService {
           signal: capture.signal,
         };
         if (commandCancelled(signal, cause, code))
-          failure = new AnalysisCancelledError(operation, {
-            cause: callerCancellationCause(signal, cause),
-            capturedOutput,
-            ...ownedCleanupOptions(cause),
-          });
+          failure = cancelledBy(
+            operation,
+            carriedReason(callerCancellationCause(signal, cause)),
+            { capturedOutput, ...ownedCleanupOptions(cause) },
+          );
         else if (code === "ETIMEDOUT")
           failure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
@@ -1118,8 +1116,7 @@ export class ReverseEngineeringService {
       }
     }
     if (signal?.aborted && failure === undefined) {
-      failure = new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      failure = cancelledBy(operation, signal, {
         capturedOutput: {
           stdout,
           stderr,
@@ -1541,9 +1538,7 @@ export const digestFile = async (
     );
     const abort = (): void => {
       stream.destroy(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal?.reason,
-        }),
+        cancelledBy("artifact_digest", carriedReason(signal?.reason)),
       );
     };
     const cleanup = (): void => {
@@ -1553,11 +1548,7 @@ export const digestFile = async (
     if (signal?.aborted) {
       cleanup();
       stream.destroy();
-      rejectDigest(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal.reason,
-        }),
-      );
+      rejectDigest(cancelledBy("artifact_digest", signal));
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
@@ -1637,9 +1628,7 @@ const statWithDeadline = (
   timeoutMs: number,
 ): Promise<Stats> => {
   if (signal?.aborted)
-    return Promise.reject(
-      new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
-    );
+    return Promise.reject(cancelledBy("artifact_digest", signal));
   return new Promise<Stats>((resolveStat, rejectStat) => {
     let settled = false;
     const finish = (outcome: Result<Stats, unknown>): void => {
@@ -1652,11 +1641,7 @@ const statWithDeadline = (
     };
     const abort = (): void =>
       finish(
-        err(
-          new AnalysisCancelledError("artifact_digest", {
-            cause: signal?.reason,
-          }),
-        ),
+        err(cancelledBy("artifact_digest", carriedReason(signal?.reason))),
       );
     const timer = setTimeout(
       () =>

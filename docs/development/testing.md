@@ -258,7 +258,9 @@ Actions jobs own their runner and use up to four; see
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
-tests avoid process-global state and keep resource cleanup test-scoped. Each
+tests avoid process-global state and keep resource cleanup test-scoped. Source
+projects run those shared graphs in forked workers, so each worker owns its own
+heap and no single process holds the whole lane. Each
 MCP session still owns its resources, and CLI cases retain fresh command
 instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
 isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.

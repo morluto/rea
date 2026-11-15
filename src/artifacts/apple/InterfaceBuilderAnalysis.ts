@@ -4,6 +4,7 @@ import {
   ParseFailureError,
 } from "../../domain/parseFailure.js";
 import { TextDecoder } from "node:util";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
 import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
 import {
@@ -284,6 +285,8 @@ const decodeInterfaceBuilderBundle = async (
         if (input.signal?.aborted === true) throw cause;
         // Read/identity failures describe source acquisition, not bad content.
         if (cause instanceof ArtifactReaderFailure) throw cause;
+        // A broken internal assumption is a REA defect, not an invalid archive.
+        if (cause instanceof InternalInvariantError) throw cause;
         if (cause instanceof InterfaceBuilderDecodeBudgetExceeded) {
           // A document rejected while decoding, e.g. beyond the shared depth
           // limit, retains no representation; later documents keep its share.

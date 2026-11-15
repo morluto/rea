@@ -17,6 +17,7 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { isRecord } from "../domain/isRecord.js";
 
@@ -137,18 +138,6 @@ export const advertisedInputJsonSchema = <Contract extends ToolContract>(
     target: "draft-2020-12",
   }) as Record<string, unknown>;
 
-/**
- * Return the canonical output JSON Schema: the complete projection of the
- * contract's output, which the full output profile lists. A client that
- * validates a reply uses it whatever the selected profile advertises.
- */
-export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
-  contract: Contract,
-): Record<string, unknown> =>
-  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
 /** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
@@ -158,11 +147,13 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
-        const shared = presentOutputJsonSchema(
-          project({
-            ...options,
-            libraryOptions: { reused: "ref", ...options.libraryOptions },
-          }),
+        const shared = shareOutputDefinitions(
+          presentOutputJsonSchema(
+            project({
+              ...options,
+              libraryOptions: { reused: "ref", ...options.libraryOptions },
+            }),
+          ),
         );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.
@@ -178,6 +169,20 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       },
     ),
   );
+
+/**
+ * Return the canonical output JSON Schema registered on MCP for a target: the
+ * complete projection of the contract's output, which the full output profile
+ * lists. A client that validates a reply uses it whatever the selected profile
+ * advertises.
+ */
+export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+  target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
+): Record<string, unknown> =>
+  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
+    target,
+  }) as Record<string, unknown>;
 
 /**
  * Apply a wire-presentation transform to one schema's advertised input

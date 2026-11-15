@@ -14,7 +14,10 @@ import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCre
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -95,10 +98,7 @@ export const planOutputTree = async (
 const outputCancellation = (
   operation: string,
   signal: AbortSignal | undefined,
-) =>
-  signal?.aborted === true
-    ? new AnalysisCancelledError(operation, { cause: signal.reason })
-    : undefined;
+) => (signal?.aborted === true ? cancelledBy(operation, signal) : undefined);
 
 /**
  * Write a new or empty folder through the safe output tree, rolling an

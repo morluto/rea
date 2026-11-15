@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { access, stat } from "node:fs/promises";
 
 import {
@@ -50,7 +51,7 @@ export const admitIdaConfiguration = async (
 ): Promise<IdaAdmission> => {
   if (configuration.mode !== "headless") return { admitted: true };
   const root = configuration.workspaceRoot;
-  const privacy = privateRuntimeRootCapability();
+  const privacy = privateRuntimeRootCapability(HOST_PLATFORM.platform);
   if (!privacy.available)
     return {
       admitted: false,

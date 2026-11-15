@@ -2,6 +2,14 @@ import { expect, it, vi } from "vitest";
 import * as windows from "../windows/WindowsOwnedProcess.js";
 import { spawnOwnedProviderProcess } from "./ProviderProcess.js";
 
+// Select the composed host fact, not Node's mutable ambient process property.
+vi.mock("../platform/HostPlatform.js", () => ({
+  HOST_PLATFORM: Object.freeze({
+    platform: "win32",
+    architecture: process.arch,
+  }),
+}));
+
 it.each([
   {
     constraint: "Create process atomically inside owned Job Object failed",
@@ -27,13 +35,8 @@ it.each([
           }
         } as unknown as typeof windows.WindowsOwnedProcess,
       );
-    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const observed: string[] = [];
     try {
-      Object.defineProperty(process, "platform", {
-        value: "win32",
-        configurable: true,
-      });
       await expect(
         spawnOwnedProviderProcess({
           command: "C:\\adb.exe",
@@ -45,7 +48,6 @@ it.each([
       ).rejects.toBe(failure);
       expect(observed).toEqual(states);
     } finally {
-      Object.defineProperty(process, "platform", platform);
       constructor.mockRestore();
     }
   },

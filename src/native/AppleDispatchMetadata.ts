@@ -47,10 +47,11 @@ import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
 import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { parseMachoLayout } from "./AppleMachoSelection.js";
 import {
-  parseMachoLayout,
+  selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./AppleMachoSelection.js";
+} from "./metadata/MachoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,
@@ -64,6 +65,7 @@ import {
   createSwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -75,7 +77,25 @@ export function* decodeAppleDispatchMetadataSteps(
   objcClassImportAddressesComplete = true,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
-  const layout = parseMachoLayout(bytes, architecture, admittedSlice);
+  const selected = selectMachoSlice(bytes, {
+    mode: "admitted",
+    architecture,
+    slice: admittedSlice,
+  });
+  if (!selected.ok) {
+    if (selected.error.kind === "malformed")
+      throw malformedInput("macho", selected.error.message);
+    // Admission bound this architecture and slice to these exact bytes, so a
+    // refusal is an inconsistency inside REA, not the caller's selection.
+    throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
+      diagnostics: {
+        target_path: provenance.path,
+        refusal: selected.error.kind,
+        reason: selected.error.message,
+      },
+    });
+  }
+  const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
@@ -360,7 +380,9 @@ export const inspectAppleDispatchMetadata = async (
 ) => {
   const { signal } = options;
   if (target.kind !== "executable" || !isMachOFormat(target.format))
-    throw new TypeError("Apple dispatch metadata requires a Mach-O target");
+    throw invariantViolation(
+      "Apple dispatch metadata requires a Mach-O target",
+    );
   const admission =
     options.maxInputBytes === undefined
       ? {
