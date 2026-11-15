@@ -19,7 +19,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -231,11 +231,11 @@ const combineCleanupFailure = <T>(
   primary.ok
     ? err(cleanup)
     : err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary.error,
           cleanup,
           "inspect_signature",
-        ).bindCleanupDependencies([primary.error, cleanup]),
+        ),
       );
 
 const signatureCleanupFailure = (
