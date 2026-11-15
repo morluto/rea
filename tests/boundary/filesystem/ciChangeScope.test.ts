@@ -224,6 +224,17 @@ it.each([
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
