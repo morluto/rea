@@ -11,6 +11,7 @@ import {
   artifactPrimaryCleanupLeases,
 } from "./ArtifactReader.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Capabilities the scope needs from an output tree and a private runtime
@@ -275,11 +276,7 @@ export class ArtifactResourceScope {
     return err(
       new AggregateError(
         failures,
-        failures
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        failures.map((cause) => errorMessage(cause)).join("; "),
       ),
     );
   }

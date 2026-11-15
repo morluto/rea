@@ -32,6 +32,9 @@ import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
+  hashStableRootArtifactHandle,
+  openRootArtifact,
+  releaseRootArtifact,
 } from "../resources/index.js";
 import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
@@ -51,11 +54,6 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
-import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "../resources/index.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -125,6 +123,7 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
@@ -3726,7 +3725,7 @@ const releaseExposureFailurePrimary = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

@@ -1,5 +1,6 @@
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { SafeOutputTree } from "./SafeOutputTree.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Setup failed after this tree was acquired; callers still own this exact tree. */
 export class SafeOutputTreeCreationFailure extends ArtifactReaderFailure {
@@ -28,6 +29,3 @@ export class SafeOutputTreeCreationFailure extends ArtifactReaderFailure {
     this.tree = tree;
   }
 }
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
