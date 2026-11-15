@@ -107,6 +107,7 @@ const successfulTracerOutput = {
   breakpoints: [{ index: 0, location_count: 1, locations: [] }],
   events: [EVENT],
   other_stops: [],
+  unattributed_breakpoint_stops: 0,
 };
 const configSchema = z.object({
   result_path: z.string(),

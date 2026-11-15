@@ -20,6 +20,14 @@ it("counts plain-Error limit classes in every layout", () => {
   ).toBe(1);
 });
 
+it("counts limit subclasses of BinaryResourceFailure, which names its allowance", () => {
+  expect(
+    localLimitErrorClassCount(
+      "export class ProbeLimitFailure extends BinaryResourceFailure {}",
+    ),
+  ).toBe(1);
+});
+
 it("ignores classes on the shared owners and unrelated names", () => {
   expect(
     localLimitErrorClassCount(

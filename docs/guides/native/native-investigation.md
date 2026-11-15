@@ -1290,7 +1290,13 @@ cancellation Evidence, even if the target has already exited.
 - `selected_file_sha256` and LLDB module identity observations. These checks do
   not pin the executable against concurrent mutation; `loaded_image_sha256`
   remains unknown;
-- signal or exception stops;
+- signal or exception stops. LLDB can report a requested breakpoint's own trap
+  as an `EXC_BREAKPOINT` exception without running its callback; a trap at a
+  requested location is recorded as that breakpoint's event. Any other
+  breakpoint trap, and any signal or exception stop on a requested location,
+  stays in `other_stops`, is counted in
+  `coverage.unattributed_breakpoint_stops`, and makes coverage partial, because
+  it may be a hit REA could not record;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.

@@ -331,13 +331,16 @@ checkCounted(
 
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
 // src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
-// class on plain Error hides the limit's name and maximum from both.
+// class on plain Error hides the limit's name and maximum from both; a limit
+// subclass of BinaryResourceFailure keeps a second limit field beside the
+// allowance its LimitRef already names. The environment-state extraction's private retention stop is control flow that
+// its own entry point catches and turns into `null`; it is never reported.
 checkCounted(
-  "local limit class extending plain Error (use decodeLimit from src/domain/parseFailure or an AnalysisRefusal)",
+  "local limit class (use decodeLimit from src/domain/parseFailure, a named BinaryResourceFailure allowance, or an AnalysisRefusal)",
   "local-limit-error-class",
   files,
   localLimitErrorClassCount,
-  [],
+  ["src/domain/analysisView/EnvironmentStateExtraction.ts"],
 );
 
 // A resource allowance is charged and refunded through `Budget` in
@@ -351,6 +354,17 @@ checkCounted(
   files,
   /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu,
   ["src/domain/budget.ts"],
+);
+
+// A slice to a named maximum drops items; boundedList in src/domain/boundedList
+// keeps the count of what it dropped beside the retained items, so a consumer
+// can say that more exist and how many.
+checkCounted(
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "constant-maximum-slice",
+  files,
+  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  ["src/domain/boundedList.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;

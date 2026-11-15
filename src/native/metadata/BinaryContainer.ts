@@ -50,22 +50,35 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
   }
 }
 
-/** Resource boundary exceeded while decoding metadata or native container structure. */
+/**
+ * Resource boundary exceeded while decoding metadata or native container
+ * structure. `allowance` names the exhausted allowance in the failure's
+ * `LimitRef`; it defaults to the boundary when a decoder has only one.
+ */
 export class BinaryResourceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
+    allowance: string = boundary,
   ) {
     super({
       kind: "limit",
       format: "native-binary",
       detail: message,
-      limit: { name: boundary, maximum: maximum_bytes },
+      limit: { name: allowance, maximum: maximum_bytes },
     });
     this.name = "BinaryResourceFailure";
   }
 }
+
+/** The failure's allowance when it is one of `allowances`, else `null`. */
+export const binaryResourceAllowance = <Allowance extends string>(
+  failure: BinaryResourceFailure,
+  allowances: readonly Allowance[],
+): Allowance | null =>
+  allowances.find((allowance) => allowance === failure.failure.limit.name) ??
+  null;
 
 /** Limit name of the fixed per-string NUL-termination read allowance. */
 const STRING_READ_LIMIT = "string-read-bytes";

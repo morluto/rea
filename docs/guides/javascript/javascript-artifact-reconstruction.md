@@ -831,13 +831,32 @@ caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
 
-Member-mutation analysis also has a fixed work allowance of 524,288 alias
-states per source. It is not a `semantic_precision` field. A source whose alias
-histories exceed it is refused with a `resource_constraint` that names the
-fixed work allowance, instead of exhausting the worker heap. Static facts the
-worker had not yet reported are not kept, because a partial mutation index
-would let later reads keep stale values. Raising `max_heap_mb`,
-`analysis_timeout_ms` or `semantic_precision` does not admit the same source.
+Member-mutation analysis also has a work allowance of 524,288 alias states
+per source, selected by the `javascript.member_mutation_alias_states` setting
+(1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with
+`REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES` for CLI or future REA processes;
+it applies to the next `analyze_javascript_application`, `analyze_web_bundle`
+or `import-reference-source` operation. It is not a `semantic_precision` field.
+A source whose alias histories exceed it is refused with a
+`resource_constraint` that names the setting, its effective value and source,
+instead of exhausting the worker heap. Each scheduled state retains about
+1–2 KiB of worker heap until its query finishes, so a raised allowance usually
+needs a larger `max_heap_mb` too. In `analyze_javascript_application`, a
+source refused during the semantic phase keeps its completed static facts. One
+refused during the static phase still counts as parsed and keeps its
+syntax-level facts: parse status `partial`, syntax coverage,
+source map directives and vendor markers. Its `analysis_coverage.examination`
+is `not-examined` with `refused_phase: "member-mutations"` and an
+`unexamined_reason`, and findings that read mutation facts are not reported,
+because a partial mutation index would let later reads keep stale values; their
+absence is not evidence of absence. In `analyze_web_bundle`, a refused script
+still counts as parsed and keeps its parse status and text-level inferences
+such as vendor and bundle-runtime markers; its routes, endpoints and edges are
+not reported, and its `javascript_analysis` unknown carries the setting,
+remediation and `refused_phase: "member-mutations"`. `import-reference-source` keeps a refused
+file's declaration-level imports and records that its CommonJS require calls
+were not examined. Raising `max_heap_mb`, `analysis_timeout_ms` or
+`semantic_precision` alone does not admit the same source.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
