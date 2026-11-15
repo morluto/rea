@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -25,12 +26,11 @@ const validateAdvertised = (
   response: CallToolResult,
 ) => {
   const tool = tools.find((candidate) => candidate.name === name);
-  if (tool?.outputSchema === undefined)
-    throw new Error(`missing ${name} output schema`);
+  if (tool === undefined) throw new Error(`missing ${name} output schema`);
   const validate = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(tool.outputSchema));
+  }).compile(canonicalOutputSchema(tool.name));
   expect(
     validate(response.structuredContent),
     JSON.stringify(validate.errors),

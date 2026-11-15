@@ -3,7 +3,7 @@ import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { TextDecoder } from "node:util";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 type Frame =
   | {
@@ -21,7 +21,7 @@ const captureNodeAdmission = (maximumNodes: number | undefined) => {
     nodes++;
     if (maximumNodes !== undefined && nodes > maximumNodes)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "parser-nodes", maximum: maximumNodes },
         "JSON exceeds its parser node representation allowance.",
       );
   };
@@ -37,7 +37,7 @@ const selectCaptureObjectProperty = (
     throw new TypeError("JSON visitor emitted a property outside an object.");
   if (frame.members.has(key))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} JSON contains duplicate object members.`,
     );
   frame.pendingKey = key;
@@ -68,7 +68,7 @@ export const parseCaptureJson = (
     admitNode();
     if (frames.length >= captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
       );
@@ -129,7 +129,10 @@ export const parseCaptureJson = (
           throw new TypeError("JSON visitor emitted an unsupported literal.");
       },
       onError: () => {
-        throw new CaptureFormatError("format", `${format} is malformed JSON.`);
+        throw new CaptureFormatError(
+          "malformed",
+          `${format} is malformed JSON.`,
+        );
       },
     },
     {
@@ -147,10 +150,11 @@ export const decodeCaptureText = (
   format: "HAR" | "qlog",
 ): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // Exported HAR and qlog files may carry a BOM signature (RFC 8259 8.1).
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} is not valid UTF-8 JSON.`,
     );
   }

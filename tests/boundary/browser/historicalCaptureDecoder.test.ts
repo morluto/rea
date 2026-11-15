@@ -33,6 +33,7 @@ import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { waitFor } from "../../support/testWait.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 
@@ -336,12 +337,9 @@ it.each(["cancelled", "process"] as const)(
       sensitive_values: ["capture-private-runtime"],
     });
     const target = decoder.inspect(input, { signal: controller.signal });
-    await vi.waitFor(
-      async () => {
-        targetPid = JSON.parse(await readFile(markerPath, "utf8"));
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(async () => {
+      targetPid = JSON.parse(await readFile(markerPath, "utf8"));
+    });
     const peer = decoder.inspect(input);
     await peerEntered.promise;
     if (outcome === "cancelled") controller.abort(reason);

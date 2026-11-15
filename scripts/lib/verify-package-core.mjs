@@ -6,11 +6,15 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Only this operation needs built contracts; path checks remain source-only.
  */
 export const verifyCompleteToolCatalog = async (client, options) => {
-  const [{ requireMcpLifecycleResult, sortVerifierNames }, { TOOL_CONTRACTS }] =
-    await Promise.all([
-      import("./mcp-verifier-results.mjs"),
-      import("../../dist/contracts/toolContracts.js"),
-    ]);
+  const [
+    { requireMcpLifecycleResult, sortVerifierNames },
+    { TOOL_CONTRACTS },
+    dialect,
+  ] = await Promise.all([
+    import("./mcp-verifier-results.mjs"),
+    import("../../dist/contracts/toolContracts.js"),
+    import("../../dist/contracts/advertisedDialect.js"),
+  ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
   const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
@@ -36,6 +40,25 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
+  // The compact input presentation is enforced at zero, like every output pattern.
+  const regressions = [
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedInputDialectViolations),
+      ),
+      {},
+    ),
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
+      ),
+      {},
+    ),
+  ];
+  if (regressions.length > 0)
+    throw new Error(
+      `packaged MCP advertises constructs outside the portable schema dialect: ${regressions.join("; ")}`,
+    );
   const sessionDefinition = listed.tools.find(
     ({ name }) => name === "binary_session",
   );

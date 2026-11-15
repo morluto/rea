@@ -62,6 +62,11 @@ const failureFields = {
   address: z.string().min(1),
   code: z.string().min(1),
   message: z.string().min(1),
+  pseudocode_absence: pseudocodeAbsenceSchema
+    .exactOptional()
+    .describe(
+      "The provider's reported reason for null pseudocode; omitted after the name to fit the inline text budget, and always kept in the index.",
+    ),
 };
 
 const failureSchema = z.union([

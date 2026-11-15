@@ -26,6 +26,7 @@ import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const DATABASE_TARGET: BinaryTarget = {
   path: "/tmp/fixture.hop",
@@ -669,7 +670,10 @@ describe("analysis provider registry: rejection diagnostics", () => {
                 providerId: "alpha",
                 origin: "availability",
                 code: "version_unresolved",
-                remediation: expect.stringContaining("rea doctor") as unknown,
+                // doctor cannot check this provider, so it is not offered.
+                remediation: expect.not.stringContaining(
+                  "rea doctor",
+                ) as unknown,
               },
             ],
           },
@@ -1263,7 +1267,7 @@ describe("profile resolution terminal facts", () => {
         },
         closeOwnedResources: async () => {
           if (!allowClose) return err(primary);
-          primary.resolveCleanup();
+          releaseOwnedCleanup(primary);
           return ok(null);
         },
       },
@@ -1324,7 +1328,7 @@ describe("automatic profile cleanup ownership", () => {
             },
             closeOwnedResources: async () => {
               if (!released.has(id)) return err(failures[id]);
-              failures[id].resolveCleanup();
+              releaseOwnedCleanup(failures[id]);
               return ok(null);
             },
           };
@@ -1541,7 +1545,7 @@ it.each(["alpha", "beta"])(
         ...candidate(id).provider,
         closeOwnedResources: async () => {
           if (!released) return err(id === unknownOwner ? unknown : tracked);
-          if (id !== unknownOwner) tracked.resolveCleanup();
+          if (id !== unknownOwner) releaseOwnedCleanup(tracked);
           return ok(null);
         },
       })),
@@ -1661,7 +1665,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
       },
       closeOwnedResources: async () => {
         releases++;
-        cleanup.resolveCleanup();
+        releaseOwnedCleanup(cleanup);
         return ok(null);
       },
     },

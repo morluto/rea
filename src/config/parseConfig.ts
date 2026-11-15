@@ -19,6 +19,7 @@ import {
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
 } from "../domain/analysisResourceLimits.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REPLY } from "./bridgeMaxReplyBytes.js";
 import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
@@ -138,6 +139,7 @@ export const parseConfig = (
   const valueFlowEdges = admitted("ghidra.value_flow_max_edges");
   const callerScan = admitted("hopper.caller_scan_budget_ms");
   const bridgeBytes = admitted("bridge.max_request_bytes");
+  const bridgeReplyBytes = admitted("bridge.max_reply_bytes");
   const regexDeadline = admitted("regex.matching_deadline_ms");
   const regexHeap = admitted("regex.worker_heap_request_mib");
   return ok({
@@ -150,9 +152,6 @@ export const parseConfig = (
     ...(env.REA_MCP_MAX_INPUT_ELEMENTS === undefined
       ? {}
       : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
-    ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
-      ? {}
-      : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
     ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
@@ -247,6 +246,15 @@ export const parseConfig = (
         ? DEFAULT_BRIDGE_MAX_REQUEST
         : {
             maximumBytes: bridgeBytes,
+            source: "setting",
+          },
+    bridgeMaxReplyBytes:
+      bridgeReplyBytes === undefined ||
+      bridgeReplyBytes === null ||
+      environment.REA_BRIDGE_MAX_REPLY_BYTES === undefined
+        ? DEFAULT_BRIDGE_MAX_REPLY
+        : {
+            maximumBytes: bridgeReplyBytes,
             source: "setting",
           },
     regexMatchingDeadline:

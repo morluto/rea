@@ -13,11 +13,14 @@ export interface AnalysisSettingValues {
   readonly "regex.matching_deadline_ms": number;
   readonly "regex.worker_heap_request_mib": number;
   readonly "capture.decoder_old_generation_mib": number;
+  readonly "capture.packet_json_expansion_bytes": number;
   readonly "javascript.analysis_timeout_ms": number;
   readonly "javascript.max_heap_mb": number;
+  readonly "javascript.member_mutation_alias_states": number;
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
   readonly "bridge.max_request_bytes": number;
+  readonly "bridge.max_reply_bytes": number;
   readonly "debugger.command_deadline_ms": number;
   readonly "debugger.max_command_output_bytes": number;
   readonly "hopper.caller_scan_budget_ms": number;
@@ -81,3 +84,35 @@ export interface AnalysisInvocationSettingLimit extends Omit<
   /** Launch-environment seed that a new invocation reads, when one exists. */
   readonly environment?: string;
 }
+
+/**
+ * A limit whose control is not a registered analysis setting: a per-call
+ * request parameter, or an environment variable REA reads when it starts. A
+ * limit without `control_kind` is an `AnalysisSettingLimit` named by
+ * `setting`. `update_analysis_settings` changes neither control.
+ */
+export type AnalysisControlLimit = {
+  readonly effective_value: number;
+  readonly unit: AnalysisSettingLimit["unit"];
+  readonly minimum: number;
+  readonly maximum: number;
+  /** Value used when the control is omitted. */
+  readonly default_value: number;
+} & (
+  | {
+      readonly control_kind: "parameter";
+      readonly parameter: string;
+      /** CLI spelling of the same per-call parameter. */
+      readonly cli_flag: string;
+      readonly applies_at: "next_call";
+    }
+  | {
+      readonly control_kind: "environment";
+      readonly environment: string;
+      /** A one-invocation caller's next invocation reads it without a restart. */
+      readonly applies_at: "next_startup" | "next_invocation";
+    }
+);
+
+/** The limit an error binds: a registered setting, or a parameter or environment control. */
+export type AnalysisLimit = AnalysisSettingLimit | AnalysisControlLimit;

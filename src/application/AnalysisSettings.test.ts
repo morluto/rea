@@ -181,7 +181,11 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["ghidra.startup_timeout_ms", "bridge.max_request_bytes"]);
+  ).toEqual([
+    "ghidra.startup_timeout_ms",
+    "bridge.max_request_bytes",
+    "bridge.max_reply_bytes",
+  ]);
   for (const operation of ["list_cutter_sessions", "cutter_command"] as const)
     expect(
       store

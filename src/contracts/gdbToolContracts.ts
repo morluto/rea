@@ -5,7 +5,7 @@ import {
   commandEvidenceDetailSchema,
   gdbCommandResultSchema,
 } from "../domain/commandObservation.js";
-import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -16,6 +16,7 @@ const sessionId = z.string().uuid();
 export const GDB_TOOL_CONTRACTS = [
   {
     name: "start_gdb_session",
+    availability: { host: "persistentDebugger" },
     ...toolContractMetadata("start_gdb_session"),
     kind: "native-provider",
     description:

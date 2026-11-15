@@ -35,8 +35,8 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
-  type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
   JavaScriptRouteCandidate,

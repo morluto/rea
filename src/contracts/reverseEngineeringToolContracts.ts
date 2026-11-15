@@ -1,5 +1,5 @@
 import { commandObservationSchema } from "../domain/commandObservation.js";
-import { objdumpSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { objdumpSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 
 import {
   objdumpInputSchema,

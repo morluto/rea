@@ -1,3 +1,5 @@
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   projectObjcClassMethods,
@@ -40,7 +42,8 @@ const readLocalClass = (read: ObjcDispatchReaders, address: bigint) => {
   const ro = read.pointer(address + 32n) & ~7n;
   const name = read.string(read.pointer(ro + 24n));
   if (name.length === 0)
-    throw new TypeError(
+    throw malformedInput(
+      "macho",
       `Objective-C class at ${hex(address)} has an empty name`,
     );
   return { ro, name };
@@ -66,6 +69,7 @@ const resolveSuperclass = (
       address: hex(superclass),
     };
   } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
     failures.push(
       `Superclass pointer ${hex(superclass)} of ${className} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
@@ -116,7 +120,10 @@ export const decodeObjcDispatchFacets = (input: {
       relative = (flags & 0x80000000) !== 0;
     const stride = flags & 0xfffc;
     if (stride !== (relative ? 12 : 24))
-      throw new TypeError(`Unsupported method stride/flags at ${hex(list)}`);
+      throw unsupportedInput(
+        "macho",
+        `Unsupported method stride/flags at ${hex(list)}`,
+      );
     for (let index = 0; index < count; index++) {
       if (!budget.admit()) {
         onTruncated?.();
@@ -130,6 +137,7 @@ export const decodeObjcDispatchFacets = (input: {
         try {
           fileOffset = read.offset(target);
         } catch (cause: unknown) {
+          if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
           // best-effort cleanup: serialized target remains unresolved.
           void cause;
         }
@@ -170,17 +178,22 @@ export const decodeObjcDispatchFacets = (input: {
               implementation < segment.address + segment.size,
           )
         )
-          throw new RangeError(
+          throw malformedInput(
+            "macho",
             "Method implementation is not in an executable segment",
           );
         implementationLocation = read.location(implementation);
       } catch (cause: unknown) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         // best-effort cleanup: external/chained pointers remain unresolved.
         void cause;
       }
       const selector = read.string(selectorAddress);
       if (selector.length === 0)
-        throw new TypeError("Objective-C method has an empty selector");
+        throw malformedInput(
+          "macho",
+          "Objective-C method has an empty selector",
+        );
       selectors.push(selector);
       result.objc_dispatch_implementations.push({
         class_name: className,
@@ -237,6 +250,7 @@ export const decodeObjcDispatchFacets = (input: {
       try {
         return ok(read.pointer(field));
       } catch (cause: unknown) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         const admitted = budget.admit();
         failures.push(
           `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -269,6 +283,7 @@ export const decodeObjcDispatchFacets = (input: {
       try {
         protocolReader.record(pointer.value);
       } catch (cause) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         // record() admits the slot itself before decoding, so admitting
         // again here would count one protocol twice.
         failures.push(
@@ -301,7 +316,10 @@ export const decodeObjcDispatchFacets = (input: {
       const stride = read.u32(ivarList),
         count = read.u32(ivarList + 4n);
       if (stride !== 32)
-        throw new TypeError("Unsupported Objective-C ivar entry size");
+        throw unsupportedInput(
+          "macho",
+          "Unsupported Objective-C ivar entry size",
+        );
       ivarCount = count;
       for (let index = 0; index < count; index++) {
         if (!budget.admit()) {
@@ -314,13 +332,14 @@ export const decodeObjcDispatchFacets = (input: {
         try {
           value = read.u32(encodedOffset);
         } catch (cause: unknown) {
+          if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
           // Unresolved offsets are recorded; the cause adds no identity.
           void cause;
           failures.push(`Unresolved ivar offset pointer ${hex(encodedOffset)}`);
         }
         const ivarName = read.string(read.pointer(entry + 8n));
         if (ivarName.length === 0)
-          throw new TypeError("Objective-C ivar has an empty name");
+          throw malformedInput("macho", "Objective-C ivar has an empty name");
         const alignment = read.u32(entry + 24n);
         result.objc_ivars.push({
           class_name: name,
@@ -407,6 +426,7 @@ export const decodeObjcDispatchFacets = (input: {
       try {
         readClass(read.pointer(address), true);
       } catch (cause) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         failures.push(
           `Metaclass of ${name}: ${cause instanceof Error ? cause.message : String(cause)}`,
         );
@@ -438,6 +458,7 @@ export const decodeObjcDispatchFacets = (input: {
       try {
         readClass(pointer.value);
       } catch (cause) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         // The slot was already admitted inside readClass before anything
         // could throw (its admit runs before the first pointer read), so
         // admitting again here would count one class twice: at the budget

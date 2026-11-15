@@ -13,7 +13,8 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const expectRecoveredBatch = (response: CallToolResult, owned: string) => {
   expect(parseMcpToolError(response).error).toMatchObject({
@@ -57,14 +58,7 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
     pending = false,
     allow = false,
     closes = 0;
-  let entered!: () => void;
-  let release!: () => void;
-  const closing = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const finalCleanup = phaseGate();
   const session = new BinarySession(
     createTestProviderRouter(() => ({
       execute: async (operation) => {
@@ -90,14 +84,13 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
         closes++;
         if (!pending) return ok(null);
         if (closes === 2) {
-          entered();
-          await gate;
+          await finalCleanup.hold();
           return err(failure);
         }
         if (!allow) return err(failure);
         await rm(owned, { recursive: true });
         pending = false;
-        failure.resolveCleanup();
+        releaseOwnedCleanup(failure);
         return ok(null);
       },
     })),
@@ -153,12 +146,12 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
       { signal: controller.signal, timeout: 120000 },
     );
     try {
-      await awaitAcknowledgement(closing, cancelledClose, "final cleanup");
+      await finalCleanup.reached(cancelledClose, "final cleanup");
       controller.abort();
       await expect(cancelledClose).rejects.toThrow();
     } finally {
       controller.abort();
-      release();
+      finalCleanup.release();
       await Promise.allSettled([cancelledClose]);
     }
     allow = true;
@@ -170,7 +163,7 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
     await expect(access(owned)).rejects.toThrow();
   } finally {
     allow = true;
-    release();
+    finalCleanup.release();
     await client.close();
     await server.close();
     await session.close();

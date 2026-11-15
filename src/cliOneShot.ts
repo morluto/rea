@@ -122,8 +122,9 @@ export const runOneShotCli = async (
   }
 
   // Loaded only now: the documents above answer without the command catalog.
-  const { closeCliResources, createCli } = await import("./cli.js");
-  host.ownCliResources(closeCliResources);
+  const { loadCliRuntime } = await import("./cli/cliLoader.js");
+  const runtime = await loadCliRuntime(cliArguments, host.environment);
+  host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput } = await import("./cli/cliResultOutput.js");
   let wroteOutput = false;
   const resultOutput = createCliResultOutput(
@@ -131,7 +132,7 @@ export const runOneShotCli = async (
     host.resultDestination,
   );
   try {
-    await createCli(host.environment, resultOutput).serve(cliArguments, {
+    await runtime.createCli(resultOutput).serve(cliArguments, {
       stdout: (output) => {
         if (resultOutput?.handled) {
           if (resultOutput.failed && !host.stdoutClosed())

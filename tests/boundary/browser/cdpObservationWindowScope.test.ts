@@ -161,8 +161,23 @@ it("updates the main frame from a pre-arm root replacement without inventing a n
               timestamp: 21,
             },
           },
+          // The replaced root no longer scopes main-frame lifecycle rows.
+          {
+            method: "Page.lifecycleEvent",
+            sessionId: command.sessionId,
+            params: {
+              frameId: "frame-main",
+              loaderId: "loader-frame-main",
+              name: "load",
+              timestamp: 22,
+            },
+          },
         ]
       : undefined,
+  );
+
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "lifecycle", frame_id: "frame-main" }),
   );
 
   expect(observation.timeline).not.toContainEqual(

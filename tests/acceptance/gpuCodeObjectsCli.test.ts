@@ -8,7 +8,7 @@ import { gpuCodeObjectsSchema } from "../../src/domain/gpu/gpuCodeObjects.js";
 import {
   gpuCodeObjectsPageViewResultSchema,
   gpuCodeObjectsSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -1274,11 +1274,19 @@ cliTest(
     const refused = await cli.run({ arguments: args });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "target_unavailable",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        path,
-        constraint: "file_format_rejected",
-        reason: "MZ header does not declare a PE image",
+        operation: "inspect_gpu_code_objects",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "MZ header does not declare a PE image",
+            ),
+          }),
+        ],
       },
     });
   },

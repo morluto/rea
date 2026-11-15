@@ -12,7 +12,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { playwrightTraceSchema } from "../../../src/domain/playwrightTrace/playwrightTrace.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
@@ -164,7 +164,6 @@ cliTest(
     const fixture = await playwrightTraceFixture({ resources: true });
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
     const schemas = await advertisedMcpToolSchemas(
@@ -172,10 +171,12 @@ cliTest(
       "inspect_playwright_trace",
     );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { path: fixture.path }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        path: fixture.path,
+      }),
     ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         path: fixture.path,
         view: {
           kind: "playwright-trace",

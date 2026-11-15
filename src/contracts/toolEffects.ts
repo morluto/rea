@@ -1,3 +1,5 @@
+import type { TOOL_CONTRACTS } from "./toolContracts.js";
+
 /** Possible effects across a tool's supported inputs, including temporary work. */
 export interface ToolEffects {
   readonly mutatesTarget: boolean;
@@ -75,8 +77,11 @@ const providerUiNetworkEvidence = providerEffects(evidence, {
   changesUiState: true,
 });
 
+/** Every public tool name; the audit below must list each one exactly once. */
+type PublicToolName = (typeof TOOL_CONTRACTS)[number]["name"];
+
 /** Explicit effect audit for every public tool. */
-const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
+const TOOL_EFFECT_AUDIT = {
   inspect_analysis_settings: effects(),
   update_analysis_settings: effects({ mutatesSession: true }),
   list_cutter_sessions: effects({ accessesNetwork: true }),
@@ -911,7 +916,11 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   record_unknown: effects({ mutatesSession: true, idempotent: false }),
   update_unknown: effects({ mutatesSession: true, idempotent: false }),
   verify_unknown_resolution: effects(),
-};
+} satisfies Readonly<Record<PublicToolName, EffectAudit>>;
+
+/** Lookup by an unchecked name; a missing entry is reported by the caller. */
+const auditedEffects: Readonly<Record<string, EffectAudit | undefined>> =
+  TOOL_EFFECT_AUDIT;
 
 const sessionEffects = (audit: EffectAudit): ToolEffects =>
   "session" in audit ? audit.session : audit;
@@ -919,17 +928,19 @@ const sessionEffects = (audit: EffectAudit): ToolEffects =>
 /** Possible effects across every supported provider profile. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> =
   Object.fromEntries(
-    Object.entries(TOOL_EFFECT_AUDIT).map(([name, audit]) => [
-      name,
-      "session" in audit
-        ? effects({ ...audit.session, ...audit.global })
-        : audit,
-    ]),
+    Object.entries(TOOL_EFFECT_AUDIT).map(
+      ([name, audit]: [string, EffectAudit]) => [
+        name,
+        "session" in audit
+          ? effects({ ...audit.session, ...audit.global })
+          : audit,
+      ],
+    ),
   );
 
 /** Effects owned by the tool before composing the selected provider. */
 export const toolSessionEffects = (name: string): ToolEffects => {
-  const audited = TOOL_EFFECT_AUDIT[name];
+  const audited = auditedEffects[name];
   if (audited === undefined)
     throw new Error(`Missing effect audit for ${name}`);
   return sessionEffects(audited);

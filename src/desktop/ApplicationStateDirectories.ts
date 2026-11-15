@@ -2,6 +2,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
+import { xdgBase } from "./XdgBase.js";
 
 /** The environment whose XDG folders, and the home whose dot-folders, may hold the application's state. */
 interface StateLocations {
@@ -64,10 +65,10 @@ export const stateDirectories = async (
   extra: readonly string[],
 ): Promise<DesktopApplicationInventory["state_directories"]> => {
   const bases = [
-    environment.XDG_CONFIG_HOME || join(home, ".config"),
-    environment.XDG_DATA_HOME || join(home, ".local/share"),
-    environment.XDG_STATE_HOME || join(home, ".local/state"),
-    environment.XDG_CACHE_HOME || join(home, ".cache"),
+    xdgBase(environment.XDG_CONFIG_HOME, join(home, ".config")),
+    xdgBase(environment.XDG_DATA_HOME, join(home, ".local/share")),
+    xdgBase(environment.XDG_STATE_HOME, join(home, ".local/state")),
+    xdgBase(environment.XDG_CACHE_HOME, join(home, ".cache")),
   ];
   const variants = new Set(
     names

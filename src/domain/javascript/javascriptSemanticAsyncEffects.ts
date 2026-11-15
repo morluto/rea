@@ -19,10 +19,8 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import {
-  createGlobalReferenceReader,
-  isUnmodifiedGlobalReference,
-} from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticOpaqueGlobalMayHaveChanged,
   semanticOpaqueNameMayHaveChanged,

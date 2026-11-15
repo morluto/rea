@@ -16,6 +16,7 @@ import type {
   IdaMcpConnection,
   IdaMcpConnectionDependencies,
 } from "../../../src/ida/IdaMcpConnection.js";
+import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -48,7 +49,7 @@ type IdaTransportFixtureOptions = {
   readonly toolContentType?: string;
   readonly toolResponseBody?: string | Buffer;
   readonly configurationHeaders?: Readonly<Record<string, string>>;
-  readonly connectionDependencies?: IdaMcpConnectionDependencies;
+  readonly connectionDependencies?: Partial<IdaMcpConnectionDependencies>;
 };
 const fixtureResponse = (
   input: z.infer<typeof requestSchema>,
@@ -184,11 +185,11 @@ const fixture = async (options: IdaTransportFixtureOptions = {}) => {
       url: `http://127.0.0.1:${address.port}/mcp`,
       headers: configurationHeaders,
       mode: native ? "attached" : "headless",
-      ...(native ? { protocol: "native" as const } : {}),
+      protocol: native ? "native" : "modern",
       timeoutMs: 2000,
     },
     {},
-    connectionDependencies,
+    idaConnectionDependencies(connectionDependencies),
   );
   cleanups.push(() => connection.close());
   return {
@@ -300,9 +301,11 @@ process.stdin.on("data", (chunk) => {
       args: ["-e", script],
       env: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 10_000,
     },
     {},
+    idaConnectionDependencies(),
   );
   cleanups.push(() => connection.close());
   expect(await connection.connect()).toEqual(["list_strings"]);
