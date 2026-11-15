@@ -143,6 +143,7 @@ interface ActiveSession {
   readonly pending: Map<number, PendingRpc>;
   nextId: number;
   closed: boolean;
+  closeRequested: boolean;
   exited: boolean;
   state: "ready" | "closed";
   processState: string;
@@ -157,11 +158,11 @@ interface ActiveSession {
 const waitForLldbCommandTurn = (
   previous: Promise<void>,
   signal?: AbortSignal,
+  operation: string = "lldb_command",
 ): Promise<void> => {
   if (signal === undefined) return previous;
   return waitForAbortable(previous, signal).then((outcome) => {
-    if (outcome instanceof AbortedWait)
-      throw cancelledBy("lldb_command", outcome);
+    if (outcome instanceof AbortedWait) throw cancelledBy(operation, outcome);
   });
 };
 
@@ -171,7 +172,6 @@ const waitForLldbCommandTurn = (
  */
 export class LldbSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<ActiveSession>;
-  readonly #failedCleanups = new Set<string>();
   readonly #environment: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
   readonly #commandTimeoutMs: number;
@@ -280,6 +280,8 @@ export class LldbSessionManager {
     signal: AbortSignal,
     options: LldbStartOptions = {},
   ): Promise<Result<LldbStartResult, AnalysisError>> {
+    if (signal?.aborted) return err(cancelledBy("start_lldb_session", signal));
+
     const sessionId = randomUUID();
     const childEnv = { ...this.#environment };
 
@@ -382,6 +384,7 @@ export class LldbSessionManager {
       pending,
       nextId: 1,
       closed: false,
+      closeRequested: false,
       exited: false,
       state: "ready",
       processState: "no_process",
@@ -404,6 +407,8 @@ export class LldbSessionManager {
             "close",
             {},
             5000,
+            undefined,
+            "close_lldb_session",
           );
           if (
             res?.target_state === "none_observed" ||
@@ -442,6 +447,7 @@ export class LldbSessionManager {
         {},
         this.#startupTimeoutMs,
         signal,
+        "start_lldb_session",
       );
 
       // 2. Launch target or attach
@@ -461,12 +467,11 @@ export class LldbSessionManager {
           },
           this.#startupTimeoutMs,
           signal,
+          "start_lldb_session",
         );
 
         if (launchRes.error || launchRes.status === "failed") {
-          await this.#stopProcess(session, "LLDB", {
-            platform: this.#platform,
-          });
+          await this.#sessions.stop(session);
           supervisor.dispose();
           rl.close();
           return err(
@@ -490,11 +495,10 @@ export class LldbSessionManager {
           },
           this.#startupTimeoutMs,
           signal,
+          "start_lldb_session",
         );
         if (attachRes.error || attachRes.status === "failed") {
-          await this.#stopProcess(session, "LLDB", {
-            platform: this.#platform,
-          });
+          await this.#sessions.stop(session);
           supervisor.dispose();
           rl.close();
           return err(
@@ -524,9 +528,10 @@ export class LldbSessionManager {
       });
     } catch (cause) {
       session.closed = true;
+      session.closeRequested = true;
       session.state = "closed";
       rl.close();
-      await this.#stopProcess(session, "LLDB", { platform: this.#platform });
+      await this.#sessions.stop(session);
       supervisor.dispose();
 
       if (
@@ -593,7 +598,7 @@ export class LldbSessionManager {
     });
 
     try {
-      await waitForLldbCommandTurn(previous, signal);
+      await waitForLldbCommandTurn(previous, signal, "lldb_command");
       acquired = true;
       if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
       return await this.#executeInTurn(session, sessionId, command, signal);
@@ -602,6 +607,12 @@ export class LldbSessionManager {
         (signal?.aborted && cause === signal.reason) ||
         cause instanceof AnalysisCancelledError
       ) {
+        if (
+          cause instanceof AnalysisCancelledError &&
+          cause.partialObservation
+        ) {
+          return err(cause);
+        }
         return err(cancelledBy("lldb_command", carriedReason(cause)));
       }
       if (cause instanceof AnalysisError) return err(cause);
@@ -656,11 +667,8 @@ export class LldbSessionManager {
       { command, timeout: timeoutMs / 1000 },
       rpcTimeoutMs,
       signal,
+      "lldb_command",
     );
-
-    if (signal?.aborted) {
-      throw cancelledBy("lldb_command", signal);
-    }
 
     if (res.process_state) {
       session.processState = res.process_state;
@@ -711,6 +719,12 @@ export class LldbSessionManager {
       ],
     });
 
+    if (signal?.aborted) {
+      throw cancelledBy("lldb_command", signal, {
+        partialObservation: evidence,
+      });
+    }
+
     return ok({ result: cmdResult, evidence });
   }
 
@@ -726,6 +740,8 @@ export class LldbSessionManager {
           "status",
           {},
           3000,
+          undefined,
+          "lldb_session_status",
         );
         if (res) {
           if (res.process_state !== undefined)
@@ -768,6 +784,8 @@ export class LldbSessionManager {
       return ok({ target_state: "none_observed" });
     }
 
+    if (signal?.aborted) return err(cancelledBy("close_lldb_session", signal));
+
     const previous = session.commandTail;
     let release: (() => void) | undefined;
     session.commandTail = new Promise<void>((resolve) => {
@@ -775,7 +793,7 @@ export class LldbSessionManager {
     });
 
     try {
-      await waitForLldbCommandTurn(previous, signal);
+      await waitForLldbCommandTurn(previous, signal, "close_lldb_session");
       let targetState:
         | "terminated"
         | "detached"
@@ -792,27 +810,37 @@ export class LldbSessionManager {
             {},
             5000,
             signal,
+            "close_lldb_session",
           );
           if (res?.target_state) {
             targetState = res.target_state;
           }
         }
-        this.#failedCleanups.delete(sessionId);
       } catch {
         targetState = "unknown";
-        this.#failedCleanups.add(sessionId);
       } finally {
         session.closed = true;
+        session.closeRequested = true;
         session.state = "closed";
         session.rl.close();
-        const stopResult = await this.#sessions.stop(session);
-        if (stopResult.status === "incomplete") {
-          targetState = "unknown";
-          this.#failedCleanups.add(sessionId);
-        } else {
-          session.supervisor.dispose();
-          this.#sessions.remove(session);
-        }
+      }
+
+      const stopResult = await this.#sessions.stop(session);
+      if (stopResult.status === "incomplete") {
+        return err(
+          this.#sessions.retainCleanupFailure(
+            session,
+            "close_lldb_session",
+            stopResult.reason,
+          ),
+        );
+      }
+
+      session.supervisor.dispose();
+      this.#sessions.remove(session);
+
+      if (signal?.aborted) {
+        return err(cancelledBy("close_lldb_session", signal));
       }
 
       if (targetState === "unknown") {
@@ -833,15 +861,12 @@ export class LldbSessionManager {
 
   async closeAll(): Promise<void> {
     await this.#sessions.closeAll();
-    if (this.#failedCleanups.size > 0) {
-      throw new Error(
-        `Failed to clean up LLDB sessions: ${Array.from(this.#failedCleanups).join(", ")}`,
-      );
-    }
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
-    return this.#sessions.retryCleanupFailures((session) => !session.closed);
+    return this.#sessions.retryCleanupFailures(
+      (session) => !session.closeRequested,
+    );
   }
 
   async #sendSessionRpc<T>(
@@ -851,9 +876,10 @@ export class LldbSessionManager {
     params: Record<string, unknown>,
     timeoutMs: number,
     signal?: AbortSignal,
+    operation: string = method,
   ): Promise<T> {
     if (signal?.aborted) {
-      throw cancelledBy(method, signal);
+      throw cancelledBy(operation, signal);
     }
 
     const raw = await new Promise<unknown>((resolve, reject) => {
@@ -871,7 +897,7 @@ export class LldbSessionManager {
           if (onAbort !== undefined && signal !== undefined) {
             signal.removeEventListener("abort", onAbort);
           }
-          reject(new AnalysisTimeoutError(method, timeoutMs));
+          reject(new AnalysisTimeoutError(operation, timeoutMs));
         },
         Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
       );
@@ -900,7 +926,7 @@ export class LldbSessionManager {
           try {
             session.child.kill("SIGINT");
           } catch {}
-          reject(cancelledBy(method, signal));
+          reject(cancelledBy(operation, signal));
         };
         signal.addEventListener("abort", onAbort, { once: true });
       }
@@ -943,11 +969,12 @@ export class LldbSessionManager {
     if (!parsed.success) {
       throw new AnalysisCapabilityUnavailableError(
         "lldb",
-        method,
+        operation,
         `Invalid or malformed RPC reply from LLDB daemon: ${parsed.error.message}`,
         {
           diagnostics: {
             method,
+            operation,
             raw: typeof raw === "object" ? JSON.stringify(raw) : String(raw),
           },
         },

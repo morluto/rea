@@ -13,6 +13,7 @@ import sys
 import os
 import json
 import signal
+import tempfile
 import threading
 import traceback
 
@@ -99,7 +100,7 @@ class ReaLldbSessionDaemon:
             return None, None
 
     def execute_command(self, cmd_str: str, timeout_sec: float = 15.0) -> dict:
-        """Executes one LLDB command with thread timeout containment."""
+        """Executes one LLDB command with thread timeout containment and resource bounds."""
         if not self.debugger.IsValid():
             return {
                 "command": cmd_str,
@@ -113,86 +114,138 @@ class ReaLldbSessionDaemon:
         res = lldb.SBCommandReturnObject()
         result = {}
 
+        # Set up immediate output streaming to bounded temporary files if supported by LLDB
+        # to avoid accumulating unbounded memory in the daemon before response checks.
+        tmp_out = None
+        tmp_err = None
+        sbfile_out = None
+        sbfile_err = None
+        try:
+            tmp_out = tempfile.NamedTemporaryFile("w+", delete=False)
+            tmp_err = tempfile.NamedTemporaryFile("w+", delete=False)
+            if hasattr(lldb, "SBFile") and hasattr(res, "SetImmediateOutputFile"):
+                sbfile_out = lldb.SBFile(tmp_out.fileno(), "w", False)
+                sbfile_err = lldb.SBFile(tmp_err.fileno(), "w", False)
+                res.SetImmediateOutputFile(sbfile_out)
+                res.SetImmediateErrorFile(sbfile_err)
+        except Exception:
+            pass
+
         def _run():
-            self.debugger.GetCommandInterpreter().HandleCommand(cmd_str, res)
-            result["done"] = True
+            try:
+                self.debugger.GetCommandInterpreter().HandleCommand(cmd_str, res)
+                if hasattr(res, "flush"):
+                    res.flush()
+            finally:
+                result["done"] = True
 
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=timeout_sec)
+        def _read_bounded_output():
+            out = ""
+            err = ""
+            is_truncated = False
 
-        live_pid, live_target = self._get_live_info()
-
-        if not t.is_alive():
             out_size = res.GetOutputSize() if hasattr(res, "GetOutputSize") else 0
             err_size = res.GetErrorSize() if hasattr(res, "GetErrorSize") else 0
-            truncated = (out_size > self.MAX_OUTPUT_CHARS or err_size > self.MAX_OUTPUT_CHARS)
+            if out_size > self.MAX_OUTPUT_CHARS or err_size > self.MAX_OUTPUT_CHARS:
+                is_truncated = True
 
-            out = res.GetOutput() or ""
-            err = res.GetError() or ""
+            # If streamed to temporary files, read only up to MAX_OUTPUT_CHARS directly
+            # without materializing massive output strings into the Python heap.
+            used_stream = False
+            if tmp_out and os.path.exists(tmp_out.name):
+                try:
+                    with open(tmp_out.name, "r", encoding="utf-8", errors="replace") as f:
+                        out = f.read(self.MAX_OUTPUT_CHARS)
+                        if f.read(1):
+                            is_truncated = True
+                        used_stream = True
+                except Exception:
+                    pass
 
-            if len(out) > self.MAX_OUTPUT_CHARS:
-                out = out[:self.MAX_OUTPUT_CHARS]
-                truncated = True
-            if len(err) > self.MAX_OUTPUT_CHARS:
-                err = err[:self.MAX_OUTPUT_CHARS]
-                truncated = True
+            if tmp_err and os.path.exists(tmp_err.name):
+                try:
+                    with open(tmp_err.name, "r", encoding="utf-8", errors="replace") as f:
+                        err = f.read(self.MAX_OUTPUT_CHARS)
+                        if f.read(1):
+                            is_truncated = True
+                        used_stream = True
+                except Exception:
+                    pass
+
+            if not used_stream or (not out and not err):
+                raw_out = res.GetOutput() or "" if hasattr(res, "GetOutput") else ""
+                raw_err = res.GetError() or "" if hasattr(res, "GetError") else ""
+                if len(raw_out) > self.MAX_OUTPUT_CHARS:
+                    out = raw_out[:self.MAX_OUTPUT_CHARS]
+                    is_truncated = True
+                else:
+                    out = raw_out
+                if len(raw_err) > self.MAX_OUTPUT_CHARS:
+                    err = raw_err[:self.MAX_OUTPUT_CHARS]
+                    is_truncated = True
+                else:
+                    err = raw_err
 
             combined = f"{out}\n{err}".strip() if (err and out) else (out or err).strip()
             if len(combined) > self.MAX_OUTPUT_CHARS:
                 combined = combined[:self.MAX_OUTPUT_CHARS]
+                is_truncated = True
+
+            return combined, is_truncated
+
+        try:
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=timeout_sec)
+
+            live_pid, live_target = self._get_live_info()
+
+            if not t.is_alive():
+                combined, truncated = _read_bounded_output()
+                state_desc = self._process_state_report()
+                return {
+                    "command": cmd_str,
+                    "output": combined,
+                    "process_state": state_desc,
+                    "output_truncated": truncated,
+                    "completion_status": "complete" if not truncated else "partial",
+                    "pid": live_pid,
+                    "target": live_target,
+                }
+
+            # Timed out - interrupt execution safely so command thread does not run unbounded
+            try:
+                if self.process and self.process.IsValid() and self.process.GetState() == lldb.eStateRunning:
+                    self.process.Stop()
+                self.debugger.DispatchInputInterrupt()
+            except Exception:
+                pass
+            t.join(timeout=0.5)
+
+            live_pid, live_target = self._get_live_info()
+            partial, truncated = _read_bounded_output()
+            timeout_msg = f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}"
+            combined_timeout = f"{partial}\n{timeout_msg}".strip() if partial else timeout_msg
+            if len(combined_timeout) > self.MAX_OUTPUT_CHARS:
+                combined_timeout = combined_timeout[:self.MAX_OUTPUT_CHARS]
                 truncated = True
 
-            state_desc = self._process_state_report()
             return {
                 "command": cmd_str,
-                "output": combined,
-                "process_state": state_desc,
+                "output": combined_timeout,
+                "process_state": self._process_state_report(),
                 "output_truncated": truncated,
-                "completion_status": "complete" if not truncated else "partial",
+                "completion_status": "unknown",
                 "pid": live_pid,
                 "target": live_target,
             }
-
-        # Timed out - interrupt execution safely so command thread does not run unbounded
-        try:
-            if self.process and self.process.IsValid() and self.process.GetState() == lldb.eStateRunning:
-                self.process.Stop()
-            self.debugger.DispatchInputInterrupt()
-        except Exception:
-            pass
-        t.join(timeout=0.5)
-
-        live_pid, live_target = self._get_live_info()
-
-        # Capture partial output if available
-        partial_out = ""
-        partial_err = ""
-        try:
-            if hasattr(res, "GetOutput"):
-                partial_out = (res.GetOutput() or "")[:self.MAX_OUTPUT_CHARS]
-            if hasattr(res, "GetError"):
-                partial_err = (res.GetError() or "")[:self.MAX_OUTPUT_CHARS]
-        except Exception:
-            pass
-
-        partial = f"{partial_out}\n{partial_err}".strip() if (partial_err and partial_out) else (partial_out or partial_err).strip()
-        timeout_msg = f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}"
-        combined_timeout = f"{partial}\n{timeout_msg}".strip() if partial else timeout_msg
-        truncated = False
-        if len(combined_timeout) > self.MAX_OUTPUT_CHARS:
-            combined_timeout = combined_timeout[:self.MAX_OUTPUT_CHARS]
-            truncated = True
-
-        return {
-            "command": cmd_str,
-            "output": combined_timeout,
-            "process_state": self._process_state_report(),
-            "output_truncated": truncated,
-            "completion_status": "unknown",
-            "pid": live_pid,
-            "target": live_target,
-        }
+        finally:
+            for tf in (tmp_out, tmp_err):
+                if tf and os.path.exists(tf.name):
+                    try:
+                        os.unlink(tf.name)
+                    except Exception:
+                        pass
 
     def launch(
         self,

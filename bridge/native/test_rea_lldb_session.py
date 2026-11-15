@@ -63,6 +63,15 @@ if not hasattr(fake_lldb, "SBDebugger"):
         def GetErrorSize(self):
             return len(self._err)
 
+        def SetImmediateOutputFile(self, f):
+            pass
+
+        def SetImmediateErrorFile(self, f):
+            pass
+
+        def flush(self):
+            pass
+
     fake_lldb.SBDebugger = MockSBDebugger
     fake_lldb.SBCommandReturnObject = MockSBCommandReturnObject
     fake_lldb.SBError = lambda: types.SimpleNamespace(Success=lambda: True, GetCString=lambda: "")
