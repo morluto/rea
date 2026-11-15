@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, sep } from "node:path";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   ExecFileOutputCancelledError,
@@ -63,7 +64,7 @@ const gitOutput = async (
     throw gitFailure(cause);
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(observation.stdout);
+    return decodeStrictUtf8(observation.stdout, "strip-signature");
   } catch {
     // The failure keeps the exact observation it could not decode.
     throw gitFailure(
