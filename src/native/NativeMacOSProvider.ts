@@ -140,7 +140,10 @@ import {
   architectureLocations,
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -455,12 +458,7 @@ class NativeMacOSClient implements AnalysisClient {
     for (const cleanupError of cleanupErrors)
       result = result.ok
         ? err(cleanupError)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanupError,
-            ).bindCleanupDependencies([result.error, cleanupError]),
-          );
+        : err(analysisErrorWithCleanupDependencies(result.error, cleanupError));
     return result;
   }
 
@@ -537,11 +535,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             result.ok
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   result.error,
                   cleanup,
                   operation,
-                ).bindCleanupDependencies([result.error, cleanup]),
+                ),
           );
         }
         result = finishNativeUiObservation(result, operation, interruption);
@@ -1568,11 +1566,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             primary === undefined
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   primary,
                   cleanup,
                   "inspect_macho",
-                ).bindCleanupDependencies([primary, cleanup]),
+                ),
           );
         }
         if (signal?.aborted && result.ok)
