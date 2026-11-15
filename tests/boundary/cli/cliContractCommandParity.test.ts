@@ -193,15 +193,16 @@ const suppliedField = (
 ): z.ZodType => {
   const field = contractShape(description)[parameter.field]!;
   if (parameter.member === undefined) return field;
-  let object: z.ZodType = field;
-  while (
-    object instanceof z.ZodOptional ||
-    object instanceof z.ZodExactOptional
-  )
-    object = object.unwrap() as z.ZodType;
-  return (
-    (object as z.ZodObject).shape[parameter.member] as z.ZodType
-  ).optional();
+  let supplied: z.ZodType = field;
+  for (const member of parameter.member) {
+    while (
+      supplied instanceof z.ZodOptional ||
+      supplied instanceof z.ZodExactOptional
+    )
+      supplied = supplied.unwrap() as z.ZodType;
+    supplied = (supplied as z.ZodObject).shape[member] as z.ZodType;
+  }
+  return supplied.optional();
 };
 
 /**
@@ -385,7 +386,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "inspect-android-jni-bindings",
   "inspect-api-contract",
-  "inspect-web-network-capture",
   "inspect-with-objdump",
   "trace-web-source-location",
 ];
@@ -608,7 +608,7 @@ describe("Registration refusals of contract commands", () => {
     ["a union", z.union([z.string(), z.boolean()]).optional()],
     ["a pipe", z.string().pipe(z.string()).optional()],
     ["an array of objects", z.array(z.object({})).optional()],
-    ["an array of numbers", z.array(z.number()).optional()],
+    ["an array of booleans", z.array(z.boolean()).optional()],
     ["a tuple", z.tuple([z.string()]).optional()],
   ])("refuses to describe a field that is %s", (_kind, field) => {
     expect(() =>
@@ -617,6 +617,24 @@ describe("Registration refusals of contract commands", () => {
         { command: "probe", description: "Probe" },
       ),
     ).toThrow("probe.field has no argv projection");
+  });
+
+  it("takes an array of numbers as repeated decimal tokens within its bounds", () => {
+    const [parameter] = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          ordinals: z.array(z.int().nonnegative()).min(1).max(2).optional(),
+        }),
+      },
+      { command: "probe", description: "Probe" },
+    ).parameters;
+    const schema = parameter!.schema;
+    expect(parameter!.repeatable).toBe(true);
+    expect(schema.parse(["0", "7"])).toEqual([0, 7]);
+    expect(schema.parse(undefined)).toBeUndefined();
+    for (const refused of [["0x1"], ["-1"], [], ["1", "2", "3"]])
+      expect(schema.safeParse(refused).success, String(refused)).toBe(false);
   });
 
   it("refuses an input constraint the CLI schema cannot carry", () => {
@@ -880,10 +898,16 @@ describe("Flattened object fields of contract commands", () => {
           const input = description.toContractInput(
             argvValues(description, { [given.key]: value }),
           );
-          // An omitted member stays omitted, never an explicit undefined.
-          expect(Object.keys(input[field] as object)).toEqual([given.member]);
-          expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
-            value,
+          // An omitted member stays omitted, never an explicit undefined;
+          // a nested member supplies each enclosing object with only itself.
+          let object = input[field] as Record<string, unknown>;
+          for (const member of given.member!.slice(0, -1)) {
+            expect(Object.keys(object)).toEqual([member]);
+            object = object[member] as Record<string, unknown>;
+          }
+          expect(Object.keys(object)).toEqual([given.member!.at(-1)]);
+          expect(object[given.member!.at(-1)!]).toEqual(
+            given.callerPath ? absoluteCallerPath(value as string) : value,
           );
         }
       }
