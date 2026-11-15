@@ -113,7 +113,7 @@ const createBundleResourceFactory = (
 ) => {
   return {
     createClient: async (
-      root: import("../application/AppBundleExecutable.js").ResolvedAppBundleResourceRoot,
+      root: import("../domain/apple/bundleResourceRoot.js").ResolvedAppBundleResourceRoot,
     ) => {
       const [{ ArtifactProvider }, { NativeMacOSProvider }] = await Promise.all(
         [

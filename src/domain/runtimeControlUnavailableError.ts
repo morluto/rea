@@ -1,4 +1,4 @@
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { AnalysisCapabilityUnavailableError } from "./analysisErrorCore.js";
 
 /**
  * Expected refusal when a host control required before launch is unavailable.

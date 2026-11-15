@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { reaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";

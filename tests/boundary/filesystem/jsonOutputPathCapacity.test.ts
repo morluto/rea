@@ -46,7 +46,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 it.each(["directory", "content"] as const)(

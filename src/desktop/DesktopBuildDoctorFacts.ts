@@ -8,7 +8,7 @@ import type {
   DesktopBuildCommand,
   DesktopBuildFacts,
   DesktopBuildFactsInput,
-} from "../application/DesktopBuildDoctor.js";
+} from "../ports/DesktopBuildHost.js";
 import {
   AnalysisCancelledError,
   cancelledBy,

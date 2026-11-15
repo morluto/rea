@@ -38,7 +38,7 @@ import {
   parseEvidence,
   withEvidenceCallerInputPath,
 } from "../../../src/domain/evidence.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
