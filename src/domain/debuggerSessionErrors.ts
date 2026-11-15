@@ -32,16 +32,56 @@ export const unknownDebuggerSessionError = (
     ],
   );
 
-/** Refuse a command on a retained session that stopped, naming why it stopped. */
+/**
+ * Why a retained debugger session accepts no more commands:
+ * - `input-stream-failure`: the debugger's stdin closed, errored or refused a write.
+ * - `output-correlation-failure`: debugger output could no longer be attributed
+ *   to one command, such as an oversized or invalid record or a missing marker.
+ * - `command-deadline` / `command-cancelled`: a command's deadline or caller
+ *   cancellation stopped the session, because late output could not be correlated.
+ * - `server-shutdown`: REA is closing every session.
+ * - `close-requested`: the close tool started releasing this session.
+ * - `process-exited`: the debugger process exited.
+ * - `stopped`: REA stopped the session for another reason.
+ */
+export const DEBUGGER_SESSION_STOP_CODES = [
+  "input-stream-failure",
+  "output-correlation-failure",
+  "command-deadline",
+  "command-cancelled",
+  "server-shutdown",
+  "close-requested",
+  "process-exited",
+  "stopped",
+] as const;
+export type DebuggerSessionStopCode =
+  (typeof DEBUGGER_SESSION_STOP_CODES)[number];
+
+/** A stopped session's reason code and its explanation. */
+export interface DebuggerSessionStop {
+  readonly code: DebuggerSessionStopCode;
+  readonly reason: string;
+}
+
+/**
+ * Refuse a command on a retained session that stopped, naming why it stopped.
+ * The code projects as `details.diagnostics.session_stop`.
+ */
 export const stoppedDebuggerSessionError = (
   tools: DebuggerSessionTools,
   operation: string,
-  reason: string,
+  stop: DebuggerSessionStop,
 ): AnalysisCapabilityUnavailableError =>
-  new AnalysisCapabilityUnavailableError(tools.providerId, operation, reason, {
-    userMessage: `The ${tools.name} debug session stopped and accepts no more commands. ${reason}`,
-    remediationAction: `Call ${tools.close} with this session_id to release the stopped session, then call ${tools.start} to begin a new one. Earlier commands may have changed the target, so confirm their effects before repeating them.`,
-  });
+  new AnalysisCapabilityUnavailableError(
+    tools.providerId,
+    operation,
+    stop.reason,
+    {
+      diagnostics: { session_stop: stop.code },
+      userMessage: `The ${tools.name} debug session stopped and accepts no more commands. ${stop.reason}`,
+      remediationAction: `Call ${tools.close} with this session_id to release the stopped session, then call ${tools.start} to begin a new one. Earlier commands may have changed the target, so confirm their effects before repeating them.`,
+    },
+  );
 
 export const RIZIN_DEBUG_SESSION_TOOLS = {
   providerId: "rizin",

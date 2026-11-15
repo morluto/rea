@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEBUGGER_SESSION_STOP_CODES } from "../domain/debuggerSessionErrors.js";
 
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
@@ -114,6 +115,12 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
         .exactOptional()
         .describe(
           "Present when state is closed: why the session stopped accepting commands. Close it and start a new session to continue.",
+        ),
+      closed_reason_code: z
+        .enum(DEBUGGER_SESSION_STOP_CODES)
+        .exactOptional()
+        .describe(
+          "Present with closed_reason: input-stream-failure, output-correlation-failure, command-deadline, command-cancelled, server-shutdown, close-requested, process-exited, or stopped.",
         ),
     }),
     examples: [
