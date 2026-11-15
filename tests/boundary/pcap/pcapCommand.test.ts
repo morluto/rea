@@ -192,10 +192,13 @@ it.skipIf(process.platform !== "darwin")(
       (error: unknown) => ({ ok: false as const, error }),
     );
     await preparing;
-    // The command deadline is armed only once preparation has finished.
-    expect(commandDeadlines()).toEqual([]);
+    // Observe before release; assert after the command is joined so a failed
+    // check never leaves it running past the test.
+    const armedWhilePreparing = commandDeadlines();
     release();
     const result = await pending;
+    // The command deadline is armed only once preparation has finished.
+    expect(armedWhilePreparing).toEqual([]);
     if (!result.ok) throw result.error;
     expect(result.value.stdout.trim()).toBe(process.version);
     expect(commandDeadlines()).toHaveLength(1);
