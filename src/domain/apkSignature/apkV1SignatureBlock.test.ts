@@ -6,6 +6,7 @@ import {
   indefinite,
   oid,
   withIssuer,
+  withRepeatedExtensions,
   withSerial,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
@@ -104,6 +105,20 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     );
     expect(block.signerInfos[0]?.certificateIndex).toBeNull();
     expect(block.certificates.map(sha256)).toEqual([ROOT_SHA256]);
+  });
+
+  it("names no certificate whose tbsCertificate repeats its extensions", () => {
+    // RFC 5280 §4.1 allows one extensions [3]; a repeat is not a
+    // TBSCertificate, so neither copy is chosen to name the signer.
+    const repeated = withRepeatedExtensions(LEAF_CERTIFICATE);
+    const block = decoded(
+      signedDataBlock({
+        certificates: [repeated],
+        signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      }),
+    );
+    expect(block.signerInfos[0]?.certificateIndex).toBeNull();
+    expect(block.certificates.map(sha256)).toEqual([sha256(repeated)]);
   });
 
   it("accepts BER indefinite lengths on constructed elements", () => {
