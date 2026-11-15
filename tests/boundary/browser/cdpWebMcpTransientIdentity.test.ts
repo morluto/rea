@@ -602,3 +602,79 @@ it.each([
     ).toEqual(limited ? [expect.stringContaining("frames child:")] : []);
   },
 );
+
+// A registration kept across a URL change is the same registration: a later
+// update replaces it and a removal deletes it, whatever URL each event saw.
+it.each([
+  ["an update", "WebMCP.toolsAdded", ["old"]],
+  ["a removal", "WebMCP.toolsRemoved", []],
+] as const)(
+  "applies %s to a subframe tool kept across a URL change",
+  async (_label, method, expected) => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method: command }, origin) =>
+        command === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: origin + "/app",
+                },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "child",
+                      parentId: "frame-main",
+                      loaderId: "loader-A",
+                      url: origin + "/child",
+                    },
+                  },
+                ],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method: command, sessionId }, origin) => {
+        if (command !== "WebMCP.enable") return undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        const tools = (description: string) => ({
+          tools: [
+            { name: "old", frameId: "child", description, inputSchema: {} },
+          ],
+        });
+        return [
+          { method: "WebMCP.toolsAdded", ...scope, params: tools("first") },
+          {
+            method: "Page.frameNavigated",
+            ...scope,
+            params: {
+              frame: {
+                id: "child",
+                parentId: "frame-main",
+                loaderId: "loader-A",
+                url: origin + "/other",
+              },
+            },
+          },
+          { method, ...scope, params: tools("second") },
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.total).toBe(expected.length);
+    expect(
+      result.value.tools.items.map((tool) => [tool.name, tool.description]),
+    ).toEqual(expected.map((name) => [name, "second"]));
+  },
+);

@@ -490,8 +490,7 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
         completeness.exclude("webmcp_tools", "invalid_protocol_value");
         continue;
       }
-      for (const [key, tool] of tools)
-        if (tool.name === name && tool.frame_id === frameId) tools.delete(key);
+      tools.delete(registrationKey(frameId, name));
     }
     return;
   }
@@ -504,7 +503,10 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
     }
     const normalized = normalizeTool(tool, input, frames, completeness);
     if (normalized === undefined) continue;
-    tools.set(normalized.tool_key, normalized);
+    tools.set(
+      registrationKey(normalized.frame_id, normalized.name),
+      normalized,
+    );
   }
 };
 
@@ -663,6 +665,14 @@ const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
     limitations,
   };
 };
+
+/**
+ * A frame's registration is identified by its frame and tool name. The frame
+ * URL in `tool_key` describes where it was registered, so a retained
+ * registration and its later update after a URL change share one entry.
+ */
+const registrationKey = (frameId: string, name: string): string =>
+  compositeKey([frameId, name]);
 
 const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   // Registrations without a known admitted frame are excluded above, so the
