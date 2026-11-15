@@ -53,13 +53,15 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       });
       const Validator = target === "draft-2020-12" ? Ajv2020 : Ajv;
       const validate = new Validator({ strict: false }).compile(projected);
-      for (const [encoded, valid] of [
-        ["AA==", true],
-        ["AB==", false],
-        ["AAAAAA==", false],
+      // The unbounded pad-bit probe has no stack-safe portable form, so the
+      // advertisement admits `AB==` while the server still refuses it.
+      for (const [encoded, valid, advertised] of [
+        ["AA==", true, true],
+        ["AB==", false, true],
+        ["AAAAAA==", false, false],
       ] as const) {
         const value = { encoded, literal };
-        expect(validate(value), encoded).toBe(valid);
+        expect(validate(value), encoded).toBe(advertised);
         expect(input.safeParse(value).success, encoded).toBe(valid);
         expect(output.safeParse(value).success, encoded).toBe(valid);
       }
