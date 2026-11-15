@@ -46,7 +46,6 @@ cliTest.for([
       const result = await cli.run({
         arguments: ["capture-browser-scenario", path, "--json"],
         environment: { HOME: home, REA_LOG_LEVEL: "silent" },
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject(expected);

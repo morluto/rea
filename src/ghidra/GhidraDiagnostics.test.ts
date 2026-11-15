@@ -1,54 +1,12 @@
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import {
-  GHIDRA_DIAGNOSTIC_TEXT_BYTES,
+  GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
   ghidraDiagnosticStream,
   ghidraFailureOutput,
+  ghidraLauncherFailure,
   createGhidraDiagnostics,
 } from "./GhidraDiagnostics.js";
-import { expect, it } from "vitest";
-
-it("bounds projected launcher text and reports the cut explicitly", () => {
-  const body = "launcher line\n".repeat(200_000);
-  const stream = ghidraDiagnosticStream(
-    {
-      text: body,
-      bytes: Buffer.byteLength(body),
-      observedBytes: Buffer.byteLength(body),
-    },
-    undefined,
-  ) as Record<string, unknown>;
-  expect(stream.text_truncated).toBe(true);
-  // The excerpt keeps head and tail within the budget plus its omission marker.
-  expect(Buffer.byteLength(stream.text as string)).toBeLessThanOrEqual(
-    GHIDRA_DIAGNOSTIC_TEXT_BYTES + 64,
-  );
-  // The counters keep reporting the source size rather than the excerpt's.
-  expect(stream.bytes).toBe(Buffer.byteLength(body));
-  expect(stream.retained_bytes).toBe(Buffer.byteLength(body));
-});
-
-it("leaves text within budget unmarked and unchanged", () => {
-  const stream = ghidraDiagnosticStream(
-    { text: "short", bytes: 5, observedBytes: 5 },
-    undefined,
-  ) as Record<string, unknown>;
-  expect(stream).toEqual({ text: "short", bytes: 5, retained_bytes: 5 });
-});
-
-it("redacts the transport credential before deciding the excerpt", () => {
-  const token = "t".repeat(64);
-  const text = `${token}\n${"x".repeat(GHIDRA_DIAGNOSTIC_TEXT_BYTES)}`;
-  const stream = ghidraDiagnosticStream(
-    {
-      text,
-      bytes: Buffer.byteLength(text),
-      observedBytes: Buffer.byteLength(text),
-    },
-    token,
-  ) as Record<string, unknown>;
-  expect(stream.text_truncated).toBe(true);
-  expect((stream.text as string).startsWith("[REDACTED]\n")).toBe(true);
-});
+import { describe, expect, it } from "vitest";
 
 it("keeps request output and provenance without projecting launcher history", () => {
   const output = { text: "launcher output", bytes: 15, observedBytes: 15 };
@@ -176,6 +134,40 @@ it.each([false, true])(
   },
 );
 
+it("retains bounded, redacted launcher failure lines before clipping output", () => {
+  const line =
+    "java.io.FileNotFoundException: /tmp/secret-token/java_home.save (Access is denied)";
+  const text = `${line}\n${"later output\n".repeat(7000)}`;
+  const stream = {
+    text,
+    bytes: Buffer.byteLength(text),
+    observedBytes: Buffer.byteLength(text),
+  };
+  const empty = { text: "", bytes: 0, observedBytes: 0 };
+  const output = ghidraFailureOutput(
+    {
+      snapshot: { stdout: empty, stderr: stream, exitCode: 1, signal: null },
+      complete: true,
+    },
+    "secret-token",
+    false,
+  );
+  expect(output).toMatchObject({
+    launcher_failures: {
+      failures: [
+        {
+          kind: "java_home_save_denied",
+          stream: "stderr",
+          line: "java.io.FileNotFoundException: /tmp/[REDACTED]/java_home.save (Access is denied)",
+          path: "/tmp/[REDACTED]/java_home.save",
+        },
+      ],
+      truncated: false,
+    },
+  });
+  expect(JSON.stringify(output)).not.toContain("secret-token");
+});
+
 it.each([
   [undefined, false],
   [true, true],
@@ -203,45 +195,104 @@ it.each([
   },
 );
 
-it("retains the launcher lines that select a recovery path when the excerpt drops them", () => {
-  const name = "program_gamma";
-  const missing = `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer)`;
-  const denied = `java.io.FileNotFoundException: C:\\Temp\\rea-provider-1\\java_home.save (Access is denied)`;
-  const body = [
-    "launcher preamble\n".repeat(20_000),
-    `${missing}\n`,
-    "launcher middle\n".repeat(20_000),
-    `${denied}\n`,
-    "launcher epilogue\n".repeat(20_000),
-  ].join("");
-  const stream = ghidraDiagnosticStream(
-    {
-      text: body,
-      bytes: Buffer.byteLength(body),
-      observedBytes: Buffer.byteLength(body),
-    },
+it("carries only the latest launcher output in an error, with its byte counts", () => {
+  const retained = `${"early line\n".repeat(400_000)}last line: startup timed out\n`;
+  const bytes = Buffer.byteLength(retained);
+  const projected = ghidraDiagnosticStream(
+    { text: retained, bytes, observedBytes: bytes + 1_000 },
     undefined,
-  ) as Record<string, unknown>;
-  expect(stream.text_truncated).toBe(true);
-  // The excerpt itself omits the middle, so classification needs the retained lines.
-  expect(stream.text as string).not.toContain(name);
-  expect(stream.guidance_lines).toEqual([missing, denied]);
+  ) as {
+    text: string;
+    bytes: number;
+    retained_bytes: number;
+    text_bytes: number;
+  };
+  expect(projected.text.endsWith("last line: startup timed out\n")).toBe(true);
+  expect(Buffer.byteLength(projected.text)).toBe(projected.text_bytes);
+  expect(projected.text_bytes).toBeLessThanOrEqual(
+    GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
+  );
+  expect(projected).toMatchObject({
+    bytes: bytes + 1_000,
+    retained_bytes: bytes,
+  });
 });
 
-it("keeps guidance lines inside the excerpt and out of the projection when nothing is cut", () => {
-  const text =
-    "Requested project program file(s) not found: fixture\nAccess is denied";
-  const stream = ghidraDiagnosticStream(
-    {
+it("keeps short launcher output whole", () => {
+  expect(
+    ghidraDiagnosticStream(
+      { text: "ok\n", bytes: 3, observedBytes: 3 },
+      undefined,
+    ),
+  ).toEqual({ text: "ok\n", bytes: 3, retained_bytes: 3 });
+});
+
+describe("Ghidra launcher failure lines", () => {
+  it("extracts the denied java_home.save path from JVM output", () => {
+    const line =
+      "java.io.FileNotFoundException: C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save (Access is denied)";
+    expect(ghidraLauncherFailure("stderr", line)).toEqual({
+      kind: "java_home_save_denied",
+      stream: "stderr",
+      line,
+      path: "C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save",
+    });
+  });
+
+  it.each([
+    [
+      "another denied path",
+      "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)",
+    ],
+    [
+      "a different failure for the file",
+      "java.io.FileNotFoundException: C:\\x\\java_home.save (The system cannot find the path specified)",
+    ],
+    ["only a mention", "Reading java_home.save failed"],
+    ["no output", ""],
+  ])("does not classify %s", (_label, line) => {
+    expect(ghidraLauncherFailure("stderr", line)).toBeUndefined();
+  });
+
+  it("keeps a differently cased denial that falls outside the delivered excerpt", () => {
+    const line =
+      "java.io.FileNotFoundException: C:\\x\\java_home.save (ACCESS IS DENIED)";
+    const text = `${line}\n${"later output\n".repeat(7000)}`;
+    const stream = {
       text,
       bytes: Buffer.byteLength(text),
       observedBytes: Buffer.byteLength(text),
-    },
-    undefined,
-  ) as Record<string, unknown>;
-  expect(stream).toEqual({
-    text,
-    bytes: Buffer.byteLength(text),
-    retained_bytes: Buffer.byteLength(text),
+    };
+    const empty = { text: "", bytes: 0, observedBytes: 0 };
+    const output = ghidraFailureOutput(
+      {
+        snapshot: { stdout: empty, stderr: stream, exitCode: 1, signal: null },
+        complete: true,
+      },
+      undefined,
+      false,
+    ) as {
+      stderr: { text: string };
+      launcher_failures: { failures: unknown[] };
+    };
+    expect(output.stderr.text).not.toContain("java_home.save");
+    expect(output.launcher_failures.failures).toEqual([
+      expect.objectContaining({
+        kind: "java_home_save_denied",
+        path: "C:\\x\\java_home.save",
+      }),
+    ]);
+  });
+
+  it("records the requested program list after Ghidra's refusal marker", () => {
+    expect(
+      ghidraLauncherFailure(
+        "stdout",
+        "ERROR Requested project program file(s) not found: target.bin (HeadlessAnalyzer)",
+      ),
+    ).toMatchObject({
+      kind: "missing_program",
+      requested: "target.bin (HeadlessAnalyzer)",
+    });
   });
 });

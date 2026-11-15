@@ -374,13 +374,11 @@ setTimeout(() => process.exit(9), 10000).unref();
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(stopped).then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 5000 },
+      .poll(() =>
+        readFile(stopped).then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort({ request: "late doctor cancellation" });

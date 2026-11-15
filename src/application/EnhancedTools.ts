@@ -506,21 +506,32 @@ export class EnhancedTools {
         });
         continue;
       }
-      const { result: pseudocode } = observed.value;
+      const { result: pseudocode, pseudocodeAbsence } = observed.value;
+      // Each item keeps its own observation's caveats, so repeated selectors
+      // that the provider answered differently stay distinguishable; the batch
+      // Evidence still aggregates them.
+      const limitations = [...new Set(observed.value.limitations)];
+      const itemLimitations = limitations.length === 0 ? {} : { limitations };
       if (typeof pseudocode === "string" && pseudocode.length > 0) {
-        items.push({ address, procedure, status: "ok", pseudocode });
+        items.push({
+          address,
+          procedure,
+          status: "ok",
+          pseudocode,
+          ...itemLimitations,
+        });
         continue;
       }
-      // Only this observation can explain its missing text, so its caveats
-      // stay with the item; the batch Evidence still aggregates them.
-      const limitations = [...new Set(observed.value.limitations)];
       if (pseudocode === null) {
         items.push({
           address,
           procedure,
           status: "unavailable",
           reason: "no_pseudocode",
-          ...(limitations.length === 0 ? {} : { limitations }),
+          ...(pseudocodeAbsence === undefined
+            ? {}
+            : { pseudocode_absence: pseudocodeAbsence }),
+          ...itemLimitations,
         });
         continue;
       }
@@ -529,7 +540,7 @@ export class EnhancedTools {
         procedure,
         status: "error",
         error: projectAnalysisError(missingPseudocodeError(pseudocode)),
-        ...(limitations.length === 0 ? {} : { limitations }),
+        ...itemLimitations,
       });
     }
     return ok(batchDecompileResult(items));

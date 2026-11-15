@@ -75,7 +75,6 @@ for (const { runner, userAgent } of [
           arguments: arguments_,
           cwd: home,
           environment,
-          timeoutMs: 20_000,
         });
       const setup = await run([
         "setup",

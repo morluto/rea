@@ -73,7 +73,10 @@ const host = (
       ? err({ kind: "unreadable" as const, ...image })
       : ok(image);
   },
-  isFile: async (path: string) => path in images,
+  isFile: async (path: string) => ({
+    kind: "file" as const,
+    isFile: path in images,
+  }),
 });
 
 const typora = {
@@ -102,6 +105,109 @@ describe("parseLinkerCache", () => {
 });
 
 describe("libraryClosure", () => {
+  it("continues past a denied directory to the one the linker can search", async () => {
+    // A folder with denied search is not one the linker loads from, so a later
+    // readable directory holding the soname is the object actually in use.
+    const closure = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/denied", "/native"]),
+      },
+      [],
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? ok(elf(["libcore.so"], [], ["/denied", "/native"]))
+            : path === "/native/libcore.so"
+              ? ok(elf([]))
+              : err({
+                  kind: "unreadable" as const,
+                  identity: null,
+                  reason: "EACCES",
+                }),
+        isFile: async (path: string) =>
+          path === "/denied/libcore.so"
+            ? { kind: "unknown" as const, unreachable: true }
+            : {
+                kind: "file" as const,
+                isFile: path === "/native/libcore.so",
+              },
+      },
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [{ soname: "libcore.so", path: "/native/libcore.so" }],
+      missing: [],
+      unreadable: [],
+      truncated: false,
+    });
+  });
+
+  it("keeps an unprobeable candidate unresolved instead of reporting it missing", async () => {
+    // Nothing else provides the soname, and the denied folder may hold it, so
+    // the walk records why it could not tell rather than claiming absence.
+    const closure = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/denied"]),
+      },
+      [],
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? ok(elf(["libcore.so"], [], ["/denied"]))
+            : err({
+                kind: "unreadable" as const,
+                identity: null,
+                reason: "EACCES",
+              }),
+        isFile: async () => ({
+          kind: "unknown" as const,
+          unreachable: true,
+        }),
+      },
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [],
+      missing: [],
+      unreadable: [{ path: "/denied/libcore.so", reason: "EACCES" }],
+      truncated: false,
+    });
+  });
+
+  it("keeps a transiently unprobed candidate ahead of the linker cache", async () => {
+    // A search directory that failed transiently may still be the one the
+    // linker loads from, so its candidate keeps search order.
+    const closure = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/volatile"]),
+      },
+      parseLinkerCache(LINKER_CACHE),
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? ok(elf(["libcore.so"], [], ["/volatile"]))
+            : path === "/volatile/libcore.so"
+              ? ok(elf([]))
+              : err({
+                  kind: "unreadable" as const,
+                  identity: null,
+                  reason: "missing",
+                }),
+        isFile: async (path: string) =>
+          path === "/volatile/libcore.so"
+            ? { kind: "unknown" as const, unreachable: false }
+            : { kind: "file" as const, isFile: true },
+      },
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [{ soname: "libcore.so", path: "/volatile/libcore.so" }],
+    });
+  });
+
   it("walks DT_NEEDED through RPATH and the cache for the executable's machine", async () => {
     const closure = await libraryClosure(
       typora,

@@ -18,7 +18,10 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
+import {
+  stdioSelectingFields,
+  type ClientRegistrationTarget,
+} from "./ClientRegistrationProfile.js";
 import {
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
@@ -277,12 +280,18 @@ export const clientRegistrationSourceFacts = (
         ),
       );
   } else {
+    const launcherFields = new Set(fields);
     for (const field of connection.kind === "cline"
       ? ["transport", "type", "transportType", "url"]
       : connection.kind === "commandcode"
         ? ["type", "url"]
         : connection.fields)
       fields.add(field);
+    // An existing selector that already chooses stdio stays, including one
+    // inherited through a YAML merge; only remote selectors are superseded.
+    if (connection.kind === "flat")
+      for (const field of stdioSelectingFields(source ?? {}, connection))
+        if (!launcherFields.has(field)) fields.delete(field);
   }
   return ok({ ...parsed, connectionFields: fields });
 };

@@ -1,8 +1,8 @@
-import {
-  readUniversalMachoImage,
-  readUniversalMachoSlice,
-} from "../domain/apple/machoImageSelection.js";
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
+import {
+  IL2CPP_SLICE_SELECTORS,
+  type Il2cppBinaryArchitecture,
+} from "../domain/il2cpp/il2cppMetadata.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -14,6 +14,11 @@ import {
   type FileMappingIndex,
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import {
+  requireSelectedNativeImage,
+  type SelectedNativeImage,
+  type SliceSelectionInput,
+} from "../native/metadata/MachoSliceSelection.js";
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
@@ -31,59 +36,39 @@ import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
 } from "./Il2cppBinaryFormat.js";
-const MACHO_CPU = new Map([
-  [0x01000007, "amd64"],
-  [0x0100000c, "arm64"],
-]);
 
-/** Select one thin image; a universal Mach-O needs the caller's architecture. */
-const selectImage = (
-  bytes: Buffer,
-  architecture: string | undefined,
-): Buffer => {
-  const container = readUniversalMachoImage(bytes);
-  if (!container.ok)
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      container.error.message,
-    );
-  const fat = container.value;
-  if (fat === null) {
-    if (architecture !== undefined)
-      throw new Il2cppBinaryFormatFailure(
-        "slice-not-found",
-        `architecture ${architecture} was requested but the binary is not a universal Mach-O`,
-      );
-    return bytes;
-  }
-  const available = fat.slices.map(
-    (slice) => MACHO_CPU.get(slice.cpuType) ?? `macho-cpu-${slice.cpuType}`,
-  );
-  if (architecture === undefined)
-    throw new Il2cppBinaryFormatFailure(
-      "slice-selection-required",
-      `universal Mach-O holds ${available.join(", ")}; select one architecture`,
-    );
-  if (available.filter((value) => value === architecture).length > 1)
-    throw new Il2cppBinaryFormatFailure(
-      "ambiguous-slice-selection",
-      `multiple universal slices declare ${architecture}; no slice was selected`,
-    );
-  const index = available.indexOf(architecture);
-  const slice = fat.slices[index];
-  if (slice === undefined)
-    throw new Il2cppBinaryFormatFailure(
-      "slice-not-found",
-      `universal Mach-O holds ${available.join(", ")}, not ${architecture}`,
-    );
-  const selected = readUniversalMachoSlice(bytes, fat, slice);
-  if (!selected.ok)
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      selected.error.message,
-    );
-  return selected.value;
+/** Selection failures name the binary's inputs and IL2CPP's public spellings. */
+const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
+  pathField: "binary_path",
+  architectureField: "binary_architecture",
+  spelling: Object.fromEntries(
+    Object.entries(IL2CPP_SLICE_SELECTORS).map(([publicName, selector]) => [
+      selector,
+      publicName,
+    ]),
+  ),
 };
+
+/**
+ * Select the thin image of the caller's binary: IL2CPP's `binary_architecture`
+ * maps onto the shared slice selector here, once, and a selection failure
+ * names `binary_architecture` or `binary_path`.
+ */
+export const requireIl2cppBinaryImage = (
+  operation: string,
+  path: string,
+  bytes: Buffer,
+  architecture: Il2cppBinaryArchitecture | undefined,
+): SelectedNativeImage =>
+  requireSelectedNativeImage(
+    operation,
+    path,
+    bytes,
+    architecture === undefined
+      ? undefined
+      : IL2CPP_SLICE_SELECTORS[architecture],
+    IL2CPP_SLICE_SELECTION_INPUT,
+  );
 
 export interface NativeImage {
   readonly bytes: Buffer;
@@ -97,11 +82,8 @@ export interface NativeImage {
   readonly machoPointerFixups?: PointerFixups;
 }
 
-export function* openImageSteps(
-  bytes: Buffer,
-  architecture: string | undefined,
-): Generator<void, NativeImage> {
-  const image = selectImage(bytes, architecture);
+/** Open one thin image; a universal Mach-O slice is selected before this. */
+export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
   let container: BinaryContainer;
   try {
     container = readBinaryContainer(image);

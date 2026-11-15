@@ -113,7 +113,6 @@ it.each([
         entered.promise.then(() => undefined),
         pending,
         "initial target open",
-        10_000,
       );
       const signal = await entered.promise;
       expect(signals.listenerCount("SIGINT")).toBe(1);
@@ -187,12 +186,7 @@ it.each(["optional", "late-handle"] as const)(
         registerProcessShutdown(handler, { signals, stdin: input }),
     });
     try {
-      await awaitAcknowledgement(
-        entered.promise,
-        pending,
-        "startup stage",
-        10_000,
-      );
+      await awaitAcknowledgement(entered.promise, pending, "startup stage");
       if (stage === "optional") {
         await new Promise<void>((resolve) => {
           input.once("end", resolve);

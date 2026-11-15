@@ -1,6 +1,5 @@
 import type { JsonValue } from "../domain/jsonValue.js";
-import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8TailExcerpt } from "../domain/utf8Excerpt.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import type {
   ProviderProcessOutputSince,
@@ -13,12 +12,11 @@ import type { GhidraTransportKind } from "./GhidraTransport.js";
 export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 /**
- * Bytes of redacted launcher text projected into one caller-visible
- * diagnostics field. A failing Ghidra run drains its log into stdout/stderr,
- * so the in-memory retention budget is roughly a hundred times larger than any
- * client can receive in a tool result.
+ * Bytes of each retained stream an error carries: the latest output, where a
+ * failure is reported. The 8 MiB retention stays for scanning, not delivery.
  */
-export const GHIDRA_DIAGNOSTIC_TEXT_BYTES = 64 * 1024;
+export const GHIDRA_DIAGNOSTIC_EXCERPT_BYTES = 64 * 1024;
+const LAUNCHER_LINE_CHARACTERS = 4096;
 
 /** JVM error class located in all launcher output, beyond the retention budget. */
 export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
@@ -143,6 +141,7 @@ export const ghidraFailureOutput = (
   stdout: ghidraDiagnosticStream(scoped.snapshot.stdout, token),
   stderr: ghidraDiagnosticStream(scoped.snapshot.stderr, token),
   complete: scoped.complete && !drainIncomplete,
+  launcher_failures: observedLauncherFailures(scoped, token),
   observed_oome: (scoped.markers ?? []).map((marker) => {
     const bytes = Buffer.byteLength(marker.line, "utf8");
     return {
@@ -166,54 +165,116 @@ export const ghidraFailureOutput = (
   }),
 });
 
+/** Ghidra's headless refusal when `-process` names no program in the project. */
+const GHIDRA_MISSING_PROGRAM = "Requested project program file(s) not found: ";
+
 /**
- * Launcher lines that select a specific recovery path: a missing `-process`
- * program and a denied `java_home.save` write. Both are matched by REA after
- * projection, so an excerpt that drops them from its omitted middle would
- * replace the specific failure with a generic one.
+ * The JVM's access-denied refusal to open `java_home.save` (Win32 error 5).
+ * Only a line naming that file and the denial counts.
  */
-const GHIDRA_GUIDANCE_LINE =
-  /Requested project program file\(s\) not found:|java_home\.save/iu;
+const JAVA_HOME_SAVE_DENIED =
+  /FileNotFoundException:\s*(.*?java_home\.save)\s*\(Access is denied\)/iu;
 
-/** Retained guidance lines per stream; one launcher names each condition once. */
-export const GHIDRA_GUIDANCE_LINES = 8;
+/** A launcher failure recognized in one output line, with that line as evidence. */
+export type GhidraLauncherFailure =
+  | {
+      readonly kind: "missing_program";
+      readonly stream: "stdout" | "stderr";
+      readonly line: string;
+      /** The text after Ghidra's refusal marker: the requested program list. */
+      readonly requested: string;
+    }
+  | {
+      readonly kind: "java_home_save_denied";
+      readonly stream: "stdout" | "stderr";
+      readonly line: string;
+      readonly path: string;
+    };
 
-/** Bytes allowed for the retained guidance lines of one stream. */
-export const GHIDRA_GUIDANCE_TEXT_BYTES = 8 * 1024;
+/**
+ * Recognize a launcher failure in one line of output. This is the only parser
+ * of these lines; error projection reads its facts, never the raw streams.
+ */
+export const ghidraLauncherFailure = (
+  stream: "stdout" | "stderr",
+  line: string,
+): GhidraLauncherFailure | undefined => {
+  const marker = line.indexOf(GHIDRA_MISSING_PROGRAM);
+  if (marker !== -1)
+    return {
+      kind: "missing_program",
+      stream,
+      line,
+      requested: line.slice(marker + GHIDRA_MISSING_PROGRAM.length),
+    };
+  const path = JAVA_HOME_SAVE_DENIED.exec(line)?.[1]?.trim();
+  return path === undefined || path === ""
+    ? undefined
+    : { kind: "java_home_save_denied", stream, line, path };
+};
 
-/** Lines the excerpt would drop but a recovery decision still reads. */
-const guidanceLines = (text: string): string[] => {
-  const lines = text
-    .split(/\r?\n/u)
-    .filter((line) => GHIDRA_GUIDANCE_LINE.test(line));
-  return lines.length === 0 ? [] : lines.slice(-GHIDRA_GUIDANCE_LINES);
+/**
+ * Whether a missing-program refusal names exactly the program REA passed to
+ * `-process`, so a longer program name cannot be read as this refusal.
+ */
+export const ghidraMissingProgramNames = (
+  failure: Extract<GhidraLauncherFailure, { kind: "missing_program" }>,
+  programName: string,
+): boolean =>
+  failure.requested === programName ||
+  failure.requested.startsWith(`${programName} `);
+
+const LAUNCHER_FAILURE_LIMIT = Math.floor(
+  GHIDRA_DIAGNOSTIC_EXCERPT_BYTES / LAUNCHER_LINE_CHARACTERS,
+);
+
+/**
+ * Parse every retained, credential-redacted line once, before the streams are
+ * cut to their delivered excerpt, and keep a bounded list of the failures.
+ */
+const observedLauncherFailures = (
+  scoped: ProviderProcessOutputSince,
+  token: string | undefined,
+): JsonValue => {
+  const failures: GhidraLauncherFailure[] = [];
+  let truncated = false;
+  for (const stream of ["stdout", "stderr"] as const) {
+    const text = redactCapturedTransportCredential(
+      scoped.snapshot[stream],
+      token,
+      "[REDACTED]",
+    );
+    for (const line of text.split(/\r?\n/u)) {
+      const failure = ghidraLauncherFailure(stream, line);
+      if (failure === undefined) continue;
+      if (
+        line.length > LAUNCHER_LINE_CHARACTERS ||
+        failures.length >= LAUNCHER_FAILURE_LIMIT
+      ) {
+        truncated = true;
+        continue;
+      }
+      failures.push(failure);
+    }
+  }
+  return { failures, truncated };
 };
 
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
 ): JsonValue => {
-  const redacted = redactCapturedTransportCredential(
-    stream,
-    token,
-    "[REDACTED]",
+  // Redact the whole retained text first, so the cut cannot expose part of a token.
+  const excerpt = utf8TailExcerpt(
+    redactCapturedTransportCredential(stream, token, "[REDACTED]"),
+    GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
   );
-  const excerpt = new BoundedOutputExcerpt(GHIDRA_DIAGNOSTIC_TEXT_BYTES);
-  excerpt.append(Buffer.from(redacted, "utf8"));
-  const guidance = excerpt.truncated ? guidanceLines(redacted) : [];
   return {
     text: excerpt.text,
     // Preserve the historical total-byte counter; text is now bounded separately.
     bytes: stream.observedBytes,
     retained_bytes: stream.bytes,
-    ...(excerpt.truncated ? { text_truncated: true } : {}),
-    ...(guidance.length === 0
-      ? {}
-      : {
-          guidance_lines: guidance.map(
-            (line) => boundedUtf8Text(line, GHIDRA_GUIDANCE_TEXT_BYTES).text,
-          ),
-        }),
+    ...(excerpt.truncated ? { text_bytes: excerpt.bytes } : {}),
     ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
   };
 };

@@ -15,7 +15,7 @@ import { inspectAnalysisView } from "./AnalysisViewService.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import type { BrowserScenarioCapture } from "../../domain/browserScenarioCapture.js";
-import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import { projectBrowserScenarioView } from "../../domain/analysisView/browserScenarioView.js";
 
 const tree = (text: string) => ({

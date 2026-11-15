@@ -96,6 +96,10 @@ Persistent command Evidence retains the caller-selected and resolved startup pat
 
 Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, whose output budget defaults to 16 MiB. Rizin debug startup waits 30000 ms with no runtime override. Each command frame defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). The 16777216-byte frame cap and 4096-frame command cap remain fixed. Evidence names the cap that stopped the command. The one-shot `command_timeout_ms` setting does not change a debug session.
 
+### Stopped debugger sessions
+
+A Rizin or GDB session stops accepting commands when REA stops it, for example after an output or frame limit, a command deadline, cancellation or a protocol failure, or when the debugger process exits. REA keeps the stopped session and the first reason it observed until `close_rizin_debug_session` or `close_gdb_session` releases it, including after a retried cleanup succeeds. `rizin_debug_session_status` and `gdb_session_status` then report `state: "closed"` with that reason in `closed_reason`. A later `rizin_debug_command` or `gdb_console` on the session fails with `capability_unavailable`; `details.reason` carries the same reason, and the remediation is to close the session and start a new one. A `session_id` that this server never returned, or that close already released, fails with `invalid_request` instead.
+
 ### Debugger launch settings
 
 GDB and Rizin share these settings in the environment that launches REA:
@@ -135,6 +139,8 @@ rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr
 ```sh
 rea execute-rizin-command ./program iI
 ```
+
+Rizin exits with status 0 even when its shell refuses a statement, so the exit code does not show whether the command ran. Rizin 0.6 through 0.9.1 log one of four stderr lines for such a refusal: `ERROR: Command '…' does not exist.`, ``ERROR: Wrong number of arguments passed to `…`…``, `ERROR: core: Error while executing command: …` (an invalid statement), or `ERROR: core: Error while parsing command: …`. Rizin then skips the refused statement and every later one in the command. When the completed process's stderr contains one of these lines, REA reports `completion_status: "rejected"` and adds a limitation naming the refusal. stdout then holds only the output of earlier statements, so empty stdout is not an empty result. Other `ERROR:` lines, such as `ERROR: Cannot find function at …`, come from commands that ran; REA keeps them in stderr and reports `complete`. A command that lowers `log.level` or redirects stderr hides refusals from REA.
 
 Captured stdout and stderr use the same `max_output_bytes` (CLI: `--max-output-bytes`) admission and recovery described above, default 16 MiB. One-shot commands independently use `command_timeout_ms`. Raising output admission cannot recover an earlier capture; command effects and cleanup must be checked before another invocation.
 

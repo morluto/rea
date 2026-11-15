@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
@@ -28,6 +29,7 @@ import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
@@ -222,8 +224,32 @@ process.stdin.on("data", async (chunk) => {
         "gdb_session_status",
         sessionId,
       );
-      expect(status.state).toBe("closed");
+      expect(status).toMatchObject({
+        state: "closed",
+        closed_reason: expect.stringContaining(
+          "A GDB MI command was cancelled",
+        ),
+      });
       expect(status).toHaveProperty("diagnostics_truncated");
+      // A later command names the retained reason instead of an argument error.
+      expect(
+        parseMcpToolError(
+          (await client.callTool({
+            name: "gdb_console",
+            arguments: { session_id: sessionId, command: "info registers" },
+          })) as CallToolResult,
+        ).error,
+      ).toMatchObject({
+        code: "capability_unavailable",
+        message: expect.stringContaining(
+          "The GDB debug session stopped and accepts no more commands. A GDB MI command was cancelled",
+        ),
+        remediation: {
+          action: expect.stringMatching(
+            /close_gdb_session.*start_gdb_session/u,
+          ),
+        },
+      });
       await manager.closeAll();
       expect(stopResults).toContain("stopped");
     } finally {

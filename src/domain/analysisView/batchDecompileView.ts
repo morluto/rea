@@ -4,6 +4,7 @@ import {
   type CommittedProviderIdentity,
 } from "../analysisProfile.js";
 import { digestSchema } from "../digests.js";
+import { pseudocodeAbsenceSchema } from "../native/pseudocodeAbsence.js";
 import { providerSchema } from "../evidence.js";
 import {
   batchDecompileResultSchema,
@@ -114,11 +115,13 @@ const batchDecompileRowSchema = z.discriminatedUnion("status", [
     status: z.literal("ok"),
     pseudocode_code_units: z.int().positive(),
     pseudocode: z.string().min(1).exactOptional(),
+    limitations: batchItemLimitationsSchema,
   }),
   z.strictObject({
     ...itemIdentity,
     status: z.literal("unavailable"),
     reason: z.literal("no_pseudocode"),
+    pseudocode_absence: pseudocodeAbsenceSchema.exactOptional(),
     limitations: batchItemLimitationsSchema,
   }),
   z.strictObject({
@@ -253,7 +256,7 @@ const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
       : [
           `${String(unknownIdentity)} items have unknown procedure identity; their address is the caller's selector, not an observed entry.`,
         ]),
-    "Evidence limitations aggregate every item's provider observations and are not attributed to one successful item. A batch covers only its selected procedures, and exhausting a page establishes nothing outside it.",
+    "Evidence limitations aggregate every item's provider observations; each item row also carries its own observation's limitations. A batch covers only its selected procedures, and exhausting a page establishes nothing outside it.",
   ];
 };
 
@@ -276,12 +279,18 @@ const itemRow = (
       status: "ok",
       pseudocode_code_units: item.pseudocode.length,
       ...(includePseudocode ? { pseudocode: item.pseudocode } : {}),
+      ...(item.limitations === undefined
+        ? {}
+        : { limitations: item.limitations }),
     };
   if (item.status === "unavailable")
     return {
       ...identity,
       status: "unavailable",
       reason: item.reason,
+      ...(item.pseudocode_absence === undefined
+        ? {}
+        : { pseudocode_absence: item.pseudocode_absence }),
       ...(item.limitations === undefined
         ? {}
         : { limitations: item.limitations }),

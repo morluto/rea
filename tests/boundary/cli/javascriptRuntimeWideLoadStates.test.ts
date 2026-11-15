@@ -112,7 +112,7 @@ processTest.for([1_000, 16_000])(
         path,
         "--json",
       ],
-      { cwd: root, timeoutMs: 30_000 },
+      { cwd: root },
     );
     expect(
       response.exitCode,

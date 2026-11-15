@@ -29,6 +29,7 @@ import {
   LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX,
   parseLinuxPrivateDisplayDiagnostic,
 } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const helperPath = fileURLToPath(
   new URL("../../../../scripts/hopper-demo-x11.py", import.meta.url),
@@ -543,7 +544,7 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
       signal: controller.signal,
     });
     if (outcome === "cancelled") {
-      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      await waitFor(async () => expect(await access(ready)).toBeUndefined());
       controller.abort("caller stopped");
     }
     const result = await operation;

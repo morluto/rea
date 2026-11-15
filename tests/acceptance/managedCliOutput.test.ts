@@ -7,7 +7,7 @@ import { expect } from "vitest";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
   "recovers the same managed artifact through decimal CLI budgets and retains caller choices",
@@ -157,7 +157,7 @@ cliTest(
           ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
         }),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -546,7 +546,7 @@ cliTest(
       });
       const path = join(root, `virtual-${virtualSectionSize}.dll`);
       await writeFile(path, bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode).toBe(0);
@@ -647,7 +647,7 @@ cliTest(
       "inspect-managed-members",
       "inspect-managed-native-boundaries",
     ]) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [command, path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -682,7 +682,7 @@ cliTest(
         "inspect-managed-members",
         "inspect-managed-native-boundaries",
       ]) {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [command, path, "--json"],
         });
         expect(result.exitCode).not.toBe(0);
