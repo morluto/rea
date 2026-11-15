@@ -1272,6 +1272,9 @@ resource readers remain read-only within the selected bundle.
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
+When `path` is omitted and the open target is itself a plist, a plist that
+cannot be read or decoded is reported against that target
+(`target_unavailable`), not as an input issue on `path`.
 The CLI `rea inspect-plist <path>` opens its selected artifact for one invocation.
 
 Each provider client receives `binary_session.analysis_run.run_id` before any

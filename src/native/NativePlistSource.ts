@@ -42,10 +42,14 @@ import {
   NATIVE_PLIST_INPUT_ALLOWANCE,
 } from "./parsers/plist.js";
 
-/** Resolved lookup identity and selection intent, independent of file readiness. */
+/**
+ * Resolved lookup identity and selection intent, independent of file readiness.
+ * `selected` came from the caller's `path` input, `target` is the session
+ * target itself, and `default` is the bundle's Info.plist.
+ */
 export interface NativePlistSelection {
   readonly path: string;
-  readonly origin: "selected" | "default";
+  readonly origin: "selected" | "target" | "default";
 }
 
 /** Resolve intent once; consumers never infer it from an omitted tool argument. */
@@ -61,7 +65,7 @@ export const resolveNativePlistSelection = async (
       target.kind === "artifact" &&
       target.format === "plist"
     )
-      return ok({ path: target.path, origin: "selected" });
+      return ok({ path: target.path, origin: "target" });
     const source = target.sourcePath ?? target.path;
     const sourceMetadata = await stat(source);
     const root = sourceMetadata.isDirectory()
@@ -106,8 +110,9 @@ const macOSBundleRoot = (path: string): string | undefined => {
 };
 
 /**
- * Report a plist that cannot be decoded as the caller's selection, or as the
- * target's missing default, rather than as a failed tool run.
+ * Report a plist that cannot be decoded against the input that chose it: the
+ * caller's `path` selection, the session target itself, or the target's
+ * missing default, rather than as a failed tool run.
  */
 export const unreadablePlist = (
   selection: NativePlistSelection,
@@ -116,22 +121,33 @@ export const unreadablePlist = (
 ): AnalysisError => {
   const { path } = selection;
   const sentence = reason.endsWith(".") ? reason : `${reason}.`;
-  // Name the default that is missing and the selection that still works.
-  const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
-  return selection.origin === "default"
-    ? new AnalysisCapabilityUnavailableError(
+  switch (selection.origin) {
+    case "default": {
+      // Name the default that is missing and the selection that still works.
+      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
+      return new AnalysisCapabilityUnavailableError(
         IDENTITY.id,
         "inspect_plist",
         missingDefault,
         { ...options, userMessage: missingDefault },
-      )
-    : new AnalysisInputError("inspect_plist", options, [
+      );
+    }
+    case "target":
+      // The caller sent no `path`; the open target is the plist that failed.
+      return new BinaryTargetError(
+        path,
+        `cannot inspect it as a property list: ${sentence}`,
+        options,
+      );
+    case "selected":
+      return new AnalysisInputError("inspect_plist", options, [
         {
           path: ["path"],
           reason: "invalid_value",
           message: `Cannot inspect ${path}: ${sentence}`,
         },
       ]);
+  }
 };
 
 interface PlistFileInput {
