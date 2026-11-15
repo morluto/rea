@@ -81,7 +81,7 @@ it("attributes file-I/O cancellation to the comparison and preserves its exact c
       controller.signal,
       resources,
     );
-    await held.firstRead;
+    await held.reached(pending, "first file read");
     controller.abort(cause);
     held.release();
     const result = await pending;

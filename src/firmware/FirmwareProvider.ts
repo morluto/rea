@@ -50,6 +50,7 @@ import {
   firmwareFileSizeLimit,
   firmwareToolUnavailable,
   resolveFirmwareCommand,
+  firmwareExecutionOutput,
   runFirmwareCommand,
   readFirmwareCommandReport,
   type FirmwareLauncher,
@@ -430,15 +431,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         for (const selected of [command.command, command.limiter])
           await assertArtifactCommandPath(selected, request.operation, {
-            capturedOutput: {
-              stdout: output.stdout.text,
-              stderr: output.stderr.text,
-              stdout_bytes: output.stdout.bytes,
-              stderr_bytes: output.stderr.bytes,
-              exit_code: output.exit_code ?? null,
-              signal: output.signal,
-              truncated: false,
-            },
+            capturedOutput: firmwareExecutionOutput(output),
           });
         return output;
       };

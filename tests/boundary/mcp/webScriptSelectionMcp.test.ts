@@ -9,7 +9,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerWebScriptTool } from "../../../src/server/registerWebScriptTool.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -37,11 +37,11 @@ it.skipIf(process.platform === "win32")(
       createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     );
     const artifactResources = new ArtifactResourceScope();
-    registerWebScriptTool(server, {
-      logger: silentLogger,
-      recordEvidence: undefined,
-      artifactResources: artifactResources,
-    });
+    registerServiceTools(
+      server,
+      { webScripts: artifactResources },
+      { logger: silentLogger },
+    );
     const mcp = createTestMcp();
     onTestFinished(() =>
       closeVerifierResources([
@@ -102,11 +102,11 @@ it("refuses an existing output directory as invalid output_directory input", asy
     createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
   );
   const artifactResources = new ArtifactResourceScope();
-  registerWebScriptTool(server, {
-    logger: silentLogger,
-    recordEvidence: undefined,
-    artifactResources,
-  });
+  registerServiceTools(
+    server,
+    { webScripts: artifactResources },
+    { logger: silentLogger },
+  );
   const mcp = createTestMcp();
   onTestFinished(() =>
     closeVerifierResources([

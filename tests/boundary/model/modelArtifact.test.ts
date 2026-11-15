@@ -830,6 +830,7 @@ it.each([false, true])(
       element_count: strings.length,
       preview_complete: false,
     });
+    expect(result.value.coverage.array_values).toBe("partial");
     expect(result.value.artifact).toMatchObject({
       bytes_read: fixture.header.length,
       header_sha256: createHash("sha256").update(fixture.header).digest("hex"),

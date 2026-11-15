@@ -1,7 +1,6 @@
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   access,
@@ -18,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
 import { MitmproxyCaptureAdapter } from "../../../src/browser/history/MitmproxyCaptureAdapter.js";
 import {
@@ -247,8 +247,7 @@ it.each(["cancelled", "process"] as const)(
     const finishPath = join(root, "finish");
     const text = JSON.stringify(historicalHar());
     await writeFile(capturePath, text);
-    const peerEntered = createDeferred<void>();
-    const peerContinue = createDeferred<void>();
+    const peerCommand = phaseGate();
     const controller = new AbortController();
     const reason = { request: "cancel owned inert decoder" };
     let targetPid: number | undefined;
@@ -291,8 +290,7 @@ it.each(["cancelled", "process"] as const)(
                   finishPath,
                 ],
               };
-            peerEntered.resolve(undefined);
-            await peerContinue.promise;
+            await peerCommand.hold();
             await writeFile(
               join(runtimePath, "reply.json"),
               JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
@@ -321,7 +319,7 @@ it.each(["cancelled", "process"] as const)(
     onTestFinished(async () => {
       denied = false;
       denyRoot = false;
-      peerContinue.resolve(undefined);
+      peerCommand.release();
       await targetOwner?.stop();
       await decoder.close();
       vi.restoreAllMocks();
@@ -336,7 +334,7 @@ it.each(["cancelled", "process"] as const)(
       targetPid = JSON.parse(await readFile(markerPath, "utf8"));
     });
     const peer = decoder.inspect(input);
-    await peerEntered.promise;
+    await peerCommand.reached(peer, "peer decoder command");
     if (outcome === "cancelled") controller.abort(reason);
     else await writeFile(finishPath, "finish workload");
     const failed = await target;
@@ -362,7 +360,7 @@ it.each(["cancelled", "process"] as const)(
       () => undefined,
       (cause) => cause,
     );
-    peerContinue.resolve(undefined);
+    peerCommand.release();
     expect((await peer).ok).toBe(true);
     expect(await closing).toBeInstanceOf(Error);
     expect(targetRootCloses).toBe(0);

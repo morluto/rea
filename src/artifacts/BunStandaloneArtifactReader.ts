@@ -3,7 +3,6 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { setImmediate } from "node:timers/promises";
@@ -27,6 +26,7 @@ import {
   ArtifactResourceScope,
   normalizeArtifactPath,
   ArtifactPathRegistry,
+  artifactReaderLimitFailure,
 } from "../resources/index.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";

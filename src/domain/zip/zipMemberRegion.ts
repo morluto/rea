@@ -1,8 +1,8 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { BinaryReader } from "../binaryContainer.js";
 import {
   apkSigningPairEnd,
   APK_SIGNING_BLOCK_MAX_PAIRS,
-} from "../domain/apkSignature/apkSigningBlock.js";
+} from "../apkSignature/apkSigningBlock.js";
 
 /** One central-directory record's claim on the member region before the directory. */
 export interface ZipLocalRecord {

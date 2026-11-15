@@ -1,23 +1,23 @@
-import { LC, LC_REQ_DYLD } from "../domain/apple/machoLoadCommandCodes.js";
+import { LC, LC_REQ_DYLD } from "./machoLoadCommandCodes.js";
 import {
   MachoLoadCommandCursor,
   decodeMachoFixedWordFields,
   machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
-} from "../domain/apple/machoLoadCommands.js";
+} from "./machoLoadCommands.js";
 import {
   MACHO_VERSION_MIN_PLATFORMS,
   type MachoVersionMinPlatform,
-} from "../domain/apple/machoPlatform.js";
-import { readMachoSegmentHeader } from "../domain/apple/machoSegmentHeader.js";
-import { readMachoSectionHeader } from "../domain/apple/machoSectionHeader.js";
+} from "./machoPlatform.js";
+import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
+import { readMachoSectionHeader } from "./machoSectionHeader.js";
 import { createHash } from "node:crypto";
 import {
   malformedInput,
   ParseFailureError,
   truncatedInput,
-} from "../domain/parseFailure.js";
-import { invariantViolation } from "../domain/internalInvariant.js";
+} from "../parseFailure.js";
+import { invariantViolation } from "../internalInvariant.js";
 
 /** loader.h defines these with LC_REQ_DYLD; the reader also accepts each code without that bit. */
 const withoutRequiredByDyld = (code: number): number => code & ~LC_REQ_DYLD;

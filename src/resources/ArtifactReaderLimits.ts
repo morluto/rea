@@ -1,5 +1,5 @@
 import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { artifactReaderLimitMaximum } from "../domain/artifactReaderLimits.js";
 
 /** Construct exact next-call recovery at the enforcing resource owner. */
