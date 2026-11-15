@@ -283,6 +283,27 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
   });
 });
 
+it("names whether an opened PyInstaller entry is foreign or differs from inventory", async () => {
+  const bytes = archive(Buffer.from("first"));
+  await withPyInstallerReader(bytes, async (reader) => {
+    await reader.prepareContainer(hash(bytes));
+    const [entry] = await members(reader);
+    if (entry === undefined) throw new Error("Missing member");
+    await expect(
+      reader.open({ ...entry, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    await expect(
+      reader.open({ ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+  });
+});
+
 it.each(["ENOENT", "ENOTDIR"] as const)(
   "retains changed-source evidence when an admitted carrier becomes unaddressable (%s)",
   async (code) => {

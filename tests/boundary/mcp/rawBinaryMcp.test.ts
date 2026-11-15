@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -242,9 +243,8 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     response: CallToolResult,
   ) => {
     const tool = tools.find((candidate) => candidate.name === name);
-    if (tool?.outputSchema === undefined)
-      throw new Error(`missing ${name} output schema`);
-    const schema = z.record(z.string(), z.unknown()).parse(tool.outputSchema);
+    if (tool === undefined) throw new Error(`missing ${name} output schema`);
+    const schema = canonicalOutputSchema(tool.name);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,

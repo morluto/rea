@@ -15,7 +15,7 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
   createFileMappingIndex,
 } from "../metadata/BinaryContainer.js";
 import {
@@ -303,11 +303,11 @@ export const inspectAndroidJniLibrary = async (
         if (cause instanceof BinaryMappingFailure) {
           if (cause.reason !== "unmapped") throw cause;
           stringWork += scanned ? allowance + 1 : 1;
-        } else if (cause instanceof BinaryStringReadLimitFailure) {
+        } else if (isBinaryStringReadLimit(cause)) {
           stringWork += allowance + 1;
           tablesStatus = "partial";
           unknowns.add(
-            `Some JNI candidate strings exceeded the ${cause.maximumBytes}-byte NUL-termination read allowance; omitted entries remain unknown`,
+            `Some JNI candidate strings exceeded the ${String(cause.failure.limit.maximum)}-byte NUL-termination read allowance; omitted entries remain unknown`,
           );
         } else if (cause instanceof BinaryFormatFailure) {
           // Unterminated source bytes also consume their actual scan allowance.
@@ -501,16 +501,17 @@ export const inspectAndroidJniLibrary = async (
       });
     if (
       cause instanceof BinaryResourceFailure ||
-      (cause instanceof ElfPointerRelocationFailure &&
-        cause.reason === "native-index-capacity")
+      (cause instanceof ElfPointerRelocationFailure && cause.kind === "limit")
     )
       return err({ kind: "capacity", message: cause.message });
     if (cause instanceof BinaryFormatFailure)
-      return err({ kind: cause.kind, message: cause.message });
+      return err({
+        kind: cause.kind === "unsupported" ? "unsupported" : "malformed",
+        message: cause.message,
+      });
     if (cause instanceof ElfPointerRelocationFailure)
       return err({
-        kind:
-          cause.reason === "malformed-container" ? "malformed" : "unsupported",
+        kind: cause.kind === "malformed" ? "malformed" : "unsupported",
         message: cause.message,
       });
     throw cause;

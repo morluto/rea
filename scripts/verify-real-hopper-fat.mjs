@@ -1,16 +1,9 @@
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { constants } from "node:fs";
@@ -23,16 +16,17 @@ import {
   requireMcpOperationResult,
 } from "./lib/mcp-verifier-results.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import {
   verifyHopperSourceBinding,
   relocateSingleFatSlice,
 } from "./lib/real-hopper-source-binding.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const run = promisify(execFile);
 const verifyFat64 = process.argv[2] === "--fat64";
@@ -65,7 +59,11 @@ const sdk = (
   })
 ).stdout.trim();
 
-const directory = await realpath(await mkdtemp(join(tmpdir(), "hopper-fat-")));
+const workspace = await VerifierFixture.open({
+  prefix: "hopper-fat-",
+  private: false,
+});
+const directory = workspace.path;
 const source = fileURLToPath(
   new URL("../tests/conformance/c/fixture.c", import.meta.url),
 );
@@ -96,7 +94,32 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const observations = [];
 const sourceBinding = [];
-await withVerifierCleanup(async () => {
+// The root is removed only after these cleanups confirm.
+workspace.releaseAfter(async () => {
+  try {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  } catch (cause) {
+    throw new Error(`Hopper cleanup failed; fixture retained at ${directory}`, {
+      cause,
+    });
+  }
+  try {
+    const retained = [
+      ...(await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY))
+        .paths,
+    ].filter((path) => !before.has(path));
+    assert.deepEqual(retained, [], "Hopper resources remain or are unresolved");
+  } catch (cause) {
+    throw new Error(
+      `Hopper resource verification failed; fixture retained at ${directory}`,
+      { cause },
+    );
+  }
+});
+await withVerifierFixture(workspace, async () => {
   await run(toolPaths.clang, [
     "-isysroot",
     sdk,
@@ -236,10 +259,11 @@ await withVerifierCleanup(async () => {
       { timeout: 180_000 },
     );
     const result = requireMcpOperationResult(reply, name);
-    const schema = catalog.tools.find(
-      (tool) => tool.name === name,
-    )?.outputSchema;
-    assert.ok(schema, `${name} omitted its output schema`);
+    assert.ok(
+      catalog.tools.some((tool) => tool.name === name),
+      `${name} is not advertised`,
+    );
+    const schema = canonicalOutputSchema(name);
     assert.equal(
       ajv.validate(schema, reply.structuredContent),
       true,
@@ -432,40 +456,7 @@ await withVerifierCleanup(async () => {
     const cli = JSON.parse((await pending).stdout);
     assert.deepEqual(cli.normalized_result, expected.mapping);
   }
-}, [
-  async () => {
-    try {
-      await closeVerifierResources([
-        () => client.close(),
-        () => transport.close(),
-      ]);
-    } catch (cause) {
-      throw new Error(
-        `Hopper cleanup failed; fixture retained at ${directory}`,
-        {
-          cause,
-        },
-      );
-    }
-    try {
-      const retained = [
-        ...(await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY))
-          .paths,
-      ].filter((path) => !before.has(path));
-      assert.deepEqual(
-        retained,
-        [],
-        "Hopper resources remain or are unresolved",
-      );
-    } catch (cause) {
-      throw new Error(
-        `Hopper resource verification failed; fixture retained at ${directory}`,
-        { cause },
-      );
-    }
-    await rm(directory, { recursive: true, force: true });
-  },
-]);
+});
 console.log(
   JSON.stringify(
     {

@@ -15,6 +15,7 @@ import type {
   TestProcesses,
 } from "../../support/process/processFixture.js";
 import { rizinTestInferiorTty } from "../providers/RizinTestInferiorTty.js";
+import { fakeGdbStartupPreamble } from "../providers/gdbTestHelpers.js";
 
 /**
  * Fake debuggers behind the compiled public entrypoint. Real Rizin and GDB are
@@ -64,6 +65,7 @@ onLines((line) => {
 `;
 
 const fakeGdb = `${fakeDebuggerPrelude}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let tty = "";
 let inventoryRequests = 0;

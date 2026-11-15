@@ -179,6 +179,7 @@ it.for([
               .update(changed)
               .digest("hex"),
             unpacked,
+            integrity_check: "declared-digest",
           },
           retryable: false,
           remediation: { action: projected.error.message },

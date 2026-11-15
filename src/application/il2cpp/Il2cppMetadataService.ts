@@ -1,5 +1,5 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
   Il2cppSeedOutput,
@@ -15,9 +15,10 @@ import {
 import type { Il2cppMetadataPort } from "./Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -65,11 +66,7 @@ export class Il2cppMetadataService {
         failure =
           failure === undefined
             ? next
-            : analysisErrorWithCleanupFailure(
-                failure,
-                next,
-                OPERATION,
-              ).bindCleanupDependencies([failure, next]);
+            : analysisErrorWithCleanupDependencies(failure, next, OPERATION);
       }
     }
     if (failure !== undefined) throw failure;
@@ -153,17 +150,16 @@ export class Il2cppMetadataService {
     const value = report.data;
     const evidence = this.#evidence(value, providerInput, output);
     let seedReceipt: Il2cppSeedReceipt | undefined;
-    const cancelled = () =>
+    const cancelled = (signal: AbortSignal) =>
       err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options?.signal?.reason,
+        cancelledBy(OPERATION, signal, {
           partialObservation: evidence,
           ...(seedReceipt === undefined
             ? {}
             : { diagnostics: { published_seed_output: { ...seedReceipt } } }),
         }),
       );
-    if (options?.signal?.aborted) return cancelled();
+    if (isAborted(options?.signal)) return cancelled(options.signal);
     if (output !== undefined && this.seeds !== undefined) {
       const written = await this.seeds.write(value, output, options);
       if (!written.ok) {
@@ -172,7 +168,7 @@ export class Il2cppMetadataService {
       }
       seedReceipt = written.value;
     }
-    if (options?.signal?.aborted) return cancelled();
+    if (isAborted(options?.signal)) return cancelled(options.signal);
     return detail === "summary"
       ? summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);

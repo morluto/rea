@@ -1,4 +1,5 @@
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -15,15 +16,19 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
@@ -56,8 +61,9 @@ import {
 } from "./FirmwareReports.js";
 
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
+  firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 
@@ -116,17 +122,18 @@ const waitForPredecessor = (
   predecessor: Promise<void>,
   operation: string,
   signal?: AbortSignal,
-): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const abort = () =>
-      reject(new AnalysisCancelledError(operation, { cause: signal?.reason }));
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted === true) abort();
+): Promise<Result<void, AnalysisCancelledError>> => {
+  if (signal === undefined) return predecessor.then(() => ok(undefined));
+  return new Promise((resolve) => {
+    const abort = () => resolve(err(cancelledBy(operation, signal)));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
     void predecessor.then(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
+      signal.removeEventListener("abort", abort);
+      resolve(ok(undefined));
     });
   });
+};
 const limitations = [
   "Signature matches and reported sizes do not establish partition validity, encryption or runtime mappings. Binwalk may infer unknown lengths before emitting its report.",
   "Only Linux is supported by this integration. One worker, inherited per-process address-space/file-size/CPU limits and a deadline constrain execution; staging byte and entry budgets are polled and may transiently overshoot. Limits are not aggregate process-memory or filesystem quotas.",
@@ -166,26 +173,28 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
-    if (this.#closed) return err(new AnalysisCancelledError(request.operation));
+    if (this.#closed)
+      return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
     const predecessor = this.#tail;
     let release = () => {};
     this.#tail = new Promise<void>((resolve) => {
       release = resolve;
     });
     // Cancel the caller promptly without letting a later request bypass its predecessor.
-    try {
-      await waitForPredecessor(predecessor, request.operation, options?.signal);
-    } catch (cause: unknown) {
+    const waited = await waitForPredecessor(
+      predecessor,
+      request.operation,
+      options?.signal,
+    );
+    if (!waited.ok) {
       void predecessor.then(release);
-      return err(
-        cause instanceof AnalysisError
-          ? cause
-          : new AnalysisCancelledError(request.operation),
-      );
+      return err(waited.error);
     }
     try {
       if (this.#closed)
-        return err(new AnalysisCancelledError(request.operation));
+        return err(
+          cancelledBy(request.operation, OwnerCancellation.ownerClosed),
+        );
       const cleanup = await this.#retryCleanup();
       if (cleanup.executionBlocked && cleanup.failure !== undefined)
         return err(cleanup.failure);
@@ -210,10 +219,13 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       await this.#files.close();
     } catch (cause: unknown) {
       failures.push(
-        firmwareFailure(cause, {
-          engine: "firmware",
-          operation: "close_firmware",
-        }),
+        classifyProviderFailure(
+          cause,
+          firmwareFailureDialect({
+            engine: "firmware",
+            operation: "close_firmware",
+          }),
+        ),
       );
     }
     const workspace = await this.#retryWorkspaceCleanup();
@@ -227,10 +239,13 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.retryCleanup();
     } catch (cause: unknown) {
-      fileFailure = firmwareFailure(cause, {
-        engine: "firmware",
-        operation: "close_firmware",
-      });
+      fileFailure = classifyProviderFailure(
+        cause,
+        firmwareFailureDialect({
+          engine: "firmware",
+          operation: "close_firmware",
+        }),
+      );
     }
     const workspace = await this.#retryWorkspaceCleanup();
     return {
@@ -331,7 +346,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Outcome> {
     // Capture configuration after queue admission; later operations may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     const engineName = FIRMWARE_OPERATION_ENGINES[request.operation];
@@ -347,10 +365,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
-      if (signal.aborted)
-        throw new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-        });
+      if (isAborted(signal))
+        throw firmwareSignalInterruption(request.operation, signal, deadline);
       if (request.operation === "extract_firmware")
         await SafeOutputTree.checkDestination(
           request.input.output_directory,
@@ -532,6 +548,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           ),
           request.operation,
           signal,
+          deadline,
         );
         // The inventory can finish after its deadline expired; an expired
         // extraction must not publish under the fresh publication budget.
@@ -605,12 +622,16 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         ),
       );
     } catch (cause: unknown) {
-      const failure = firmwareFailure(cause, {
-        engine: engineName,
-        operation: request.operation,
-        deadline,
-      });
-      outcome = err(failure);
+      outcome = err(
+        classifyProviderFailure(
+          cause,
+          firmwareFailureDialect({
+            engine: engineName,
+            operation: request.operation,
+            phase: { signal, deadline },
+          }),
+        ),
+      );
     }
     const finished = await finishFirmwareWorkspace(
       root,
@@ -708,21 +729,21 @@ const finishFirmwareWorkspace = async (
         completedFirmwareObservation(outcome.value),
       );
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           request.operation,
-        ).bindCleanupDependencies([cleanup]),
+        ),
       );
     }
     return err(
       outcome.ok
         ? cleanup
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             outcome.error,
             cleanup,
             request.operation,
-          ).bindCleanupDependencies([outcome.error, cleanup]),
+          ),
     );
   }
   return outcome;

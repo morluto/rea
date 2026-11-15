@@ -1,0 +1,23 @@
+[
+  "setup: no contract setup",
+  "doctor: no contract doctor",
+  "uninstall: no contract uninstall",
+  "update: no contract update",
+  "capabilities: no contract capabilities",
+  "providers: no contract providers",
+  "import-reference-source: no contract import_reference_source",
+  "project-managed-application-graph: no object shape project_managed_application_graph",
+  "compare-web-captures: no object shape compare_web_captures",
+  "validate-browser-scenario: no contract validate_browser_scenario",
+  "guided-workflows: no object shape guided_workflows",
+  "inspect-evidence-bundle: no contract inspect_evidence_bundle",
+  "evidence-import: no contract evidence_import",
+  "evidence-export: no contract evidence_export",
+  "environment-export: no contract environment_export",
+  "environment-compare: no contract environment_compare",
+  "environment-serve: no contract environment_serve",
+  "inspect-desktop-application-state: no contract inspect_desktop_application_state",
+  "export-desktop-application: no contract export_desktop_application",
+  "describe-desktop-application-task: no contract describe_desktop_application_task",
+  "capture-desktop-application: no contract capture_desktop_application"
+]

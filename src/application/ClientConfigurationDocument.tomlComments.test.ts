@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -38,7 +39,7 @@ for (const format of ["toml", "grok"] as const)
             ? { ...peers, rea: { command: "new", args: [] } }
             : peers;
         const result = serializeClientConfiguration(
-          withClientServers(parsed, servers),
+          withClientServers(parsed, servers, HOST_PLATFORM.platform),
           format,
           source,
         );
@@ -80,7 +81,7 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     const { rea: removed, ...servers } = parsed.servers;
     expect(removed).toBeDefined();
     const result = serializeClientConfiguration(
-      withClientServers(parsed, servers),
+      withClientServers(parsed, servers, HOST_PLATFORM.platform),
       "toml",
       source,
     );
@@ -111,7 +112,7 @@ it.each(["toml", "grok"] as const)(
       rea: { ...previous, command: "new" },
     };
     const result = serializeClientConfiguration(
-      withClientServers(parsed, servers),
+      withClientServers(parsed, servers, HOST_PLATFORM.platform),
       format,
       source,
     );

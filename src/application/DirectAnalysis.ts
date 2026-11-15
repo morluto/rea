@@ -82,8 +82,9 @@ import {
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  CallerAbort,
 } from "../domain/analysisErrorCore.js";
 import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -278,8 +279,7 @@ export const runProviderAnalysis = async (
       if (operationSignal.aborted)
         return err(
           cliError(
-            new AnalysisCancelledError(tool, {
-              cause: operationSignal.reason,
+            cancelledBy(tool, operationSignal, {
               partialObservation: evidence,
             }),
           ),
@@ -701,10 +701,7 @@ const retainFinalCancellation = (
   signal: AbortSignal,
 ): AnalysisError =>
   signal.aborted
-    ? analysisErrorWithCancellation(
-        failure,
-        new AnalysisCancelledError(tool, { cause: signal.reason }),
-      )
+    ? analysisErrorWithCancellation(failure, cancelledBy(tool, signal))
     : failure;
 
 const executeAnalysisTool = async (input: {
@@ -853,16 +850,19 @@ const withProcessCancellation = async <Value>(
 ): Promise<Value> => {
   if (suppliedSignal !== undefined) return operation(suppliedSignal);
   const controller = new AbortController();
-  const cancel = (): void => controller.abort();
+  const interrupt = (): void =>
+    controller.abort(CallerAbort.forProcessSignal("SIGINT"));
+  const terminate = (): void =>
+    controller.abort(CallerAbort.forProcessSignal("SIGTERM"));
   // Package runners can forward a terminal interrupt after REA already received
   // it directly. Keep both guards installed until provider cleanup has settled.
-  process.on("SIGINT", cancel);
-  process.on("SIGTERM", cancel);
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", terminate);
   try {
     return await operation(controller.signal);
   } finally {
-    process.off("SIGINT", cancel);
-    process.off("SIGTERM", cancel);
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", terminate);
   }
 };
 

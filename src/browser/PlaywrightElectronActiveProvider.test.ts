@@ -33,6 +33,7 @@ import {
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
 import { waitFor } from "../../tests/support/testWait.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -236,7 +237,7 @@ it("retains failed ownership-helper cleanup until provider close retries it", as
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -414,6 +415,10 @@ it("passes required Windows runtime variables without inheriting unrelated value
 let ownership: PersistentOwnedProcessGroup;
 
 beforeEach(() => {
+  // Fake applications have no hook to announce a refused lock.
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    new AbortController().signal,
+  );
   ownership = {
     runId: "run",
     leaderPid: 4242,
@@ -438,6 +443,7 @@ const emptyHookSnapshot = () => ({
   observed_ipc: 0,
   observed_runtime: 0,
   hook_error: false,
+  single_instance_lock_refused: false,
 });
 
 it.each([
@@ -688,6 +694,148 @@ it("retains the initial snapshot when the final state read fails", async () => {
       limitations: expect.arrayContaining([
         expect.stringContaining("initial pre-action snapshot"),
       ]),
+    },
+  });
+});
+
+it.each(["initial", "final"] as const)(
+  "refuses an application handed off to a running instance at the %s snapshot",
+  async (stage) => {
+    const state = (refused: boolean) => ({
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: {
+        ...emptyHookSnapshot(),
+        single_instance_lock_refused: refused,
+      },
+    });
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+      state(stage === "initial"),
+    );
+    vi.spyOn(
+      electronActions,
+      "readFinalApplicationState",
+    ).mockResolvedValueOnce(state(stage === "final"));
+    const runActions = vi
+      .spyOn(electronActions, "runElectronActions")
+      .mockResolvedValue({ actions: [] });
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+    };
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+    });
+
+    if (result.ok) throw new Error("Expected the handed-off launch to fail");
+    expect(runActions).toHaveBeenCalledTimes(stage === "initial" ? 0 : 1);
+    expect(application.close).toHaveBeenCalled();
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "application_already_running",
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      message: expect.stringContaining("The application is already running"),
+      remediation: {
+        action: expect.stringContaining("Close the running application"),
+      },
+    });
+    // A refusal first seen in the final snapshot keeps that snapshot, which
+    // holds the blocked lock request and the action effects.
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "electron-active-observation",
+      capture: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            stage === "initial"
+              ? "initial pre-action snapshot"
+              : "failed after its final snapshot",
+          ),
+        ]),
+      },
+    });
+  },
+);
+
+it("stops pending actions when the lock is refused while they wait", async () => {
+  const state = (refused: boolean) => ({
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: {
+      ...emptyHookSnapshot(),
+      single_instance_lock_refused: refused,
+    },
+  });
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+    state(false),
+  );
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValueOnce(
+    state(true),
+  );
+  // The refused path never opens the window the action waits for.
+  const refusal = new AbortController();
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    refusal.signal,
+  );
+  const windows = vi.fn(() => []);
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows,
+  };
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    async () =>
+      application as unknown as Awaited<
+        ReturnType<typeof import("playwright-core")._electron.launch>
+      >,
+  );
+
+  const capture = provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [
+        { step_id: "open", kind: "click", window_index: 0, selector: "#go" },
+      ],
+    }),
+    application_root: dirname(process.execPath),
+  });
+  let result: Awaited<typeof capture>;
+  try {
+    await waitFor(() => expect(windows).toHaveBeenCalled());
+    refusal.abort();
+    result = await capture;
+  } finally {
+    // A failed wait still stops and joins the capture before mocks restore.
+    await provider.close();
+    await capture;
+  }
+
+  if (result.ok) throw new Error("Expected the handed-off launch to fail");
+  expect(application.close).toHaveBeenCalled();
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "application_already_running",
+    partialObservation: {
+      capture: { actions: [{ step_id: "open", status: "cancelled" }] },
     },
   });
 });

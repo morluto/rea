@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { normalizeHttpHostname } from "./httpHostname.js";
+import { declaredByPatterns } from "./schemaConstraints.js";
 import { err, ok, type Result } from "./result.js";
 
 /** Agentenv folder and local-id spelling, also used for authored task files. */
@@ -35,15 +36,17 @@ export const isPortableBundleName = (name: string): boolean =>
   parsePortableBundleName(name).ok;
 
 /** Lookup names share portable identity; authoring reservations are separate. */
-export const portableBundleNameSchema = z
-  .string()
-  .regex(PORTABLE_BUNDLE_NAME_PATTERN)
-  .max(PORTABLE_BUNDLE_NAME_MAX_LENGTH)
-  .refine(isPortableBundleName, `Expected ${PORTABLE_BUNDLE_NAME_CONSTRAINT}`)
-  // Advertise both reservations without look-around, which strict clients reject.
-  .meta({
-    allOf: [
-      { not: { pattern: WINDOWS_RESERVED_NAME.source } },
-      { not: { pattern: NUMERIC_HOSTNAME_NAME.source } },
-    ],
-  });
+export const portableBundleNameSchema = declaredByPatterns(
+  z
+    .string()
+    .regex(PORTABLE_BUNDLE_NAME_PATTERN)
+    .max(PORTABLE_BUNDLE_NAME_MAX_LENGTH),
+  isPortableBundleName,
+  // Both reservations without look-around, which strict clients reject. The
+  // hostname check also refuses names these patterns admit.
+  {
+    excludes: [WINDOWS_RESERVED_NAME, NUMERIC_HOSTNAME_NAME],
+    relation: "wider",
+  },
+  { message: `Expected ${PORTABLE_BUNDLE_NAME_CONSTRAINT}` },
+);

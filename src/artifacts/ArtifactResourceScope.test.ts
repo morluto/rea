@@ -715,3 +715,111 @@ it.each(["artifact", "domain"] as const)(
     }
   },
 );
+
+it("tracks diagnostic work outside admission and joins it before a cleanup retry", async () => {
+  const scope = new ArtifactResourceScope();
+  let earlierReleased = false;
+  scope.retain({
+    kind: "lease",
+    resource: "earlier",
+    lease: {
+      release: async () => {
+        if (!earlierReleased) throw new Error("earlier close denied");
+      },
+    },
+  });
+  const started = deferred<void>();
+  const finish = deferred<void>();
+  let lateReleases = 0;
+  // A pending owner neither delays nor fails tracked work.
+  const sample = scope.track(async () => {
+    started.resolve();
+    await finish.promise;
+    scope.retain({
+      kind: "lease",
+      resource: "sampled",
+      lease: {
+        release: async () => {
+          lateReleases += 1;
+        },
+      },
+    });
+    return "sample";
+  });
+  try {
+    await awaitAcknowledgement(started.promise, sample, "tracked work");
+    earlierReleased = true;
+    let retried = false;
+    const retry = scope.retryCleanup().then(() => {
+      retried = true;
+    });
+    await Promise.resolve();
+    expect(retried).toBe(false);
+    finish.resolve();
+    await expect(sample).resolves.toBe("sample");
+    await retry;
+    // The drain joined the tracked work, so the owner it retained was retried.
+    expect(lateReleases).toBe(1);
+    expect(scope.cleanupResources).toEqual([]);
+  } finally {
+    earlierReleased = true;
+    finish.resolve();
+    await scope.close();
+  }
+});
+
+it("joins diagnostic work admitted while a cleanup retry releases an earlier owner", async () => {
+  const scope = new ArtifactResourceScope();
+  const releasing = deferred<void>();
+  const allowRelease = deferred<void>();
+  scope.retain({
+    kind: "lease",
+    resource: "earlier",
+    lease: {
+      release: async () => {
+        releasing.resolve();
+        await allowRelease.promise;
+      },
+    },
+  });
+  let lateReleases = 0;
+  const started = deferred<void>();
+  const finish = deferred<void>();
+  let retried = false;
+  const retry = scope.retryCleanup().then(() => {
+    retried = true;
+  });
+  let sample: Promise<string> | undefined;
+  try {
+    await awaitAcknowledgement(releasing.promise, retry, "earlier release");
+    // Admitted after the drain already found no active work.
+    sample = scope.track(async () => {
+      started.resolve();
+      await finish.promise;
+      scope.retain({
+        kind: "lease",
+        resource: "sampled",
+        lease: {
+          release: async () => {
+            lateReleases += 1;
+          },
+        },
+      });
+      return "sample";
+    });
+    await awaitAcknowledgement(started.promise, sample, "tracked work");
+    allowRelease.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(retried).toBe(false);
+    finish.resolve();
+    await expect(sample).resolves.toBe("sample");
+    await retry;
+    expect(lateReleases).toBe(1);
+    expect(scope.hasPending).toBe(false);
+  } finally {
+    allowRelease.resolve();
+    finish.resolve();
+    await Promise.allSettled(sample === undefined ? [retry] : [retry, sample]);
+    await scope.close();
+  }
+});
