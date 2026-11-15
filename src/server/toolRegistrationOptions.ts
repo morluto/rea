@@ -92,6 +92,16 @@ const inputCapacityRefusal = ({
     `Invalid arguments for tool ${tool}: arguments contain more than the maximum of ${String(maximumElements)} elements`,
   );
 
+/** Whether the decoded recovered bag fits the selected element allowance. */
+const recoveredFitsAllowance = (
+  recoveredArguments: Record<string, unknown>,
+  capacity: StructuredArgumentCapacity | undefined,
+): boolean =>
+  capacity === undefined ||
+  !Number.isFinite(capacity.maximumElements) ||
+  inputElementCount(recoveredArguments, capacity.maximumElements) <=
+    capacity.maximumElements;
+
 /** Whether recovery expanded the argument bag past the selected allowance. */
 const refuseRecoveredArguments = (
   recoveredArguments: Record<string, unknown>,
@@ -129,8 +139,29 @@ const enforceRecoveredArgumentCapacity = (
   return {
     "~standard": {
       ...standard,
-      validate: (value: unknown) => {
+      validate: async (value: unknown) => {
         const recoveredArguments = recoveredArgumentBag(value);
+        if (
+          recoveredArguments !== undefined &&
+          !recoveredFitsAllowance(recoveredArguments, capacity)
+        ) {
+          // The decoded candidate exceeds the allowance. Keep the caller's
+          // original arguments when the validator falls back to them, and
+          // refuse when the decoded candidate was accepted.
+          const candidate = standard.validate(value);
+          const candidateResult =
+            candidate instanceof Promise
+              ? candidate
+              : Promise.resolve(candidate);
+          const candidateOutcome = await candidateResult;
+          const keptOriginal =
+            typeof candidateOutcome === "object" &&
+            candidateOutcome !== null &&
+            "value" in candidateOutcome &&
+            (candidateOutcome as { value: unknown }).value === value;
+          if (keptOriginal) return standard.validate(value);
+          throw inputCapacityRefusal(capacity);
+        }
         if (recoveredArguments !== undefined)
           refuseRecoveredArguments(recoveredArguments, capacity);
         return standard.validate(value);
@@ -162,35 +193,40 @@ export const acceptStringifiedStructuredArguments = (
     return capacity === undefined
       ? schema
       : enforceRecoveredArgumentCapacity(schema, capacity);
-  const select = (
-    parsedResult: Awaited<ReturnType<typeof standard.validate>>,
-    value: unknown,
-    recoveredArguments: Record<string, unknown>,
-  ) => {
-    if (parsedResult.issues === undefined) return parsedResult;
-    rejectedInputs.set(parsedResult.issues, recoveredArguments);
-    const unchangedResult = standard.validate(value);
-    if (unchangedResult instanceof Promise) {
-      return unchangedResult.then((result) =>
-        "issues" in result ? parsedResult : result,
-      );
-    }
-    return "issues" in unchangedResult ? parsedResult : unchangedResult;
-  };
   return {
     "~standard": {
       ...standard,
-      validate: (value: unknown) => {
+      validate: async (value: unknown) => {
         const recoveredArguments = recoveredArgumentBag(value);
         if (recoveredArguments === undefined) return standard.validate(value);
+        if (
+          capacity !== undefined &&
+          !recoveredFitsAllowance(recoveredArguments, capacity)
+        ) {
+          // The decoded candidate exceeds the allowance. Keep the caller's
+          // original arguments when the validator falls back to them, and
+          // refuse when the decoded candidate was accepted.
+          const candidate = standard.validate(value);
+          const candidateResult =
+            candidate instanceof Promise
+              ? candidate
+              : Promise.resolve(candidate);
+          const candidateOutcome = await candidateResult;
+          const keptOriginal =
+            typeof candidateOutcome === "object" &&
+            candidateOutcome !== null &&
+            "value" in candidateOutcome &&
+            (candidateOutcome as { value: unknown }).value === value;
+          if (keptOriginal) return standard.validate(value);
+          throw inputCapacityRefusal(capacity);
+        }
         // Charge the decoded graph before the canonical parser sees it.
         refuseRecoveredArguments(recoveredArguments, capacity);
-        const parsedResult = standard.validate(recoveredArguments);
-        return parsedResult instanceof Promise
-          ? parsedResult.then((result) =>
-              select(result, value, recoveredArguments),
-            )
-          : select(parsedResult, value, recoveredArguments);
+        const parsedResult = await standard.validate(recoveredArguments);
+        if (parsedResult.issues === undefined) return parsedResult;
+        rejectedInputs.set(parsedResult.issues, recoveredArguments);
+        const unchangedResult = await standard.validate(value);
+        return "issues" in unchangedResult ? parsedResult : unchangedResult;
       },
     },
   };
