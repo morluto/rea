@@ -380,6 +380,16 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     partialObservation = owner.partialObservation;
+  let argumentObservations =
+    composed.argumentObservations.length > 0
+      ? composed.argumentObservations
+      : error.argumentObservations;
+  for (
+    let owner = composed.cleanupPrimary;
+    argumentObservations.length === 0 && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    argumentObservations = owner.argumentObservations;
   const completedSourceObservation =
     publication?.completed.kind === "omitted"
       ? undefined
@@ -483,6 +493,18 @@ const projectError = (
           partial_observation: isImmutableJsonSnapshot(partialObservation)
             ? partialObservation
             : jsonValueSchema.parse(partialObservation),
+        }),
+    ...(!options.partialObservation || argumentObservations.length === 0
+      ? {}
+      : {
+          argument_observations: argumentObservations.map(
+            ({ argument, observation }) => ({
+              argument,
+              observation: isImmutableJsonSnapshot(observation)
+                ? observation
+                : jsonValueSchema.parse(observation),
+            }),
+          ),
         }),
     ...(!options.partialObservation || completedSourceObservation === undefined
       ? {}

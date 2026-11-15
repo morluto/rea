@@ -740,7 +740,9 @@ describe("compare-managed-members composed from inspect_managed_members", () => 
     const path = join(directory, "same.dll");
     await writeFile(path, buildManagedPeFixture());
 
-    expect(await managedComparisonCommand()(path, path)).toMatchObject({
+    const result = await managedComparisonCommand()(path, path);
+
+    expect(result).toMatchObject({
       code: "invalid_request",
       details: {
         issues: [
@@ -749,9 +751,16 @@ describe("compare-managed-members composed from inspect_managed_members", () => 
             message: "Managed member Evidence must be distinct",
           },
         ],
-        partial_observation: { subject: { local_path: path } },
+        argument_observations: [
+          { argument: "left", observation: { subject: { local_path: path } } },
+          {
+            argument: "right",
+            observation: { subject: { local_path: path } },
+          },
+        ],
       },
     });
+    expect(result).not.toHaveProperty("details.partial_observation");
   });
 
   it("reports an unopenable left path without opening the right", async () => {
@@ -768,6 +777,7 @@ describe("compare-managed-members composed from inspect_managed_members", () => 
       details: { path: leftPath },
     });
     expect(result).not.toHaveProperty("details.partial_observation");
+    expect(result).not.toHaveProperty("details.argument_observations");
     expect(targets).toEqual([leftPath]);
   });
 });
@@ -808,16 +818,24 @@ describe("compare-managed-members source failures", () => {
       if (side === "right")
         expect(result).toMatchObject({
           details: {
-            partial_observation: {
-              operation: "inspect_managed_members",
-              subject: {
-                local_path: leftPath,
-                digest: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+            argument_observations: [
+              {
+                argument: "left",
+                observation: {
+                  operation: "inspect_managed_members",
+                  subject: {
+                    local_path: leftPath,
+                    digest: {
+                      sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+                    },
+                  },
+                },
               },
-            },
+            ],
           },
         });
-      else expect(result).not.toHaveProperty("details.partial_observation");
+      else expect(result).not.toHaveProperty("details.argument_observations");
+      expect(result).not.toHaveProperty("details.partial_observation");
     },
   );
 
@@ -888,10 +906,15 @@ describe("compare-managed-members source failures", () => {
         if (side === "right")
           expect(result).toMatchObject({
             details: {
-              partial_observation: { subject: { local_path: leftPath } },
+              argument_observations: [
+                {
+                  argument: "left",
+                  observation: { subject: { local_path: leftPath } },
+                },
+              ],
             },
           });
-        else expect(result).not.toHaveProperty("details.partial_observation");
+        else expect(result).not.toHaveProperty("details.argument_observations");
       } finally {
         read.mockRestore();
       }
