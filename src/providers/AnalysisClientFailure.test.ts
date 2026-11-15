@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -259,5 +260,22 @@ it("reattributes a provider-owned failure through the request facts it reports",
       provider_request: { operation: "wire_request", request_id: 7 },
       provider_diagnostics: { bridge: "observed" },
     },
+  });
+});
+
+it("keeps the named integrity check when an artifact change changes operation", () => {
+  const attributed = analysisClientFailureForOperation(
+    new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target.app",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    ),
+    "ghidra",
+    "binary_overview",
+  );
+  expect(projectAnalysisError(attributed)).toMatchObject({
+    code: "artifact_changed",
+    details: { integrity_check: "member-identity" },
   });
 });

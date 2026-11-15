@@ -602,6 +602,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {
@@ -658,6 +661,12 @@ const requestErrorDetails = (
       ...(error.issuePath === undefined
         ? {}
         : { issue_path: [...error.issuePath] }),
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+      ...(error.remainingIssueCount === undefined
+        ? {}
+        : { remaining_issue_count: error.remainingIssueCount }),
     };
   return undefined;
 };

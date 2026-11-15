@@ -8,7 +8,10 @@ import {
   type AnalysisCleanupLease,
 } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
+import {
+  stableArtifactInputRecovery,
+  readerIntegrityFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
@@ -19,7 +22,6 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -204,12 +206,7 @@ export const historicalCaptureFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      sourcePath,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(OPERATION, sourcePath, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&

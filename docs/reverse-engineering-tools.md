@@ -314,7 +314,12 @@ never sends its authenticated frame does not hold the bridge accept loop.
 At most 8 connection threads run. A further accept is closed, and a failure to start a thread closes that socket without stopping the listener. A status `completed_connection` is the longest prefix of accepted connections that have terminated. It does not treat an earlier connection as finished because a later status reached the command lock first. Scalar values in one Cutter reply are encoded in bounded batches.
 A command reply that does not fit keeps its completion state and document
 generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
-also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper response reads are unchanged.
+also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper and Ghidra reply lines are bounded separately by
+`REA_BRIDGE_MAX_REPLY_BYTES` (`bridge.max_reply_bytes`): default 268435456 bytes
+(256 MiB), from 1048576 to 536870888. The client admits the value with each
+request. A reply line, or an unterminated tail, above it is refused as a typed
+`transport` resource constraint naming the setting; REA discards the bytes and
+closes that bridge connection rather than retaining them.
 `cutter_command` reports `output_truncated` and `document_generation` as `null`
 when the plugin did not declare them, for example when no reply was read, the
 reply was malformed, or an older plugin omitted them. A null generation means

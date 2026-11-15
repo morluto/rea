@@ -1,3 +1,8 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher as FixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -13,8 +18,6 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
-
-import { HopperFixtureLauncher as FixtureLauncher } from "./hopperClient.fixture.js";
 
 class SilentLauncher implements BridgeLauncher {
   launch() {
@@ -191,7 +194,7 @@ class BadHealthLauncher implements BridgeLauncher {
   }
 }
 
-const clients: HopperClient[] = [];
+const clients: TransportHopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
@@ -200,7 +203,11 @@ afterEach(async () => {
 describe("HopperClient startup deadline", () => {
   it("applies one deadline to launcher, socket, and health startup phases", async () => {
     const launcher = new LateSilentLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 500 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 500,
+    });
     clients.push(client);
 
     const result = await client.start();
@@ -235,6 +242,7 @@ describe("HopperClient startup failures", () => {
   it("cancels bridge startup without waiting for the startup timeout", async () => {
     const launcher = new CancelThenFixtureLauncher();
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       // Keep the retry proof independent from scheduler pressure when the
       // complete boundary project is starting several child-process fixtures.
@@ -276,7 +284,11 @@ describe("HopperClient startup failures", () => {
 
   it("retries after cancellation before the launcher starts", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 30_000,
+    });
     clients.push(client);
     const controller = new AbortController();
 
@@ -309,7 +321,11 @@ describe("HopperClient startup failures", () => {
 
   it("records unknown when the health handshake is invalid", async () => {
     const launcher = new BadHealthLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 30_000,
+    });
     clients.push(client);
 
     const result = await client.start();
@@ -326,6 +342,7 @@ describe("HopperClient startup failures", () => {
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
       const client = new HopperClient({
+        replyContracts: transportReplyContracts,
         launcher: new ExitingLauncher(exitCode),
         startupTimeoutMs: 10_000,
       });
@@ -342,6 +359,7 @@ describe("HopperClient startup failures", () => {
 
   it("projects actionable CI remediation for Hopper UI, license, and lifecycle failures", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new ExitingLauncher(75),
       startupTimeoutMs: 10_000,
     });
@@ -362,6 +380,7 @@ describe("HopperClient startup failures", () => {
 
   it("preserves the private-display diagnostic from an adapter exit", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new DiagnosticExitingLauncher(),
       startupTimeoutMs: 10_000,
     });

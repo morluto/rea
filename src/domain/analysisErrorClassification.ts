@@ -209,6 +209,7 @@ const BROWSER_OBSERVATION_CLASSIFICATIONS = {
   ),
   target_not_found: classified("target_unavailable", "unavailable"),
   target_not_allowed: classified("target_unavailable", "unavailable"),
+  application_already_running: classified("target_unavailable", "unavailable"),
   service_worker_blocked: classified("target_unavailable", "unavailable"),
   target_changed: classified("target_unavailable", "unavailable"),
   target_session_detached: classified("target_unavailable", "unavailable"),

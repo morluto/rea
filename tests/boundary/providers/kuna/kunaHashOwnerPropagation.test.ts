@@ -205,6 +205,7 @@ import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallat
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import { run, session } from "./kunaSessionFixture.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 it.skipIf(process.platform === "win32").each([
   { operation: "list_strings", input: {}, command: "strings" },
@@ -420,11 +421,13 @@ it.skipIf(process.platform === "win32")(
     injected.fingerprintReads = 0;
     injected.failReadStage = "fingerprint";
     try {
-      const result = await cache.build({
-        installation: installed.value,
-        targetPath: fixture.target.path,
-        targetSha256: fixture.target.sha256,
-      });
+      const result = await cache.build(
+        withKunaProjectDeadline({
+          installation: installed.value,
+          targetPath: fixture.target.path,
+          targetSha256: fixture.target.sha256,
+        }),
+      );
       if (result.ok) throw new Error("injected export hash read passed");
       const originatingError = result.error;
       expect(originatingError).toMatchObject({

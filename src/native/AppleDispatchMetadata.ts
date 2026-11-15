@@ -1,4 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import {
   malformedInput,
   parseFailureFromCause,
@@ -524,9 +525,7 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
         cause,

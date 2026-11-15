@@ -48,6 +48,12 @@ export class VerifierFixture {
    * failure is an AggregateError whose `cleanupLeases` is `[this fixture]`.
    */
   release(): Promise<void>;
+  /**
+   * Run pending cleanups as `release` does, then keep the root instead of
+   * removing it and name it and `reason` on stderr. A failed cleanup fails
+   * the same way `release` does.
+   */
+  keep(reason: string): Promise<void>;
 }
 
 /**

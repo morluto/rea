@@ -91,18 +91,16 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       readonly exitCode?: number;
     },
   ) {
-    super(
-      failure.reason,
-      message,
-      options === undefined
-        ? undefined
-        : {
-            ...(options.cause === undefined ? {} : { cause: options.cause }),
-            ...(options.cancellation === undefined
-              ? {}
-              : { cancellation: options.cancellation }),
-          },
-    );
+    super(failure.reason, message, {
+      ...(options?.cause === undefined ? {} : { cause: options.cause }),
+      ...(options?.cancellation === undefined
+        ? {}
+        : { cancellation: options.cancellation }),
+      // Only hdiutil verify classifies a DMG failure as integrity.
+      ...(failure.reason === "integrity"
+        ? { integrityCheck: "image-checksum" as const }
+        : {}),
+    });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;
     this.unrecognizedImage = failure.unrecognizedImage ?? false;

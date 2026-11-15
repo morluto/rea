@@ -106,15 +106,30 @@ export class VerifierFixture {
 
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
+    return this.#settle(true);
+  }
+
+  /**
+   * Run every registered cleanup as `release` does, then keep the root for a
+   * reviewer instead of removing it, and name it and `reason` on stderr. A
+   * run keeps its fixture this way only on request; a cleanup that fails
+   * retains the root as `release` would, and a later `keep` retries it.
+   */
+  async keep(reason) {
+    await this.#settle(false);
+    process.stderr.write(`Keeping verifier fixture ${this.path}: ${reason}\n`);
+  }
+
+  #settle(removeRoot) {
     if (this.#released) return Promise.resolve();
     this.#registrationClosed = true;
-    this.#releasing ??= this.#attemptRelease().finally(() => {
+    this.#releasing ??= this.#attemptRelease(removeRoot).finally(() => {
       this.#releasing = undefined;
     });
     return this.#releasing;
   }
 
-  async #attemptRelease() {
+  async #attemptRelease(removeRoot) {
     const failures = [];
     const unconfirmed = [];
     for (const cleanup of this.#pending) {
@@ -133,6 +148,8 @@ export class VerifierFixture {
           `Retained verifier fixture ${this.path} because a cleanup that may still use it did not confirm.`,
         ),
       ]);
+    // A kept root stays allocated; it is not released.
+    if (!removeRoot) return;
     try {
       await this.#root.close();
     } catch (cause) {

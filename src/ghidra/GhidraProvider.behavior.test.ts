@@ -109,6 +109,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   createFunctionCoordinateContext,
@@ -4733,6 +4734,42 @@ it.each([
   },
 );
 
+it("keeps a refused setting's configuration error through the provider boundary", async () => {
+  const refusal = new ConfigurationError("invalid bridge reply ceiling", {
+    settings: [
+      {
+        setting: "REA_BRIDGE_MAX_REPLY_BYTES",
+        constraint: "a positive decimal integer",
+      },
+    ],
+  });
+  const failure = new GhidraSessionError(
+    "admission",
+    refusal.message,
+    {},
+    { cause: refusal },
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => err(failure),
+    callTool: async () => err(failure),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected profile");
+
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+
+  expect(result.ok ? undefined : result.error).toBe(refusal);
+  expect(projectAnalysisError(refusal).code).toBe("configuration_invalid");
+});
+
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {
     setting: "ghidra.startup_timeout_ms",
@@ -5031,7 +5068,7 @@ describe("Ghidra missing project program", () => {
 });
 
 describe("Ghidra changed project", () => {
-  const launchFailure = async (cause: unknown) => {
+  const launchFailure = async (cause: unknown, viaLauncher = true) => {
     const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
     onTestFinished(async () => {
       await rm(root, { recursive: true, force: true });
@@ -5043,9 +5080,9 @@ describe("Ghidra changed project", () => {
       "Ghidra headless launch failed",
       { failure_kind: "start" },
       {
-        cause: new GhidraLaunchError("Ghidra headless launch failed", {
-          cause,
-        }),
+        cause: viaLauncher
+          ? new GhidraLaunchError("Ghidra headless launch failed", { cause })
+          : cause,
       },
     );
     const ghidra = provider(
@@ -5099,6 +5136,28 @@ describe("Ghidra changed project", () => {
     );
     expect(error.cause).toBe(physical);
   });
+
+  it.each([true, false])(
+    "keeps the integrity check a changed artifact named (via launcher: %s)",
+    async (viaLauncher) => {
+      const { projected } = await launchFailure(
+        new AnalysisArtifactChangedError(
+          "open_binary",
+          "/projects/selected",
+          GHIDRA_PROJECT_PROFILE_MISMATCH,
+          { integrityCheck: "container-identity" },
+        ),
+        viaLauncher,
+      );
+      expect(projected).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          operation: "list_documents",
+          integrity_check: "container-identity",
+        },
+      });
+    },
+  );
 
   it("keeps the generic start failure for other launch failures", async () => {
     const { projected } = await launchFailure(new Error("spawn failed"));

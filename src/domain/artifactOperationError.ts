@@ -23,17 +23,33 @@ export interface ArtifactAdmissionLimit {
  * Which consistency check an `integrity` failure tripped, so consumers need
  * not read the message: a member the reader did not produce, member metadata
  * that differs from inventory, a container or unpacked file whose identity
- * changed, short read coverage, bytes disagreeing with the declared size, or a
- * read stream over a handle the reader does not own.
+ * changed, a directory or archive member whose file identity or bytes
+ * changed since inventory, short read coverage, bytes disagreeing with the
+ * declared size, a disk image whose stored checksum does not verify, a read
+ * stream over a handle the reader does not own, a format-declared digest or
+ * checksum that disagrees with content or cannot be checked, layout sources
+ * (structural index, tool listing, region table) that are malformed, disagree
+ * or place an entry outside the artifact, entries that do not reassemble into
+ * the source, an inventory node or verified state a later read relies on
+ * that is missing, output bytes that do not read back as written, or an
+ * output tree used after commit or whose cleanup could not be verified.
  */
 export type ArtifactIntegrityCheck =
   | "foreign-entry"
   | "entry-metadata"
   | "container-identity"
   | "unpacked-entry-identity"
+  | "member-identity"
+  | "image-checksum"
   | "read-coverage"
   | "declared-size"
-  | "reader-ownership";
+  | "reader-ownership"
+  | "declared-digest"
+  | "layout-consistency"
+  | "reconstruction"
+  | "inventory-node"
+  | "output-readback"
+  | "output-lifecycle";
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {
