@@ -142,6 +142,12 @@ export const LANE_TOOLCHAINS = Object.freeze({
     runs(tools.riscvReadelf, llvm),
     runs(tools.riscvObjdump, llvm),
   ],
+  // The ESP image and flash lanes build ESP32-C3 ELF files with the same
+  // RISC-V Clang, linking through --ld-path; esptool is checked by the lane.
+  esp: [
+    ...targets(tools.riscvClang, "riscv32-unknown-elf"),
+    runs(tools.riscvLinker),
+  ],
 });
 
 let ownedCommand;
