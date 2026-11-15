@@ -17,3 +17,12 @@
 
 # refactor(domain): move the native section directory and ELF string readers into domain (#11449)
 c935387f480d2195c2beb3d05f62270b25bad28c
+
+# refactor(resources): move the artifact reader limit failure into src/resources (#11474)
+ea668fc953e9a642f05b325df67ce0407b602f1b
+
+# refactor(domain): move the binary image, Mach-O selection and fixup readers into domain (#11482)
+7f61563caee94674c583e46e18e9376f1f8f0ab3
+
+# refactor(domain): move the validated source map leaf decoder into src/domain (#11498)
+733b361073b3d32cc64a108570fc56c86c9f60a1
