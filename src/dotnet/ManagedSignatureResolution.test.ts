@@ -792,6 +792,35 @@ describe("comparison of edges to a TypeSpec-owned member", () => {
     },
   );
 
+  it.each([
+    ["zero arguments", [0x0a, 0], false],
+    ["wrong argument count", [0x0a, 2, 8, 8], false],
+    ["malformed argument", [0x0a, 1, 0x7f], false],
+    ["unresolved argument", [0x0a, 1, 0x12, 0x19], false],
+    ["resolved argument", [0x0a, 1, 8], true],
+  ] as const)(
+    "validates a TypeSpec-owned MethodSpec with %s independently",
+    (_name, instantiation, resolved) => {
+      const inspection = inspectDisplayFixture({
+        typeSpecSignatures: [Buffer.from([0x1d, 8])],
+        memberRefParentRaw: 12,
+        memberRefSignature: Buffer.from([0x10, 1, 0, 1]),
+        methodSpecMethods: [3],
+        methodSpecInstantiation: Buffer.from(instantiation),
+        ilBody: body(0x2b00_0001),
+      });
+      expect(inspection.call_edges[0]?.target_identity_sha256).toBeNull();
+      expect(inspection.call_edges[0]?.target_row_resolved).toBe(resolved);
+      const comparison = compareManagedMembers(
+        { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+        { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+      );
+      expect(comparison.methods[0]?.status).toBe(
+        resolved ? "unchanged" : "unknown",
+      );
+    },
+  );
+
   it("keeps historical target-row resolution unknown", () => {
     const inspection = typeSpecMember(0x0a00_0001);
     const historical = {
