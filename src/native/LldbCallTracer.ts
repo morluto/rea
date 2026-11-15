@@ -7,7 +7,7 @@ import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,6 +49,7 @@ import {
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
   signalProcessWithStartIdentity,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessIdentityObservation } from "../process/ProcessOwnership.js";
@@ -819,7 +820,12 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     if (output !== undefined && output.status !== "traced")
       return failureWithPartial((partialObservation) =>
-        tracerFailure(output, lifecycleCleanup, partialObservation),
+        tracerFailure(
+          output,
+          lifecycleCleanup,
+          partialObservation,
+          exited.targetIdentityFailure,
+        ),
       );
     const processCleanupFailure = exited.cleanupFailure;
     if (processCleanupFailure !== undefined)
@@ -988,6 +994,7 @@ const tracerFailure = (
   },
   cleanup?: AnalysisCleanupObservation,
   partialObservation?: NativeCallPartialObservation,
+  targetIdentityFailure?: string,
 ): AnalysisError => {
   const options = {
     ...(cleanup === undefined ? {} : { cleanup }),
@@ -1005,6 +1012,9 @@ const tracerFailure = (
       diagnostics: {
         reason: message,
         constraint: "target process start identity could not be verified",
+        ...(targetIdentityFailure === undefined
+          ? {}
+          : { identity_observation: targetIdentityFailure }),
       },
     });
   if (output.status === "tracer-error")
@@ -1387,6 +1397,8 @@ type LldbExit =
       /** False proves LLDB never started and could not have created a target. */
       readonly targetLaunched: boolean;
       readonly targetIdentity: string | undefined;
+      /** Why the host acknowledged the launched target's identity as unavailable. */
+      readonly targetIdentityFailure?: string;
       readonly cleanupFailure: string | undefined;
       /** The work budget elapsed before this physical LLDB exit was selected. */
       readonly overran?: true;
@@ -1434,6 +1446,7 @@ const runLldb = async (
     options.signal,
   );
   let targetIdentity: string | undefined;
+  let targetIdentityFailure: string | undefined;
   let supervisor: ProviderProcessSupervisor | undefined;
   let retained = false;
   let processFailureBeforeInterruption:
@@ -1465,6 +1478,7 @@ const runLldb = async (
       ...selectedOutcome,
       targetLaunched: supervisor !== undefined,
       targetIdentity,
+      ...(targetIdentityFailure === undefined ? {} : { targetIdentityFailure }),
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
       ...(overran === undefined ? {} : { overran }),
@@ -1516,16 +1530,26 @@ const runLldb = async (
         let observation: ProcessIdentityObservation | undefined;
         try {
           observation = await observeProcessStartIdentity(pid);
-        } catch {
+          if (observation === undefined)
+            targetIdentityFailure = `PID ${String(pid)} had exited or was absent from the process table`;
+          else if (observation.state !== "readable")
+            targetIdentityFailure = observation.reason;
+        } catch (cause: unknown) {
           observation = undefined;
+          targetIdentityFailure =
+            cause instanceof Error ? cause.message : String(cause);
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
+        // The bridge polls for the acknowledgement's name, so publish it
+        // complete: a reader must never see the created but unwritten file.
+        const stagedAck = `${options.identityAckPath}.partial`;
         await writeFile(
-          options.identityAckPath,
+          stagedAck,
           observation?.state === "readable" ? "readable" : "unavailable",
           { mode: 0o600 },
         );
+        await rename(stagedAck, options.identityAckPath);
         identityAckWritten = true;
       }
       const interruption = deadline.interruption;
@@ -1590,9 +1614,17 @@ const ensureTerminated = async (
   identity: string | undefined,
 ): Promise<TargetTermination> => {
   if (pid === undefined) return "identity-unavailable";
+  // The target's parent (debugserver) reaps it, so a killed target can stay
+  // in the process table as a zombie. A PID that answers kill(pid, 0) is
+  // therefore not proof the target still runs: with its start identity, an
+  // exited (zombie or replaced) PID counts as terminated.
+  const exited = async (): Promise<boolean> =>
+    !alive(pid) ||
+    (identity !== undefined &&
+      (await observeProcessStartIdentityExit(pid, identity)) === "exited");
   let signalDisposition: Exclude<TargetTermination, "terminated"> | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (!alive(pid)) return "terminated";
+    if (await exited()) return "terminated";
     if (attempt === 10) {
       if (identity === undefined) signalDisposition = "identity-unavailable";
       else {
@@ -1612,7 +1644,7 @@ const ensureTerminated = async (
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return !alive(pid)
+  return (await exited())
     ? "terminated"
     : (signalDisposition ?? "identity-unavailable");
 };
