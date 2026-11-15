@@ -638,7 +638,7 @@ const PATH_SCOPES = {
     ".github/workflows/real-agentenv.yml",
     "scripts/verify-agentenv-environment.mjs",
     "src/{application,server}/environment/**",
-    "src/application/{JsonInputFile,OwnedJsonInput,RegularFileRead}.ts",
+    "src/application/{JsonInputFile,OwnedJsonInput}.ts",
     "src/artifacts/{SafeOutputTree*,StreamBytes}.ts",
     "src/resources/ArtifactResourceScope.ts",
     "src/cliJsonInput.ts",
