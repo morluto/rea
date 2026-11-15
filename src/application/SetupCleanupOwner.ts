@@ -32,14 +32,7 @@ export const setupCleanupError = (
   cause: unknown,
   observation = ArtifactReaderFailure.cleanupObservation(cause, []),
 ): AnalysisError => {
-  if (
-    cause instanceof AnalysisError &&
-    (cause.cleanupIncomplete ||
-      cause.hasCleanupOwner ||
-      cause.cleanup !== undefined ||
-      cause instanceof ProviderCleanupError)
-  )
-    return cause;
+  if (cause instanceof AnalysisError && cause.carriesCleanup) return cause;
   const error = setupCleanupReport(cause, observation);
   bindRegularFileCleanup(cause, error);
   return error;

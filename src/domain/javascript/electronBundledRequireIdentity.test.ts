@@ -40,7 +40,7 @@ it("does not claim Electron host identity from an unbound require in unknown con
       loader_authority: "candidate",
     }),
   );
-  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+  expect(analysis.analysis_coverage.applicability.electron).toBe("unknown");
 });
 
 describe("Electron identity through Webpack externals", () => {

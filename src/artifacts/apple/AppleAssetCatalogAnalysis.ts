@@ -16,6 +16,9 @@ import { streamChunkToBuffer } from "../StreamBytes.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   ArtifactTraversalObservation,
@@ -113,7 +116,16 @@ export const analyzeAppleAssetCatalogs = async (input: {
         (joined.error instanceof AnalysisError &&
           joined.error.cleanupIncomplete))
     ) {
-      const primary = translateArtifactFailure("inspect_asset_catalog", cause);
+      // A defect still owns the outcome; it becomes the adapter failure the
+      // provider boundary would report, so the reader's cleanup can join it.
+      const primary =
+        cause instanceof InternalInvariantError
+          ? new ProviderAdapterError(
+              ARTIFACT_GRAPH_PROVIDER.id,
+              "inspect_asset_catalog",
+              { cause },
+            )
+          : translateArtifactFailure("inspect_asset_catalog", cause);
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
         joined.error,

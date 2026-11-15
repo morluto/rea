@@ -1,11 +1,7 @@
-import { constants } from "node:fs";
-import { lstat, mkdir, open, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCancelledError,
@@ -19,9 +15,14 @@ import {
   sameRegularFileState,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { writeClientRegistrationBackup } from "./ClientRegistrationBackup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import {
+  privateProfilePermissions,
+  PRIVATE_PROFILE_MODES,
+  type PrivateProfilePermissions,
+  securePrivateDirectory,
+} from "./ClientPrivateProfile.js";
 import {
   ClientConfigurationPublicationFailure,
   isClientConfigurationCleanupFailure,
@@ -43,18 +44,7 @@ import {
 export interface McpClientRegistrationReceipt {
   readonly status: "configured" | "unchanged";
   readonly backupPath?: string;
-  readonly permissions?:
-    | {
-        readonly kind: "verified_posix_modes";
-        readonly directoryMode: 0o700;
-        readonly fileMode: 0o600;
-      }
-    | {
-        readonly kind: "requested_windows_modes";
-        readonly requestedDirectoryMode: 0o700;
-        readonly requestedFileMode: 0o600;
-        readonly aclVerification: "unavailable";
-      };
+  readonly permissions?: PrivateProfilePermissions;
 }
 export type McpClientRegistrationFailure =
   | ConfigurationError
@@ -179,7 +169,9 @@ export const registerMcpClient = async (
       checkCancellation();
       await mkdir(dirname(path), {
         recursive: true,
-        ...(client.privateProfile !== undefined ? { mode: 0o700 } : {}),
+        ...(client.privateProfile !== undefined
+          ? { mode: PRIVATE_PROFILE_MODES.directory }
+          : {}),
       });
       checkCancellation();
       if (client.privateProfile !== undefined && process.platform !== "win32")
@@ -198,7 +190,7 @@ export const registerMcpClient = async (
           requestedPath: settingsPath,
           state: snapshot?.state,
           ...(client.privateProfile !== undefined
-            ? { requiredMode: 0o600 as const }
+            ? { requiredMode: PRIVATE_PROFILE_MODES.file }
             : {}),
         },
       );
@@ -277,7 +269,7 @@ const unchangedRegistration = async (
     !clientConfigurationValuesEqual(parsed.document, updated) ||
     (client.privateProfile !== undefined &&
       process.platform !== "win32" &&
-      ((snapshot?.state.mode ?? 0) & 0o777) !== 0o600)
+      ((snapshot?.state.mode ?? 0) & 0o777) !== PRIVATE_PROFILE_MODES.file)
   )
     return undefined;
   const current = await readRegularFileTextSnapshot(path, {
@@ -351,95 +343,3 @@ const verifyRegistration = async (
     }
   });
 };
-
-/** fx's profile permissions are applied through the selected directory descriptor. */
-const securePrivateDirectory = async (
-  path: string,
-  home: string,
-  checkCancellation: () => void,
-  resources: ArtifactResourceScope,
-): Promise<boolean> => {
-  const owner = new OwnedFileHandle(
-    await open(
-      path,
-      constants.O_RDONLY |
-        (constants.O_DIRECTORY ?? 0) |
-        (constants.O_NOFOLLOW ?? 0),
-    ),
-  );
-  const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
-  let primary: unknown;
-  let changed = false;
-  try {
-    const before = await owner.handle.stat();
-    const named = await lstat(path);
-    if (
-      !before.isDirectory() ||
-      named.isSymbolicLink() ||
-      before.ino === 0 ||
-      before.dev !== named.dev ||
-      before.ino !== named.ino ||
-      !named.isDirectory()
-    )
-      throw new RegularFileChangedError(path);
-    // A linked parent can make a profile path name the home folder itself.
-    const homeFolder = await stat(home);
-    if (homeFolder.dev === before.dev && homeFolder.ino === before.ino)
-      throw new ConfigurationError(
-        `The private profile folder ${path} is the home folder; REA will not make the home folder private. Point the client at its own profile folder; no settings were written.`,
-      );
-    changed = (before.mode & 0o777) !== 0o700;
-    checkCancellation();
-    if (changed) await owner.handle.chmod(0o700);
-    const after = await owner.handle.stat();
-    const current = await lstat(path);
-    if (
-      (after.mode & 0o777) !== 0o700 ||
-      current.isSymbolicLink() ||
-      !current.isDirectory() ||
-      current.dev !== after.dev ||
-      current.ino !== after.ino
-    )
-      throw new RegularFileChangedError(path);
-  } catch (cause: unknown) {
-    primary = cause;
-  }
-  try {
-    await lease.release();
-  } catch (cause: unknown) {
-    const error = new ConfigurationError(
-      `Private client directory cleanup failed at ${path}`,
-      {
-        cause:
-          primary === undefined
-            ? cause
-            : new AggregateError(
-                [primary, cause],
-                "Private profile permission operation and directory cleanup failed",
-              ),
-        cleanup: {
-          reason: "Private profile directory handle could not be closed",
-          resources: [path],
-        },
-      },
-    );
-    new AnalysisCleanupLeaseGroup(error, [lease]);
-    resources.retain({ kind: "lease", resource: path, lease });
-    throw error;
-  }
-  if (primary !== undefined) throw primary;
-  return changed;
-};
-
-/** Mode requests cannot establish Windows ACL privacy. */
-const privateProfilePermissions = (): NonNullable<
-  McpClientRegistrationReceipt["permissions"]
-> =>
-  process.platform === "win32"
-    ? {
-        kind: "requested_windows_modes",
-        requestedDirectoryMode: 0o700,
-        requestedFileMode: 0o600,
-        aclVerification: "unavailable",
-      }
-    : { kind: "verified_posix_modes", directoryMode: 0o700, fileMode: 0o600 };

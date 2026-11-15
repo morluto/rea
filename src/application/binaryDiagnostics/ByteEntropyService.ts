@@ -38,7 +38,7 @@ import {
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -374,11 +374,7 @@ export class ByteEntropyService {
         if (outcome.kind === "failed") {
           const primary = readFailure(outcome.cause);
           return err(
-            analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              OPERATION,
-            ).bindCleanupDependencies([primary, cleanup]),
+            analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
           );
         }
         return err(cleanup);

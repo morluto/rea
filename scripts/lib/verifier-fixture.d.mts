@@ -24,6 +24,11 @@ export class VerifierFixture {
   /** Register a cleanup that must confirm before the root may be removed. */
   releaseAfter<T extends () => unknown>(cleanup: T): T;
   /**
+   * Keep the root for good: something that may still use it cannot be
+   * confirmed stopped. Every later release fails with `reason`.
+   */
+  retain(reason: string): void;
+  /**
    * Run pending cleanups in order, then remove the root if all confirmed. A
    * failure is an AggregateError whose `cleanupLeases` is `[this fixture]`.
    */

@@ -5,6 +5,7 @@ import {
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
+  ArtifactIntegrityCheck,
   ArtifactLimitBoundary,
 } from "../domain/artifactOperationError.js";
 import type {
@@ -44,6 +45,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly readerLimit?: ArtifactReaderLimitFact;
   /** Fixed allowance a limit names; more memory or a retry cannot lift it. */
   readonly fixedAllowance?: FixedAllowance;
+  /** For an `integrity` failure, the check that failed, when the reader names it. */
+  readonly integrityCheck?: ArtifactIntegrityCheck;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -267,6 +270,7 @@ export class ArtifactReaderFailure extends Error {
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
   /** Typed fixed allowance for a `limit` reason; never inferred from message text. */
   readonly fixedAllowance: FixedAllowance | undefined;
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
     readonly reason:
@@ -297,6 +301,42 @@ export class ArtifactReaderFailure extends Error {
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
     this.fixedAllowance = options?.fixedAllowance;
+    this.integrityCheck = options?.integrityCheck;
+  }
+
+  /**
+   * Reader-owned facts a rebuilt failure must keep. Each rebuild chooses its
+   * own cause, cleanup, cancellation and partial observation.
+   */
+  primaryFacts(): Pick<
+    ArtifactReaderFailureOptions,
+    | "userMessage"
+    | "resolvedPath"
+    | "boundary"
+    | "admission"
+    | "readerLimit"
+    | "fixedAllowance"
+    | "integrityCheck"
+  > {
+    return {
+      ...(this.userMessage === undefined
+        ? {}
+        : { userMessage: this.userMessage }),
+      ...(this.resolvedPath === undefined
+        ? {}
+        : { resolvedPath: this.resolvedPath }),
+      ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.admission === undefined ? {} : { admission: this.admission }),
+      ...(this.readerLimit === undefined
+        ? {}
+        : { readerLimit: this.readerLimit }),
+      ...(this.fixedAllowance === undefined
+        ? {}
+        : { fixedAllowance: this.fixedAllowance }),
+      ...(this.integrityCheck === undefined
+        ? {}
+        : { integrityCheck: this.integrityCheck }),
+    };
   }
 
   /** Retain completed facts when a later artifact step fails. */
@@ -337,27 +377,14 @@ export class ArtifactReaderFailure extends Error {
       primary.message,
       {
         cause: primary,
-        userMessage: primary.userMessage,
-        resolvedPath: primary.resolvedPath,
+        // The constrained bound survives cleanup wrapping, or a file-size
+        // refusal would be reported as a memory constraint once a close fails.
+        ...primary.primaryFacts(),
         cancellation: primary.cancellation,
         cleanup: combineCleanup(primary.cleanup, cleanup),
         cleanupLeases:
           cleanupLeases ??
           (cleanup === primary.cleanup ? primary.cleanupLeases : undefined),
-        // The constrained bound survives cleanup wrapping, or a file-size
-        // refusal would be reported as a memory constraint once a close fails.
-        ...(primary.boundary === undefined
-          ? {}
-          : { boundary: primary.boundary }),
-        ...(primary.admission === undefined
-          ? {}
-          : { admission: primary.admission }),
-        ...(primary.readerLimit === undefined
-          ? {}
-          : { readerLimit: primary.readerLimit }),
-        ...(primary.fixedAllowance === undefined
-          ? {}
-          : { fixedAllowance: primary.fixedAllowance }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

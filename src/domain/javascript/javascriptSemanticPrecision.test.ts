@@ -66,7 +66,7 @@ it("distinguishes wrapper work recovery from unchanged unsupported or cyclic syn
   const source = `const e = require("electron"); e.ipcMain.on("first", event => event.sender.copy());`;
   const bounded = analyzeJavaScriptStaticSource(source, { wrapper_visits: 1 });
   expect(
-    bounded.analysis_coverage?.examination.electron_call_paths_limited,
+    bounded.analysis_coverage.examination.electron_call_paths_limited,
   ).toBe(true);
   expect(bounded.limitations).toEqual(
     expect.arrayContaining([
@@ -77,7 +77,7 @@ it("distinguishes wrapper work recovery from unchanged unsupported or cyclic syn
     wrapper_visits: 10_000,
   });
   expect(
-    recovered.analysis_coverage?.examination.electron_call_paths_limited,
+    recovered.analysis_coverage.examination.electron_call_paths_limited,
   ).toBe(false);
   expect((recovered.electron.call_paths ?? []).length).toBeGreaterThan(0);
   const cycle = analyzeJavaScriptSemantics(

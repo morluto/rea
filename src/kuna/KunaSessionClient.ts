@@ -53,6 +53,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
@@ -237,13 +241,16 @@ const isUnavailableProject = (cause: unknown): boolean =>
 const message = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const failure = (operation: string, cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
-        cause,
-        userMessage: `Kuna ${operation} failed: ${message(cause)}`,
-      });
+/** How one Kuna session operation reports a failure nothing typed it as. */
+const kunaSessionDialect = (operation: string): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation,
+  unclassified: (cause) =>
+    new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+      cause,
+      userMessage: `Kuna ${operation} failed: ${message(cause)}`,
+    }),
+});
 
 /** Bind a refused descriptor retry to the leases that still own those handles. */
 const descriptorCleanupError = (
@@ -617,7 +624,7 @@ export class KunaSessionClient implements AnalysisClient {
           ),
         );
       }
-      return err(failure(operation, cause));
+      return err(classifyProviderFailure(cause, kunaSessionDialect(operation)));
     }
   }
 
@@ -1567,7 +1574,9 @@ export class KunaSessionClient implements AnalysisClient {
             address,
             installation,
             AbortSignal.any([this.#session.signal, controller.signal]),
-          ).catch((cause: unknown) => err(failure(operation, cause))),
+          ).catch((cause: unknown) =>
+            err(classifyProviderFailure(cause, kunaSessionDialect(operation))),
+          ),
         ),
       };
       this.#singleFunctionRuns.set(address, created);
@@ -1937,7 +1946,9 @@ export class KunaSessionClient implements AnalysisClient {
       const head = await this.#commands.inputHead("list_procedures");
       return head.ok ? ok(await readKunaMachoLayout(head.value)) : head;
     } catch (cause: unknown) {
-      return err(failure("list_procedures", cause));
+      return err(
+        classifyProviderFailure(cause, kunaSessionDialect("list_procedures")),
+      );
     }
   }
 
@@ -2067,7 +2078,9 @@ export class KunaSessionClient implements AnalysisClient {
         if (cancellation !== undefined) return err(cancellation);
       }
       if (!(cause instanceof RegularFileCleanupFailure))
-        return err(failure("health", cause));
+        return err(
+          classifyProviderFailure(cause, kunaSessionDialect("health")),
+        );
       const error = kunaFileCleanupError(cause, "health");
       kunaResources.bindFailure(cause, error);
       return err(error);

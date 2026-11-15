@@ -46,6 +46,7 @@ import {
   toolAvailabilityInventory,
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 afterEach(async () => {
@@ -1715,7 +1716,7 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
         closeOwnedResources: async () => {
           if (!fail) return ok(null);
           if (!release) return err(failure);
-          failure.resolveCleanup();
+          releaseOwnedCleanup(failure);
           return ok(null);
         },
       },
@@ -1791,7 +1792,7 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     resolveAnalysisProfile: async () => err(failures[id]),
     closeOwnedResources: async () => {
       if (!released.has(id)) return err(failures[id]);
-      failures[id].resolveCleanup();
+      releaseOwnedCleanup(failures[id]);
       return ok(null);
     },
   }));
