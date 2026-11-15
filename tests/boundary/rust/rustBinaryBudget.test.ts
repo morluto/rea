@@ -39,8 +39,16 @@ it("recovers the same complete Rust image after input and report budget changes"
     const projectedInput = projectAnalysisError(smallInput.error);
     expect(projectedInput).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { maximum_input_bytes: 4095 } },
+      details: {
+        reported_limits: { maximum_input_bytes: 4095 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.input_bytes",
+          effective_value: 4095,
+        },
+      },
     });
+    expect(projectedInput.remediation.action).not.toContain("--");
     expect(projectedInput.remediation.action).toContain(
       "producer_limits.input_bytes",
     );
@@ -52,8 +60,16 @@ it("recovers the same complete Rust image after input and report budget changes"
     const projectedReport = projectAnalysisError(smallReport.error);
     expect(projectedReport).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { maximum_output_bytes: 16 } },
+      details: {
+        reported_limits: { maximum_output_bytes: 16 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.output_bytes",
+          effective_value: 16,
+        },
+      },
     });
+    expect(projectedReport.remediation.action).not.toContain("--");
     expect(projectedReport.remediation.action).toContain(
       "producer_limits.output_bytes",
     );

@@ -12,6 +12,6 @@
   "src/ghidra/GhidraProviderClient.ts": 2,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
   "src/native/NativePlistSource.ts": 1,
-  "src/rust/RustBinaryProvider.ts": 6,
+  "src/rust/RustBinaryProvider.ts": 3,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }
