@@ -398,9 +398,12 @@ const modules = {
       createWebNetworkCaptureService(environment, settings),
   ),
   javascriptRecovery: capability(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       options.javascriptRecovery ??
-      createJavaScriptRecoveryProvider(environment),
+      createJavaScriptRecoveryProvider(environment, undefined, {
+        platform,
+        architecture: arch,
+      }),
     (value) => value.close?.() ?? Promise.resolve(),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
@@ -427,9 +430,13 @@ const modules = {
     }),
   ),
   firmwareAnalysis: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       new FirmwareAnalysisService(
-        options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+        options.firmwareAnalysis ??
+          createFirmwareAnalysisProvider(environment, undefined, {
+            platform,
+            architecture: arch,
+          }),
       ),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
@@ -510,8 +517,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
