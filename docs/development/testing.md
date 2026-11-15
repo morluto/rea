@@ -867,7 +867,12 @@ owned cleanup seams while preserving real cleanup where feasible.
 holds a late handshake or in-flight work at a boundary and releases it with a
 value or a rejection, `cancelDuringCleanup`
 cancels from inside final cleanup, and `controlledCleanup` gives children
-refused or confirmed outcomes with counted retries. Check server
+refused or confirmed outcomes with counted retries.
+`tests/support/providerLifecycleCoverage.ts` maps every registered provider id
+to its launch, handshake, operation, cancellation, cleanup and retry
+regressions, a not-applicable reason, or an explicit gap. Name the test file
+and literal title when a change adds or moves a provider lifecycle regression;
+the shrink-only gap list closes as stages gain coverage. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
