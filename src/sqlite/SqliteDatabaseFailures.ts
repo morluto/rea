@@ -18,7 +18,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -131,11 +130,9 @@ export const sqliteDatabaseDialect = (
           ? undefined
           : stableArtifactInputFailure(cause, OPERATION);
       }
-      // This signal's own abort carries its reason; another abort error
-      // is still a cancellation, reported as itself.
+      // Only the caller's own abort is a cancellation. An abort error with
+      // another reason, or with no caller abort, is classified as itself.
       if (isAbortOf(cause, signal)) return cancelledBy(OPERATION, signal);
-      if (cause instanceof Error && cause.name === "AbortError")
-        return cancelledBy(OPERATION, carriedReason(cause));
       // Windows reports a sharing violation as EBUSY: another process holds
       // the file without read sharing. The unchanged request succeeds once
       // that process releases it. Name the member of the file set that was
@@ -160,7 +157,7 @@ export const sqliteDatabaseDialect = (
       return undefined;
     },
     command: (outcome) =>
-      sqliteWorkerCommand(outcome, path, workerTimeoutMs, dialect.unclassified),
+      sqliteWorkerCommand(outcome, path, workerTimeoutMs, { phase, path }),
     commandCleanup: sqliteWorkerCleanup,
     // A database file the read could not open names the selected file set.
     ...(phase === "artifact-read"
@@ -191,14 +188,6 @@ export const sqliteDatabaseDialect = (
           phase,
           path,
           reason: cause instanceof Error ? cause.message : String(cause),
-          ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
-            ? {
-                failure_kind: cause.reason,
-                exit_code: cause.snapshot.exitCode ?? null,
-                signal: cause.snapshot.signal ?? null,
-                captured_output: { ...capturedSqliteOutput(cause.snapshot) },
-              }
-            : {}),
         },
       }),
   };
@@ -235,7 +224,7 @@ const sqliteWorkerCommand = (
   outcome: ProviderOutcome,
   selectedPath: string,
   workerTimeoutMs: number,
-  unclassified: ProviderFailureDialect["unclassified"],
+  phaseDiagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderOutcomeContext => ({
   operation: OPERATION,
   capturedOutput: capturedSqliteOutput,
@@ -258,10 +247,22 @@ const sqliteWorkerCommand = (
       remediationAction: `The SQLite worker's ${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)} MiB JavaScript heap is fixed in this release; worker_timeout_ms does not raise it. Narrow table, columns, schema_scope or row_limit only if the question permits it; repeating the unchanged request is expected to fail the same way.`,
     },
   }),
-  // The unclassified report keeps the exit facts and output in its
-  // diagnostics, so the classified output is not repeated beside them.
-  dialect: (exit, { capturedOutput: _retained, ...details }) =>
-    unclassified(exit.cause, details),
+  // The unclassified report keeps the output in its diagnostics, beside the
+  // examined exit facts, so the classified output is not repeated.
+  dialect: (exit, _details, unclassified) =>
+    unclassified(SQLITE_PROVIDER_IDENTITY.id, {
+      capturedOutput: undefined,
+      diagnostics: {
+        ...phaseDiagnostics,
+        ...(exit.output === undefined
+          ? {}
+          : {
+              captured_output: {
+                ...capturedSqliteOutput(exit.output.snapshot),
+              },
+            }),
+      },
+    }),
 });
 
 /**

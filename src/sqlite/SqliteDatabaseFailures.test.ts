@@ -33,18 +33,29 @@ it.each([
   },
 );
 
-it("keeps another signal's abort error as the cancellation's cause", async () => {
-  const caller = new AbortController();
-  caller.abort({ source: "caller" });
-  const other = new AbortController();
-  other.abort({ source: "another owner" });
-  const foreign = await nodeAbortError(other.signal);
+it.each([
+  ["another signal's abort error", "aborted", "other-signal"],
+  ["a reasonless AbortError", "aborted", "reasonless"],
+  ["an abort error without a caller abort", "live", "other-signal"],
+] as const)(
+  "classifies %s as itself, not as cancellation (caller %s)",
+  async (_label, state, thrown) => {
+    const caller = new AbortController();
+    if (state === "aborted") caller.abort({ source: "caller" });
+    const other = new AbortController();
+    other.abort({ source: "another owner" });
+    const foreign =
+      thrown === "reasonless"
+        ? new DOMException("Aborted elsewhere", "AbortError")
+        : await nodeAbortError(other.signal);
 
-  const failure = classifyProviderFailure(
-    foreign,
-    sqliteDatabaseDialect("/selected.db", "artifact-read", caller.signal),
-  );
+    const failure = classifyProviderFailure(
+      foreign,
+      sqliteDatabaseDialect("/selected.db", "artifact-read", caller.signal),
+    );
 
-  expect(failure).toBeInstanceOf(AnalysisCancelledError);
-  expect(failure.cause).toBe(foreign);
-});
+    expect(failure).not.toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({ _tag: "ProviderAdapterError" });
+    expect(failure.cause).toBe(foreign);
+  },
+);

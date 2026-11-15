@@ -1134,7 +1134,8 @@ nativeTest(
       error: {
         _tag: "ProviderAdapterError",
         diagnostics: {
-          failure_kind: "process",
+          failure_kind: "exited",
+          stop_requested: false,
           exit_code: 7,
           captured_output: {
             stderr: "authored SQLite worker failure",

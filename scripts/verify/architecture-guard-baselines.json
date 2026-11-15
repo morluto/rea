@@ -388,9 +388,6 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "abort-error-name": {
-    "src/ida/IdaBusyHealth.ts": 1,
-    "src/process/ExecFileOutput.ts": 1,
-    "src/server/http/listenHttpServer.ts": 1,
-    "src/sqlite/SqliteDatabaseFailures.ts": 1
+    "src/server/http/listenHttpServer.ts": 1
   }
 }

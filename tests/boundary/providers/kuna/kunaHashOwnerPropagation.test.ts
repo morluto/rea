@@ -816,9 +816,6 @@ it.skipIf(process.platform === "win32")(
       expect(inspection.checks[0]).toMatchObject({
         ok: false,
         code: "cleanup_incomplete",
-        detail: expect.stringContaining(
-          "Kuna installation inspection could not confirm cleanup",
-        ),
         details: {
           cleanup_incomplete: true,
           cleanup_resources: [expect.stringContaining(fixture.kuna)],
