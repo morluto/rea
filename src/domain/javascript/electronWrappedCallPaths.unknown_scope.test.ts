@@ -167,6 +167,27 @@ describe("later initializer loader proof", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it.each([
+    ["directly", "() => import.meta"],
+    ["through a local", "() => { const meta = import.meta; return meta; }"],
+  ])(
+    "keeps the unknown when a late function returns a changed import.meta %s",
+    (_form, initializer) => {
+      const result = analyzeJavaScriptStaticSource(`
+      import.meta.load = __non_webpack_require__;
+      function register() {
+        load().load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = ${initializer};
+      register();
+    `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
   it("keeps the unknown when a late loader alias resolves through two bindings", () => {
     const result = analyze(`
       function register() {
@@ -285,6 +306,20 @@ describe("later initializer selected value proof", () => {
         moduleUrl();
       }
       var moduleUrl = () => import.meta.url;
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the module complete when a late function returns an unchanged import.meta", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function run() {
+        meta().url;
+      }
+      var meta = () => import.meta;
       run();
     `);
 
@@ -883,6 +918,43 @@ describe("later initializer literal prototype proof", () => {
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("partial");
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it.each([
+    ["an object literal", "() => ({})"],
+    ["a number", "() => 1"],
+    ["a local object", "() => { const value = {}; return value; }"],
+    ["a promise", "async () => null"],
+  ])(
+    "keeps the unknown when a late function returns %s whose prototype supplies a loader",
+    (_form, initializer) => {
+      const result = analyze(`
+      Object.prototype.load = require;
+      function register() {
+        load().load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = ${initializer};
+      register();
+    `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps a late function returning a literal complete without a prototype write", () => {
+    const result = analyze(`
+      function run() {
+        make().size;
+      }
+      var make = () => ({});
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
 });
 

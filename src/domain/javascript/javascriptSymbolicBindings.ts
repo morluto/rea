@@ -36,6 +36,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   resolveSemanticBindingState,
+  semanticPrototypeOwners,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
@@ -113,6 +114,11 @@ const literalPrototypeOwner = (
   if (t.isBigIntLiteral(node)) return "BigInt";
   return undefined;
 };
+
+const isImportMeta = (node: t.Node): node is t.MetaProperty =>
+  t.isMetaProperty(node) &&
+  node.meta.name === "import" &&
+  node.property.name === "meta";
 
 const isFreshConstruction = (node: t.Node): boolean => {
   if (!t.isNewExpression(node)) return false;
@@ -1245,12 +1251,68 @@ export class JavaScriptSymbolicBindings {
           loaderFree = false;
       },
     });
+    if (loaderFree)
+      loaderFree = semanticCallableResultExpressions(node).every(
+        ({ node: result }) =>
+          this.#chargeLoaderProof() && this.#isLoaderFreeResult(node, result),
+      );
     if (invocation !== undefined) {
       const cached = this.#loaderFreeFunctionCalls.get(node) ?? new Map();
       cached.set(signature, loaderFree);
       this.#loaderFreeFunctionCalls.set(node, cached);
     }
     return loaderFree;
+  }
+
+  /**
+   * The caller selects members on a late function's result after this proof,
+   * so a result whose prototype chain or `import.meta` gained members can
+   * supply a loader without a member expression inside the function.
+   */
+  #isLoaderFreeResult(fn: t.Function, result: t.Node | null): boolean {
+    if ((fn.async || fn.generator) && this.#inheritedMembersChanged("Object"))
+      return false;
+    if (result === null) return true;
+    const value = unwrapJavaScriptExpression(result).node;
+    if (
+      t.isNullLiteral(value) ||
+      t.isUnaryExpression(value, { operator: "void" }) ||
+      (t.isIdentifier(value) &&
+        value.name === "undefined" &&
+        resolveSemanticBindingState(this.state, value, value.name) ===
+          undefined &&
+        !semanticResolutionBlocked(this.state, value, value.name))
+    )
+      return true;
+    if (isImportMeta(value)) return !this.#importMetaMembersChanged();
+    const owner = literalPrototypeOwner(value);
+    if (owner !== undefined) return !this.#inheritedMembersChanged(owner);
+    return (
+      !semanticPrototypeOwners.some((candidate) =>
+        this.#inheritedMembersChanged(candidate),
+      ) && !this.#importMetaMembersChanged()
+    );
+  }
+
+  /** Whether any member a value of this prototype inherits may have changed. */
+  #inheritedMembersChanged(owner: SemanticPrototypeOwner): boolean {
+    const owners: readonly SemanticPrototypeOwner[] =
+      owner === "Object" ? [owner] : [owner, "Object"];
+    return owners.some((prototypeOwner) => {
+      const path = ["global", prototypeOwner, "prototype"] as const;
+      return (
+        this.#prototypeMutationOwners.has(prototypeOwner) ||
+        this.state.ambientWrites.touches(path) ||
+        this.state.ambientEscapes.touches(path)
+      );
+    });
+  }
+
+  #importMetaMembersChanged(): boolean {
+    return (
+      this.state.ambientWrites.touches(["import-meta"]) ||
+      this.state.ambientEscapes.touches(["import-meta"])
+    );
   }
 
   #isLoaderFreeFunctionReference(
@@ -1426,12 +1488,7 @@ export class JavaScriptSymbolicBindings {
     node: t.MemberExpression | t.OptionalMemberExpression,
   ): boolean | undefined {
     const object = unwrapJavaScriptExpression(node.object).node;
-    if (
-      !t.isMetaProperty(object) ||
-      object.meta.name !== "import" ||
-      object.property.name !== "meta"
-    )
-      return undefined;
+    if (!isImportMeta(object)) return undefined;
     return isUnmodifiedImportMetaUrl(node, this.state);
   }
 
