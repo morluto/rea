@@ -4795,6 +4795,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
