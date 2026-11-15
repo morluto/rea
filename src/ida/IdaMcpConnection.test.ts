@@ -23,6 +23,7 @@ describe("upstream IDA tool result decoding", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     });
     const evidence = "Caller-selected fixture-secret evidence";
@@ -31,6 +32,7 @@ describe("upstream IDA tool result decoding", () => {
         { content: [{ type: "text", text: evidence }] },
         undefined,
         redact,
+        "text",
       ),
     ).toBe(evidence);
     expect(
@@ -53,6 +55,7 @@ describe("upstream IDA tool result decoding", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     });
     expect(() =>
@@ -102,10 +105,34 @@ describe("upstream IDA tool result decoding", () => {
       }),
     ).toEqual([{ address: "0x1000" }]);
     expect(
-      decodeIdaToolResult({
-        content: [{ type: "text", text: "int main(void);" }],
-      }),
+      decodeIdaToolResult(
+        { content: [{ type: "text", text: "int main(void);" }] },
+        undefined,
+        undefined,
+        "text",
+      ),
     ).toBe("int main(void);");
+  });
+  it.each([
+    ["truncated JSON", '{"code": "int main('],
+    ["ordinary text", "int main(void);"],
+  ])("rejects %s from a tool that declares a JSON reply", (_label, text) => {
+    expect(
+      () => decodeIdaToolResult({ content: [{ type: "text", text }] }),
+      "malformed JSON is never decoded as an ordinary string",
+    ).toThrow("IDA MCP returned malformed JSON text.");
+  });
+  it("keeps JSON-shaped text from a tool that declares a text reply", () => {
+    for (const text of ["null", "42", '{"code": "int main('])
+      expect(
+        decodeIdaToolResult(
+          { content: [{ type: "text", text }] },
+          undefined,
+          undefined,
+          "text",
+        ),
+        "plain-text pseudocode is never reinterpreted as JSON",
+      ).toBe(text);
   });
   it("preserves upstream failures and rejects truncated previews that still satisfy item schemas", () => {
     expect(() => decodeIdaToolResult({ content: [] })).toThrow(
@@ -156,6 +183,7 @@ const failingHttpConnection = (
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Custom " + credential },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -257,6 +285,7 @@ it("preserves the SDK request timeout as a typed IDA timeout", async () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs,
     },
     {},
@@ -323,6 +352,7 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs,
     },
     {},
@@ -476,6 +506,7 @@ const withIdaResource = async (
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -539,6 +570,7 @@ it("owns unclassified truncated-output hints separately from their context", () 
   const diagnostic = createIdaDiagnosticRedactor({
     url: "http://127.0.0.1:12345/mcp",
     mode: "attached",
+    protocol: "legacy",
     timeoutMs: 1000,
     headers: { Authorization: 'Custom q"uote' },
   });
@@ -641,6 +673,7 @@ it("uses the actual SDK abort outcome to preserve the caller reason", async () =
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -697,6 +730,7 @@ it("keeps a real SDK physical failure when abort arrives during its outer unwind
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -801,9 +835,9 @@ it("selects structured IDA evidence ahead of text while admitting mixed content"
   ).toEqual({ observed: true });
   expect(
     decodeIdaToolResult({
-      content: [image, { type: "text", text: "fallback" }],
+      content: [image, { type: "text", text: '{"fallback":true}' }],
     }),
-  ).toBe("fallback");
+  ).toEqual({ fallback: true });
   for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
     expect(() =>
       decodeIdaToolResult({
@@ -841,6 +875,7 @@ const cleanupConnection = () =>
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -1087,6 +1122,7 @@ it.each(["completed", "pending", "rejected"] as const)(
         url: "http://127.0.0.1:12345/mcp",
         headers: {},
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 30,
       },
       {},

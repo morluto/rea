@@ -4,12 +4,17 @@ import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verifi
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, expect, onTestFinished } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const compareContract = toolContract("compare_application_versions");
 const analyzeContract = toolContract("analyze_javascript_application");
@@ -36,7 +41,7 @@ const runJson = async (
   await writeFile(path, JSON.stringify(input));
   // These JSON commands share no provider state; reuse the fixture-owned CLI
   // process so the matrix measures validation rather than repeated startup.
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   return run({
     arguments: [
       command,
@@ -51,10 +56,13 @@ const runJson = async (
   });
 };
 const connectMcp = async (root: string) => {
-  const client = new Client({
-    name: "application-input-identities",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "application-input-identities",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],

@@ -18,6 +18,7 @@ import {
   readConfigurationFile,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
@@ -62,6 +63,21 @@ export const prepareRegistration = async (
       : effectiveClientServer(inherited, PRODUCT_IDENTITY.mcpServerKey),
   );
   if (!desired.ok) throw desired.error;
+  // The client's own settings policy can exclude or override this entry.
+  if (client.setupClient !== undefined) {
+    const policy = await readClientPolicyBlock(
+      client.setupClient,
+      parsed,
+      desired.value,
+    );
+    if (!policy.ok)
+      throw (
+        policy.error.cleanupFailure ??
+        new ConfigurationError(policy.error.detail)
+      );
+    if (policy.value !== undefined)
+      throw new ConfigurationError(`${policy.value} No settings were written.`);
+  }
   const updated = withClientServers(
     parsed,
     {

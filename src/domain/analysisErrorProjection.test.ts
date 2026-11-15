@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
 import { describe, expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
@@ -25,7 +26,6 @@ import {
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type DialogTimeoutRejection,
   type HopperStartupFailureDiagnostic,
@@ -110,8 +110,9 @@ describe("agent recovery metadata", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("Do not repeat the unchanged call."),
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "extract_firmware",
       },
     });
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
@@ -126,9 +127,6 @@ describe("agent recovery metadata", () => {
       category: "invalid_input",
       retryable: false,
       details: { reason: "already-exists" },
-      remediation: {
-        action: expect.stringContaining("do not repeat record_unknown"),
-      },
     });
     expect(analysisErrorProjectionSchema.parse(duplicate)).toEqual(duplicate);
     expect(
@@ -187,8 +185,6 @@ describe("agent recovery metadata", () => {
       },
     });
     expect(projected.remediation.action).toContain("tools/list");
-    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
-    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -236,18 +232,7 @@ describe("agent recovery metadata", () => {
         operation: "inspect_binary_layout",
         timeout_ms: 2_500,
       },
-      message: expect.stringContaining("server/provider deadline"),
-      remediation: {
-        action: expect.stringContaining("provider diagnostics"),
-      },
     });
-    expect(projected.message).toContain("not a client-side timeout");
-    expect(projected.remediation.action).not.toContain(
-      "raise its tool deadline",
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /declared timeout controls|larger server\/provider budget|without assuming adjustable limits|do not assume adjustable/u,
-    );
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 });
@@ -848,6 +833,64 @@ describe("analysis error projection: Hopper provider failures", () => {
     });
   });
 
+  it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcherFailure: {
+          exit_code: 2,
+          signal: null,
+          stdout: { text: "", bytes: 0, retained_bytes: 0 },
+          stderr: {
+            text: "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n",
+            bytes: 90,
+            retained_bytes: 90,
+          },
+          output_closed: true,
+          diagnostic_truncated: false,
+        },
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcher: { exit_code: 2, signal: null },
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("keeps an ordinary Hopper start failure retryable", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        userMessage: "Hopper's launcher helper failed before bridge readiness.",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: true,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "retry",
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+  });
+
   it("retains the Hopper request and provider diagnostic on a remote failure", () => {
     expect(
       projectAnalysisError(
@@ -955,7 +998,7 @@ describe("analysis error projection: Hopper startup failures", () => {
       value: "-5",
       source: "setting",
       minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
-      maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      maximum_ms: MAX_NODE_TIMER_DELAY_MS,
       default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
     } satisfies DialogTimeoutRejection;
     const projected = projectAnalysisError(

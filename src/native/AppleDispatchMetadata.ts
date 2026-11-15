@@ -1,3 +1,7 @@
+import {
+  malformedInput,
+  parseFailureFromCause,
+} from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
@@ -101,7 +105,7 @@ export function* decodeAppleDispatchMetadataSteps(
     // pointer-fixup coverage remains partial, and consumers that need to
     // distinguish null from an unresolved bind use resolvePointer directly.
     if (decodedPointer.kind === "unknown") return decodedPointer.raw;
-    throw new RangeError(decodedPointer.reason);
+    throw malformedInput("macho", decodedPointer.reason);
   };
   const bound = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -116,7 +120,7 @@ export function* decodeAppleDispatchMetadataSteps(
     try {
       fileOffset = offset(address);
     } catch (cause) {
-      if (!(cause instanceof RangeError)) throw cause;
+      if (parseFailureFromCause(cause) === undefined) throw cause;
       fileOffset = null;
     }
     return { address: `0x${address.toString(16)}`, file_offset: fileOffset };
@@ -135,7 +139,10 @@ export function* decodeAppleDispatchMetadataSteps(
     let end = start;
     while (end < bytes.length && end - start < 4096 && bytes[end] !== 0) end++;
     if (end === bytes.length || end - start >= 4096)
-      throw new RangeError("Unterminated or oversized metadata string");
+      throw malformedInput(
+        "macho",
+        "Unterminated or oversized metadata string",
+      );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -467,7 +474,7 @@ const appleDispatchMetadataPrimaryFailure = (
         {
           cause,
           remediationAction:
-            cause.kind === "malformed"
+            cause.kind !== "unsupported"
               ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },

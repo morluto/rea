@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
@@ -79,7 +80,6 @@ import {
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   DEFAULT_NATIVE_UI_DEADLINE_MS,
-  MAX_NATIVE_TIMER_MS,
   readNativeDeadline,
 } from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -99,6 +99,7 @@ import {
 import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
 import { machoKnownCodeSignSelector } from "./MachoArchitectureSelection.js";
 import {
   demangleSwiftSchema,
@@ -495,7 +496,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: deadline.reason,
               message: deadline.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         );
@@ -641,7 +642,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: timeout.reason,
               message: timeout.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         ),
@@ -1414,6 +1415,13 @@ class NativeMacOSClient implements AnalysisClient {
                 selected,
                 Math.floor(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES / 256),
               ),
+            readSliceRange: (offset, size, at, length) =>
+              source.readSlice(
+                offset,
+                size ?? source.bytes - offset,
+                at,
+                length,
+              ),
             readCommandNames: async (offset, size, selected) => {
               const length = size ?? source.bytes - offset;
               // Binary strings can expand to hex and escaped JSON, and each
@@ -2176,6 +2184,7 @@ const parseEntitlements = (
     value,
     limitations: [
       ...numbers.limitations(),
+      ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ...(projected.nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),

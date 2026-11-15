@@ -47,7 +47,6 @@ import {
 } from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
@@ -67,7 +66,6 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
-  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -940,20 +938,11 @@ const clientConfigurationDesired = async (
     "fragment",
   );
   if (!environment.ok) throw environment.error;
-  const registrationEnvironment =
-    compactInputSchemaByDefault(client) &&
-    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
-      undefined
-      ? {
-          ...environment.value,
-          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        }
-      : environment.value;
   const registration = refreshClientRegistration(
     client,
     format,
     launcher,
-    registrationEnvironment,
+    environment.value,
     parsed === undefined
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),

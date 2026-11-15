@@ -10,6 +10,7 @@ import type {
   WasmArtifactPort,
 } from "../application/wasm/WasmArtifactPort.js";
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
   readStableArtifact,
@@ -27,11 +28,11 @@ import type {
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -65,7 +66,7 @@ import {
   wabtReleaseLine,
 } from "./WabtRelease.js";
 import {
-  wabtFailure,
+  wabtFailureDialect,
   wabtConfigurationRecoveryAction,
   type WabtVersionProbe,
 } from "./WabtFailures.js";
@@ -131,7 +132,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         cause.cleanup === undefined
       )
         return err(this.#closedError());
-      return err(wabtFailure(cause, "artifact", input.path));
+      return err(
+        classifyProviderFailure(
+          cause,
+          wabtFailureDialect("artifact", input.path),
+        ),
+      );
     }
   }
 
@@ -236,13 +242,13 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         : options?.commandTimeoutSource;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
-      const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
-      if (!isAbsolute(directory))
+        throw cancelledBy(OPERATION, options.signal);
+      const directory = environment.REA_WABT_BIN_DIRECTORY;
+      if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
           setting: "REA_WABT_BIN_DIRECTORY",
+          // Keep the caller's rejected selection; unset stays distinct.
+          ...(directory === undefined ? {} : { configured: directory }),
         });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
@@ -700,20 +706,22 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(
+      const failure = classifyProviderFailure(
         cause,
-        phase,
-        phase === "artifact" ? artifactInput.path : input.path,
-        {
-          commandTimeoutMs,
-          ...(commandTimeoutSource === undefined
-            ? {}
-            : { commandTimeoutSource }),
-          limits,
-          inputField: artifactInput.field,
-          observedOutput: capturedOutput,
-          ...(versionProbe === undefined ? {} : { versionProbe }),
-        },
+        wabtFailureDialect(
+          phase,
+          phase === "artifact" ? artifactInput.path : input.path,
+          {
+            commandTimeoutMs,
+            ...(commandTimeoutSource === undefined
+              ? {}
+              : { commandTimeoutSource }),
+            limits,
+            inputField: artifactInput.field,
+            observedOutput: capturedOutput,
+            ...(versionProbe === undefined ? {} : { versionProbe }),
+          },
+        ),
       );
       if (failure.partialObservation === undefined) {
         const partial = acquiredEvidence();
@@ -746,12 +754,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         result = err(
           analysisErrorWithCancellation(
             result.ok ? undefined : result.error,
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
-              ...(partialObservation === undefined
-                ? {}
-                : { partialObservation }),
-            }),
+            cancelledBy(
+              OPERATION,
+              options.signal,
+              partialObservation === undefined ? {} : { partialObservation },
+            ),
           ),
         );
       }

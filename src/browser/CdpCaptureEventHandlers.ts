@@ -16,6 +16,8 @@ import {
 } from "./CdpFrameIdentity.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { observeCdpFrameUrl } from "./CdpCaptureDocuments.js";
+import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   inferJsonShape,
   type JsonShapeCapacityFailure,
@@ -738,12 +740,13 @@ export const handleFrameNavigated = (
   state: CdpCaptureEventsState,
   params: unknown,
 ): void => {
-  if (state.mainFrameId === undefined) return;
+  const document = state.document;
+  if (document === undefined) return;
   const frameFacts = cdpFrameEventFacts({
     method: "Page.frameNavigated",
     params,
   });
-  const identity = selectCdpFrameIdentity(frameFacts, state.mainFrameId);
+  const identity = selectCdpFrameIdentity(frameFacts, document.current.frameId);
   if (identity.identityIssue !== null || identity.parentIssue !== null) {
     state.completeness.exclude("frames", "invalid_protocol_value");
     if (
@@ -757,27 +760,24 @@ export const handleFrameNavigated = (
   }
   if (identity.selection === "other" && identity.parentRelation === "child")
     return;
-  if (identity.selection === "unknown") {
+  if (
+    identity.frameId === null ||
+    (identity.selection === "other" && !identity.isRootReplacement) ||
+    frameFacts.loaderIssue !== null
+  ) {
     state.completeness.exclude("frames", "invalid_protocol_value");
     state.unknownRootIdentity = true;
     return;
   }
-  if (identity.selection === "other" && !identity.isRootReplacement) {
-    state.completeness.exclude("frames", "invalid_protocol_value");
-    state.unknownRootIdentity = true;
-    return;
-  }
+  // `frameNavigated` re-fires for a document already reported; only the
+  // document owner decides whether this one differs from the selected one.
+  const comparison = document.observe({
+    frameId: identity.frameId,
+    loaderId: frameFacts.loaderId,
+    url: observedFrameUrl(observeCdpFrameUrl(frameFacts.source)),
+  });
+  if (comparison === "same") return;
   const rawUrl = cdpStringValue(frameFacts.source?.url);
-  const loaderId = frameFacts.loaderId;
-  // `frameNavigated` re-fires for a document already reported (same URL and
-  // loader). Treating that as a navigation aborted a valid capture with
-  // `target_changed`, which is a false claim that the target moved.
-  const document = `${String(identity.frameId ?? "")}\0${String(loaderId ?? "")}\0${String(rawUrl ?? "")}`;
-  if (state.committedDocument === document) return;
-  state.committedDocument = document;
-  if (identity.isRootReplacement)
-    state.mainFrameId = identity.frameId ?? undefined;
-  state.navigationDuringCapture = true;
   if (
     isHttpUrl(rawUrl) &&
     allowedSanitizedUrl(rawUrl, state.allowedOrigins) === undefined

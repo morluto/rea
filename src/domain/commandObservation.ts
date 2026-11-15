@@ -9,7 +9,11 @@ export const commandObservationSchema = z.strictObject({
   output_budget_bytes: z.int().positive().exactOptional(),
   output_budget_source: z.enum(["default", "request"]).exactOptional(),
   output_truncated: z.boolean(),
-  completion_status: z.enum(["complete", "unknown"]),
+  completion_status: z
+    .enum(["complete", "rejected", "unknown"])
+    .describe(
+      "complete: the provider process completed. rejected: it completed, but the provider reported that it refused the command; limitations say what ran. unknown: the capture or process ended early.",
+    ),
   artifact_sha256_after: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)

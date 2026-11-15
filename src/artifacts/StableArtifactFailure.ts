@@ -1,15 +1,55 @@
 import type { StableArtifactSnapshot } from "./readStableArtifact.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+  type ArtifactFilePrimaryFacts,
+} from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+
+/** Preserve ownership classification for stable-file identity and cancellation. */
+export const projectOwnedArtifactIdentityFailure = (
+  facts: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+): AnalysisError | undefined => {
+  const { cause, origin } = facts;
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  if (cause.reason === "integrity")
+    return new AnalysisArtifactChangedError(operation, path, cause.message, {
+      cause,
+    });
+  if (cause.reason === "cancelled")
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
+  return undefined;
+};
+
+/** The request field that selected a file: a name, or a path into the request. */
+export type RequestField = string | readonly (string | number)[];
+
+const requestFieldPath = (field: RequestField): (string | number)[] =>
+  typeof field === "string" ? [field] : [...field];
 
 /** Project filesystem errors that identify a refused or unreadable selected file. */
 export const projectSelectedArtifactFileFailure = (
@@ -17,17 +57,19 @@ export const projectSelectedArtifactFileFailure = (
   operation: string,
   path: string,
   description: string,
-  field = "path",
+  field: RequestField = "path",
+  options: AnalysisErrorOptions = {},
 ): AnalysisError | undefined => {
   if (!(cause instanceof Error) || !("code" in cause)) return undefined;
   if (cause.code === "EACCES" || cause.code === "EPERM")
     return new AnalysisAccessDeniedError(operation, path, cause.code, {
+      ...options,
       cause,
     });
   if (isSelectedRegularFileError(cause))
-    return new AnalysisInputError(operation, { cause }, [
+    return new AnalysisInputError(operation, { ...options, cause }, [
       {
-        path: [field],
+        path: requestFieldPath(field),
         reason: "invalid_value",
         message: `Selected ${description} could not be read (${String(cause.code)}): ${path}.`,
       },
@@ -56,6 +98,25 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
         conformsToInputContract: true,
       }
     : {};
+
+/** Report a rejected artifact path or format with its source-provided recovery. */
+export const stableArtifactInputFailure = (
+  cause: ArtifactReaderFailure,
+  operation: string,
+  field: RequestField = "path",
+  options: AnalysisErrorOptions = {},
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    { ...options, cause, ...stableArtifactInputRecovery(cause) },
+    [
+      {
+        path: requestFieldPath(field),
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ],
+  );
 
 const artifactCleanupFailure = (
   cause: unknown,

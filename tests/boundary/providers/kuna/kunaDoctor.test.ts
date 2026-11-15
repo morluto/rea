@@ -8,10 +8,16 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { createSystemDoctorHost } from "../../../../src/doctorRuntime.js";
 import { runDoctorOwned } from "../../../../src/application/Doctor.js";
-import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
-import { STARTUP_OWNER_CLOSED } from "../../../../src/process/SharedStartupAttempt.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../../../../src/domain/analysisErrorCore.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+// The production `kuna --version` deadline (KunaInstallation). A stop that
+// regressed would still end the gated probe there, so cancellation must win.
+const VERSION_PROBE_DEADLINE_MS = 10_000;
 
 it("reports an unconfigured Kuna as a missing optional engine", async () => {
   expect(await inspectKunaProvider({})).toMatchObject({
@@ -284,25 +290,22 @@ it.each(["caller", "host"] as const)(
     try {
       // The preceding Ghidra probe may prepare Darwin process ownership before
       // Kuna starts; keep startup separate from the bounded post-abort join.
-      await expect
-        .poll(async () => (await fakeKunaCalls(kuna)).length, {
-          timeout: 10_000,
-        })
-        .toBe(1);
+      await expect.poll(async () => (await fakeKunaCalls(kuna)).length).toBe(1);
       const probe = (await fakeKunaCalls(kuna))[0];
       if (probe === undefined) throw new Error("Missing Kuna version probe");
       expect(probe.argv).toEqual(["--version"]);
       if (source === "caller") controller.abort(reason);
       else closing = host.close!();
-      // The unreleased probe normally waits for its ten-second deadline.
-      await expect.poll(() => settled, { timeout: 2_000 }).toBe(true);
+      await expect.poll(() => settled).toBe(true);
+      // The unreleased probe would otherwise end at its own deadline.
+      expect(Date.now() - probe.at).toBeLessThan(VERSION_PROBE_DEADLINE_MS);
       const failure = await inspection;
       expect(failure).toBeInstanceOf(AnalysisCancelledError);
       if (!(failure instanceof AnalysisCancelledError))
         throw new Error("Expected Kuna inspection cancellation");
       expect(failure.operation).toBe("doctor");
       expect(failure.cause).toBe(
-        source === "caller" ? reason : STARTUP_OWNER_CLOSED,
+        source === "caller" ? reason : OwnerCancellation.startupOwnerClosed,
       );
       // Cancellation only settles once execFile has reaped its direct child.
       expect(() => process.kill(probe.pid, 0)).toThrowError(

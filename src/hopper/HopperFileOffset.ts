@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
-import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -10,7 +9,9 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
+  type CancellationReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -35,20 +36,12 @@ import {
   validateFatSliceIdentity,
 } from "../domain/apple/machoContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { HopperReply } from "./HopperReplyContracts.js";
 
 const OPERATION = "address_to_file_offset";
 const MAX_FAT_ARCHITECTURES = 128;
 const PREFIX_BYTES = 8 + MAX_FAT_ARCHITECTURES * 32;
-const observationSchema = z.strictObject({
-  address: z.string().regex(/^0x[0-9a-f]+$/u),
-  provider_file_offset: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  provider_source_path: z.string().nullable(),
-  provider_image_header_hex: z
-    .string()
-    .regex(/^[a-f0-9]{24}$/u)
-    .nullable(),
-});
-type Observation = z.infer<typeof observationSchema>;
+type Observation = HopperReply<"address_to_file_offset">;
 
 /** Exact descriptor owner the caller retries after a rejected source close. */
 export interface HopperFileOffsetOwnership {
@@ -62,18 +55,9 @@ export interface HopperFileOffsetOwnership {
 /** Bind native image-relative offsets to coordinates in the admitted source bytes. */
 export async function mapHopperFileOffset(
   target: BinaryTarget,
-  value: JsonValue,
+  observation: Observation,
   ownership: HopperFileOffsetOwnership,
 ): Promise<Result<JsonValue, AnalysisError>> {
-  const parsed = observationSchema.safeParse(value);
-  if (!parsed.success)
-    return err(
-      new AnalysisOutputError(
-        OPERATION,
-        "Hopper's native file mapping observation is malformed",
-      ),
-    );
-  const observation = parsed.data;
   const partial = (reason: string): FileOffsetPartialObservation => ({
     operation: OPERATION,
     ...observation,
@@ -90,7 +74,7 @@ export async function mapHopperFileOffset(
       "The selected database digest does not identify its original executable bytes. Open that executable to verify original-file coordinates; read_bytes still exposes the database's native bytes.",
     );
   const signal = ownership.signal;
-  if (signal?.aborted) return err(cancelled(partial, signal.reason));
+  if (signal?.aborted) return err(cancelled(partial, signal));
   const publish = (marker: ProviderCleanupError): ProviderCleanupError => {
     ownership.onCleanupMarker(marker);
     return marker;
@@ -136,7 +120,7 @@ export async function mapHopperFileOffset(
         );
       return err(
         retainSnapshot(
-          cancelled(partial, cause.reason),
+          cancelled(partial, carriedReason(cause.reason)),
           captured.value,
           verification.observation,
           verified.fileOffset,
@@ -180,10 +164,9 @@ const isSourceRead = (
 
 const cancelled = (
   partial: (reason: string) => FileOffsetPartialObservation,
-  cause?: unknown,
+  reason: CancellationReason,
 ): AnalysisCancelledError =>
-  new AnalysisCancelledError(OPERATION, {
-    ...(cause === undefined ? {} : { cause }),
+  cancelledBy(OPERATION, reason, {
     partialObservation: partial("Source verification was cancelled"),
   });
 
@@ -203,7 +186,7 @@ const sourceAccessFailure = (
   partial: (reason: string) => FileOffsetPartialObservation,
 ): AnalysisError => {
   if (cause instanceof RegularFileOperationCancelled)
-    return cancelled(partial, cause.reason);
+    return cancelled(partial, carriedReason(cause.reason));
   const reason = `Cannot verify original source bytes: ${cause instanceof Error ? cause.message : String(cause)}`;
   const code =
     typeof cause === "object" && cause !== null && "code" in cause
@@ -285,7 +268,10 @@ const cleanupAfterSnapshot = (
     return err(
       withCleanup(
         retainSnapshot(
-          cancelled(partial, failure.completionCancellation.reason),
+          cancelled(
+            partial,
+            carriedReason(failure.completionCancellation.reason),
+          ),
           captured.value,
           verification.observation,
           verified.fileOffset,

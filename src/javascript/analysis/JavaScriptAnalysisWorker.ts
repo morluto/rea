@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
@@ -67,11 +68,11 @@ import {
 } from "../../process/ProviderDeadline.js";
 import {
   readJavaScriptAnalysisTransfer,
-  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   javaScriptForwardedTransferRemediation,
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
 import {
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
   JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
@@ -221,7 +222,7 @@ export class JavaScriptAnalysisWorker {
       limits.heapMb > JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM ||
       !Number.isSafeInteger(limits.timeoutMs) ||
       limits.timeoutMs <= 0 ||
-      limits.timeoutMs > 2_147_483_647
+      limits.timeoutMs > MAX_NODE_TIMER_DELAY_MS
     )
       throw new RangeError(
         "JavaScript worker requires valid heap and execution limits",

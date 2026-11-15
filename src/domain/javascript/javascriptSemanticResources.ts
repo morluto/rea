@@ -20,9 +20,12 @@ import {
   staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -85,6 +88,11 @@ export const collectJavaScriptSemanticResources = (
         context,
       ) &&
         !rejectsTlsProtocolVersionLiteral(
+          candidate.node,
+          candidate.specifier,
+          context.state,
+        ) &&
+        !rejectsSocketHostMember(
           candidate.node,
           candidate.specifier,
           context.state,
@@ -741,36 +749,42 @@ const tlsOptionMerge = (
 };
 
 /**
- * Whether a `tls` call carries a protocol version Node rejects.
+ * The value Node reads for one `net`/`tls` option member: a node, `undefined` when
+ * the member is absent, or `"unknown"` when an accessor, a prototype write or a
+ * dynamic copy could change it. `tls` merges its option arguments (see
+ * `tlsOptionMerge`); `net` reads only an options object in argument 0. Returns
+ * `undefined` when the options themselves are not statically known.
  *
- * `tls.connect` resolves the version before it opens a socket, so a bad literal throws
- * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
- * `undefined` are accepted as "not given", every other non-string value throws
- * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
- * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`.
- *
- * A truthy `secureContext` bypasses version parsing — Node uses
- * `options.secureContext || tls.createSecureContext(options)` — while a falsy one does
- * not, so only a truthy context ends the check.
- *
- * The answer stays undecided, which keeps the acquisition, whenever an accessor could
- * have written the member first. Measured on Node 24.22.1,
+ * The answer stays unknown whenever an accessor could have written the member
+ * first. Measured on Node 24.22.1,
  * `{get side() { this.minVersion = "TLSv1.2"; }, minVersion: "nope"}` connects because
  * the getter runs during Node's own copy, and a `set minVersion` in an earlier argument
  * absorbs a later write. Both are bodies this reader does not run.
- *
- * Only `tls` reads these members, so `net` is not consulted.
  */
-const rejectsTlsProtocolVersionLiteral = (
+const socketOptionReader = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (specifier !== "tls") return false;
-  const merge = tlsOptionMerge(node, state);
-  if (merge === undefined || merge.target === "unknown") return false;
+): ((member: string) => t.Node | "unknown" | undefined) | undefined => {
+  let target: t.ObjectExpression | undefined;
+  let source: t.Node | undefined;
+  if (specifier === "tls") {
+    const merge = tlsOptionMerge(node, state);
+    if (merge === undefined || merge.target === "unknown") return undefined;
+    target = merge.target === "fresh" ? undefined : merge.target;
+    source = merge.source;
+  } else if (specifier === "net") {
+    const first = node.arguments[0];
+    if (
+      first === undefined ||
+      node.arguments.some((argument) => t.isSpreadElement(argument))
+    )
+      return undefined;
+    const options = unwrapJavaScriptExpression(first as t.Node).node;
+    if (!t.isObjectExpression(options)) return undefined;
+    target = options;
+  } else return undefined;
   const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
-  const target = merge.target === "fresh" ? undefined : merge.target;
   // A known source value proves the final option only when target writes are
   // ordinary. Target prototypes and copied __proto__ can absorb later writes.
   if (
@@ -782,16 +796,16 @@ const rejectsTlsProtocolVersionLiteral = (
         primitiveOwnKeys(property.value, isNullish) === null,
     )
   )
-    return false;
-  const sourceReader = staticObjectCopyPropertyReader(merge.source, isNullish);
+    return undefined;
+  const sourceReader = staticObjectCopyPropertyReader(source, isNullish);
   const copiedPrototype = sourceReader("__proto__");
   if (
     copiedPrototype.status === "dynamic" ||
     (copiedPrototype.status === "explicit" &&
       primitiveOwnKeys(copiedPrototype.value, isNullish) === null)
   )
-    return false;
-  const objects = [target, merge.source].filter(
+    return undefined;
+  const objects = [target, source].filter(
     (value): value is t.ObjectExpression => t.isObjectExpression(value),
   );
   const accessorWritten = objects.some((options) =>
@@ -800,7 +814,7 @@ const rejectsTlsProtocolVersionLiteral = (
     ),
   );
   const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
-  const effective = (member: string): t.Node | "unknown" | undefined => {
+  return (member) => {
     let read: t.Node | "unknown" | undefined;
     for (const reader of readers) {
       const property = reader(member);
@@ -812,6 +826,32 @@ const rejectsTlsProtocolVersionLiteral = (
     }
     return read;
   };
+};
+
+/**
+ * Whether a `tls` call carries a protocol version Node rejects.
+ *
+ * `tls.connect` resolves the version before it opens a socket, so a bad literal throws
+ * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
+ * `undefined` are accepted as "not given", every other non-string value throws
+ * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
+ * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`.
+ *
+ * A truthy `secureContext` bypasses version parsing — Node uses
+ * `options.secureContext || tls.createSecureContext(options)` — while a falsy one does
+ * not, so only a truthy context ends the check. An unknown member keeps the
+ * acquisition (see `socketOptionReader`).
+ *
+ * Only `tls` reads these members, so `net` is not consulted.
+ */
+const rejectsTlsProtocolVersionLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (specifier !== "tls") return false;
+  const effective = socketOptionReader(node, specifier, state);
+  if (effective === undefined) return false;
   // A truthy context means Node never parses the members at all. The shared owner
   // already treats `-0` as falsy. Measured on Node 24.22.1,
   // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
@@ -868,6 +908,49 @@ const rejectsTlsProtocolVersionLiteral = (
     if (rejectsValue(read)) return true;
   }
   return false;
+};
+
+/**
+ * Whether a `net`/`tls` call carries a `host` option Node rejects.
+ *
+ * Measured on Node 24.22.1: both connect through `options.host || "localhost"` and
+ * throw `ERR_INVALID_ARG_TYPE` from the call when that is not a string, so a truthy
+ * non-string host leaves no socket while a falsy one (`0`, `""`, `false`, `null`)
+ * connects to localhost. A truthy `path` connects a pipe and a truthy TLS `socket`
+ * skips the connect, so neither reads `host`, and an absent one may be inherited
+ * from a patched `Object.prototype`. Anything not statically known keeps the
+ * acquisition.
+ */
+const rejectsSocketHostMember = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const effective = socketOptionReader(node, specifier, state);
+  if (effective === undefined) return false;
+  const falsy = (value: t.Node) =>
+    isNullishPlaceholder(value, state) ||
+    staticJavaScriptTruthiness(value) === false;
+  // Node reads an absent member through the prototype chain, so a write to
+  // Object.prototype that may run first can supply a path or socket.
+  const inheritable = state.prototypeMutationSites.some(
+    (effect) =>
+      effect.owner === "Object" &&
+      semanticEffectTiming(node, effect.node, state) !== "after",
+  );
+  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
+    const value = effective(member);
+    if (value === "unknown" || (value !== undefined && !falsy(value)))
+      return false;
+    if (value === undefined && inheritable) return false;
+  }
+  const host = effective("host");
+  if (host === undefined || host === "unknown") return false;
+  // Every statically truthy shape other than a string literal is a non-string.
+  return (
+    staticJavaScriptTruthiness(host) === true &&
+    !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
+  );
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */

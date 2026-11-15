@@ -16,9 +16,11 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { Deadline } from "../domain/deadline.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -177,12 +179,14 @@ export const kunaExportFailure = (
     const { completion } = kunaCopyFailureFacts(cause);
     const primary =
       cause.reason === "cancelled" || completion?.cancellation !== undefined
-        ? new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
-            cause:
+        ? cancelledBy(
+            KUNA_EXPORT_OPERATION,
+            carriedReason(
               completion?.cancellation === undefined
                 ? artifactFileCancellationCause(cause)
                 : completion.cancellation.reason,
-          })
+            ),
+          )
         : new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
             cause,
             userMessage: `Kuna project cache failed: ${message(cause)}`,
@@ -207,12 +211,13 @@ export const kunaExportFailure = (
     return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
   const cancellation = regularFileCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
-      cause: cancellation.reason,
-    });
+    return cancelledBy(
+      KUNA_EXPORT_OPERATION,
+      carriedReason(cancellation.reason),
+    );
   if (cause instanceof AnalysisError) return cause;
   if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
-    return new AnalysisCancelledError(KUNA_EXPORT_OPERATION, { cause });
+    return cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cause));
   return new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
     userMessage: `Kuna project cache failed: ${message(cause)}`,
@@ -270,7 +275,7 @@ export const exportKunaProject = async (
     configuration,
     request.deadline,
   );
-  const deadline = Date.now() + acceptedDeadline.ms;
+  const deadline = Deadline.after(acceptedDeadline.ms);
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
@@ -297,7 +302,7 @@ export const exportKunaProject = async (
       arguments: arguments_,
       workspace: request.workspace,
       operation: KUNA_EXPORT_OPERATION,
-      timeoutMs: deadline - Date.now(),
+      timeoutMs: deadline.remainingMs(),
       deadline: acceptedDeadline,
       outputBytes,
       signal,

@@ -129,7 +129,7 @@ class ExternalFixtureBridge {
           rm(directory, { recursive: true, force: true }),
         ),
       );
-    }, 45_000);
+    });
   }
 }
 

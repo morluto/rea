@@ -7,6 +7,7 @@ import {
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
@@ -16,7 +17,10 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
 import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
@@ -100,7 +104,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
       collectAssetCatalogs({ ...input, resources }),
     ));
   } catch (cause: unknown) {
-    interfaceBuilderCancel.abort();
+    interfaceBuilderCancel.abort(OwnerCancellation.noLongerNeeded);
     const joined = await interfaceBuilderAnalysis;
     if (
       !joined.ok &&
@@ -206,10 +210,10 @@ const collectAssetCatalogs = async (input: {
     kind: "completed",
   };
   try {
-    for await (const entry of reader.entries(input.signal, {
-      onCoverage: traversal.onCoverage,
+    for await (const entry of declaredArtifactEntries(reader, input.signal, {
+      onCoverage: traversal.record,
       onOmission: (omission) => {
-        traversal.onOmission(omission);
+        traversal.omit(omission);
         const { path, kind } = omission;
         if (path.split("/").at(-1) === "Assets.car")
           uninspected.push(`${path} (${kind})`);
@@ -269,7 +273,7 @@ const collectAssetCatalogs = async (input: {
   }
   if (outcome.kind === "failed") throw outcome.cause;
   if (symlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       // Source entries are represented even when their link targets were not
       // inspected. Keep that inventory scope separate from catalog discovery.
       status: "complete",

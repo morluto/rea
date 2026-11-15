@@ -324,7 +324,7 @@ it.skipIf(process.platform === "win32").each([
         await expectHarnessFailureCleanup(supervisor, events);
         return;
       }
-      await waitForProviderProcessReady(child.process, 25_000);
+      await waitForProviderProcessReady(child.process);
       const observed = JSON.parse(await readFile(report, "utf8"));
       expect(observed.reason).toBe("timeout");
       expect(observed.pids).toHaveLength(2);
@@ -373,5 +373,4 @@ it.skipIf(process.platform === "win32").each([
       await removeTestWorkspace(workspace.root);
     }
   },
-  45_000,
 );

@@ -860,7 +860,7 @@ it("retains legacy routes and a bounded route-fact prefix inside one checkpoint 
   } finally {
     await worker.close();
   }
-}, 60000);
+});
 
 it("keeps wrapped route ancestry, navigation and unknown named parents in the real worker", async () => {
   const worker = new JavaScriptAnalysisWorker({

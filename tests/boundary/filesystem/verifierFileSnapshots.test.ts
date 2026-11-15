@@ -263,11 +263,11 @@ processTest(
       else await removeTestWorkspace(workspace.root);
     }
   `;
-    const result = await processes.run(
-      process.execPath,
-      ["--input-type=module", "--eval", program],
-      { timeoutMs: 20_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      program,
+    ]);
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.signal, result.stderr).toBeNull();

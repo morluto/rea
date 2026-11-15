@@ -152,6 +152,15 @@ Exhausted traversals with deliberately omitted filesystem entries retain
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+Each container reader declares its own traversal coverage, including complete
+coverage. A traversal that ends without that declaration, or that stops before
+its reader finishes, is `unknown` with a limitation naming the reader format;
+a complete traversal of one container never covers another.
+ZIP members are listed from the central directory. Coverage is `complete` only
+when its records account for every byte before the directory (a well-formed
+APK signing block is accounted for); otherwise coverage is `unknown` and a
+limitation gives the unaccounted bytes, which may hold local entries the
+directory does not list.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
@@ -866,8 +875,9 @@ and provider identities:
 
 Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
-provider observations and are not attributed to one successful item; unavailable and error
-items keep their own. A page over the response budget offers a smaller selection
+provider observations; every item, successful or not, also keeps its own
+observation's limitations, and an unavailable item keeps the provider's
+`pseudocode_absence` reason when one was reported. A page over the response budget offers a smaller selection
 from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
 row does not fit. An inline source offers none, because the record cannot be
 repeated in that reply; resend it with a smaller selection.
@@ -1003,7 +1013,11 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
+(currently `1`). Import, comparison and every other bundle reader refuse a
+bundle without it, or with another revision, as an integrity mismatch whose
+recovery is to recreate the observations with the current release;
+re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint
@@ -1640,6 +1654,16 @@ or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
 the loaded flag, decides whether source bytes can exist, so an initialized
 file-backed overlay still maps.
 
+`search_bytes` continuations reuse `cursor`. The bridge binds that cursor to
+the target, analysis profile (including a selected Ghidra project), pattern,
+mask, bounds, and document. A mismatch returns `invalid_request` attributed to
+`cursor`. The message names that binding and states that the one-way cursor
+does not identify which value differs. Select the original context or omit
+the cursor. The call still matches the input schema, so there is no
+`inspect_input_contract` recovery.
+`details.issues[0].observed.differing_component` is `unknown`, and `bound_to`
+lists the bound components.
+
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.
@@ -1899,6 +1923,16 @@ occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
 `record-and-continue` the root becomes `mismatched` while its elements stay
 listed and extractable as observed-untrusted bytes, and `extract_artifact`
 returns the root record with the extracted files' records.
+
+A universal Mach-O is inventoried from `lipo -detailed_info`, cross-checked
+against REA's own parse of the FAT table. When the two disagree, the default
+policy fails with `integrity`. Under `record-and-continue` the disagreement is
+reported as an integrity limitation and the slices are enumerated from the FAT
+table, whose bytes are authoritative; lipo's ranges are not used, but a matched
+row's retained field evidence stays on its slice. A slice lipo did not match is
+named from its own CPU identity, qualified by its FAT offset when that name
+repeats. When REA cannot parse the FAT table, lipo's rows are inventoried and a
+count disagreement makes coverage `unknown`. A malformed FAT table still fails.
 
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under

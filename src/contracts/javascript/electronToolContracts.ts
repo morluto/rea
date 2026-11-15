@@ -22,7 +22,7 @@ import {
 import {
   javaScriptRoutesViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import {
   analyzeJavaScriptApplicationInputSchema,

@@ -247,6 +247,7 @@ export class KunaReferenceQueries {
             "capacity",
             "The session's native reference-query queue is full; await an existing query before starting another.",
             { limit_queries: PENDING_XREF_QUERIES },
+            { measuredExhaustion: true },
           ),
         );
       pending = this.work.start<KunaIncomingReferences>(

@@ -3,10 +3,12 @@ import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -24,6 +26,8 @@ import {
 import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import { jadxHeapExhausted } from "./JadxProtocol.js";
+import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -113,9 +117,7 @@ const observeJadxFailure = (
             cause: cancellation.reason,
             ...jadxOperationTimeoutGuidance(timeoutMs),
           })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
+        : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
     const reason =
       cause.cleanupCause instanceof Error
@@ -138,9 +140,10 @@ const observeJadxFailure = (
               cause: nestedCancellation.reason,
               ...jadxOperationTimeoutGuidance(timeoutMs),
             })
-          : new AnalysisCancelledError(request.operation, {
-              cause: nestedCancellation.reason,
-            });
+          : cancelledBy(
+              request.operation,
+              carriedReason(nestedCancellation.reason),
+            );
     const snapshotObservation =
       completed === undefined
         ? undefined
@@ -312,12 +315,14 @@ const presentDiagnosticFailure = (
   failure: DiagnosticFailure,
 ): AnalysisError => {
   const output = failure.transport?.diagnostics();
-  const options = {
-    cause: failure.cause,
-    ...(output === undefined ? {} : { capturedOutput: output }),
-  };
+  const captured = output === undefined ? {} : { capturedOutput: output };
+  const options = { cause: failure.cause, ...captured };
   if (failure.kind === "cancelled")
-    return new AnalysisCancelledError(failure.operation, options);
+    return cancelledBy(
+      failure.operation,
+      carriedReason(failure.cause),
+      captured,
+    );
   if (failure.kind === "timeout")
     return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
       ...options,
@@ -326,6 +331,21 @@ const presentDiagnosticFailure = (
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
   if (failure.kind === "startup") {
+    // Before the handshake the retained stderr is the only evidence of why the
+    // launcher stopped; a heap shortage there is a resource limit, not setup.
+    if (jadxHeapExhausted(output?.stderr ?? ""))
+      return new AnalysisResourceConstraintError(
+        failure.operation,
+        "memory",
+        "The JADX worker JVM ran out of heap before REA's Android bridge answered",
+        // The bridge never reported its heap, so the limit stays unknown.
+        { observed_max_heap_bytes: null },
+        {
+          ...options,
+          retryable: false,
+          remediationAction: JADX_HEAP_REMEDIATION,
+        },
+      );
     const reason = `Java could not start REA's Android bridge using ${failure.command}: ${failure.cause instanceof Error ? failure.cause.message : String(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",

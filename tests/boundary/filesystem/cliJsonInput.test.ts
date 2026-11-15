@@ -490,7 +490,6 @@ describe("CLI JSON stdin cancellation and encoding", () => {
       expect(stream.destroyed).toBe(true);
       expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
     },
-    1_000,
   );
 
   it.each([

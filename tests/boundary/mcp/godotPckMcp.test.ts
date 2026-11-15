@@ -19,7 +19,7 @@ import type { ArtifactOccurrence } from "../../../src/domain/artifactGraph.js";
 import {
   artifactInventorySummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,

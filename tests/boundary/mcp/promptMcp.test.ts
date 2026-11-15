@@ -680,7 +680,7 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
   expect(closed.isError).not.toBe(true);
   await lifecycle.aborted;
   expect((await pending).completion.values).toEqual([]);
-}, 10_000);
+});
 
 it.each(["replacement", "shutdown"])(
   "waits for cancelled completion cleanup before HTTP %s",
@@ -902,7 +902,7 @@ describe("guided prompt completion lifecycle", () => {
     ).not.toBe(true);
     expect(await complete(client, "document", "")).toEqual([]);
     expect(await complete(client, "procedure", "")).toEqual([]);
-  }, 10_000);
+  });
 });
 
 const createWarmCompletionFixture = async () => {

@@ -25,6 +25,7 @@ import type {
   ReferenceSourceRead,
 } from "../reference/ReferenceSourceReaderTypes.js";
 import { typescriptEmittedSourceCandidates } from "./TypeScriptEmittedSourceCandidates.js";
+import { appendAll } from "../domain/appendAll.js";
 
 export interface ParsedReferenceSourceEntries {
   readonly entries: HistoricalSourceGraphInput["entries"];
@@ -565,7 +566,7 @@ const appendFile = (
     limitations: [...(parsed?.limitations ?? [])],
   });
   if (parsed === undefined) return;
-  output.limitations.push(...parsed.limitations);
+  appendAll(output.limitations, parsed.limitations);
   for (const relationship of parsed.relationships) {
     const { resolutionStrategy, resolutionBasePath, ...graphRelationship } =
       relationship;
@@ -599,7 +600,7 @@ const appendFile = (
       resolution: resolved.resolution,
     });
   }
-  output.parseFailures.push(...parsed.parse_failures);
+  appendAll(output.parseFailures, parsed.parse_failures);
 };
 
 const appendReadEntry = (

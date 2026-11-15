@@ -17,7 +17,10 @@ import {
   type ObserveJavaScriptRuntimeInput,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -789,7 +792,7 @@ const waitForCapture = async (
     ]);
   } finally {
     // Cancel only this wait's timer. The caller owns and retains its signal.
-    timerOwner.abort();
+    timerOwner.abort(OwnerCancellation.noLongerNeeded);
     removeDisconnect();
     removeProtocolFailure();
   }

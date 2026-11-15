@@ -38,4 +38,4 @@ it("retains a wide factory's async keys before normalizing the registration", ()
       end: { line: 1, column: start + factory.length },
     },
   });
-}, 30_000);
+});

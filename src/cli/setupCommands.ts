@@ -12,6 +12,7 @@ import {
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -144,7 +145,9 @@ const registerDoctorCommand = (
   cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: localPathStringSchema
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
@@ -274,12 +277,11 @@ const runSetupCommand = async (
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);
-  else if (
-    options.dryRun &&
-    !input.formatExplicit &&
-    hasInteractiveTerminal()
-  ) {
-    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+  // Setup's output is agent-only, which incur hides when stdout is a terminal
+  // and no format was chosen, so that terminal gets a rendered summary instead.
+  else if (!input.formatExplicit && process.stdout.isTTY === true) {
+    if (result.status === "planned")
+      renderSetupDryRun(result.plannedActions, result.remediation);
     else renderInteractiveSetupResult(result, environment);
   }
   return result;
