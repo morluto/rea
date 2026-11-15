@@ -65,7 +65,7 @@ import type {
   ResolvedAppBundleResourceRoot,
   BundleResourceRoot,
 } from "../domain/apple/bundleResourceRoot.js";
-import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../application/binary/BundleResourceSession.js";
+import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
