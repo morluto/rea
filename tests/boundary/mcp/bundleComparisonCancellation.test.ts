@@ -123,7 +123,7 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
       (error: unknown) => error,
     );
   await dispatch.reached(cancellation, "compare_bundles dispatch");
-  await reader.firstRead;
+  await reader.reached(cancellation, "first file read");
   await client.ping();
   controller.abort(new Error("SDK bundle comparison cancellation"));
   reader.release();

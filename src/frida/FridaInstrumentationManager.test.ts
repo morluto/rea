@@ -1,4 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
@@ -1916,15 +1917,13 @@ it("preserves a native rejection observed before cancellation during script clea
   onTestFinished(() => manager.closeAll());
   if (!started.ok) throw started.error;
   const session = bindings.device.session;
-  const entered = createDeferred<void>();
-  const held = createDeferred<void>();
-  onTestFinished(() => held.resolve());
+  const providerLifecycleBoundary = phaseGate();
+  onTestFinished(() => providerLifecycleBoundary.release());
   const create = session.createScript.bind(session);
   session.createScript = async () => {
     const script = await create();
     script.unload = async () => {
-      entered.resolve();
-      await held.promise;
+      await providerLifecycleBoundary.hold();
       const owned = session.scripts[0];
       if (owned !== undefined) owned.isDestroyed = true;
     };
@@ -1938,13 +1937,12 @@ it("preserves a native rejection observed before cancellation during script clea
     { sourceKind: "inline", source: "void 0" },
     controller.signal,
   );
-  await awaitAcknowledgement(
-    entered.promise,
+  await providerLifecycleBoundary.reached(
     loading,
     "provider lifecycle boundary",
   );
   controller.abort(new Error("late abort during cleanup"));
-  held.resolve();
+  providerLifecycleBoundary.release();
   const result = await loading;
   if (result.ok) throw new Error("Failed load succeeded");
   expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
