@@ -2,8 +2,15 @@ import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorker
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
+import {
+  stableArtifactInputRecovery,
+  readerIntegrityFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
@@ -14,12 +21,12 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -88,13 +95,18 @@ export const protobufCaptureFailure = (
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
   "The capture decoder reached its Windows Job Object memory limit";
 
-/** Preserve the origin and typed cause of a historical capture failure. */
+/**
+ * Preserve the origin and typed cause of a historical capture failure.
+ * `cleanupLease` is the decoder's lease on `rawCause`'s retained process
+ * owner; its confirmed release resolves the cleanup this failure reports.
+ */
 export const historicalCaptureFailure = (
   input: InspectWebNetworkCaptureInput,
   rawCause: unknown,
   phase: "capture-read" | "descriptor-read" | "decoder",
   options?: ExecutionOptions,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
+  cleanupLease?: AnalysisCleanupLease,
 ): AnalysisError => {
   const { cause, origin } = artifactFilePrimaryFacts(rawCause);
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -129,6 +141,8 @@ export const historicalCaptureFailure = (
         },
         { operation: OPERATION, cause },
       );
+      if (cleanupLease !== undefined)
+        new AnalysisCleanupLeaseGroup(cleanup, [cleanupLease]);
       return cause.cause instanceof OwnedCommandFailure
         ? analysisErrorWithCleanupFailure(
             historicalCaptureFailure(input, cause.cause, phase, options, heap),
@@ -138,14 +152,16 @@ export const historicalCaptureFailure = (
         : cleanup;
     }
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause:
+      return cancelledBy(
+        OPERATION,
+        carriedReason(
           cause.cancellation === undefined
             ? options?.signal?.aborted === true
               ? options.signal.reason
               : undefined
             : cause.cancellation.reason,
-      });
+        ),
+      );
     if (cause.reason === "timeout") {
       const timeoutMs = selectedWebNetworkCaptureTimeoutMs(
         input.capture_timeout_ms,
@@ -189,20 +205,16 @@ export const historicalCaptureFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      sourcePath,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(OPERATION, sourcePath, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     phase === "decoder" &&
     origin === "owned-or-classified" &&
@@ -296,9 +308,7 @@ export const historicalCaptureFailure = (
         "code" in cause &&
         cause.code === "ABORT_ERR"))
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: options.signal.reason,
-    });
+    return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
     cause,
     diagnostics: {

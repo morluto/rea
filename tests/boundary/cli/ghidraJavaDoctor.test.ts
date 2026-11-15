@@ -251,6 +251,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
             working_directory: process.cwd(),
           }),
           { PATH: hostPath },
+          process.platform,
         )
       ).executable,
       join(bin, "ps"),

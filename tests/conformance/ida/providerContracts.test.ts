@@ -63,6 +63,7 @@ describe.each(["attached", "headless"] as const)(
             args: [],
             env: {},
             mode,
+            protocol: mode === "attached" ? "legacy" : "modern",
             workspaceRoot: root,
             timeoutMs: 1000,
           },

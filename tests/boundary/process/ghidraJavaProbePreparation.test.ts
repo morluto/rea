@@ -17,6 +17,7 @@ import {
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { waitForProcessOwnershipInspection } from "../../../src/process/ProcessInspectionCancellation.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Long enough for an ordinary owned launch, short enough to keep the cold case quick.
 const PROBE_TIMEOUT_MS = 2_000;
@@ -186,7 +187,7 @@ it.runIf(process.platform === "darwin")(
     let denied = true;
     const close = vi.fn(async () => {
       if (denied) throw cleanup;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     });
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async () => {

@@ -14,19 +14,22 @@ import {
   pythonPycCompleteDeliveryShape,
   pythonPycSummaryDeliveryShape,
 } from "../../domain/analysisView/pythonPycView.js";
+import { presentRootDiscriminator } from "../../domain/schemaAnnotations.js";
 
 /** Delivery selection does not change provider inputs or complete Evidence identity. */
-export const inspectPythonPycRequestSchema = z
-  .discriminatedUnion("detail", [
+export const inspectPythonPycRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
     inspectPythonPycInputSchema.extend(pythonPycCompleteDeliveryShape),
     inspectPythonPycInputSchema.extend(pythonPycSummaryDeliveryShape),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+  ]),
+  "detail",
+);
 
 /** Static CPython pyc inspection is independent of active native-analysis providers. */
 export const PYTHON_PYC_TOOL_CONTRACTS = [
   {
     name: "inspect_python_pyc",
+    availability: "standalone",
     ...toolContractMetadata("inspect_python_pyc"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

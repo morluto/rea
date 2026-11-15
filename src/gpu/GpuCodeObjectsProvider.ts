@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
@@ -18,8 +19,9 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -135,20 +137,18 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&
@@ -276,7 +276,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected GPU path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -285,6 +285,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "GPU source changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const leaves = inventory.objects.filter(
       (row) =>

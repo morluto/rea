@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -18,7 +19,7 @@ import { dexDescriptorSchema } from "./dexTypes.js";
 const count = z.int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
-const status = z.enum(["complete", "partial", "unknown"]);
+const status = coverageStatusSchema;
 const ABI_LAYOUTS = new Map<string, readonly [string, number]>([
   ["arm64-v8a", ["arm64", 64]],
   ["armeabi-v7a", ["arm", 32]],

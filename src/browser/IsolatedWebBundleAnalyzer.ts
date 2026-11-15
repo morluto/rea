@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -9,11 +10,13 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { buildCapturedWebBundleAnalysis } from "../domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../domain/webBundleAnalyzerState.js";
-import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.js";
+import {
+  unavailableWebScriptRecovery,
+  type WebBundleScriptAnalysis,
+} from "../domain/webBundleScriptAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
@@ -144,6 +147,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
@@ -171,6 +175,7 @@ export class IsolatedWebBundleAnalyzer {
       sourceMaps,
       input,
       signal,
+      memberMutationAllowance,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -184,6 +189,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -225,6 +231,7 @@ export class IsolatedWebBundleAnalyzer {
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
           input.semantic_precision,
+          memberMutationAllowance,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {
@@ -241,11 +248,7 @@ export class IsolatedWebBundleAnalyzer {
                   : error instanceof AnalysisResourceConstraintError
                     ? "resource_constraint"
                     : "worker_failure",
-              detail:
-                error instanceof AnalysisResourceConstraintError &&
-                error.reportedLimits !== null
-                  ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
-                  : (error.userMessage ?? error.message),
+              ...unavailableWebScriptRecovery(error),
             },
           );
           if (error.cleanupIncomplete) {
@@ -312,8 +315,7 @@ export class IsolatedWebBundleAnalyzer {
       deadline.dispose();
     }
     if (caller.aborted && deadline.interruption !== "timeout") {
-      const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
-        cause: caller.reason,
+      const cancelled = cancelledBy("analyze_web_bundle", caller, {
         partialObservation: partial ?? inspection,
       });
       failure = hasPrimaryFailure

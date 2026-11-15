@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -106,11 +106,11 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${this.#label} entry does not match its owning inventory`,
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        `${this.#label} entry does not match its owning inventory`,
+      );
       if (stored.encrypted)
         throw new ArtifactReaderFailure(
           "unavailable",
@@ -200,6 +200,7 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `${label} entry ended early: ${entry.path}`,
+          { integrityCheck: "declared-size" },
         );
       await this.#source.read(signal);
     };

@@ -14,6 +14,8 @@ import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwner
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
@@ -107,6 +109,66 @@ it("reuses one real owned analyzer while retaining distinct source identities an
     ).toEqual([]);
   } finally {
     await worker.close();
+  }
+});
+
+it("applies a changed member-mutation allowance to the next analysis on the same scope", async () => {
+  const scope = new ArtifactResourceScope();
+  // Four conditional self-selections before one member write (#8294).
+  const file = source(
+    "allowance.js",
+    [
+      "function probe(input, env) { var m; if (env.first) m = env.first.info;",
+      ...Array.from(
+        { length: 4 },
+        (_, index) =>
+          `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+      ),
+      "m[1] = input.length; return m; } module.exports = probe;",
+    ].join(" "),
+  );
+  try {
+    for (const allowance of [
+      undefined,
+      { aliasStates: 8, source: "runtime" } as const,
+      undefined,
+    ]) {
+      const worker = await createJavaScriptSourceAnalysis(
+        {
+          heapMb: 128,
+          timeoutMs: 30_000,
+          ...(allowance === undefined
+            ? {}
+            : { memberMutationAllowance: allowance }),
+        },
+        1,
+        { scope },
+      );
+      try {
+        const result = await worker.analyze(file, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (allowance === undefined) {
+          if (!result.ok) throw result.error.error;
+          continue;
+        }
+        expect(result.ok).toBe(false);
+        if (result.ok)
+          throw new Error("Expected the lowered allowance to refuse");
+        expect(result.error.error).toMatchObject({
+          limit: {
+            setting: "javascript.member_mutation_alias_states",
+            effective_value: 8,
+            source: "runtime",
+          },
+        });
+      } finally {
+        await worker.close();
+      }
+    }
+  } finally {
+    await scope.close();
   }
 });
 
@@ -701,7 +763,13 @@ it("formats a real worker's declined semantic budget once", async () => {
 });
 
 // The handshake mirrors the real server: only Node.js reports an enforced V8 heap limit.
-const resourceFailureWorker = (heapLimit: string) =>
+const resourceFailureWorker = (
+  heapLimit: string,
+  failure: { readonly resource: string; readonly limits: unknown } = {
+    resource: "memory",
+    limits: null,
+  },
+) =>
   new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 30_000 }, (request) =>
     spawnOwnedProviderProcess({
       ...request,
@@ -711,7 +779,7 @@ const resourceFailureWorker = (heapLimit: string) =>
 process.stdout.write(JSON.stringify({ kind: "ready", heap_limit_bytes: heap }) + "\\n");
 require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {
   const { id } = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ kind: "failure", id, reason: "resource", resource: "memory", limits: null, message: "fixture" }) + "\\n");
+  process.stdout.write(JSON.stringify({ kind: "failure", id, reason: "resource", ...${JSON.stringify(failure)}, message: "fixture" }) + "\\n");
 });`,
       ],
     }),
@@ -744,6 +812,56 @@ it("reports the worker heap limit only when the runtime enforces V8 heap flags",
               worker_timeout_ms: 30_000,
             },
     });
+  } finally {
+    await worker.close();
+  }
+});
+
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  // The fixture reports the allowance the parent sent, as the real worker does.
+  const worker = new JavaScriptAnalysisWorker(
+    {
+      heapMb: 128,
+      timeoutMs: 30_000,
+      memberMutationAllowance: { aliasStates: 4096, source: "runtime" },
+    },
+    (request) =>
+      spawnOwnedProviderProcess({
+        ...request,
+        arguments: [
+          "-e",
+          `process.stdout.write(JSON.stringify({ kind: "ready", heap_limit_bytes: process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null }) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "resource", resource: "cpu", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "fixture" }) + "\\n");
+});`,
+        ],
+      }),
+  );
+  try {
+    const result = await worker.analyze(
+      source("app.mjs", "export const observed = 7;"),
+      { nodes: 100, unknowns: 100 },
+    );
+    if (result.ok) throw new Error("expected a reported resource failure");
+    const error = result.error.error;
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("expected a resource constraint");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      reportedLimits: {
+        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 4096,
+        sent_source: "runtime",
+      },
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 4096,
+        source: "runtime",
+      },
+    });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.remediationAction).toContain("update_analysis_settings");
   } finally {
     await worker.close();
   }

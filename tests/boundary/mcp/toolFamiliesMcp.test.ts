@@ -29,7 +29,7 @@ const scopedServer = (
     undefined,
     new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     undefined,
-    "full",
+    undefined,
     undefined,
     advertisedToolFamilies,
   );

@@ -1,8 +1,9 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { legacyMachoPlatform } from "../domain/apple/machoPlatform.js";
 import {
-  legacyMachoPlatform,
-  type MachoVersionMinPlatform,
-} from "../domain/apple/machoPlatform.js";
-import { machoLoadCommandName } from "../domain/apple/machoLoadCommandCodes.js";
+  LC,
+  machoLoadCommandName,
+} from "../domain/apple/machoLoadCommandCodes.js";
 import type { MachoCommandNames } from "./MachoCommandNames.js";
 
 const PLATFORM_NAMES = new Map<number, string>([
@@ -53,26 +54,34 @@ const DYLIBS = new Set([
   "LC_LOADFVMLIB",
   "LC_PREBOUND_DYLIB",
 ]);
+// Fixed-VM and prebound library commands carry fields after the name that this
+// projection does not decode.
+const UNDECODED_STRING_COMMANDS = new Set<number>([
+  LC.LOADFVMLIB,
+  LC.IDFVMLIB,
+  LC.FVMFILE,
+  LC.PREBOUND_DYLIB,
+]);
 const STRING_FIELDS = new Map<number, string>([
-  [0x6, "name"],
-  [0x7, "name"],
-  [0x9, "name"],
-  [0x10, "name"],
-  [0xc, "name"],
-  [0xd, "name"],
-  [0x80000018, "name"],
-  [0x8000001f, "name"],
-  [0x20, "name"],
-  [0x80000023, "name"],
-  [0xe, "name"],
-  [0xf, "name"],
-  [0x12, "umbrella"],
-  [0x13, "sub_umbrella"],
-  [0x14, "client"],
-  [0x15, "sub_library"],
-  [0x8000001c, "path"],
-  [0x27, "name"],
-  [0x39, "triple"],
+  [LC.LOADFVMLIB, "name"],
+  [LC.IDFVMLIB, "name"],
+  [LC.FVMFILE, "name"],
+  [LC.PREBOUND_DYLIB, "name"],
+  [LC.LOAD_DYLIB, "name"],
+  [LC.ID_DYLIB, "name"],
+  [LC.LOAD_WEAK_DYLIB, "name"],
+  [LC.REEXPORT_DYLIB, "name"],
+  [LC.LAZY_LOAD_DYLIB, "name"],
+  [LC.LOAD_UPWARD_DYLIB, "name"],
+  [LC.LOAD_DYLINKER, "name"],
+  [LC.ID_DYLINKER, "name"],
+  [LC.SUB_FRAMEWORK, "umbrella"],
+  [LC.SUB_UMBRELLA, "sub_umbrella"],
+  [LC.SUB_CLIENT, "client"],
+  [LC.SUB_LIBRARY, "sub_library"],
+  [LC.RPATH, "path"],
+  [LC.DYLD_ENVIRONMENT, "name"],
+  [LC.TARGET_TRIPLE, "triple"],
 ]);
 
 const bytesText = (input: Uint8Array, fixed: boolean) => {
@@ -80,9 +89,7 @@ const bytesText = (input: Uint8Array, fixed: boolean) => {
   const bytes = end < 0 ? input : input.subarray(0, end);
   try {
     return {
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text: decodeStrictUtf8(bytes, "preserve"),
       bytesHex: null,
     };
   } catch {
@@ -344,7 +351,7 @@ export const projectMachoBinary = (
       });
     }
     if (row.commandString !== undefined) {
-      decoded = ![0x6, 0x7, 0x9, 0x10].includes(row.command);
+      decoded = !UNDECODED_STRING_COMMANDS.has(row.command);
       const name = textFact(row.commandString, false, commandLimitations);
       const field = STRING_FIELDS.get(row.command) ?? "name";
       fields[field] =
@@ -441,8 +448,7 @@ export const projectMachoBinary = (
       decoded = true;
       fields.version = version(row.legacyBuild.version);
       fields.sdk = version(row.legacyBuild.sdk);
-      const platform = ([0x24, 0x25, 0x2f, 0x30].indexOf(row.command) +
-        1) as MachoVersionMinPlatform;
+      const platform = row.legacyBuild.platform;
       const effective = legacyMachoPlatform(platform, binary.header.cpuType);
       builds.push({
         platform:

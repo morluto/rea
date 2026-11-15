@@ -62,7 +62,7 @@ const afterValidation = async <T>(
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed ${stage}: ${path}`,
-        { cause },
+        { cause, integrityCheck: "container-identity" },
       );
     throw cause;
   }
@@ -119,6 +119,7 @@ export const readStableArtifact = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Artifact changed before open: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       assertArtifactReadActive(signal);
       // A raced descriptor size must not allocate beyond the selected budget.
@@ -172,6 +173,7 @@ export const readStableArtifact = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Artifact changed during read: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       assertArtifactReadActive(signal);
       onValidatedState?.(initial);
@@ -197,6 +199,7 @@ export const assertStableArtifactState = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Artifact changed since acquisition: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   assertArtifactReadActive(signal);
 };

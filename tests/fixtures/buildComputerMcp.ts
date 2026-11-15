@@ -1,4 +1,5 @@
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../../src/desktop/AgentEnvComputer.js";
 import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,11 +42,12 @@ const FIRST_READ: SettleTiming = {
   boundMs: 0,
 };
 
-/** An MCP client of a REA server whose build computers reach the fakes through `environment` and read apps with `settle`. */
+/** An MCP client of a REA server whose build computers reach the fakes through `environment`, read apps with `settle` and start on `startTiming`. */
 export const connectBuildServer = async (
   environment: Readonly<Record<string, string>>,
   settle: BuildSettle = FIRST_READ,
   defaults?: BuildComputerDefaults,
+  startTiming?: ComputerStartTiming,
 ): Promise<Client> => {
   const session = createTestBinarySession(() => {
     throw new Error("build computers must not start a deep provider");
@@ -55,11 +57,13 @@ export const connectBuildServer = async (
     {
       environment: {
         ...hostEnvironment,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         ...environment,
       },
       desktopBuildSettle: settle,
       desktopBuildDefaults: defaults ?? (await isolatedBuildDefaults()),
+      ...(startTiming === undefined
+        ? {}
+        : { desktopBuildStartTiming: startTiming }),
     },
   );
   const client = new Client({ name: "build-computer-mcp", version: "1" });

@@ -343,9 +343,18 @@ it.each([
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Mismatched FAT slice was admitted");
-    expect(result.error.message).toContain(
-      "Selected lipo slice does not identify exactly one FAT entry",
-    );
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining(
+            "Selected lipo slice does not identify exactly one FAT entry",
+          ),
+        },
+      ],
+    });
   },
 );
 

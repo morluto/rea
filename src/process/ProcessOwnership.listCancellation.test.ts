@@ -40,7 +40,7 @@ it.each(
     expect(failure.reason).toBe(reason);
     expect(failure.cause).toBe(native);
     expect(processList).toHaveBeenCalledTimes(1);
-    expect(processList.mock.calls[0]?.[0]).toBe("ps");
+    expect(processList.mock.calls[0]?.[0]).toMatch(/(?:^|\/)ps$/u);
     expect(processList.mock.calls[0]?.[2]?.signal).toBe(controller.signal);
   },
 );

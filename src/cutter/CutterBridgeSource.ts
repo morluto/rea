@@ -14,6 +14,21 @@ const PACKAGED_PLUGIN = new URL(
 export const packagedCutterPluginPath = (plugin = PACKAGED_PLUGIN): string =>
   fileURLToPath(plugin);
 
+/**
+ * What to do when a session does not run the packaged plugin. A plugin with
+ * no published digest still runs, but REA cannot tell which source it is.
+ */
+export const cutterBridgeSourceRecovery = (
+  source: CutterBridgeSource,
+  plugin = PACKAGED_PLUGIN,
+): string | undefined => {
+  if (source === "packaged") return undefined;
+  const recopy = `Copy ${packagedCutterPluginPath(plugin)} into Cutter's plugins/python directory, restart Cutter, and list sessions again.`;
+  return source === "unknown"
+    ? `The running plugin publishes no SHA-256, so its source is unknown. ${recopy}`
+    : recopy;
+};
+
 const packagedDigests = new Map<string, string>();
 
 /**

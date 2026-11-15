@@ -12,9 +12,9 @@ import {
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
@@ -166,9 +166,7 @@ export const preparePcapNativeBound = async (
     return { nativeBound, limitations };
   } catch (cause) {
     if (signal?.aborted === true && !(cause instanceof AnalysisError))
-      throw new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      });
+      throw cancelledBy(operation, signal);
     if (cause instanceof AnalysisError) throw cause;
     const reason =
       "Cannot establish the selected Linux resource limiter before processing capture bytes.";

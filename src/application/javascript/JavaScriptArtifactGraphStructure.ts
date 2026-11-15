@@ -657,7 +657,7 @@ const createFileTarget = (
           text_status: file.text.included ? "included" : file.text.reason,
           parse_status:
             javascript?.parse_status ?? (skipped ? "skipped" : null),
-          ...(javascript?.analysis_coverage !== undefined
+          ...(javascript !== null
             ? { analysis_coverage: javascript.analysis_coverage }
             : javascript === null && file.kind === "javascript"
               ? {

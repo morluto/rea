@@ -251,7 +251,9 @@ it("rejects a directory configured as the firmware engine executable", async () 
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
-    reason: expect.stringContaining(command),
+    reason: expect.stringContaining(
+      `REA_BINWALK_COMMAND is not a readable executable regular file: ${command}: Configured path is not a regular file`,
+    ),
   });
 });
 
@@ -295,7 +297,9 @@ it("rejects a directory configured as the resource limiter executable", async ()
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
-    reason: expect.stringContaining(limiter),
+    reason: expect.stringContaining(
+      `Resource limiter is not an executable regular file: ${limiter}: Configured path is not a regular file; provide util-linux prlimit`,
+    ),
   });
 });
 

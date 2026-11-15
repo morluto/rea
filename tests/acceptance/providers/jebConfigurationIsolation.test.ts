@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -92,7 +93,7 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
       const refusal = parseMcpToolError(
         await client.callTool(
           { name: "inspect_jeb_client", arguments: {} },
-          { toolDefinition: definition },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
         ),
       );
       expect(refusal.error).toMatchObject({
@@ -169,7 +170,7 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
     const refusal = parseMcpToolError(
       await client.callTool(
         { name: "inspect_jeb_client", arguments: {} },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       ),
     );
     expect(refusal.error).toMatchObject({

@@ -16,7 +16,7 @@ import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactReaderFailure,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -195,11 +195,11 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const active = this.#signal(signal);
     return this.#scope.run(async () => {
       const stored = this.#members.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `PyInstaller entry was not produced by this reader: ${entry.path}`,
-        );
+      assertProducedEntry(
+        entry,
+        stored?.entry,
+        `PyInstaller entry was not produced by this reader: ${entry.path}`,
+      );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(
           "format",
@@ -689,4 +689,10 @@ export class PyInstallerArtifactReader implements ArtifactReader {
 }
 
 const failure = (error: PyInstallerFailure): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(error.reason, error.message);
+  new ArtifactReaderFailure(
+    error.reason,
+    error.message,
+    error.reason === "integrity"
+      ? { integrityCheck: error.integrityCheck }
+      : undefined,
+  );
