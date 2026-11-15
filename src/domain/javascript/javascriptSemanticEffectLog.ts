@@ -512,9 +512,11 @@ export const bindingMemberEffectMayPrecede = (
   );
 
 /**
- * Whether a recorded member write to `binding`'s object, or an escape of it,
- * may run before every read `observedAt` names for it. `observedAt` returns
- * undefined for an effect the reader does not ask about.
+ * Whether a recorded member write to `binding`'s object, or (with
+ * `"member-effects"`) an escape of it, may run before every read `observedAt`
+ * names for it. `observedAt` returns undefined for an effect the reader does
+ * not ask about. A reader that asks only about writes skips the escapes, which
+ * grow with every call through the binding.
  */
 export const bindingMemberEffectMayPrecedeReads = (
   state: JavaScriptSemanticAnalysisState,
@@ -524,10 +526,11 @@ export const bindingMemberEffectMayPrecedeReads = (
     effect: MemberWrite,
   ) => readonly t.Node[] | undefined,
   ordering: SemanticEffectOrdering,
+  observes: "member-writes" | "member-effects" = "member-effects",
 ): boolean => {
   for (const [kind, effects] of [
     ["member-write", binding.memberWrites],
-    ["escape", binding.escapedPaths],
+    ["escape", observes === "member-effects" ? binding.escapedPaths : []],
   ] as const)
     for (const effect of effects) {
       const reads = observedAt(kind, effect);

@@ -973,12 +973,12 @@ const computeOriginalBuiltinReceiver = (
       bindingMemberEffectMayPrecedeReads(
         state,
         receiver,
-        (kind, { path }) =>
-          kind === "member-write" &&
+        (_, { path }) =>
           affectsBuiltinPath(path, [...receiverPath, method])
             ? [node]
             : undefined,
         "top-level",
+        "member-writes",
       )) ||
     sources.some((source) => {
       const shared =
