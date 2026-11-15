@@ -3,15 +3,15 @@ import { isUtf8 } from "node:buffer";
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "./managedDecodeBudget.js";
 import {
   managedFailure,
   ManagedReaderFailure,
-} from "./ManagedReaderFailure.js";
+} from "./managedReaderFailure.js";
 import {
   computeRowSize,
   type RowSizeContext,
-} from "./ManagedMetadataRowSizes.js";
+} from "./managedMetadataRowSizes.js";
 
 export const METADATA_TABLE_NAMES = [
   "Module",

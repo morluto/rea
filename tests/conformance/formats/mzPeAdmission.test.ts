@@ -11,7 +11,7 @@ import {
 } from "../../../src/domain/native/nativeAotPe.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import type { DesktopFile } from "../../../src/domain/desktopApplication.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { readPeHeaders } from "../../../src/artifacts/pe/PeResourceLayout.js";
 import { peResourceFixture } from "../../../src/artifacts/pe/PeResources.fixture.js";
