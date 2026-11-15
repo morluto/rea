@@ -65,6 +65,16 @@ const moduleIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
+/**
+ * What a managed inspection established about the CLI metadata: none present,
+ * read in full or in part, or present but unreadable.
+ */
+export const managedMetadataStatusSchema = z.enum([
+  "absent",
+  ...knownCoverageStatusSchema.options,
+  "malformed",
+]);
+
 const managedArtifactReferenceSchema = z.object({
   path: z.string().min(1),
   sha256: digestSchema,
@@ -73,7 +83,7 @@ const managedArtifactReferenceSchema = z.object({
 });
 
 const managedMetadataSummarySchema = z.object({
-  status: z.enum(["absent", "complete", "partial", "malformed"]),
+  status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
 });
@@ -520,7 +530,7 @@ export const managedArtifactInspectionSchema = z.object({
     ),
   }),
   metadata: z.object({
-    status: z.enum(["absent", "complete", "partial", "malformed"]),
+    status: managedMetadataStatusSchema,
     version: z.string().nullable(),
     stream_names: z.array(z.string()),
     table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),

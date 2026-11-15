@@ -19,6 +19,15 @@ export const knownCoverageStatusSchema = coverageStatusSchema.exclude([
 export type KnownCoverageStatus = z.infer<typeof knownCoverageStatusSchema>;
 
 /**
+ * Coverage of a producer that either covered its whole universe or cannot
+ * tell how much it covered; it never measures a known gap, so it never
+ * reports `partial`.
+ */
+export const completeOrUnknownCoverageSchema = coverageStatusSchema.exclude([
+  "partial",
+]);
+
+/**
  * Fold the coverage of the inputs a result depends on. Unknown wins: one input
  * that cannot tell makes the whole unknown, even beside a known gap. Otherwise
  * any partial input makes the whole partial. Only all-complete inputs are

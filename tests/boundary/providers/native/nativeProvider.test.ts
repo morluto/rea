@@ -16,7 +16,6 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
@@ -56,6 +55,7 @@ import {
   nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
 import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/domain/native/nativeCommandOutput.js";
 
 /** The file runner identifies selected .plist inputs as XML. */
 const writeFixturePlist = async (path: string): Promise<void> => {

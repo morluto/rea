@@ -14,7 +14,7 @@ import {
   elfRelativeRelocationType,
   elfRelocationWidth,
 } from "../metadata/ElfPointerRelocations.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
 
 /** One symbol-table row. `section` 0 is an undefined import. */
