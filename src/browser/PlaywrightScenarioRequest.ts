@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -233,7 +234,10 @@ const sendFromPage = (
     const timer =
       remaining === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), remaining);
+        : setTimeout(
+            () => controller.abort(OwnerCancellation.deadlineElapsed),
+            remaining,
+          );
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -279,7 +283,7 @@ const sendFromPage = (
         }
       return { status: answer.status };
     } catch (cause: unknown) {
-      controller.abort();
+      controller.abort(OwnerCancellation.noLongerNeeded);
       return {
         error: cause instanceof Error ? cause.message : String(cause),
       };

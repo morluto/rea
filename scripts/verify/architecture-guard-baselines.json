@@ -1,12 +1,5 @@
 {
-  "abort-without-reason": {
-    "src/browser/CdpObservationSession.ts": 1,
-    "src/browser/CdpPageCapture.ts": 1,
-    "src/browser/CdpTargetSession.ts": 2,
-    "src/browser/PlaywrightScenarioRequest.ts": 2,
-    "src/browser/PlaywrightScenarioServiceWorkers.ts": 1,
-    "src/browser/execution/CdpRuntimeSession.ts": 3
-  },
+  "abort-without-reason": {},
   "analysis-cancelled-constructor": {
     "src/application/AnalysisContextQueries.ts": 6,
     "src/application/AnalysisDocument.ts": 3,
