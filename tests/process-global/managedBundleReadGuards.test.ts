@@ -211,7 +211,7 @@ it("preserves the view operation and caller reason when bundle I/O is cancelled"
       undefined,
       { evidenceBundlePath: path, resources, signal: controller.signal },
     );
-    await held.firstRead;
+    await held.reached(pending, "first file read");
     controller.abort(reason);
     held.release();
     const result = await pending;

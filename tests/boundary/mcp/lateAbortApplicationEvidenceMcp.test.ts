@@ -1,10 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
-import {
-  createTestBinarySession,
-  createDeferred,
-} from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import type { GoBinary } from "../../../src/domain/go/goBinary.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -17,8 +14,7 @@ import type { JavaScriptRuntimeTargetList } from "../../../src/domain/javascript
 import { waitFor } from "../../support/testWait.js";
 
 it("retains late-cancelled Go artifact Evidence through MCP and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const goInspection = phaseGate();
   const controller = new AbortController();
   const report: GoBinary = {
     artifact: { path: "/artifacts/example", sha256: "a".repeat(64), bytes: 10 },
@@ -36,8 +32,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     close: async () => {},
     identity: { id: "fixture", name: "fixture", version: "1" },
     inspect: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await goInspection.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(report);
     },
@@ -50,7 +45,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    goInspection.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -62,9 +57,9 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { name: "inspect_go_binary", arguments: { path: report.artifact.path } },
     { signal: controller.signal },
   );
-  await awaitAcknowledgement(started.promise, call, "MCP observation");
+  await goInspection.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  goInspection.release();
   await expect(call).rejects.toThrow();
   await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
@@ -78,8 +73,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
 });
 
 it("retains late-cancelled Inspector target Evidence through MCP and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const inspectorObservation = phaseGate();
   const controller = new AbortController();
   const targetList: JavaScriptRuntimeTargetList = {
     runtime: { product: "Node.js", protocol_version: "1.0", v8_version: null },
@@ -94,8 +88,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
       version: "1",
     }),
     listTargets: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await inspectorObservation.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(targetList);
     },
@@ -114,7 +107,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    inspectorObservation.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -129,9 +122,9 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     },
     { signal: controller.signal },
   );
-  await awaitAcknowledgement(started.promise, call, "MCP observation");
+  await inspectorObservation.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  inspectorObservation.release();
   await expect(call).rejects.toThrow();
   await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
@@ -145,8 +138,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
 });
 
 it("records late-cancelled Browser target Evidence and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const browserObservation = phaseGate();
   const controller = new AbortController();
   const targetList: BrowserTargetList = {
     browser: {
@@ -163,8 +155,7 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
   const browser: BrowserObservationPort = {
     identity: () => ({ id: "fixture-browser", name: "fixture", version: "1" }),
     listTargets: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await browserObservation.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(targetList);
     },
@@ -201,7 +192,7 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    browserObservation.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -216,9 +207,9 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     },
     { signal: controller.signal },
   );
-  await awaitAcknowledgement(started.promise, call, "MCP observation");
+  await browserObservation.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  browserObservation.release();
   await expect(call).rejects.toThrow();
   await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(

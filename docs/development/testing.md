@@ -595,6 +595,14 @@ affected consumer.
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
 
+Every provider capability that `src/composition/capabilityDeclarations.ts`
+binds to a provider needs an entry in
+`tests/conformance/providerCapabilityCases.ts`. The entry is either a
+CLI, MCP or acceptance test that names one of the capability's operations, or an
+exemption that states why no such case exists.
+`tests/conformance/providerCapabilityConformance.test.ts` iterates the
+declarations, so a new capability fails the suite until it has one.
+
 For prerequisite recovery, include a case where only the wrong alternative is
 configured: Unblob cannot enable Binwalk inspection, and Binwalk cannot enable
 Unblob extraction. Check the final readiness or capability output retains the
@@ -865,7 +873,8 @@ delay after dispatch does not establish that phase. Use markers, barriers, or
 owned cleanup seams while preserving real cleanup where feasible.
 `tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
 holds a late handshake or in-flight work at a boundary and releases it with a
-value or a rejection, `cancelDuringCleanup`
+value or a rejection, `phaseArrival` marks a boundary whose work waits on
+something else (an abort, another owner), `cancelDuringCleanup`
 cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise

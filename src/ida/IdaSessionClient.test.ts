@@ -10,8 +10,11 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { z } from "zod";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   createIdaTarget,
   RecordingIdaMcp,
@@ -899,18 +902,9 @@ describe("attached IDA function failure handling", () => {
   it("drains in-flight read-only work on cancellation before closing its proxy", async () => {
     const { producer, client } = await fixture();
     await client.execute("health", {});
-    let release: (() => void) | undefined;
-    let notify: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
+    const readOnlyCall = phaseGate();
     producer.beforeCall = async (name) => {
-      if (name === "decompile_function") {
-        notify?.();
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      }
+      if (name === "decompile_function") await readOnlyCall.hold();
     };
     const controller = new AbortController();
     const call = client.execute(
@@ -919,11 +913,11 @@ describe("attached IDA function failure handling", () => {
       { signal: controller.signal },
     );
     try {
-      await awaitAcknowledgement(started, call, "IDA read-only call");
+      await readOnlyCall.reached(call, "IDA read-only call");
       controller.abort();
       const close = client.close();
       expect(producer.closes).toBe(0);
-      release?.();
+      readOnlyCall.release();
       const result = await call;
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -931,7 +925,7 @@ describe("attached IDA function failure handling", () => {
       expect(producer.closes).toBe(1);
     } finally {
       controller.abort();
-      release?.();
+      readOnlyCall.release();
       try {
         await call;
       } finally {
@@ -2303,10 +2297,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   const { root, target } = await createIdaTarget();
   roots.push(root);
   let deliver!: (response: Response) => void;
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const httpAcquisition = phaseArrival();
   const response = new Promise<Response>((resolve) => {
     deliver = resolve;
   });
@@ -2318,7 +2309,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   vi.stubGlobal(
     "fetch",
     vi.fn(() => {
-      entered();
+      httpAcquisition.arrive();
       return response;
     }),
   );
@@ -2336,7 +2327,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   );
   const executing = client.execute("health", {});
   try {
-    await awaitAcknowledgement(started, executing, "IDA HTTP acquisition");
+    await httpAcquisition.reached(executing, "IDA HTTP acquisition");
     const result = await executing;
     expect(result).toMatchObject({
       ok: false,

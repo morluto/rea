@@ -121,7 +121,7 @@ for (const relative of [
   "../metadata/ElfPointerRelocations",
   "../exports/NativeExportParser",
   "../metadata/ElfImage",
-  "../metadata/NativeSectionDirectory",
+  "../../domain/native/nativeSectionDirectory",
   "../../domain/elfRelocation",
   "../../domain/elfDynamicEntry",
 ]) {

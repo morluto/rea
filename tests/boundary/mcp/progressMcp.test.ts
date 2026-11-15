@@ -13,7 +13,7 @@ import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 describe("ordinary MCP progress and cancellation", () => {
   it("advances MCP progress when provider waiting does not advance completed work", async () => {
@@ -107,29 +107,21 @@ describe("ordinary MCP progress and cancellation", () => {
   it("propagates client cancellation to the active provider request", async () => {
     let providerObservedCancellation = false;
     let providerWasStarted = false;
-    let markProviderStarted!: () => void;
     let markProviderFinished!: () => void;
-    let releaseProvider!: () => void;
-    const providerStarted = new Promise<void>((resolve) => {
-      markProviderStarted = resolve;
-    });
     const providerFinished = new Promise<void>((resolve) => {
       markProviderFinished = resolve;
     });
-    const providerGate = new Promise<void>((resolve) => {
-      releaseProvider = resolve;
-    });
+    const providerRequest = phaseGate();
     const analysis: AnalysisOperationPort = {
       execute: async (operation, _parameters, options) => {
         const onAbort = () => {
           providerObservedCancellation = true;
-          releaseProvider();
+          providerRequest.release();
         };
         options?.signal?.addEventListener("abort", onAbort, { once: true });
         providerWasStarted = true;
-        markProviderStarted();
         try {
-          await providerGate;
+          await providerRequest.hold();
           return err(new AnalysisCancelledError(operation));
         } finally {
           options?.signal?.removeEventListener("abort", onAbort);
@@ -149,13 +141,13 @@ describe("ordinary MCP progress and cancellation", () => {
         { name: "current_address", arguments: {} },
         { signal: controller.signal },
       );
-      await awaitAcknowledgement(providerStarted, request, "provider request");
+      await providerRequest.reached(request, "provider request");
       controller.abort();
       await expect(request).rejects.toThrow(/abort/iu);
       await expect.poll(() => providerObservedCancellation).toBe(true);
     }, [
       async () => {
-        releaseProvider();
+        providerRequest.release();
         if (providerWasStarted) await providerFinished;
       },
       () => client.close(),

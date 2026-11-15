@@ -9,7 +9,7 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
@@ -215,21 +215,13 @@ it.runIf(supportedHost)(
   "cancels queued inspections promptly and drains the running inspection when closing",
   async () => {
     const { workspace, path } = await fixture();
-    let release: (() => void) | undefined;
-    let entered: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
+    const launch = phaseGate();
     let launches = 0;
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
       async (input) => {
         launches++;
-        entered?.();
-        await gate;
+        await launch.hold();
         return spawnOwnedProviderProcess({
           ...input,
           arguments: ["-e", "process.exit(2)"],
@@ -240,11 +232,11 @@ it.runIf(supportedHost)(
       SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
-      release?.();
+      launch.release();
       await provider.close();
     });
     const first = provider.inspect({ path });
-    await awaitAcknowledgement(started, first, "pwntools launch");
+    await launch.reached(first, "pwntools launch");
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
     const reason = { stage: "queued" };
@@ -259,7 +251,7 @@ it.runIf(supportedHost)(
     const queued = provider.inspect({ path });
     const closing = provider.close();
     const late = provider.inspect({ path });
-    release?.();
+    launch.release();
     const [firstResult, queuedResult, lateResult] = await Promise.all([
       first,
       queued,
