@@ -237,8 +237,6 @@ describe("update maintenance notices", () => {
         {
           client: "mcporter",
           config_path: "config/mcporter.json",
-          command: [],
-          command_identity: "unknown",
           state: "unknown",
           remediation: "Set an absolute MCPORTER_CONFIG.",
         },
