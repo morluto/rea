@@ -1,5 +1,6 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
+import { allKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
@@ -315,8 +316,9 @@ export const parseElfUnwindRanges = (
   );
   const gnu = gnuHeaders[0];
 
-  const named = (name: string): NativeSection[] =>
-    directory.sections.filter((section) => section.name === name);
+  const byName = keyedBy(directory.sections, ({ name }) => name);
+  const named = (name: string): readonly NativeSection[] =>
+    allKeyed(byName, name);
   const ehSections = named(".eh_frame");
   const hdrSections = named(".eh_frame_hdr");
   const debugSections = named(".debug_frame");
@@ -1112,7 +1114,7 @@ const fileRange = (section: NativeSection): FileRange | null => {
 const resolveGotBase = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-  named: (name: string) => NativeSection[],
+  named: (name: string) => readonly NativeSection[],
 ): { readonly address: bigint; readonly source: string } | null => {
   const dynamicProgram = directory.programs.find(
     (program) => program.type === 2,
