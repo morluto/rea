@@ -5,7 +5,7 @@ import {
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 
 /** PID publication is decimal; allow the largest safe PID and a CRLF ending. */
 const TARGET_PID_FILE_MAX_BYTES = String(Number.MAX_SAFE_INTEGER).length + 2;

@@ -87,7 +87,7 @@ import {
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
 } from "../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {

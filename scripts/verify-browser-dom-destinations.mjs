@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import { newPlaywrightCdpSession } from "../dist/browser/PlaywrightCdpSession.js";
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";

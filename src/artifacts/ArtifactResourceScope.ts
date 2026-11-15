@@ -12,7 +12,7 @@ import {
 } from "./ArtifactReader.js";
 import type { SafeOutputTree } from "./SafeOutputTree.js";
 import type { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 
 /** One artifact resource and the capability that owns its cleanup. */
 export type ArtifactResourceOwner =

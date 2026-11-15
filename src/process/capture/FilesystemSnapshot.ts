@@ -20,7 +20,7 @@ import type {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/AnalysisCleanupLease.js";
 import {
   normalizeCaptureFailure,
   describeProcessCaptureExecutionFailure,

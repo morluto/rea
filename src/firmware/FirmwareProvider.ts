@@ -65,7 +65,7 @@ import {
   firmwarePhaseInterruption,
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {

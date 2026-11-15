@@ -1,4 +1,4 @@
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import type { NativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";

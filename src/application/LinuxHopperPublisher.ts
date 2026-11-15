@@ -8,7 +8,7 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,

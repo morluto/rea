@@ -100,7 +100,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
   hashFile,

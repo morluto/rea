@@ -11,7 +11,7 @@ import {
 } from "../process/ProcessInspectionCancellation.js";
 import { randomUUID } from "node:crypto";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
   type DesktopCaptureEvent,

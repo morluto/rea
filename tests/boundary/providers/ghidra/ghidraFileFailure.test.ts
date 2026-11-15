@@ -12,7 +12,7 @@ import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourc
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../../src/resources/AnalysisCleanupLease.js";
 import { OwnedRegularFileOperationFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {

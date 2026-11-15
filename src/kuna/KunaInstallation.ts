@@ -19,7 +19,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import {
   hashStableFile,
   observeStableFile,

@@ -11,7 +11,7 @@ import {
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.

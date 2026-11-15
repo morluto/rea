@@ -8,7 +8,7 @@ import {
 } from "../../../src/firmware/FirmwareFiles.js";
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { firmwareFailureDialect } from "../../../src/firmware/FirmwareFailures.js";
 import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";

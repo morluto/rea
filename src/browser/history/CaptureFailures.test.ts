@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
