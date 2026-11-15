@@ -8,6 +8,7 @@ import {
   compareCountedBaseline,
   recordLoweredBaseline,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -305,6 +306,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
     );
 };
+
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  localCompletenessEnumCount,
+  ["src/domain/coverage.ts"],
+);
 
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
