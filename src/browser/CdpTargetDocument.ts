@@ -36,13 +36,16 @@ export type CdpRootNavigation =
 /**
  * The selected target's page generation: one document tracker fed by the
  * target session's root-frame navigation events and by the frame-tree replies
- * its consumers read. Each consumer decides what a navigation means for its
- * evidence (scope, coverage, timeline rows), but none classifies root-frame
- * identity or compares documents itself.
+ * its consumers read, plus one per subframe REA has seen commit. Each consumer
+ * decides what a navigation means for its evidence (scope, coverage, timeline
+ * rows), but none classifies frame identity or compares documents itself.
  */
 export class CdpTargetDocument {
   readonly #tracker: CdpDocumentTracker;
   readonly #listeners = new Set<(navigation: CdpRootNavigation) => void>();
+  /** Each subframe's document since it was first seen; replaced on a proven change. */
+  readonly #frames = new Map<string, CdpDocumentTracker>();
+  readonly #frameListeners = new Set<(frameId: string) => void>();
   readonly #rootFrameBefore = new WeakMap<CdpReceivedEvent, string>();
   #unidentified = false;
   #unsubscribe: (() => void) | undefined;
@@ -100,8 +103,33 @@ export class CdpTargetDocument {
     return this.#rootFrameBefore.get(event) ?? this.#tracker.current.frameId;
   }
 
-  /** Observe a frame-tree reply; undefined when it cannot identify its root. */
+  /**
+   * Observe a frame-tree reply; undefined when it cannot identify its root.
+   * Subframes not seen before start their document here; a reply never
+   * replaces a subframe document that navigation events are following.
+   */
   observeTree(tree: CdpFrameTree): CdpDocumentComparison | undefined {
+    for (const node of tree.frames) {
+      const { frameId, identityIssue, parentRelation, parentIssue, loaderId } =
+        node.facts;
+      if (
+        node === tree.root ||
+        frameId === null ||
+        identityIssue !== null ||
+        parentIssue !== null ||
+        parentRelation !== "child" ||
+        this.#frames.has(frameId)
+      )
+        continue;
+      this.#frames.set(
+        frameId,
+        new CdpDocumentTracker({
+          frameId,
+          loaderId: node.facts.loaderIssue === null ? loaderId : undefined,
+          url: observedFrameUrl(node.url),
+        }),
+      );
+    }
     const document = cdpRootDocument(tree);
     return document === undefined ? undefined : this.observe(document);
   }
@@ -113,6 +141,21 @@ export class CdpTargetDocument {
    */
   compareSelected(document: CdpDocumentIdentity): CdpDocumentComparison {
     return compareCdpDocuments(this.#tracker.selected, document);
+  }
+
+  /**
+   * Whether a committed navigation of subframe `frameId` could not be
+   * compared with its earlier document (no loader), so what it registered
+   * earlier may belong to that document. Cleared only by a proven change.
+   */
+  frameDocumentUnknown(frameId: string): boolean {
+    return this.#frames.get(frameId)?.unknown ?? false;
+  }
+
+  /** Receive each subframe whose committed document was proven to change. */
+  onFrameDocumentChanged(listener: (frameId: string) => void): () => void {
+    this.#frameListeners.add(listener);
+    return () => this.#frameListeners.delete(listener);
   }
 
   /** Observe a root document a consumer already identified from a reply. */
@@ -133,6 +176,11 @@ export class CdpTargetDocument {
     const frame = cdpFrameEvent(event);
     if (frame === undefined) return;
     const { facts } = frame;
+    if (facts.kind === "detached") {
+      if (facts.identityIssue === null && facts.frameId !== null)
+        this.#frames.delete(facts.frameId);
+      return;
+    }
     // A requested navigation commits nothing; attach and detach carry no document.
     if (facts.kind !== "navigated" && facts.kind !== "within_document") return;
     const identity = selectCdpFrameIdentity(facts, current.frameId);
@@ -152,8 +200,24 @@ export class CdpTargetDocument {
         this.#notify({ kind: "unidentified", frame });
       return;
     }
-    if (identity.selection === "other" && !identity.isRootReplacement) return;
     const url = observedFrameUrl(frame.url);
+    if (identity.selection === "other" && !identity.isRootReplacement) {
+      if (facts.kind === "navigated")
+        this.#observeFrame({
+          frameId: identity.frameId,
+          loaderId: facts.loaderIssue === null ? facts.loaderId : undefined,
+          url,
+        });
+      // A same-document navigation keeps a known subframe's document. A
+      // subframe first seen this way starts with an unknown loader, so a
+      // later commit cannot prove what it registered meanwhile is stale.
+      else if (!this.#frames.has(identity.frameId))
+        this.#frames.set(
+          identity.frameId,
+          new CdpDocumentTracker({ frameId: identity.frameId, url }),
+        );
+      return;
+    }
     if (facts.loaderIssue !== null) {
       // A malformed loader cannot prove the document, but another root frame
       // still proves a change, which every consumer reports as one.
@@ -187,6 +251,18 @@ export class CdpTargetDocument {
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
     this.#listeners.clear();
+    this.#frameListeners.clear();
+  }
+
+  #observeFrame(observed: CdpDocumentIdentity): void {
+    const tracker = this.#frames.get(observed.frameId);
+    if (tracker === undefined) {
+      this.#frames.set(observed.frameId, new CdpDocumentTracker(observed));
+      return;
+    }
+    if (tracker.observe(observed) !== "changed") return;
+    this.#frames.set(observed.frameId, new CdpDocumentTracker(observed));
+    for (const listener of this.#frameListeners) listener(observed.frameId);
   }
 
   #notify(navigation: CdpRootNavigation): void {

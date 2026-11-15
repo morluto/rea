@@ -25,14 +25,14 @@ async function* scriptFiles(directory: string): AsyncGenerator<string> {
  *
  * The structural check is at the send owners: `CdpConnection.send` and the
  * Playwright session refuse an unregistered command before it reaches the
- * browser, and the Playwright session refuses an unregistered event name.
- * Type-checking the verifier scripts themselves is not practical (checkJs
- * over them and the built modules they import reports about 17,000 implicit
- * `any` errors), so the text scan below is only an early warning for
- * verifiers that rarely run. It sees string-literal sends only: a name built
- * at run time, passed through a variable, or compared against
- * `event.registered?.method` on a raw `CdpConnection.onEvent` subscription is
- * not scanned, and is caught only when that verifier runs.
+ * browser, and `CdpConnection.onRegisteredEvent` and the Playwright session
+ * refuse an unregistered event name when subscribing (see
+ * `verifierCdpEventPayloads.test.ts`). Type-checking the verifier scripts
+ * themselves is not practical (checkJs over them and the built modules they
+ * import reports about 17,000 implicit `any` errors), so the text scan below
+ * is only an early warning for verifiers that rarely run. It sees
+ * string-literal sends only: a name built at run time or passed through a
+ * variable is not scanned, and is caught only when that verifier runs.
  */
 describe("verifier CDP commands", () => {
   it("refuses an unregistered command at the connection before sending it", async () => {
