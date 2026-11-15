@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AnalysisControlLimit,
+  AnalysisParameterLimit,
   AnalysisInvocationSettingLimit,
   AnalysisLimit,
   AnalysisSettingId,
@@ -640,9 +641,7 @@ export const analysisParameterLimitSchema = z.strictObject({
   maximum: z.number(),
   default_value: z.number(),
   applies_at: z.literal("next_call"),
-}) satisfies z.ZodType<
-  Extract<AnalysisControlLimit, { readonly control_kind: "parameter" }>
->;
+}) satisfies z.ZodType<AnalysisParameterLimit>;
 
 /** The control a result records for a refusal: a setting or a request parameter. */
 export const analysisResultLimitSchema = z.union([

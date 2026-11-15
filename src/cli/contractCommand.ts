@@ -658,6 +658,18 @@ export const registerContractCommand = <
             );
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
+          // A composed command also takes its sources' options; a control
+          // its result records from a source is set by that option.
+          const resultBinding =
+            description.evidenceTargets === undefined
+              ? selected.inputBinding
+              : {
+                  ...selected.inputBinding,
+                  flags: {
+                    ...description.evidenceTargets.sourceFlags,
+                    ...selected.inputBinding.flags,
+                  },
+                };
           return projectCliResult(
             await run(
               admitted.value.input as z.input<Contract["inputSchema"]>,
@@ -701,7 +713,7 @@ export const registerContractCommand = <
               },
             ),
             selected.contract.outputSchema,
-            selected.inputBinding,
+            resultBinding,
           );
         }),
       );

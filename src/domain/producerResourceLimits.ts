@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { timerDurationMsSchema } from "./analysisResourceLimits.js";
-import type { AnalysisControlLimit } from "./analysisSettings.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 
 /** Per-call owned producer budgets. Each adapter advertises only consumed fields. */
 export const producerResourceLimitsSchema = z.strictObject({
@@ -50,7 +50,7 @@ export const producerLimitControl = (
   field: Exclude<keyof ProducerResourceLimits, "command_timeout_ms">,
   effectiveValue: number,
   defaultValue: number,
-): AnalysisControlLimit => ({
+): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter: `producer_limits.${field}`,
   effective_value: effectiveValue,

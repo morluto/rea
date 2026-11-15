@@ -14,6 +14,7 @@ import {
 import { jsonValueSchema } from "../jsonValue.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 const semanticRelationIdSchema = z
@@ -353,6 +354,8 @@ const graphCoverageSchema = z.strictObject({
       unit: z.enum(["items", "bytes", "milliseconds", "depth", "other"]),
     }),
   ),
+  /** The request parameters whose retention ceilings stopped this graph. */
+  controls: z.array(analysisParameterLimitSchema).min(1).exactOptional(),
   families: z.array(familyCoverageSchema).length(12),
 });
 

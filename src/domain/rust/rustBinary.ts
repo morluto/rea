@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { rustProducerLimitsField } from "./rustResourceLimits.js";
+import {
+  RUST_PRODUCER_DEFAULTS,
+  rustProducerLimitsField,
+} from "./rustResourceLimits.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
+import { producerLimitControl } from "../producerResourceLimits.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
@@ -63,6 +68,8 @@ export const rustcCommitSchema = z.strictObject({
       status: z.literal("partial"),
       reason: z.enum(["max_rustc_hashes", "report_bytes"]),
       effective_limit: z.int().positive(),
+      /** The request parameter that bounded retention, and how to change it. */
+      limit: analysisParameterLimitSchema.exactOptional(),
     })
     .exactOptional(),
   hashes: z
@@ -73,6 +80,39 @@ export const rustcCommitSchema = z.strictObject({
       }),
     )
     .min(1),
+});
+
+type RustcCoverage = NonNullable<z.infer<typeof rustcCommitSchema>["coverage"]>;
+
+/**
+ * Partial compiler-path coverage and the per-call control that bounded it:
+ * `max_rustc_hashes` for the path count, `producer_limits.output_bytes` for
+ * the complete-report allowance. Each adapter names the option that sets it.
+ */
+export const rustcPartialCoverage = (
+  reason: RustcCoverage["reason"],
+  effectiveLimit: number,
+): RustcCoverage => ({
+  status: "partial",
+  reason,
+  effective_limit: effectiveLimit,
+  limit:
+    reason === "report_bytes"
+      ? producerLimitControl(
+          "output_bytes",
+          effectiveLimit,
+          RUST_PRODUCER_DEFAULTS.output_bytes,
+        )
+      : {
+          control_kind: "parameter",
+          parameter: "max_rustc_hashes",
+          effective_value: effectiveLimit,
+          unit: "count",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: DEFAULT_RUSTC_HASH_LIMIT,
+          applies_at: "next_call",
+        },
 });
 
 /** One explicit local executable or library, independent of a disassembler target. */

@@ -27,6 +27,7 @@ import {
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
   rustBinarySchema,
+  rustcPartialCoverage,
   type InspectRustBinaryInput,
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
@@ -134,7 +135,11 @@ export class RustBinaryProvider implements RustBinaryPort {
             ...selected.limitations,
           ],
         };
-        retainCompilerPathsWithinReport(report, limits.output_bytes);
+        retainCompilerPathsWithinReport(
+          report,
+          limits.output_bytes,
+          rustcLimitation(image.rustc_commit),
+        );
         if (
           Buffer.byteLength(JSON.stringify(report), "utf8") >
           limits.output_bytes
@@ -235,7 +240,6 @@ const limitationsFor = (
         "Dependency indices contain a cycle. The cycle is reported and was not traversed.",
       ]
     : []),
-  ...rustcLimitation(image.rustc_commit),
 ];
 
 const unknownFormatLimitation = (
@@ -261,11 +265,11 @@ const rustcLimitation = (
     ];
   if (commit.coverage?.reason === "report_bytes")
     return [
-      "Compiler-path retention exhausted the complete-report byte allowance; retained hashes are a prefix and compiler coverage is partial. Dependency observations are independent. Increase producer_limits.output_bytes on the next call (CLI --producer-limits JSON) to raise report admission; no restart is required. Increasing max_rustc_hashes alone does not raise it.",
+      "Compiler-path retention exhausted the complete-report byte allowance; retained hashes are a prefix and compiler coverage is partial. Dependency observations are independent. Raise the control in rustc_commit.coverage.limit on the next call to raise report admission; no restart is required. Increasing max_rustc_hashes alone does not raise it.",
     ];
   if (commit.coverage?.status === "partial")
     return [
-      `Compiler-path retention reached max_rustc_hashes=${String(commit.coverage.effective_limit)}; the listed hashes are a prefix and compiler coverage is partial. Increase max_rustc_hashes on the next inspect_rust_binary call (CLI --max-rustc-hashes) to retain more paths; no restart is required. Dependency observations are independent. The complete-report byte allowance still applies.`,
+      `Compiler-path retention reached max_rustc_hashes=${String(commit.coverage.effective_limit)}; the listed hashes are a prefix and compiler coverage is partial. Raise the control in rustc_commit.coverage.limit on the next call to retain more paths; no restart is required. Dependency observations are independent. The complete-report byte allowance still applies.`,
     ];
   if (commit.hashes.length === 1)
     return [
@@ -276,19 +280,30 @@ const rustcLimitation = (
   ];
 };
 
-/** Optional inferred paths never displace independently observed dependency facts. */
+/**
+ * Optional inferred paths never displace independently observed dependency
+ * facts. The compiler guidance describes the retained result: the reader's
+ * guidance when every retained path fits, otherwise the trimming guidance,
+ * which names its control directly because no compiler record may survive.
+ */
 const retainCompilerPathsWithinReport = (
   report: RustBinary,
   maxOutputBytes: number,
+  compilerGuidance: readonly string[],
 ): void => {
   const commit = report.rustc_commit;
+  const withGuidance = [...report.limitations, ...compilerGuidance];
   if (
     commit === null ||
-    Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes
-  )
+    Buffer.byteLength(
+      JSON.stringify({ ...report, limitations: withGuidance }),
+    ) <= maxOutputBytes
+  ) {
+    report.limitations = withGuidance;
     return;
+  }
   const limitation =
-    "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call (CLI --producer-limits JSON); no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
+    "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {
     ...report,
     rustc_commit: null,
@@ -297,11 +312,7 @@ const retainCompilerPathsWithinReport = (
   const empty = {
     ...commit,
     hashes: [],
-    coverage: {
-      status: "partial" as const,
-      reason: "report_bytes" as const,
-      effective_limit: maxOutputBytes,
-    },
+    coverage: rustcPartialCoverage("report_bytes", maxOutputBytes),
   };
   const available =
     maxOutputBytes -
