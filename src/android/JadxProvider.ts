@@ -22,7 +22,10 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { AndroidMappingSource } from "../domain/android/androidMapping.js";
 import {
@@ -363,11 +366,11 @@ export class JadxProvider implements AndroidAnalysisPort {
       const outcome: Outcome =
         !retired.ok && !cleanup.ok
           ? err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 retired.error,
                 cleanup.error,
                 request.operation,
-              ).bindCleanupDependencies([retired.error, cleanup.error]),
+              ),
             )
           : !retired.ok
             ? retired
@@ -409,11 +412,11 @@ export class JadxProvider implements AndroidAnalysisPort {
             "close_binary",
           );
           if (!retired.ok)
-            throw analysisErrorWithCleanupFailure(
+            throw analysisErrorWithCleanupDependencies(
               retired.error,
               cleanup,
               "close_binary",
-            ).bindCleanupDependencies([retired.error, cleanup]);
+            );
           throw cleanup;
         }
         if (!retired.ok) throw retired.error;
