@@ -21,6 +21,7 @@ import {
 } from "./ClientConfigRoots.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
+import type { JunieLocationSettings } from "./JunieClientSettings.js";
 import {
   type MsixPackageView,
   windowsAppDataRoots,
@@ -43,6 +44,8 @@ export interface SetupClient {
     readonly trustOverride?: boolean;
     readonly platform: NodeJS.Platform;
   };
+  /** Inputs deciding whether Junie loads its default user MCP location. */
+  readonly junieSettings?: JunieLocationSettings;
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
   /** Same-scope fallback ZCode stops loading after its first native server. */
@@ -164,6 +167,9 @@ interface ClientDefinitionBase {
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  readonly junieSettings?: (
+    context: ClientPathContext,
+  ) => JunieLocationSettings;
 }
 
 const traeUserDirectory = ({
@@ -857,6 +863,13 @@ const fxLocation = ({
 };
 
 /**
+ * Junie's home: `JUNIE_HOME` for Junie CLI, else `~/.junie`. add-mcp notes the
+ * JetBrains plugin always reads `~/.junie`.
+ */
+const junieHome = ({ home, env }: ClientPathContext): string =>
+  env.JUNIE_HOME || join(home, ".junie");
+
+/**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
  * `.config` on every platform). The shared `~/.agents` folder is not
  * FreeBuff-specific: REA's own skill installs create it, so it cannot
@@ -1529,6 +1542,34 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "fx",
   }),
   defineClient({
+    name: "junie",
+    mcpAdd: { projectPaths: [".junie/mcp/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Junie",
+    configPath: (context: ClientPathContext) =>
+      join(junieHome(context), "mcp", "mcp.json"),
+    markerPath: junieHome,
+    junieSettings: (context: ClientPathContext) => ({
+      userConfigPath: join(junieHome(context), "config.json"),
+      ...(context.env.JUNIE_MCP_DEFAULT_LOCATIONS === undefined
+        ? {}
+        : { mcpDefaultLocations: context.env.JUNIE_MCP_DEFAULT_LOCATIONS }),
+      ...(context.env.JUNIE_CONFIG_LOCATION === undefined
+        ? {}
+        : { configLocation: context.env.JUNIE_CONFIG_LOCATION }),
+      ...(context.env.JUNIE_CONFIG_DEFAULT_LOCATIONS === undefined
+        ? {}
+        : {
+            configDefaultLocations: context.env.JUNIE_CONFIG_DEFAULT_LOCATIONS,
+          }),
+    }),
+    format: "json",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1681,6 +1722,9 @@ export const supportedClients = (
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
+        ...(definition.junieSettings === undefined
+          ? {}
+          : { junieSettings: definition.junieSettings(context) }),
         ...(definition.configPaths === undefined
           ? {}
           : {

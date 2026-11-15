@@ -20,6 +20,7 @@ import {
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { readJunieLocationBlock } from "./JunieClientSettings.js";
 
 type SettingsSource = { path: string; document: ClientConfigurationDocument };
 const folderTrustSchema = z
@@ -128,6 +129,8 @@ export const readClientPolicyBlock = async (
   desiredRegistration?: unknown,
   resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
+  if (client.junieSettings !== undefined)
+    return readJunieLocationBlock(client.junieSettings, resources);
   if (client.name !== "gemini_cli" || client.geminiSettings === undefined)
     return ok(undefined);
   const settings = client.geminiSettings;

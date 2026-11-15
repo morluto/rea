@@ -42,6 +42,50 @@ const ownedSkillManifest = `---\nname: ${PRODUCT_IDENTITY.skillName}\n---\n# REA
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
 
+// Detection reports clients in the client table's order.
+const DETECTED_CLIENT_ORDER = [
+  "claude_code",
+  "claude_desktop",
+  "codex",
+  "cursor",
+  "codebuddy",
+  "cline",
+  "gemini_cli",
+  "windsurf",
+  "devin",
+  "opencode",
+  "antigravity",
+  "copilot_cli",
+  "commandcode",
+  "qwen_code",
+  "kimi",
+  "vscode",
+  "trae",
+  "workbuddy",
+  "lm_studio",
+  "grok_build",
+  "omp",
+  "pi",
+  "hermes",
+  "qoder",
+  "droid",
+  "zcode",
+  "dsh",
+  "freebuff",
+  "cline_vscode",
+  "cline_vscode_insiders",
+  "cline_vscodium",
+  "cline_cursor",
+  "cline_windsurf",
+  "kiro",
+  "mastracode",
+  "zed",
+  "amp",
+  "fx",
+  "junie",
+  "grok_bot",
+];
+
 describe("client configuration filesystem lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
     const home = await createTestTempDirectory("rea-detect-");
@@ -51,47 +95,7 @@ describe("client configuration filesystem lifecycle", () => {
     // Gemini CLI follows its own session state, not the shared .gemini root.
     await mkdir(join(home, ".gemini", "tmp"), { recursive: true });
     const detected = await detectClients(home);
-    expect(detected.map(({ name }) => name)).toEqual([
-      "claude_code",
-      "claude_desktop",
-      "codex",
-      "cursor",
-      "codebuddy",
-      "cline",
-      "gemini_cli",
-      "windsurf",
-      "devin",
-      "opencode",
-      "antigravity",
-      "copilot_cli",
-      "commandcode",
-      "qwen_code",
-      "kimi",
-      "vscode",
-      "trae",
-      "workbuddy",
-      "lm_studio",
-      "grok_build",
-      "omp",
-      "pi",
-      "hermes",
-      "qoder",
-      "droid",
-      "zcode",
-      "dsh",
-      "freebuff",
-      "cline_vscode",
-      "cline_vscode_insiders",
-      "cline_vscodium",
-      "cline_cursor",
-      "cline_windsurf",
-      "kiro",
-      "mastracode",
-      "zed",
-      "amp",
-      "fx",
-      "grok_bot",
-    ]);
+    expect(detected.map(({ name }) => name)).toEqual(DETECTED_CLIENT_ORDER);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
     ).toBe(join(home, ".claude.json"));
