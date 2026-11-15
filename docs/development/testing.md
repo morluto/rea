@@ -325,6 +325,23 @@ environment with `pip install --require-hashes -r` and set
 as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
 into a failure.
 
+The same run builds a validator for every distinct advertised input and output
+schema with the Rust `jsonschema` crate's defaults, which check the declared
+draft's meta-schema and formats and compile every subschema, as a Rust client
+using that crate does. `--complete` adds Python `jsonschema`'s
+`check_schema`, which `jsonschema.validate` runs before validating a
+structured result in Python clients; it takes several seconds, so it is
+opt-in. Ajv
+strict mode is not part of the check: it rejects authoring constructs such as
+unknown formats that no supported client has been seen to refuse, and Ajv's
+default meta-schema validation already runs in the package verifier. Clients
+whose validators cannot run here keep their documented rejections as rules in
+`advertisedDialect.ts`, each citing its report: the keyword allowlist and type
+rules encode Gemini's function-declaration subset, and the root-shape rule the
+Anthropic and OpenAI function-calling root. OpenAI strict mode (`strict: true`)
+is not covered: it requires every property to be required, which REA's
+optional inputs do not meet, and REA does not claim strict-mode support.
+
 The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
 coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
