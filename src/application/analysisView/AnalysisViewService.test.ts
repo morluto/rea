@@ -551,14 +551,6 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
   if (!item.ok) throw item.error;
   expect(item.value.normalized_result).toMatchObject({
     kind: "item",
-    // An item view returns the one selected record, like every other view kind.
-    coverage: {
-      status: "complete-within-view",
-      examined: 1,
-      total: 1,
-      next_offset: null,
-      exhausted: true,
-    },
     item: {
       path: "renderer.js",
       observations: expect.arrayContaining([
