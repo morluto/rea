@@ -452,6 +452,21 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
+// Services name the contract field they refuse or ask the caller to change;
+// the CLI layer owns option spellings (each command's field binding renames
+// issue paths to CLI keys). A `--flag` written outside src/cli copies that
+// mapping and goes stale when the command renames the option.
+checkCounted(
+  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "cli-option-text-outside-cli",
+  files.filter(
+    ({ path }) =>
+      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
+  ),
+  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  [],
+);
+
 // A runtime setting view throws the ConfigurationError of a malformed launch
 // seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
 // as a Result. Catching it by hand mixes it into each site's own failures.
