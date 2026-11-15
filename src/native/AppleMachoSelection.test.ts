@@ -18,11 +18,8 @@ import {
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
 import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
-import {
-  parseMachoLayout,
-  selectMachoSlice,
-  UnsupportedMachoMetadataFormatError,
-} from "./AppleMachoSelection.js";
+import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
@@ -43,7 +40,7 @@ it("keeps unknown magic distinct from recognized unsupported Mach-O formats", ()
     failure = error;
   }
   expect(failure).toBeInstanceOf(TypeError);
-  expect(failure).not.toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+  expect(failure).not.toBeInstanceOf(BinaryFormatFailure);
 });
 
 it.each([

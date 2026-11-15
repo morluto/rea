@@ -43,7 +43,7 @@ it.each([
     }),
   ).rejects.toMatchObject({
     reason: "format",
-    cause: { _tag: "XmlDocumentParseError", reason: "malformed" },
+    cause: { _tag: "ParseFailureError", kind: "malformed" },
   });
 });
 
