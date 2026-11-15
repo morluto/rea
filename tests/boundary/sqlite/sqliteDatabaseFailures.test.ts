@@ -120,6 +120,15 @@ it.each(["/selected.db", "./Database files/another.db"])(
       },
       exitCode: null,
       signal: "SIGABRT",
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const failure = sqliteDatabaseFailure(cause, path, "worker");
     expect(failure.cause).toBe(cause);

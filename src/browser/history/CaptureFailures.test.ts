@@ -65,6 +65,15 @@ it.each([
       },
       exitCode,
       signal,
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const projected = analysisErrorProjectionSchema.parse(
       projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
