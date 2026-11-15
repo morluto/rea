@@ -8,13 +8,10 @@
     "main <-> server"
   ],
   "crossProvider": {
-    "apktool -> artifacts": 2,
     "desktop -> electron": 1
   },
   "entry": {
-    "application -> browser": 2,
     "application -> desktop": 41,
-    "application -> frida": 2,
-    "application -> reference": 8
+    "application -> frida": 2
   }
 }

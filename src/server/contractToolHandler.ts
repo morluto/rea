@@ -34,6 +34,10 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import {
+  deliverApplicationExecution,
+  type ApplicationExecutionRecords,
+} from "./deliverApplicationExecution.js";
 
 /** Application service executing one named contract operation. */
 export interface ContractToolService<TOperation extends string> {
@@ -278,6 +282,78 @@ export const createDerivedToolHandler =
         },
       );
   };
+
+/** The request an application workflow runs for. */
+export interface ApplicationWorkflowRequest {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+}
+
+/** What an application workflow binding runs and the view it stages. */
+export interface ApplicationWorkflow {
+  readonly workflow: (
+    input: unknown,
+    request: ApplicationWorkflowRequest,
+  ) => Promise<Result<InvestigationWorkflowExecution, AnalysisError>>;
+  /** The caller-selected view of the completed Evidence, when the request names one. */
+  readonly view?:
+    | ((input: unknown) => AnalysisViewRequest | undefined)
+    | undefined;
+}
+
+/**
+ * Run an application workflow under analysis admission and deliver its
+ * completed Evidence with its sources and residual unknown. A request for a
+ * view (or summary) is refused before the workflow runs when the complete
+ * Evidence cannot be retained; a failure delivers its partial Evidence.
+ */
+export const createApplicationToolHandler =
+  (
+    server: EvidenceMcpServer,
+    { workflow, view }: ApplicationWorkflow,
+    logger: Logger,
+    records: ApplicationExecutionRecords,
+    withAdmittedAnalysis?: WithAdmittedAnalysis,
+  ) =>
+  (contract: ToolContract) =>
+  async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
+    runAdmittedToolOperation(
+      server,
+      withAdmittedAnalysis,
+      contract.name,
+      context.mcpReq.signal,
+      async () => {
+        const selected = view?.(input);
+        if (selected !== undefined) {
+          const retention = requireAnalysisViewRetention(contract.name, {
+            recordEvidence: records.recordEvidence,
+            evidenceById: records.evidenceById,
+          });
+          if (!retention.ok)
+            return server.delivery.toCallToolResult(retention, contract);
+        }
+        const result = await logToolExecution(logger, contract.name, () =>
+          workflow(input, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
+        );
+        if (!result.ok)
+          return server.delivery.toPartialErrorToolResult(
+            result.error,
+            contract.returnsTargetContent,
+            records.recordEvidence,
+          );
+        return deliverApplicationExecution(
+          server.delivery,
+          records,
+          contract,
+          result.value,
+          selected,
+          context.mcpReq.signal,
+        );
+      },
+    );
 
 /** One owner for optional-provider admission, execution, recording and delivery. */
 export const runEvidenceToolOperation = async <Input>(

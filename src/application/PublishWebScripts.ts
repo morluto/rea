@@ -10,27 +10,27 @@ import {
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   SafeOutputTreeCreationFailure,
-} from "../../resources/index.js";
-import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../domain/browserNetworkEvidence.js";
+} from "../resources/index.js";
+import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
-} from "../../domain/analysisErrorCore.js";
+} from "../domain/analysisErrorCore.js";
 import {
   webScriptExportManifestSchema,
   webScriptExportResultSchema,
   type ExportWebScriptsInput,
   type ExportedWebScript,
   type WebScriptExportResult,
-} from "../../domain/webScriptExport.js";
+} from "../domain/webScriptExport.js";
 import {
   isolatedWebScriptPath,
   planWebScriptExport,
   type PlannedWebScript,
-} from "../../domain/webScriptExportPlan.js";
-import { WebScriptExportError } from "../../domain/webScriptExportError.js";
-import type { SelectedScriptCapture } from "./ScriptCaptureAdapters.js";
+} from "../domain/webScriptExportPlan.js";
+import { WebScriptExportError } from "../domain/webScriptExportError.js";
+import type { SelectedScriptCapture } from "../domain/webScriptCaptureAdapters.js";
 
 const LIMITATIONS = [
   "Only script bytes retained in this capture are exported. Sources are not refetched or executed, and a response or Debugger source does not prove execution.",

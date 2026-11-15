@@ -334,7 +334,11 @@ it.skipIf(process.platform !== "linux")(
           } catch {
             // This fixture verifies the manager's fail-closed read path only.
           }
-          return { status: "incomplete", reason: "unreachable" };
+          return {
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "unreachable",
+          };
         },
       },
     );

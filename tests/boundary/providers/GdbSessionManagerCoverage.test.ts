@@ -30,7 +30,10 @@ import {
 import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
-import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import {
+  stopOwnedDebuggerProcess,
+  type OwnedDebuggerStopResult,
+} from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
   answerFakeGdbStartup,
@@ -528,6 +531,7 @@ it("preserves cancellation and cleanup details when startup stop is uncertain", 
       return stopCalls === 1
         ? {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated startup cancellation cleanup uncertainty",
           }
         : stopOwnedDebuggerProcess(session, name);
@@ -575,6 +579,7 @@ it("keeps manager-close cancellation primary when caller abort arrives during st
       }
       return {
         status: "incomplete",
+        code: "stop-failed",
         reason: "held fake cleanup remains uncertain",
       };
     },
@@ -773,6 +778,7 @@ it.each(["close", "retryCleanupFailures"] as const)(
           await stopHeld;
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated cleanup uncertainty",
           };
         }
@@ -867,6 +873,7 @@ it.each([
           ? { status: "stopped" }
           : {
               status: "incomplete",
+              code: "stop-failed",
               reason: "Inferior disposition is unresolved.",
             };
       },
@@ -1044,6 +1051,7 @@ it.each(["error", "close"] as const)(
     expect(failed.ok).toBe(false);
     if (!failed.ok) {
       expect(failed.error.diagnostics).toEqual({
+        debugger_cleanup: "inferior-state-unknown",
         session_stop: "input-stream-failure",
       });
       // The stream's own error stays in the diagnosis.
@@ -1128,6 +1136,7 @@ it("retains partial GDB command Evidence while an inherited writer remains", asy
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => ({
       status: "incomplete",
+      code: "stop-failed",
       reason: writerActive
         ? "an inherited output writer remains active"
         : "the owned GDB process was not confirmed stopped",
@@ -1264,6 +1273,7 @@ it("reports incomplete stop if GDB exits while close waits in the serialized que
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => ({
       status: "incomplete",
+      code: "stop-failed",
       reason: "GDB exited before queued close could verify cleanup",
     }),
   });
@@ -1369,6 +1379,7 @@ it("does not infer detached state when the inferior verifier observes an exited 
       }
       return {
         status: "incomplete",
+        code: "stop-failed",
         reason: "the inferior state remained unknown",
       };
     },
@@ -1415,7 +1426,9 @@ it("retains the GDB session while an unknown descendant holds output after leade
   expect(firstClose.ok).toBe(false);
   if (!firstClose.ok) {
     expect(firstClose.error.cleanupIncomplete).toBe(true);
-    expect(firstClose.error.message).toMatch(/inferior disposition/i);
+    expect(firstClose.error.diagnostics).toMatchObject({
+      debugger_cleanup: "inferior-disposition-unverified",
+    });
   }
   expect(manager.status(started.value.session_id)).toBeDefined();
   await writeFile(tty, "descendant sentinel after GDB leader exit\n");
@@ -1444,7 +1457,9 @@ it("retries close after an exited GDB's inherited output streams settle", async 
   const firstClose = await manager.close(started.value.session_id);
   expect(firstClose.ok).toBe(false);
   if (!firstClose.ok)
-    expect(firstClose.error.message).toMatch(/inferior disposition/i);
+    expect(firstClose.error.diagnostics).toMatchObject({
+      debugger_cleanup: "inferior-disposition-unverified",
+    });
   expect(manager.status(started.value.session_id)).toBeDefined();
 
   child.closeInheritedOutput();
@@ -1456,7 +1471,7 @@ it("retries close after an exited GDB's inherited output streams settle", async 
 });
 
 it("shares a single stop attempt across concurrent closes after GDB exits", async () => {
-  let resolveStop!: (result: { status: "incomplete"; reason: string }) => void;
+  let resolveStop!: (result: OwnedDebuggerStopResult) => void;
   let stopCalls = 0;
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
@@ -1465,6 +1480,7 @@ it("shares a single stop attempt across concurrent closes after GDB exits", asyn
       if (stopCalls > 1)
         return {
           status: "incomplete",
+          code: "stop-failed",
           reason: "shared stop attempt is uncertain",
         };
       return await new Promise((resolve) => {
@@ -1482,6 +1498,7 @@ it("shares a single stop attempt across concurrent closes after GDB exits", asyn
   expect(stopCalls).toBe(1);
   resolveStop({
     status: "incomplete",
+    code: "stop-failed",
     reason: "shared stop attempt is uncertain",
   });
 
@@ -1808,7 +1825,11 @@ it("retains ownership when GDB startup fails before its prompt and stop is incom
       stopCalls += 1;
       if (stopCalls === 1) {
         retainedSessionId = (session as typeof session & { id: string }).id;
-        return { status: "incomplete", reason: "simulated stop uncertainty" };
+        return {
+          status: "incomplete",
+          code: "stop-failed",
+          reason: "simulated stop uncertainty",
+        };
       }
       return stopOwnedDebuggerProcess(session, name);
     },
@@ -1858,6 +1879,7 @@ it.each([
         return stopCalls === 1
           ? {
               status: "incomplete",
+              code: "stop-failed",
               reason: "simulated startup stop uncertainty",
             }
           : stopOwnedDebuggerProcess(session, name);
@@ -1882,6 +1904,10 @@ it.each([
     });
     expect(started.error.cleanup).toMatchObject({
       reason: "simulated startup stop uncertainty",
+    });
+    // The returned startup failure itself names why cleanup is incomplete.
+    expect(started.error.diagnostics).toMatchObject({
+      debugger_cleanup: "stop-failed",
     });
     expect(started.error.cleanupIncomplete).toBe(true);
     const [sessionId] = started.error.cleanupResources;
@@ -2034,6 +2060,7 @@ it("retains startup timeout without partial evidence when cleanup is uncertain",
       return stopCalls === 1
         ? {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated startup timeout cleanup uncertainty",
           }
         : stopOwnedDebuggerProcess(session, name);
@@ -2072,6 +2099,7 @@ it("maps startup command timeout and preserves initial no-inferior evidence when
       detachResult = await debuggerSession.detachInferior();
       return {
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated startup cleanup uncertainty",
       };
     },
@@ -2166,6 +2194,7 @@ it("keeps the stop code on a startup stream failure whose cleanup is incomplete"
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => ({
       status: "incomplete",
+      code: "stop-failed",
       reason: "simulated startup stop uncertainty",
     }),
   });
@@ -3056,7 +3085,7 @@ it("does not detach a live inferior when no durable TTY was selected", async () 
   await expect(manager.closeAll()).rejects.toMatchObject({
     errors: [
       expect.objectContaining({
-        message: expect.stringMatching(/durable output sink/i),
+        code: "no-durable-output-sink",
       }),
     ],
   });
@@ -3078,7 +3107,7 @@ it("retains ownership without signaling when recursive MI reports multiple infer
   await expect(manager.closeAll()).rejects.toMatchObject({
     errors: [
       expect.objectContaining({
-        message: expect.stringMatching(/multiple inferiors/iu),
+        code: "multiple-inferiors",
       }),
     ],
   });
@@ -3153,7 +3182,7 @@ it("retains ownership and sends no signal when MI state is saturated or unknown"
   await expect(manager.closeAll()).rejects.toMatchObject({
     errors: [
       expect.objectContaining({
-        message: expect.stringMatching(/inferior detach/i),
+        code: "inferior-state-unknown",
       }),
     ],
   });
@@ -3197,7 +3226,9 @@ it("retains ownership without signaling when detach confirmation fails", async (
   const manager = managerWithFakeSpawner(fake.spawnProcess);
   const started = await expectGdbSessionStarted(manager);
 
-  await expect(manager.closeAll()).rejects.toThrow(/did not stop cleanly/i);
+  await expect(manager.closeAll()).rejects.toMatchObject({
+    errors: [expect.objectContaining({ code: "inferior-state-unknown" })],
+  });
 
   expect(manager.status(started.value.session_id)?.state).toBe("closed");
   expect(fake.children[0]?.killSignals).toEqual([]);
@@ -3215,7 +3246,9 @@ it("closes with unknown target state when MI cannot confirm thread groups", asyn
   const closed = await manager.close(started.value.session_id);
   expect(closed.ok).toBe(false);
   if (!closed.ok) {
-    expect(closed.error.message).toContain("inferior state");
+    expect(closed.error.diagnostics).toMatchObject({
+      debugger_cleanup: "inferior-state-unknown",
+    });
     expect(closed.error._tag).toBe("AnalysisCapabilityUnavailableError");
   }
   expect(manager.status(started.value.session_id)).toBeDefined();
@@ -3294,7 +3327,11 @@ it("retains a session when closing cannot confirm the debugger process stopped",
     stopProcess: async (session, name) => {
       stopCalls += 1;
       if (stopCalls === 1)
-        return { status: "incomplete", reason: "simulated close uncertainty" };
+        return {
+          status: "incomplete",
+          code: "stop-failed",
+          reason: "simulated close uncertainty",
+        };
       return stopOwnedDebuggerProcess(session, name);
     },
   });
@@ -3319,6 +3356,7 @@ it("retains an exited GDB session when provider stop verification is incomplete"
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => ({
       status: "incomplete",
+      code: "stop-failed",
       reason: "simulated exited debugger cleanup uncertainty",
     }),
   });
@@ -3421,6 +3459,7 @@ it("keeps a cancelled startup a cancellation when a cleanup retry reports it aga
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => ({
       status: "incomplete",
+      code: "stop-failed",
       reason: "stop unconfirmed",
     }),
   });
@@ -4077,6 +4116,7 @@ it.each(["incomplete", "rejected"] as const)(
             throw new Error("simulated protocol stop uncertainty");
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated protocol stop uncertainty",
           };
         }
@@ -4111,6 +4151,7 @@ it.each(["incomplete", "rejected"] as const)(
     expect(failed.ok).toBe(false);
     if (!failed.ok) {
       expect(failed.error.diagnostics).toEqual({
+        debugger_cleanup: "stop-failed",
         session_stop: "input-stream-failure",
       });
       expect(failed.error.message).toContain(
@@ -4217,6 +4258,7 @@ it("reports command timeout when an incomplete stop cannot confirm process exit"
       if (stopCalls === 1)
         return {
           status: "incomplete",
+          code: "stop-failed",
           reason: "simulated timeout stop uncertainty",
         };
       return stopOwnedDebuggerProcess(session, name);
