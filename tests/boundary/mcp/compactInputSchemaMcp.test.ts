@@ -24,10 +24,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
-import {
-  arrayItemSchemaError,
-  unsupportedInputLiteralSchemaError,
-} from "../../fixtures/mcpClientSchemaConstraints.js";
+import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
   readonly name: string;
@@ -202,12 +199,8 @@ it("keeps SDK-converted and canonical schemas valid and accepting canonical exam
         arrayItemSchemaError(tool.inputSchema, tool.name),
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
-      // Literal portability is a rule of the advertised dialect, which only
-      // the listed (compact) presentation applies.
-      if (profile === "compact")
-        expect(
-          unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
-        ).toBeUndefined();
+      // Literal portability of the listed schemas is checked with every
+      // other dialect rule in advertisedDialect.test.ts.
       expect(
         ajv.validateSchema(tool.inputSchema),
         `${profile} profile, ${tool.name}: ${ajv.errorsText(ajv.errors)}`,
