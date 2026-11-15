@@ -165,7 +165,7 @@ export const parseAndroidManifestComponents = (
   });
   if (!parsed.ok)
     return unavailable(
-      `The decoded manifest is not well-formed XML (${parsed.error.reason}), so its component inventory is unavailable.`,
+      `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
     );
   const root = parsed.value.documentElement;
   if (!isManifestElement(root) || root.nodeName !== "manifest")

@@ -178,12 +178,7 @@
     "src/wasm/WabtArtifactProvider.ts": 2,
     "src/wasm/WabtFailures.ts": 1
   },
-  "parser-format-failure-class": {
-    "src/browser/assets/WebArtifactReads.ts": 1,
-    "src/domain/xmlDocument.ts": 1,
-    "src/native/AppleMachoSelection.ts": 1,
-    "src/native/MachoCommandNames.ts": 1
-  },
+  "parser-format-failure-class": {},
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
