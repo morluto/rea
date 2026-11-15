@@ -12,6 +12,8 @@ import {
   rpmGroupedTriggerFixture,
   rpmInt32PreinFixture,
   rpmInvalidUtf8FilenameFixture,
+  rpmMismatchedFileModesFixture,
+  rpmMismatchedTriggerProgFixture,
   rpmOutOfBoundsIndexFixture,
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
@@ -561,3 +563,29 @@ it("refuses oversize scriptlet text when the caller requested it", () => {
     expect(cause.resource).toBe("max_script_bytes");
   }
 });
+
+it.each([
+  [
+    "FILEMODES",
+    rpmMismatchedFileModesFixture,
+    /RPM FILEMODES has 1 entries for 2 BASENAMES rows/u,
+  ],
+  [
+    "TRIGGERSCRIPTPROG",
+    rpmMismatchedTriggerProgFixture,
+    /RPM TRIGGERSCRIPTPROG has 1 entries for 2 TRIGGERSCRIPTS/u,
+  ],
+])(
+  "refuses a %s array whose length does not match its rows",
+  (_, fixture, message) => {
+    try {
+      parse(fixture());
+      throw new Error("expected a mismatched array refusal");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return;
+      expect(cause.kind).toBe("malformed");
+      expect(cause.message).toMatch(message);
+    }
+  },
+);

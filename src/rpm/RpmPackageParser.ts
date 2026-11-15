@@ -920,6 +920,21 @@ const files = (
   const users = stringArray(header, RPM_TAG.fileUserName);
   const groups = stringArray(header, RPM_TAG.fileGroupName);
   const algorithm = digestAlgorithm(intValue(header, RPM_TAG.fileDigestAlgo));
+  // A present per-file array must have one value per BASENAMES row, so a
+  // short or long array is not read as a missing value.
+  for (const [name, values] of [
+    ["FILESIZES", sizes],
+    ["FILEMODES", modes],
+    ["FILEDIGESTS", digests],
+    ["FILEFLAGS", flags],
+    ["FILEUSERNAME", users],
+    ["FILEGROUPNAME", groups],
+  ] as const)
+    if (values !== undefined && values.length !== baseNames.length)
+      fail(
+        `RPM ${name} has ${String(values.length)} entries for ${String(baseNames.length)} BASENAMES rows.`,
+        { field: "file inventory", observed: values.length },
+      );
   return baseNames.map((baseName, index) => {
     const dirIndex = dirIndexes[index]!;
     if (dirIndex < 0 || dirIndex >= dirNames.length)
@@ -1023,14 +1038,19 @@ const scriptlets = (
   }
   const triggerScripts = storedStrings(header, RPM_TAG.triggerScripts);
   if (triggerScripts !== undefined) {
-    const programs = stringArray(header, RPM_TAG.triggerScriptProg) ?? [];
+    const programs = stringArray(header, RPM_TAG.triggerScriptProg);
+    if (programs !== undefined && programs.length !== triggerScripts.length)
+      fail(
+        `RPM TRIGGERSCRIPTPROG has ${String(programs.length)} entries for ${String(triggerScripts.length)} TRIGGERSCRIPTS.`,
+        { field: "trigger script programs", observed: programs.length },
+      );
     const conditions = triggerConditions(header, triggerScripts.length);
     for (const [index, source] of triggerScripts.entries()) {
       const body = scriptText(source, includeText, maxBytes, "trigger");
       if (body === undefined) continue;
       rows.push({
         kind: "trigger",
-        interpreter: text(programs[index]),
+        interpreter: text(programs?.[index]),
         bytes: body.bytes,
         text: body.text,
         trigger_names: conditions[index]!,

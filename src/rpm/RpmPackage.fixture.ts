@@ -523,6 +523,34 @@ export const rpmGroupedTriggerFixture = (
     ],
   });
 
+/** Binary RPM whose FILEMODES array has one value for two BASENAMES rows. */
+export const rpmMismatchedFileModesFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: defaultHeaderTags().map((tag) =>
+      tag.tag === RPM_TAG.fileModes
+        ? { tag: RPM_TAG.fileModes, type: RPM_TYPE.int16, int16: [0o100755] }
+        : tag,
+    ),
+  });
+
+/** Two trigger scripts with a single TRIGGERSCRIPTPROG value. */
+export const rpmMismatchedTriggerProgFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "triggers" },
+      {
+        tag: RPM_TAG.triggerScripts,
+        type: RPM_TYPE.stringArray,
+        strings: ["echo first\n", "echo second\n"],
+      },
+      {
+        tag: RPM_TAG.triggerScriptProg,
+        type: RPM_TYPE.stringArray,
+        strings: ["/bin/sh"],
+      },
+    ],
+  });
+
 /** Header that declares more index entries than are stored. */
 export const rpmTruncatedHeaderFixture = (): Buffer => {
   const complete = rpmBinaryPackageFixture();
