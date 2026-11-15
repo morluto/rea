@@ -427,7 +427,7 @@ const sharedNetworkMetadata = (
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
       retainKnownFields(identity, request, networkResponseFields);
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      for (const [index, redirect] of request.redirects.entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
@@ -642,7 +642,7 @@ const networkMap = (
     values.push(
       digestCanonicalValue({
         ...response,
-        redirects: (request.redirects ?? []).map(
+        redirects: request.redirects.map(
           (
             {
               request_timestamp: _requestTimestamp,
