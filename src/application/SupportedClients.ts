@@ -13,7 +13,10 @@ import {
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import {
   absoluteXdgConfigHome,
   vscodeUserDirectory,
@@ -1018,8 +1021,9 @@ type ClientDefinitionInput = Omit<ClientDefinitionBase, "registrationProfile"> &
 const kiloTableContext = (context: ClientPathContext): KiloLocationContext => ({
   root: context,
   path: (path) => {
+    // Normalized as rea mcp add normalizes it, so joined layer paths compare.
     if ((context.platform === "win32" ? win32 : posix).isAbsolute(path))
-      return path;
+      return absoluteCallerPath(path, { platform: context.platform });
     throw new KiloRelativePathError(path);
   },
 });
