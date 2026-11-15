@@ -76,7 +76,11 @@
       "rules": { "rea/no-locale-compare": "off" }
     },
     {
-      "files": ["src/**/*.ts"],
+      "files": [
+        "src/**/*.ts",
+        "scripts/lib/browser-*-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
       "rules": { "rea/no-raw-cdp-session": "error" }
     },
     {

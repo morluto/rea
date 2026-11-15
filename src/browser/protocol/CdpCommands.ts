@@ -159,6 +159,7 @@ const CDP_COMMAND_REPLIES = {
   "Debugger.setBreakpointByUrl": z.object({ breakpointId: z.string() }),
   "Emulation.clearDeviceMetricsOverride": acknowledgement,
   "Emulation.setDeviceMetricsOverride": acknowledgement,
+  "Emulation.setPageScaleFactor": acknowledgement,
   "Emulation.setEmulatedMedia": acknowledgement,
   "Emulation.setFocusEmulationEnabled": acknowledgement,
   "Emulation.setLocaleOverride": acknowledgement,
