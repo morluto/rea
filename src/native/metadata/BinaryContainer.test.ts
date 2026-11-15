@@ -8,7 +8,7 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
@@ -47,8 +47,10 @@ it("distinguishes a mapped string read allowance from malformed bytes", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
-  expect(failure).toMatchObject({ maximumBytes: 3 });
+  expect(isBinaryStringReadLimit(failure)).toBe(true);
+  expect(failure).toMatchObject({
+    failure: { kind: "limit", limit: { maximum: 3 } },
+  });
   expect(index.readCString(bytes, 100n, bytes.length).toString()).toBe(
     "long-name",
   );

@@ -502,5 +502,18 @@
     "src/ghidra/extensions/GhidraExtensions.ts": 1,
     "src/ghidra/extensions/nativeaot/NativeAotReport.ts": 1,
     "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.ts": 2
+  },
+  "local-limit-error-class": {
+    "src/artifacts/apple/InterfaceBuilderDecodeBudget.ts": 1,
+    "src/browser/WebSourceMapFetcher.ts": 1,
+    "src/captures/parseFieldDiscovery.ts": 1,
+    "src/domain/analysisView/EnvironmentStateExtraction.ts": 1,
+    "src/domain/native/nativeAotPe.ts": 1,
+    "src/firmware/devicetree/DevicetreeParser.ts": 1,
+    "src/native/elf/ElfNoteParser.ts": 1,
+    "src/process/OwnedMcpStdioTransport.ts": 1,
+    "src/signals/SigrokRecordingProvider.ts": 1,
+    "src/signals/parseDecoderDiscovery.ts": 1,
+    "src/v8/V8CodeCache.errors.ts": 1
   }
 }
