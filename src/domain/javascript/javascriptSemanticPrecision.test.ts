@@ -73,12 +73,30 @@ it("distinguishes wrapper work recovery from unchanged unsupported or cyclic syn
       expect.stringContaining("semantic_precision.wrapper_visits=1"),
     ]),
   );
+  // The examination records the control by contract field; adapters name
+  // their own option for it, so no limitation names a CLI flag.
+  expect(bounded.analysis_coverage.examination.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "semantic_precision.wrapper_visits",
+      effective_value: 1,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 1_000_000,
+      applies_at: "next_call",
+    },
+  ]);
+  expect(bounded.limitations.join(" ")).not.toContain("--semantic-precision");
   const recovered = analyzeJavaScriptStaticSource(source, {
     wrapper_visits: 10_000,
   });
   expect(
     recovered.analysis_coverage.examination.electron_call_paths_limited,
   ).toBe(false);
+  expect(recovered.analysis_coverage.examination).not.toHaveProperty(
+    "controls",
+  );
   expect((recovered.electron.call_paths ?? []).length).toBeGreaterThan(0);
   const cycle = analyzeJavaScriptSemantics(
     "const a = b; const b = a; const selected = a;",
