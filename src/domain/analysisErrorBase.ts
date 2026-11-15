@@ -172,7 +172,6 @@ export abstract class AnalysisError extends Error {
   #cleanupResourceProjection:
     | { readonly cleanupResources: readonly string[] }
     | undefined;
-  #cleanupDependents: WeakRef<AnalysisError>[] = [];
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
@@ -185,7 +184,11 @@ export abstract class AnalysisError extends Error {
     return this.#capturedOutput;
   }
   readonly cleanup: AnalysisCleanupObservation | undefined;
-  cleanupIncomplete: boolean;
+  /**
+   * This error's own unresolved cleanup. With bound dependencies, completion
+   * is read from them when asked instead of being pushed to each dependent.
+   */
+  #cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
@@ -212,7 +215,7 @@ export abstract class AnalysisError extends Error {
         ? undefined
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
-    this.cleanupIncomplete = options?.cleanup !== undefined;
+    this.#cleanupIncomplete = options?.cleanup !== undefined;
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
@@ -236,6 +239,26 @@ export abstract class AnalysisError extends Error {
 
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
+  }
+
+  /**
+   * Whether owned resources remain unreleased. Bound dependencies decide it
+   * once bound; completion is monotonic, so a later binding cannot reopen it.
+   */
+  get cleanupIncomplete(): boolean {
+    if (!this.#cleanupIncomplete) return false;
+    const dependencies = this.#cleanupDependencies;
+    if (dependencies === undefined) return true;
+    for (const dependency of dependencies)
+      if (dependency.cleanupIncomplete) return true;
+    this.#cleanupIncomplete = false;
+    dependencies.clear();
+    return false;
+  }
+
+  /** A subclass whose own resources are unreleased when it is constructed. */
+  protected markCleanupIncomplete(incomplete: boolean): void {
+    this.#cleanupIncomplete = incomplete;
   }
   /** Later typed failures retained without changing the primary error cause. */
   get secondaryFailures(): readonly AnalysisError[] {
@@ -355,21 +378,16 @@ export abstract class AnalysisError extends Error {
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies) {
-      if (!dependency.cleanupIncomplete || pending.has(dependency)) continue;
-      pending.add(dependency);
-      dependency.#cleanupDependents = [
-        ...dependency.#cleanupDependents.filter(
-          (reference) => reference.deref() !== undefined,
-        ),
-        new WeakRef(this),
-      ];
-    }
+    for (const dependency of dependencies)
+      if (dependency.cleanupIncomplete) pending.add(dependency);
     if (pending.size === 0) this.resolveCleanup();
     return this;
   }
 
-  /** Clear live cleanup status only after its owning resource confirms retry success. */
+  /**
+   * Clear live cleanup status only after its owning resource confirms retry
+   * success. Errors composed from this one read the change on their next check.
+   */
   resolveCleanup(): this {
     if (
       [...(this.#cleanupDependencies ?? [])].some(
@@ -378,10 +396,7 @@ export abstract class AnalysisError extends Error {
     )
       return this;
     this.#cleanupDependencies?.clear();
-    this.cleanupIncomplete = false;
-    for (const reference of this.#cleanupDependents)
-      reference.deref()?.resolveCleanup();
-    this.#cleanupDependents = [];
+    this.#cleanupIncomplete = false;
     return this;
   }
 
