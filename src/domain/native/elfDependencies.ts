@@ -131,28 +131,43 @@ const compareDecimal = (left: string, right: string): number => {
 };
 
 /**
- * Integer order on dotted version suffixes, missing components reading as 0.
- * Walks both strings one component at a time so no per-name component array
- * is built or kept: a suffix can be as long as the string cap allows.
+ * Canonical form of a dotted version suffix: leading zeros removed from each
+ * component and trailing zero components dropped, so `1.02.0.0` reads `1.2`.
+ * Built once per name; two equal versions then have equal canonical strings.
+ */
+const canonicalVersionSuffix = (suffix: string): string => {
+  const components = suffix
+    .split(".")
+    .map((component) => component.replace(/^0+(?=.)/u, ""));
+  let length = components.length;
+  while (length > 1 && components[length - 1] === "0") length -= 1;
+  return components.slice(0, length).join(".");
+};
+
+/**
+ * Integer order on canonical dotted version suffixes, missing components
+ * reading as 0. A canonical suffix ends in a nonzero component, so when one
+ * runs out first the other is greater: the walk stops at the shorter suffix,
+ * and a long saved maximum is never rescanned past it.
  */
 const compareVersionSuffixes = (left: string, right: string): number => {
+  if (left === right) return 0;
   const componentEnd = (value: string, start: number): number => {
     const dot = value.indexOf(".", start);
     return dot === -1 ? value.length : dot;
   };
   let l = 0;
   let r = 0;
-  while (l < left.length || r < right.length) {
-    const lEnd = l < left.length ? componentEnd(left, l) : l;
-    const rEnd = r < right.length ? componentEnd(right, r) : r;
-    const order = compareDecimal(
-      l < left.length ? left.slice(l, lEnd) : "0",
-      r < right.length ? right.slice(r, rEnd) : "0",
-    );
+  while (l < left.length && r < right.length) {
+    const lEnd = componentEnd(left, l);
+    const rEnd = componentEnd(right, r);
+    const order = compareDecimal(left.slice(l, lEnd), right.slice(r, rEnd));
     if (order !== 0) return order;
     l = lEnd + 1;
     r = rEnd + 1;
   }
+  if (l < left.length) return left === "0" ? 0 : 1;
+  if (r < right.length) return right === "0" ? 0 : -1;
   return 0;
 };
 
@@ -171,7 +186,7 @@ export const derivedElfVersionMaxima = (
       continue;
     const namespace = match[1];
     if (namespace.length === 0) continue;
-    const suffix = match[2];
+    const suffix = canonicalVersionSuffix(match[2]);
     const current = best.get(namespace);
     if (
       current === undefined ||

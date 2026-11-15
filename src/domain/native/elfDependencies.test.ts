@@ -106,7 +106,7 @@ it("decodes named DT_FLAGS and DT_FLAGS_1 bits without expanding unrecognized va
   });
 });
 
-it("orders dotted suffixes by integer components without per-name arrays", () => {
+it("orders dotted suffixes by integer components", () => {
   const long = Array.from({ length: 30000 }, () => "1").join(".");
   expect(
     derivedElfVersionMaxima([
@@ -121,4 +121,19 @@ it("orders dotted suffixes by integer components without per-name arrays", () =>
       `D_${long}.0.1`,
     ]).map((entry) => entry.maximum),
   ).toEqual(["A_01.10", "B_1.2.0.1", "C_1.0", `D_${long}.0.2`]);
+});
+
+it("does not rescan a long saved maximum for each shorter equal version", () => {
+  const zeros = Array.from({ length: 30000 }, () => "0").join(".");
+  const names = [`A_1.${zeros}`, ...Array.from({ length: 4094 }, () => "A_1")];
+  const started = performance.now();
+  expect(derivedElfVersionMaxima(names).map((entry) => entry.maximum)).toEqual([
+    `A_1.${zeros}`,
+  ]);
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(
+    derivedElfVersionMaxima(["B_1.0.0", "B_1", "B_1.0.1", "B_1.0.01.0"]).map(
+      (entry) => entry.maximum,
+    ),
+  ).toEqual(["B_1.0.1"]);
 });
