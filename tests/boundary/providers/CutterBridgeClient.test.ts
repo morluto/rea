@@ -348,6 +348,11 @@ describe("CutterBridgeClient: plugin source identity", () => {
       }).listSessions();
 
       expect(result.sessions).toMatchObject([{ bridge_source: source }]);
+      const recovery = result.sessions[0]?.bridge_source_recovery;
+      if (source === "packaged") expect(recovery).toBeUndefined();
+      else
+        expect(recovery).toContain("bridge/cutter/rea_bridge.py into Cutter");
+      if (source === "unknown") expect(recovery).toContain("source is unknown");
     },
   );
 
