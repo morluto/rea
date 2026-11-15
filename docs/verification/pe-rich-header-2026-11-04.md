@@ -25,31 +25,30 @@ of the comparison only on pefile's own result: pefile warned that `0x80` is not
 other state difference counts as a disagreement and fails the run. A file REA
 rejects fails the run too, unless pefile also rejects it.
 
-| Result                                               | Files  |
-| ---------------------------------------------------- | ------ |
-| Rich header present                                  | 10,915 |
-| Checksum reproduces the stored key                   | 10,901 |
-| Checksum does not reproduce the key                  | 14     |
-| No Rich footer before the PE signature               | 6,980  |
-| Malformed record                                     | 0      |
-| Rejected by REA and pefile (a 0-byte `eqnedt32.exe`) | 1      |
-| Same key and entries as pefile, or both absent       | 17,890 |
-| Different from pefile                                | 0      |
-| Outside pefile's `0x80` layout assumption            | 5      |
+| Result                                         | Files  |
+| ---------------------------------------------- | ------ |
+| Rich header present                            | 10,915 |
+| Checksum reproduces the stored key             | 10,901 |
+| Checksum does not reproduce the key            | 14     |
+| No Rich footer before the PE signature         | 6,980  |
+| Malformed record                               | 0      |
+| Rejected by REA and pefile (a 0-byte `.exe`)   | 1      |
+| Same key and entries as pefile, or both absent | 17,890 |
+| Different from pefile                          | 0      |
+| Outside pefile's `0x80` layout assumption      | 5      |
 
-The 14 checksum mismatches are seven NVIDIA driver files in one DriverStore
-package, three `vk*.sys` drivers, three Riot Vanguard executables, and
-`tcblaunch.exe`. Their entries still match pefile wherever pefile's layout
-assumption holds.
+Third-party files are not named here. The 14 checksum mismatches are 13 files
+from three third-party driver and application packages, and `tcblaunch.exe`.
+Their entries still match pefile wherever pefile's layout assumption holds.
 
 The five images outside pefile's assumption:
 
-| Image                    | `DanS`   | Entries | Checksum | pefile                                    |
-| ------------------------ | -------- | ------- | -------- | ----------------------------------------- |
-| `WeGameDriverXP.sys`     | `0x200`  | 5       | matches  | 53 value pairs, "not in Microsoft format" |
-| `vkdpi.sys`              | `0x58`   | 7       | differs  | "not in Microsoft format"                 |
-| `vktap.sys` (two copies) | `0x58`   | 7       | differs  | "not in Microsoft format"                 |
-| `tcblaunch.exe`          | `0x2D20` | 7       | differs  | "not in Microsoft format"                 |
+| Image                             | `DanS`   | Entries | Checksum | pefile                                    |
+| --------------------------------- | -------- | ------- | -------- | ----------------------------------------- |
+| Third-party kernel driver A       | `0x200`  | 5       | matches  | 53 value pairs, "not in Microsoft format" |
+| Third-party driver B              | `0x58`   | 7       | differs  | "not in Microsoft format"                 |
+| Third-party driver C (two copies) | `0x58`   | 7       | differs  | "not in Microsoft format"                 |
+| `tcblaunch.exe`                   | `0x2D20` | 7       | differs  | "not in Microsoft format"                 |
 
 `tcblaunch.exe` 10.0.26100.9711 has a custom 11 KB DOS stub that is itself a
 PE image. The stub's own record sits at `0xC0`, and its checksum reproduces
