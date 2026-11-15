@@ -18,6 +18,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
@@ -47,7 +48,7 @@ import {
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
-import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
+import { hashReadable } from "../ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;

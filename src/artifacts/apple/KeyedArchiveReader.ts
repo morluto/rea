@@ -1,15 +1,6 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
-import { createHash } from "node:crypto";
 import {
-  decodeLimit,
-  isHostLimitFailure,
-  ParseFailureError,
-} from "../../domain/parseFailure.js";
-import { basename, join } from "node:path";
-import { realpath } from "node:fs/promises";
-import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import {
+  targetDigestChangedFailure,
   readStableArtifact,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
@@ -20,6 +11,15 @@ import {
   bindArtifactFileCleanup,
   ArtifactResourceScope,
 } from "../../resources/index.js";
+import { createHash } from "node:crypto";
+import {
+  decodeLimit,
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
+import { basename, join } from "node:path";
+import { realpath } from "node:fs/promises";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 

@@ -10,9 +10,9 @@ import {
   AnalysisCleanupLeaseGroup,
   ArtifactResourceScope,
   ArtifactReaderFailure,
+  withArtifactTargetIdentity,
 } from "../resources/index.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import {
   invariantViolation,
   InternalInvariantError,
