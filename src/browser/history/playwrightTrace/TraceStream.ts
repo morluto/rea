@@ -1,10 +1,11 @@
+import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
 import { LosslessNumber, isSafeNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../artifacts/ArtifactReader.js";
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -41,9 +42,7 @@ const readRecord = (bytes: Buffer): unknown => {
     );
   let value: string;
   try {
-    value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    value = decodeStrictUtf8(bytes, "preserve");
   } catch (cause) {
     throw new CaptureFormatError(
       "malformed",

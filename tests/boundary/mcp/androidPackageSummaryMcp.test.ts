@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -8,8 +12,8 @@ import {
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
@@ -179,7 +183,6 @@ const createJniSummaryContractFixture = async () => {
       },
       environment: {
         REA_MCP_TOOL_FAMILIES: "android,application,session",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
     },
   });
@@ -193,8 +196,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   const definition = catalog.find(
     (tool) => tool.name === "inspect_android_jni_bindings",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing JNI output schema");
+  if (definition === undefined) throw new Error("Missing JNI output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const request = { path: apk, ...selection };
   expect(
@@ -203,7 +205,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   ).toBe(true);
   const compact = await client.callTool(
     { name: "inspect_android_jni_bindings", arguments: request },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(compact.isError).not.toBe(true);
   const summaryEvidence = parseEvidence(compact.structuredContent);
@@ -236,7 +238,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
       name: "inspect_android_jni_bindings",
       arguments: { ...request, detail: "complete" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(complete.isError).not.toBe(true);
   const completeEvidence = parseEvidence(complete.structuredContent);
@@ -286,7 +288,6 @@ it.skipIf(process.platform === "win32")(
         androidAnalysis: provider,
         environment: {
           REA_MCP_TOOL_FAMILIES: "android,application,session",
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
         },
       },
     });
@@ -296,9 +297,10 @@ it.skipIf(process.platform === "win32")(
     const definition = catalog.find(
       (tool) => tool.name === "inspect_android_package",
     );
-    if (definition?.outputSchema === undefined)
-      throw new Error("Missing APK schema");
-    const outputSchema: Record<string, unknown> = definition.outputSchema;
+    if (definition === undefined) throw new Error("Missing APK schema");
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      definition.name,
+    );
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -321,7 +323,7 @@ it.skipIf(process.platform === "win32")(
         name: "inspect_android_package",
         arguments: { path: apk, detail: "summary" },
       },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(reply.isError).not.toBe(true);
     const receipt = parseEvidence(reply.structuredContent);
@@ -369,7 +371,7 @@ it.skipIf(process.platform === "win32")(
     }
     await assertAndroidPackageSelectedFacetContract({
       client,
-      toolDefinition: definition,
+      toolDefinition: withCanonicalOutputSchema(definition),
       apk,
       parent,
       retained: (id) => session.evidenceById(id),

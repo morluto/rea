@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
@@ -118,8 +118,12 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
   );
   expect(projected.code).toBe("provider_timeout");
   expect(projected.message).toContain("4500 ms");
-  expect(projected.message).toContain("pwntools_timeout_ms");
-  expect(projected.remediation.action).toContain("--pwntools-timeout-ms");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "pwntools_timeout_ms",
+    effective_value: 4_500,
+    default_value: 30_000,
+  });
   expect(projected.remediation.action).toContain("cpu_seconds=30");
   expect(projected.remediation.action).toContain("producer_limits");
   expect(projected.remediation.action).toContain("no REA restart");

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,
@@ -245,8 +245,7 @@ const browserResultTargetOrigin = (
     typeof result.inspection.target.origin === "string"
   )
     return result.inspection.target.origin;
-  if ("capture" in result && "target_origin" in result.capture)
-    return result.capture.target_origin ?? undefined;
+  if ("capture" in result) return result.capture.target_origin ?? undefined;
   if (!("target" in result)) return undefined;
   if ("origin" in result.target) return result.target.origin;
   if ("initial_url" in result.target)

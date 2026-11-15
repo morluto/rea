@@ -1,0 +1,16 @@
+{
+  "src/apktool/ApktoolProvider.ts": 1,
+  "src/application/reverse/ReverseEngineeringService.ts": 3,
+  "src/browser/history/CaptureFailures.ts": 2,
+  "src/captures/TsharkCaptureProvider.ts": 1,
+  "src/desktop/TaskReaderProcess.ts": 1,
+  "src/evm/EvmoleInterfaceProvider.ts": 1,
+  "src/gdb/GdbSessionManager.ts": 1,
+  "src/javascript/recovery/WakaruCommand.ts": 1,
+  "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
+  "src/native/CommandRunner.ts": 1,
+  "src/native/pwntools/PwntoolsDecoder.ts": 1,
+  "src/pcap/PcapCommand.ts": 1,
+  "src/signals/SigrokRecordingProvider.ts": 1,
+  "src/wasm/WabtArtifactProvider.ts": 1
+}

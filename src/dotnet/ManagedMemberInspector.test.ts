@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   ManagedDecodeBudget,
   managedDecodeBudget,
@@ -645,6 +646,7 @@ describe("managed member inspection", () => {
         caller_token: "0x06000001",
         il_offset: 6,
         target_identity_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        target_row_resolved: true,
         caller: "Fixture.Program.Main",
         opcode: "call",
         target_token: "0x0a000001",
@@ -659,6 +661,7 @@ describe("managed member inspection", () => {
         method_token: "0x06000001",
         il_offset: 1,
         target_identity_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        target_row_resolved: true,
         method: "Fixture.Program.Main",
         opcode: "ldfld",
         field_token: "0x04000001",
@@ -1489,6 +1492,33 @@ describe("managed exported types", () => {
       ],
     });
   });
+});
+
+it("keeps decoded members when only the loaded literals exceed capacity", () => {
+  const { heap, tokens } = fixtureUserStringHeap(
+    Array.from({ length: 8 }, (_, index) => String(index).repeat(8_000)),
+  );
+  const bytes = buildManagedPeFixture({
+    ilBody: ldstrBody(tokens),
+    userStringHeap: heap,
+  });
+  const target = managedPeFixtureTarget(bytes);
+  // The members fit 40 KB; the eight 8,000-character literals do not.
+  const result = inspectManagedMembersBytes(bytes, target, {
+    maxRepresentationBytes: 40_000,
+  });
+
+  expect(result.methods).toHaveLength(1);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  expect(result.user_strings).toMatchObject({
+    state: "partial",
+    literals: [],
+    issues: [{ code: "resource-limit", scope: "metadata.#US" }],
+  });
+  expect(result.limitations.join(" ")).toMatch(/literals are not examined/);
+  expect(
+    inspectManagedMembersBytes(bytes, target).user_strings?.literals,
+  ).toHaveLength(8);
 });
 
 describe("managed user strings", () => {
@@ -3106,14 +3136,17 @@ describe("managed member method paging", () => {
     expect(emptyPage.methods).toEqual([]);
   });
 
-  it("rejects invalid method page bounds", () => {
-    const image = buildManagedPeFixture();
-    expect(() =>
-      inspectManagedMembersBytes(image, managedPeFixtureTarget(image), {
-        methodOffset: -1,
-      }),
-    ).toThrow(RangeError);
-  });
+  // The input schema admits only non-negative integer pages, so any other
+  // page is a REA defect rather than a malformed target.
+  it.each([{ methodOffset: -1 }, { methodLimit: 1.5 }])(
+    "reports a %o method page as a broken internal assumption",
+    (page) => {
+      const image = buildManagedPeFixture();
+      expect(() =>
+        inspectManagedMembersBytes(image, managedPeFixtureTarget(image), page),
+      ).toThrow(InternalInvariantError);
+    },
+  );
 });
 
 it("retains names of unselected fields without admitting their malformed signatures", () => {

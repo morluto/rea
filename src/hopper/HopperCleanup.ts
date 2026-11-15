@@ -1,6 +1,6 @@
 import type { Socket } from "node:net";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { HopperError } from "../domain/hopperErrors.js";
 import { HopperProcessError } from "../domain/hopperErrors.js";

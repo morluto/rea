@@ -40,3 +40,9 @@ export function resolveModuleImports(
 export function inspectResolvedModuleBoundaries(
   imports: readonly ResolvedModuleImport[],
 ): readonly ModuleBoundaryViolation[];
+
+/**
+ * The file an exact-string package-map specifier names, as Node loads it.
+ * Conditional, array, pattern, undeclared and non-relative mappings are refused.
+ */
+export function packageImportTarget(root: string, specifier: string): string;

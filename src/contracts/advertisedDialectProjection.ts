@@ -5,6 +5,7 @@ import {
   ADVERTISED_BOUND_LIMIT,
   ADVERTISED_DESCRIPTION_MAX_CHARACTERS,
 } from "./advertisedDialect.js";
+import { projectPortablePattern } from "./portablePattern.js";
 
 // The one projection from a self-contained (reference-free) input schema into
 // the portable advertised dialect declared in `advertisedDialect.ts`. Every
@@ -175,7 +176,10 @@ const scalarBounds = (source: Schema, out: Schema): void => {
       (source[bound] as number) < ADVERTISED_BOUND_LIMIT
     )
       out[bound] = source[bound];
-  if (typeof source.pattern === "string") out.pattern = source.pattern;
+  if (typeof source.pattern === "string") {
+    const projected = projectPortablePattern(source.pattern);
+    if (projected.kind !== "unexpressible") out.pattern = projected.pattern;
+  }
   inclusiveBounds(source, out);
 };
 

@@ -80,6 +80,18 @@ describe("IDA diagnostic credential redaction", () => {
       "raw=[redacted transport credential]; wire=[redacted transport credential]; token=[redacted transport credential]; proxy=[redacted transport credential]; bare=[redacted transport credential]; cookie=[redacted transport credential]",
     );
   });
+  it("redacts a Set-Cookie value but not its attributes", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { "Set-Cookie": "sid=private-secret; Path=/; HttpOnly" },
+      mode: "attached",
+      protocol: "legacy",
+      timeoutMs: 1000,
+    }).text;
+    expect(redact("rejected private-secret at /caller/input")).toBe(
+      "rejected [redacted transport credential] at /caller/input",
+    );
+  });
   it("does not treat empty HTTP authentication as diagnostic content", () => {
     const redact = createIdaDiagnosticRedactor({
       url: "http://127.0.0.1:12345/mcp",

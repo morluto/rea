@@ -920,16 +920,17 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
       parsedCapture.inspection.completeness.unavailable_sections,
     ).not.toContain("scripts");
 
-    const legacySnapshot = {
+    const withoutCount = {
       ...observed.value,
       scripts: {
         ...observed.value.scripts,
       },
     };
-    delete legacySnapshot.scripts.parse_failed_total;
-    const parsedLegacySnapshot =
-      javascriptRuntimeObservationSchema.parse(legacySnapshot);
-    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+    delete (withoutCount.scripts as { parse_failed_total?: number })
+      .parse_failed_total;
+    expect(
+      javascriptRuntimeObservationSchema.safeParse(withoutCount).error?.issues,
+    ).toMatchObject([{ path: ["scripts", "parse_failed_total"] }]);
   } finally {
     await fake.close();
   }
@@ -1025,6 +1026,7 @@ const runtimeObservation = (
       },
     ],
     observed_total: 1,
+    parse_failed_total: 0,
     excluded: {
       unsupported_location: 0,
       invalid_protocol_value: 0,

@@ -5,7 +5,7 @@ import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import {
   CDP_BROWSER_PROVIDER_IDENTITY,
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
@@ -41,7 +41,11 @@ export const createOptionalObservationFactories = (
       const { WebBundleAnalysisAdmission: Admission } =
         await import("../browser/IsolatedWebBundleAnalyzer.js");
       webBundleAdmission ??= new Admission();
-      return browser.createBrowserObservationProvider(webBundleAdmission);
+      return browser.createBrowserObservationProvider(
+        webBundleAdmission,
+        environment,
+        settings,
+      );
     },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(

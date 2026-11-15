@@ -2,6 +2,7 @@ import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -150,7 +151,7 @@ export const authorizeRuntimeTargetLocation = async (
       files,
     );
 
-  if (isLosslessNodeDiscoveryPath(reportedPath, process.platform)) {
+  if (isLosslessNodeDiscoveryPath(reportedPath, HOST_PLATFORM.platform)) {
     const decision = await authorizeRuntimeLocation(
       pathToFileURL(reportedPath).href,
       signal,

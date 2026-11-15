@@ -1,6 +1,6 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
   access,
@@ -1079,11 +1079,25 @@ it.each(["tool-error", "frame-overflow", "body-error", "heap-decoy"])(
                 : "manifest decoder rejected malformed binary XML",
         },
       });
-    else
+    else {
       expect(outcome.error).toMatchObject({
-        _tag: "AnalysisOutputError",
+        _tag: "AnalysisResourceConstraintError",
         reason: expect.stringContaining("MCP frame exceeds"),
       });
+      // The refusal is built after finalization, so it keeps the output
+      // the transport retained.
+      expect(outcome.error).toHaveProperty(
+        "capturedOutput",
+        expect.objectContaining({ truncated: expect.any(Boolean) }),
+      );
+      // A fixed frame ceiling, not an output defect: recovery names it.
+      expect(outcome.error).toHaveProperty("fixedAllowance", {
+        name: "The JADX frame allowance of 8388608 bytes",
+        kind: "bytes",
+        limit: 8 * 1024 * 1024,
+        unit: "bytes",
+      });
+    }
     await provider.close();
     await verifyCleanup(launches);
   },

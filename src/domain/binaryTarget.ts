@@ -71,6 +71,11 @@ export type ExecutableMetadata =
       readonly availableArchitectures: readonly "hexagon"[];
     }
   | {
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
+    }
+  | {
       readonly format: "mach-o";
       readonly architecture: "arm64_32";
       readonly availableArchitectures: readonly "arm64_32"[];
@@ -529,6 +534,12 @@ const parseElf = (
         });
   }
   if (architecture === "hexagon")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+    });
+  if (architecture === "xtensa")
     return ok({
       format: "elf",
       architecture,

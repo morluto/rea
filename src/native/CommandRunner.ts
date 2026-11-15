@@ -20,14 +20,13 @@ import type {
 } from "../process/ProviderProcess.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
-/** Retain complete command output up to a bounded aggregate size. */
-export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
 /**
  * Failure diagnostics keep only an excerpt of each stream. Successful
  * analysis needs complete output, but a failed command's error would
@@ -246,7 +245,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         if (stopped.status === "not-owned") {
           reason = "native command ownership remains unresolved";
         } else if (stopped.status !== "incomplete") {
-          marker.resolveCleanup();
+          // The marker reads the supervisor's release of this stop.
           this.#cleanupMarkers.delete(owner);
           continue;
         } else
@@ -284,6 +283,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         { operation: "native_command", cause: failure },
       );
     }
+    marker.bindCleanupReleaseClaim(owner.cleanupRelease);
     this.#cleanupMarkers.set(owner, marker);
     if (failure.cleanupMarker === marker) return failure;
     return new NativeCommandFailure(

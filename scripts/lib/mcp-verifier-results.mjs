@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { authenticateParsedEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
-import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../dist/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../dist/contracts/toolContracts.js";
 import {
   expandProviderCapabilities,

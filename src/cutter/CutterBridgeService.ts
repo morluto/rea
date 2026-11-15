@@ -1,4 +1,5 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -48,6 +49,8 @@ export class CutterBridgeService {
       readonly sessionId: string;
       readonly completionToken?: string;
       readonly failure: AnalysisOutputError;
+      /** Confirmed by the producer's terminal receipt; the failure reads it. */
+      readonly release: AnalysisCleanupRelease;
     }
   >();
 
@@ -75,15 +78,14 @@ export class CutterBridgeService {
       );
       if (!receipt.ok)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             pending.failure,
             receipt.error,
             "cutter_command",
-          ).bindCleanupDependencies([pending.failure, receipt.error]),
+          ),
         );
       if (!receipt.value) return err(pending.failure);
-      const { failure } = pending;
-      failure.resolveCleanup();
+      pending.release.confirm();
       this.#pendingCleanup.delete(requestId);
     }
     return ok(null);
@@ -132,11 +134,11 @@ export class CutterBridgeService {
             );
       throw pending.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             pending.error,
             failure,
             "close_cutter",
-          ).bindCleanupDependencies([pending.error, failure]);
+          );
     }
     if (!pending.ok) throw pending.error;
   }
@@ -230,12 +232,14 @@ export class CutterBridgeService {
             partialObservation: evidence,
           },
         );
+        const release = new AnalysisCleanupRelease();
         this.#pendingCleanup.set(output.requestId, {
           sessionId: input.session_id,
           ...(output.completionToken === undefined
             ? {}
             : { completionToken: output.completionToken }),
-          failure,
+          failure: release.bind(failure),
+          release,
         });
         return err(failure);
       }

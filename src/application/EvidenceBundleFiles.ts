@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
 import { jsonValueValidationIssue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
@@ -29,8 +29,11 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
-import { readJsonFile, writeTextParts } from "./JsonFiles.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { readJsonFile } from "./JsonFiles.js";
+import {
+  writeTextParts,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
 type EvidenceBundleFileFailure =
   | EvidenceFileError
@@ -87,11 +90,11 @@ export const readComparisonEvidenceBundles = async (
   if (!left.ok) {
     if (!right.ok && right.error.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           left.error,
           right.error,
           operation,
-        ).bindCleanupDependencies([left.error, right.error]),
+        ),
       );
     return left;
   }
@@ -141,6 +144,7 @@ export const authenticateEvidenceBundleValue = (
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
           cause: failure.cause,
+          detectedKind: "evidence-record",
           userMessage: failure.message,
         }),
       );

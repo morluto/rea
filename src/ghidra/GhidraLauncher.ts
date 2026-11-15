@@ -8,7 +8,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
 import { constants as fsConstants } from "node:fs";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,
@@ -48,7 +48,7 @@ import {
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessCleanupResult,
@@ -294,7 +294,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
     const paths = ghidraRuntimePaths(session.runtimeRoot);
-    const platform = this.options.platform ?? process.platform;
+    const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const existingProject = this.options.existingProject;
     let started: SpawnedOwnedProviderProcess | undefined;
     let configuredMaxHeap: string | undefined;
@@ -517,12 +517,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         environment,
         onStderr: (mode, stderr) => {
           if (stderr === "") return;
-          const bytes = Buffer.byteLength(stderr);
-          const redacted = redactCapturedTransportCredential(
-            { text: stderr, bytes, observedBytes: bytes },
-            session.token,
-            "[REDACTED]",
-          );
+          const redacted = redactExplicitText(stderr, [session.token]);
           const bounded = utf8HeadExcerpt(
             redacted,
             GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
@@ -530,7 +525,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           launchSupport.push({
             mode,
             stderr: bounded.text,
-            stderr_bytes: bytes,
+            stderr_bytes: Buffer.byteLength(stderr),
             stderr_truncated: bounded.truncated,
           });
         },
@@ -841,7 +836,7 @@ const validateExistingProjectOptions = (
   if (existing !== undefined) {
     // The pre-imported project carries its own analysis; every import-time
     // selection is therefore rejected instead of silently ignored.
-    if ((options.platform ?? process.platform) === "win32")
+    if ((options.platform ?? HOST_PLATFORM.platform) === "win32")
       throw new GhidraAdmissionError("existing_project_windows");
     if (existing.programName.trim() === "")
       throw new GhidraAdmissionError("existing_project_program_name");
@@ -875,7 +870,7 @@ export const ghidraHeadlessArguments = (
   // Bridge script paths use the target platform's syntax, which differs from
   // the host when building a cross-platform invocation.
   const scriptPath =
-    (options.platform ?? process.platform) === "win32" ? win32 : posix;
+    (options.platform ?? HOST_PLATFORM.platform) === "win32" ? win32 : posix;
   const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
   const override = options.languageOverride;
   const rawBinary = options.rawBinary;
@@ -1060,7 +1055,7 @@ export const ghidraHeadlessArguments = (
           options.disabledAnalyzers.join(","),
         ]),
     ...(existing !== undefined ||
-    (options.platform ?? process.platform) === "win32"
+    (options.platform ?? HOST_PLATFORM.platform) === "win32"
       ? []
       : [
           "-postScript",

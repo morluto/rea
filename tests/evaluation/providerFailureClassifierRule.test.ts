@@ -6,7 +6,7 @@ import rule from "../../scripts/lint/rules/provider-failure-classifier.mjs";
 
 /** A baselined file allowed exactly one per-site classifier. */
 const baselinedFile = fileURLToPath(
-  new URL("../../src/adb/AdbProvider.ts", import.meta.url),
+  new URL("../../src/rust/RustBinaryProvider.ts", import.meta.url),
 );
 /** The shared classifier owner, which may examine raw failures. */
 const ownerFile = fileURLToPath(

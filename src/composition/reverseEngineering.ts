@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ReverseEngineeringServiceRuntimeOptions } from "../application/reverse/ReverseEngineeringService.js";
 import type {
   ReverseEngineeringCommandPort,
@@ -6,19 +7,28 @@ import type {
 } from "../application/reverse/ReverseEngineeringCommandPort.js";
 import { err, ok } from "../domain/result.js";
 import { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { objdumpCommand } from "../objdump/ObjdumpCommand.js";
-import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
+import {
+  objdumpCommand,
+  objdumpCommandLimitations,
+} from "../objdump/ObjdumpCommand.js";
+import {
+  OBJDUMP_COMMAND_REPAIR,
+  OBJDUMP_PROVIDER_IDENTITY,
+} from "../objdump/ObjdumpProviderIdentity.js";
 import {
   rizinCommand,
   rizinCommandLimitations,
   rizinCommandRejection,
 } from "../rizin/RizinCommand.js";
-import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
+import {
+  RIZIN_COMMAND_REPAIR,
+  RIZIN_PROVIDER_IDENTITY,
+} from "../rizin/RizinProviderIdentity.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): ReverseEngineeringCommandPort => ({
   objdump: (input) =>
     selectCommand(
@@ -27,7 +37,9 @@ export const createReverseEngineeringCommandPort = (
       platform,
       {
         arguments: objdumpCommand(input),
+        limitations: objdumpCommandLimitations(input),
         identity: OBJDUMP_PROVIDER_IDENTITY,
+        repair: OBJDUMP_COMMAND_REPAIR,
         environmentOverrides: { DEBUGINFOD_URLS: "" },
       },
     ),
@@ -41,6 +53,7 @@ export const createReverseEngineeringCommandPort = (
         limitations: rizinCommandLimitations(input),
         rejection: rizinCommandRejection,
         identity: RIZIN_PROVIDER_IDENTITY,
+        repair: RIZIN_COMMAND_REPAIR,
       },
     ),
 });
@@ -57,6 +70,7 @@ const selectCommand = (
   if (resolved.ok) return ok({ ...profile, executable: resolved.value });
   return err({
     identity: profile.identity,
+    repair: profile.repair,
     command,
     reason:
       resolved.error.kind === "not_found"

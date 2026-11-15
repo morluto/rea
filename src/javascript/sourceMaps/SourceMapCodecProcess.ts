@@ -1,4 +1,4 @@
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
@@ -9,13 +9,14 @@ import {
   isSourceMapFailure,
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import {
   sourceMapCodecInputSchema,
   sourceMapCodecReplySchema,
 } from "./SourceMapCodecProtocol.js";
 import { z } from "zod";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /** Dedicated process entrypoint invoked only for an explicitly selected map. */
 const execute = async (): Promise<string> => {
@@ -28,7 +29,8 @@ const execute = async (): Promise<string> => {
     );
     const limits = selectedSourceMapLimits(selected);
     const data = await readStableArtifact(path, limits.outputBytes);
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(data.bytes);
+    // Source maps on disk may carry a BOM signature (RFC 8259 8.1).
+    const text = decodeStrictUtf8(data.bytes, "strip-signature");
     const value: unknown = JSON.parse(text);
     const input = sourceMapCodecInputSchema.parse(value);
     if (Buffer.byteLength(input.text) > limits.mapBytes)

@@ -7,9 +7,8 @@ import {
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import * as nativeExportContracts from "../../domain/native/nativeExports.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
-  NativeExportLimitFailure,
   parseNativeExports,
   parseNativeExportsSteps,
 } from "./NativeExportParser.js";
@@ -573,9 +572,14 @@ describe("PE export directories", () => {
     const cause = refusal(
       peExportImage({ functions: [], declaredFunctions: 0x40001 }),
     );
-    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
     expect(cause).toMatchObject({
-      limit: "rows",
+      failure: {
+        kind: "limit",
+        limit: {
+          name: "rows",
+          maximum: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+        },
+      },
       boundary: "structure",
       maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
       message: expect.stringContaining("262144-entry export inventory"),
@@ -1081,9 +1085,11 @@ describe("export inventory review regressions", () => {
 
     expect(bytes.length).toBeLessThan(100_000);
     const cause = refusal(bytes);
-    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
     expect(cause).toMatchObject({
-      limit: "retained_text",
+      failure: {
+        kind: "limit",
+        limit: { name: "retained_text", maximum: 16_777_216 },
+      },
       boundary: "structure",
       maximum_bytes: 16_777_216,
       message: expect.stringContaining("16777216-byte retained-text"),

@@ -2,15 +2,13 @@ import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -23,7 +21,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
+  PE_LOAD_CONFIG_LIMITS,
   type PeLoadConfigLimit,
 } from "./PeLoadConfigParser.js";
 
@@ -107,8 +105,7 @@ const peLoadConfigFailure = (
           input.max_file_bytes,
           MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
         ),
-      limit: (failure) =>
-        failure instanceof PeLoadConfigLimitFailure ? failure.limit : null,
+      limits: PE_LOAD_CONFIG_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

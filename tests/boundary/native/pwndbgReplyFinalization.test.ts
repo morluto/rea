@@ -34,7 +34,7 @@ vi.mock("node:fs/promises", async (original) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisError,
   primaryAnalysisError,

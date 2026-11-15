@@ -10,7 +10,7 @@ if (modulePath === undefined || root === undefined)
 
 const { readStableFile } = await import(pathToFileURL(modulePath));
 const { ArtifactResourceScope } = await import(
-  new URL("../artifacts/ArtifactResourceScope.js", pathToFileURL(modulePath))
+  new URL("../resources/ArtifactResourceScope.js", pathToFileURL(modulePath))
 );
 const resources = new ArtifactResourceScope();
 try {

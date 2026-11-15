@@ -20,13 +20,31 @@ export interface PublishedEvidenceFileObservation {
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
   override readonly userMessage: string | undefined;
+  /** For a two-sided comparison input, the side whose Evidence failed. */
+  readonly side: "left" | "right" | undefined;
+  /** The first failing location inside that Evidence or its result, when schema-located. */
+  readonly issuePath: readonly (string | number)[] | undefined;
+  /** The constraint a schema refinement named on that first issue. */
+  readonly constraint: string | undefined;
+  /** Schema issues after the first, which the message only summarizes. */
+  readonly remainingIssueCount: number | undefined;
 
   constructor(
     message: string,
-    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly side?: "left" | "right";
+      readonly issuePath?: readonly (string | number)[];
+      readonly constraint?: string;
+      readonly remainingIssueCount?: number;
+    },
   ) {
     super(message, options);
     this.userMessage = options?.userMessage;
+    this.side = options?.side;
+    this.issuePath = options?.issuePath;
+    this.constraint = options?.constraint;
+    this.remainingIssueCount = options?.remainingIssueCount;
   }
 }
 
@@ -77,6 +95,9 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
 }
 
 /** Evidence bundle filesystem access failed within the configured policy. */
+/** A recognized document kind supplied where an Evidence bundle is required. */
+export type EvidenceFileDetectedKind = "analysis-snapshot" | "evidence-record";
+
 export class EvidenceFileError extends AnalysisError {
   readonly _tag = "EvidenceFileError";
   override readonly userMessage: string | undefined;
@@ -89,7 +110,7 @@ export class EvidenceFileError extends AnalysisError {
   readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
   readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
   /** For `wrong-kind`: the recognized kind the file holds instead, when known. */
-  readonly detectedKind: "analysis-snapshot" | undefined;
+  readonly detectedKind: EvidenceFileDetectedKind | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -109,7 +130,7 @@ export class EvidenceFileError extends AnalysisError {
       readonly userMessage?: string;
       readonly contentIssues?: readonly AnalysisInputIssue[];
       readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
-      readonly detectedKind?: "analysis-snapshot";
+      readonly detectedKind?: EvidenceFileDetectedKind;
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);

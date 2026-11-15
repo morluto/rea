@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -9,7 +10,10 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { buildCapturedWebBundleAnalysis } from "../domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../domain/webBundleAnalyzerState.js";
-import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.js";
+import {
+  unavailableWebScriptRecovery,
+  type WebBundleScriptAnalysis,
+} from "../domain/webBundleScriptAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -19,7 +23,7 @@ import {
   cancelledBy,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -143,6 +147,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
@@ -170,6 +175,7 @@ export class IsolatedWebBundleAnalyzer {
       sourceMaps,
       input,
       signal,
+      memberMutationAllowance,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -183,6 +189,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -224,6 +231,7 @@ export class IsolatedWebBundleAnalyzer {
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
           input.semantic_precision,
+          memberMutationAllowance,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {
@@ -240,11 +248,7 @@ export class IsolatedWebBundleAnalyzer {
                   : error instanceof AnalysisResourceConstraintError
                     ? "resource_constraint"
                     : "worker_failure",
-              detail:
-                error instanceof AnalysisResourceConstraintError &&
-                error.reportedLimits !== null
-                  ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
-                  : (error.userMessage ?? error.message),
+              ...unavailableWebScriptRecovery(error),
             },
           );
           if (error.cleanupIncomplete) {
@@ -302,11 +306,11 @@ export class IsolatedWebBundleAnalyzer {
       failure =
         failure === undefined
           ? cleanup
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               failure,
               cleanup,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([failure, cleanup]);
+            );
     } finally {
       deadline.dispose();
     }
@@ -317,11 +321,11 @@ export class IsolatedWebBundleAnalyzer {
       failure = hasPrimaryFailure
         ? analysisErrorWithCancellation(failure, cancelled)
         : failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               cancelled,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([cancelled, failure])
+            )
           : cancelled;
     } else if (!hasPrimaryFailure && deadline.interruption === "timeout") {
       const totalTimeoutMs =
@@ -337,11 +341,11 @@ export class IsolatedWebBundleAnalyzer {
       );
       failure =
         failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               timeout,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([timeout, failure])
+            )
           : timeout;
     }
     if (failure !== undefined) {

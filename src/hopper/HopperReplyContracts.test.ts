@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
@@ -9,16 +10,44 @@ import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
 import { HOPPER_OPERATIONS } from "./HopperProviderMetadata.js";
 import {
-  hasHopperReplyContract,
   hopperBridgeMethod,
-  parseHopperReply,
+  parseHopperReply as parseHopperReplyWith,
+  HopperReplyContractError,
+  hopperReplySchemas,
+  type HopperReplyMethod,
   parseHopperServerInfo,
   parseHopperShutdownReply,
 } from "./HopperReplyContracts.js";
 
+/**
+ * Stand in for the client's own reply check: `HopperClient.callTool` validates
+ * each reply against its method contract before the provider reads it.
+ */
+const validatedReply =
+  (reply: JsonValue) =>
+  (
+    method: HopperReplyMethod,
+    _arguments?: unknown,
+    options?: { readonly operation?: string },
+  ) =>
+    Promise.resolve(
+      parseHopperReplyWith(
+        hopperReplySchemas,
+        method,
+        reply,
+        options?.operation ?? method,
+      ),
+    );
+
+const parseHopperReply = <M extends HopperReplyMethod>(
+  method: M,
+  value: JsonValue,
+  operation: string = method,
+) => parseHopperReplyWith(hopperReplySchemas, method, value, operation);
+
 it("gives every Hopper operation's bridge method a reply contract", () => {
   const missing = HOPPER_OPERATIONS.map(hopperBridgeMethod).filter(
-    (method) => !hasHopperReplyContract(method),
+    (method) => !Object.hasOwn(hopperReplySchemas, method),
   );
 
   expect(missing, "no Hopper reply reaches Evidence unvalidated").toEqual([]);
@@ -111,8 +140,18 @@ it("names the requesting operation and the bridge method in a contract failure",
   expect(parsed.ok ? undefined : parsed.error).toMatchObject({
     _tag: "AnalysisOutputError",
     operation: "search_procedures",
+    method: "list_procedures",
     message: expect.stringContaining("list_procedures contract"),
   });
+});
+
+it("keeps the raw reply on a contract failure as partial evidence", () => {
+  const reply = [{ address: "0x10" }];
+  const parsed = parseHopperReply("list_procedures", reply);
+
+  if (parsed.ok) throw new Error("Expected a contract failure");
+  expect(parsed.error).toBeInstanceOf(HopperReplyContractError);
+  expect(parsed.error.reply).toBe(reply);
 });
 
 it("names each failing field without echoing reported text", () => {
@@ -227,7 +266,9 @@ describe("provider entry paths apply the reply contract", () => {
           "unlisted source fields survive",
         ).toEqual(valid);
 
-        callTool.mockResolvedValueOnce(ok(structuredClone(malformed)));
+        callTool.mockImplementationOnce(
+          validatedReply(structuredClone(malformed)) as never,
+        );
         const rejected = await client.execute(operation, parameters);
         expect(rejected.ok ? undefined : rejected.error).toMatchObject({
           _tag: "AnalysisOutputError",
@@ -248,7 +289,7 @@ describe("provider entry paths apply the reply contract", () => {
     async (operation) => {
       const ready = vi
         .spyOn(HopperClient.prototype, "callToolIfReady")
-        .mockResolvedValue(ok([{ unexpected: true }]));
+        .mockImplementation(validatedReply([{ unexpected: true }]) as never);
       const client = providerClient();
       try {
         const result = await client.executeIfReady?.(operation, {});
@@ -265,6 +306,19 @@ describe("provider entry paths apply the reply contract", () => {
       }
     },
   );
+});
+
+it("refuses, at compile time, a contract that would change the reply", () => {
+  const coercing = { count: z.object({ count: z.coerce.number() }) };
+  const defaulted = { label: z.object({ label: z.string().default("x") }) };
+  // @ts-expect-error A coercion promises a number the raw reply does not hold.
+  const coerced = parseHopperReplyWith(coercing, "count", { count: "1" }, "op");
+  // @ts-expect-error A default promises a field the raw reply may lack.
+  const filled = parseHopperReplyWith(defaulted, "label", {}, "op");
+
+  // The raw reply is returned, which is why such contracts are refused.
+  expect(coerced).toEqual({ ok: true, value: { count: "1" } });
+  expect(filled).toEqual({ ok: true, value: {} });
 });
 
 describe("Hopper health reply", () => {
