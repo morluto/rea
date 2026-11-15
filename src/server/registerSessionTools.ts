@@ -399,6 +399,7 @@ export const registerSessionTools = (
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
       {},
+      options.platform,
     ),
     androidAnalysisAvailability:
       options.androidAnalysisAvailability ?? missingAndroidAvailability,

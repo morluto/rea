@@ -181,3 +181,31 @@ it("refuses execution on the hosts that discovery reports unsupported", async ()
     await harness.close();
   }
 });
+
+it.each([
+  ["win32", false],
+  ["linux", true],
+] as const)(
+  "reports process capture on a selected %s host as its plan admits it",
+  async (platform, admitted) => {
+    const harness = await connect(platform, "x64");
+    try {
+      const entry = (await harness.availability()).find(
+        (tool) => tool.name === "capture_process_scenario",
+      );
+      expect(entry?.available).toBe(admitted);
+      const planned = await harness.call("capture_process_scenario", {
+        executable: process.execPath,
+        working_directory: harness.path("."),
+        dry_run: true,
+      });
+      if (admitted) expect(planned).not.toHaveProperty("error");
+      else
+        expect(planned).toMatchObject({
+          error: { code: "capability_unavailable" },
+        });
+    } finally {
+      await harness.close();
+    }
+  },
+);
