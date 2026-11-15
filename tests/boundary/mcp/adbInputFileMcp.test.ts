@@ -99,12 +99,13 @@ it.skipIf(process.platform === "win32")(
         );
         expect(cli.status).toBe(1);
         expect(cli.stderr).toBe("");
+        // The CLI names the argument by its CLI key.
         expect(JSON.parse(cli.stdout)).toMatchObject({
           code: "invalid_request",
           details: {
             issues: [
               {
-                path: [field],
+                path: [field.replaceAll("_", "-")],
                 reason: "invalid_value",
                 observed: {
                   path: selected,
