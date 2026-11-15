@@ -77,6 +77,18 @@ export class VerifierFixture {
     return cleanup;
   }
 
+  /**
+   * Keep the root for good: something that may still use its files cannot be
+   * confirmed stopped and has no cleanup this fixture could retry (an owned
+   * command whose cleanup is incomplete). Every release then fails, naming
+   * `reason` and the root.
+   */
+  retain(reason) {
+    this.releaseAfter(() => {
+      throw new Error(reason);
+    });
+  }
+
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
     if (this.#released) return Promise.resolve();
