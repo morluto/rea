@@ -1,0 +1,17 @@
+{
+  "src/android/JadxProtocol.ts": 2,
+  "src/android/JadxWorkspaceRoot.ts": 1,
+  "src/artifacts/AsarHeader.ts": 1,
+  "src/artifacts/ReleaseExposureReader.ts": 1,
+  "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": 1,
+  "src/artifacts/deno/DenoSectionLayout.ts": 1,
+  "src/domain/android/proguardMapping.ts": 1,
+  "src/domain/apple/interfaceBuilderKeyedArchive.ts": 1,
+  "src/evm/EvmoleInterfaceWorker.ts": 2,
+  "src/firmware/FirmwareReports.ts": 1,
+  "src/model/SafetensorsHeader.ts": 1,
+  "src/native/LldbRetainedObservations.ts": 1,
+  "src/native/apple/losslessJson.ts": 1,
+  "src/native/parsers/plist.ts": 1,
+  "src/rust/RustAuditableReader.ts": 1
+}

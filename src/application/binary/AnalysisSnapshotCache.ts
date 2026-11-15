@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -87,7 +88,7 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
 );
 
 /** Maximum duplicated result bindings retained across direct and workflow queries. */
-export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
 
 const replayDocumentSelected = (
   operation: AnalysisOperation,
@@ -170,10 +171,10 @@ export const isSnapshotCacheable = (
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
-): boolean => process.platform === "win32" && providerId === "ghidra";
+): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
-export const SNAPSHOT_REPLAY_LIMITATION =
+const SNAPSHOT_REPLAY_LIMITATION =
   "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Bounded in-memory cache for one immutable binary identity. */

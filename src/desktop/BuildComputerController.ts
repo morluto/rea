@@ -25,7 +25,7 @@ export const BUILD_REA_TIMEOUT_S = 1800;
  * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
  * One argument past this fails with E2BIG before the process starts.
  */
-export const LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
+const LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
 /**
  * A usual Linux `ARG_MAX`, leaving room for the environment the kernel counts
  * with the arguments. A larger vector fails with E2BIG before the process starts.
@@ -43,7 +43,7 @@ const isLowSurrogate = (text: string, index: number): boolean => {
 };
 
 /** Pieces of `text` that each fit in one Linux argument and join back to it. */
-export const controllerArgumentPieces = (text: string): readonly string[] => {
+const controllerArgumentPieces = (text: string): readonly string[] => {
   const pieces: string[] = [];
   let start = 0;
   while (start < text.length) {
@@ -164,6 +164,8 @@ export const answerSchema = z.looseObject({
   output_bytes: z.int().nonnegative().optional(),
   stdout_bytes: z.int().nonnegative().optional(),
   stderr: z.string().optional(),
+  /** False when the supervisor published a result but the process group is not confirmed gone. */
+  settled: z.boolean().optional(),
   apt: z
     .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
     .optional(),
@@ -277,7 +279,7 @@ const listFolder = async (
 };
 
 /** One listed file and the answer budget a batch must fit. */
-export interface ListedBatchFile {
+interface ListedBatchFile {
   readonly path: string;
   readonly size: number;
 }
@@ -287,7 +289,7 @@ export interface ListedBatchFile {
  * `rawBytes` or its base64 answer, including each file's envelope, passes
  * `answerBytes`.
  */
-export const batchListedFiles = <File extends ListedBatchFile>(
+const batchListedFiles = <File extends ListedBatchFile>(
   files: readonly File[],
   limits: { readonly rawBytes: number; readonly answerBytes: number },
 ): { files: File[]; bytes: number }[] => {

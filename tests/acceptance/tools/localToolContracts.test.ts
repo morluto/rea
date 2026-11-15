@@ -413,7 +413,7 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
       ],
     },
   });
-}, 60_000);
+});
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -583,9 +583,6 @@ captureTest(
       },
     });
   },
-  // 22 malformed requests plus two filesystem errors each start a fresh CLI.
-  // Cache compilation, but allow for startup at the bounded fanout of two.
-  120_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(

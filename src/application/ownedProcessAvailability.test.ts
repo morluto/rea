@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../process/ExecFileOutput.js";
 
 import {
   AnalysisCancelledError,
@@ -20,15 +21,11 @@ describe("Linux process table prerequisite discovery", () => {
     "reports %s with its own recovery",
     async (code) => {
       const cause = Object.assign(new Error(`ps failed: ${code}`), { code });
-      const host = createSystemProcessOwnershipHost(
-        "linux",
-        {},
-        {
-          execFileOutput: async () => {
-            throw cause;
-          },
-        },
-      );
+      const command = vi
+        .spyOn(processOutput, "execFileOutput")
+        .mockRejectedValue(cause);
+      onTestFinished(() => command.mockRestore());
+      const host = createSystemProcessOwnershipHost("linux", {});
       let failure: unknown;
       try {
         await host.prepare?.();
@@ -38,13 +35,24 @@ describe("Linux process table prerequisite discovery", () => {
       expect(failure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
       expect(failure).toMatchObject({
         cause,
-        diagnostics: { system_code: code },
+        // The refusal records which ps ran: a fixed system path or PATH.
+        message: expect.stringMatching(/\(ran ps (?:at \/|from REA's PATH)/u),
+        diagnostics: {
+          system_code: code,
+          ps_command: expect.stringMatching(/(?:^|\/)ps$/u),
+          ps_source: expect.stringMatching(/^(?:system|path)$/u),
+        },
       });
       const availability = ownedProcessPrerequisiteAvailability(failure);
       expect(availability).toMatchObject({
         status: "unavailable",
         reason: expect.stringContaining(code),
-        diagnostics: { system_code: code },
+        // Provider status keeps which ps ran, not only the system code.
+        diagnostics: {
+          system_code: code,
+          ps_command: expect.stringMatching(/(?:^|\/)ps$/u),
+          ps_source: expect.stringMatching(/^(?:system|path)$/u),
+        },
       });
       if (availability?.status !== "unavailable")
         throw new Error("expected unavailability");
@@ -58,15 +66,11 @@ describe("Linux process table prerequisite discovery", () => {
 
   it("reports a ps probe failure with no error code without blaming missing procps", async () => {
     const cause = new Error("ps failed without error code");
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async () => {
-          throw cause;
-        },
-      },
-    );
+    const command = vi
+      .spyOn(processOutput, "execFileOutput")
+      .mockRejectedValue(cause);
+    onTestFinished(() => command.mockRestore());
+    const host = createSystemProcessOwnershipHost("linux", {});
     let failure: unknown;
     try {
       await host.prepare?.();
@@ -103,15 +107,11 @@ describe("Linux process table prerequisite discovery", () => {
 
   it("does not convert host spawn capacity exhaustion to unavailability", async () => {
     const cause = Object.assign(new Error("capacity"), { code: "EAGAIN" });
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async () => {
-          throw cause;
-        },
-      },
-    );
+    const command = vi
+      .spyOn(processOutput, "execFileOutput")
+      .mockRejectedValue(cause);
+    onTestFinished(() => command.mockRestore());
+    const host = createSystemProcessOwnershipHost("linux", {});
     await expect(host.prepare?.()).rejects.toBe(cause);
   });
 });

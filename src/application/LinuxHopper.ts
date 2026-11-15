@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
@@ -226,6 +228,7 @@ export type LinuxHopperInstallResult =
         | "archive_write"
         | "launcher_inspection"
         | "integrity"
+        | "launcher_digest_mismatch"
         | "authorization_or_package_manager"
         | "launcher_missing"
         | "runtime_dependencies"
@@ -511,7 +514,7 @@ export const installLinuxHopper = async (
 };
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
-export const linuxHopperLauncherPath = (home: string): string =>
+const linuxHopperLauncherPath = (home: string): string =>
   appendCallerPath(home, ".local/share/rea/hopper/bin/Hopper", "linux");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
@@ -606,7 +609,8 @@ export const systemLinuxHopperPublisher = (
     environment,
     // Only the package family is read here; it does not depend on the
     // architecture that gates automated setup.
-    async () => (await readLinuxDistribution(process.arch))?.packageFamily,
+    async () =>
+      (await readLinuxDistribution(HOST_PLATFORM.architecture))?.packageFamily,
   );
 
 /** Read-only authentication; persistent package retention belongs to approved setup. */
@@ -724,9 +728,6 @@ const installSystemPackage = async (
   return { status: "installed" };
 };
 
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
-
 /** Retain the publisher's error and any vendor request facts it observed. */
 const publisherFailure = (
   error: HopperReleaseError,
@@ -796,7 +797,7 @@ const runPackageManagerCommand = async (
 };
 
 /** Preserve argument boundaries in a command shown to the user. */
-export const formatCommandForDisplay = (
+const formatCommandForDisplay = (
   executable: string,
   args: readonly string[],
 ): string =>
@@ -807,7 +808,7 @@ export const formatCommandForDisplay = (
     .join(" ");
 
 /** Select the native package manager and authorization boundary without shell evaluation. */
-export const linuxPackageManagerCommands = (
+const linuxPackageManagerCommands = (
   family: LinuxPackageFamily,
   archive: string,
   isRoot: boolean,

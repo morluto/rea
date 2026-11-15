@@ -27,17 +27,21 @@ cliTest.for(["ancestor", "selected-root"] as const)(
         cwd: home,
         environment: { HOME: home, USERPROFILE: home },
       });
-    expect(await validateCanonicalSkillDirectories(home, [])).toMatchObject({
+    expect(
+      await validateCanonicalSkillDirectories(home, [], {}, process.platform),
+    ).toMatchObject({
       ok: false,
       error: {
         stage: "prepare",
         cause: [{ path: selected, kind: "not_directory" }],
       },
     });
-    expect(await existingSkillDestinations(home)).toEqual({
-      destinations: [],
-      issues: [],
-    });
+    expect(await existingSkillDestinations(home, {}, process.platform)).toEqual(
+      {
+        destinations: [],
+        issues: [],
+      },
+    );
     const refused = await run();
     expect(refused.exitCode, refused.stderr).toBe(1);
     expect(refused.json).toMatchObject({

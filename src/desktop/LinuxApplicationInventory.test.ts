@@ -6,7 +6,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -647,7 +647,10 @@ const inventoryOf = async (
   {
     home,
     environment,
-  }: Pick<Awaited<ReturnType<typeof fixture>>, "home" | "environment">,
+  }: {
+    home: string;
+    environment: Readonly<Record<string, string | undefined>>;
+  },
 ) => {
   const inspected = await inspectLinuxApplication({
     desktopEntry,
@@ -820,6 +823,76 @@ describe.skipIf(process.platform === "win32")(
           },
         ]),
       );
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication relative XDG bases",
+  () => {
+    it("ignores a relative XDG base and keeps the home default", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      const inventory = await inventoryOf("org.example.notes", {
+        ...installed,
+        environment: {
+          ...environment,
+          XDG_CONFIG_HOME: "relative-config",
+          XDG_DATA_HOME: "relative-data",
+          XDG_STATE_HOME: "relative-state",
+          XDG_CACHE_HOME: "relative-cache",
+        },
+      });
+
+      const paths = inventory.state_directories.map((entry) => entry.path);
+      expect(paths).toContain(join(home, ".config/notes"));
+      expect(paths).toContain(join(home, ".local/share/notes"));
+      expect(paths).toContain(join(home, ".local/state/notes"));
+      expect(paths).toContain(join(home, ".cache/notes"));
+      expect(paths.filter((path) => !isAbsolute(path))).toEqual([]);
+    });
+
+    it("reads a relative XDG base an Exec env prefix sets as unset", async () => {
+      const installed = await fixture();
+      const { home, bin } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await mkdir(join(home, ".local/share/applications"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/org.example.env-relative.desktop",
+        ),
+        `[Desktop Entry]\nType=Application\nName=Env\nExec=env XDG_CONFIG_HOME=relative-config notes-app\n`,
+      );
+
+      const inventory = await inventoryOf(
+        "org.example.env-relative",
+        installed,
+      );
+
+      expect(inventory.executable.path).toBe(join(bin, "notes-app"));
+      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
+        join(home, ".config/notes-app"),
+      );
+    });
+
+    it("finds a desktop entry by id when XDG_DATA_HOME is relative", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/org.example.home-notes.desktop"),
+        `[Desktop Entry]\nType=Application\nName=HomeNotes\nExec=notes-app\n`,
+      );
+
+      const inventory = await inventoryOf("org.example.home-notes", {
+        ...installed,
+        environment: { ...environment, XDG_DATA_HOME: "relative-data" },
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({ name: "HomeNotes" });
     });
   },
 );

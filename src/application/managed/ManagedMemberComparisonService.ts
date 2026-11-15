@@ -17,7 +17,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   classifyBinaryTargetFilesystemFailure,
@@ -132,15 +132,15 @@ export const compareManagedMemberPaths = async (
     if (!leftTarget.ok) {
       if (!rightTarget.ok && rightTarget.error.cleanupIncomplete)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             leftTarget.error,
             rightTarget.error,
             operation,
-          ).bindCleanupDependencies([leftTarget.error, rightTarget.error]),
+          ),
         );
-      return err(leftTarget.error);
+      return leftTarget;
     }
-    if (!rightTarget.ok) return err(rightTarget.error);
+    if (!rightTarget.ok) return rightTarget;
     const inspectTarget = async (
       target: BinaryTarget,
       inputField: "leftPath" | "rightPath",

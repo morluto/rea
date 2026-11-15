@@ -243,7 +243,6 @@ it.each(["final-close cancellation", "missing sources"] as const)(
     });
     expect(jsonByteLength(closure)).toBeLessThan(16 * 1024);
   },
-  60_000,
 );
 
 it("reports a data-sized link set cited by the observation itself", async () => {
@@ -264,7 +263,7 @@ it("reports a data-sized link set cited by the observation itself", async () => 
   );
   expect(closure.omitted_count).toBe(DATA_SIZED_LINKS);
   expect(closure.omitted).toHaveLength(64);
-}, 60_000);
+});
 
 it("examines repeated links once across every captured source", async () => {
   const root = await createTestTempDirectory("rea-closure-dedupe-");
@@ -288,7 +287,7 @@ it("examines repeated links once across every captured source", async () => {
   );
   expect(closure.records).toEqual([shared]);
   expect(closure.omitted_count).toBe(2);
-}, 60_000);
+});
 
 it.each([
   ["a captured source", "captured"],

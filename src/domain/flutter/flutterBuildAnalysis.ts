@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { maxCodePoints } from "../schemaConstraints.js";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
@@ -29,20 +30,11 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  */
 /** Shared refusal for an ABI label that is not a lib/ directory name. */
 const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
-const abiSelectorSchema = z
-  .string()
-  .min(1, ABI_SELECTOR_MESSAGE)
-  .refine(
-    (label) => {
-      const characters = label[Symbol.iterator]();
-      for (let count = 0; count <= ABI_SELECTOR_MAX_CHARACTERS; count += 1)
-        if (characters.next().done) return true;
-      return false;
-    },
-    { message: ABI_SELECTOR_MESSAGE, abort: true },
-  )
-  .regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE)
-  .meta({ maxLength: ABI_SELECTOR_MAX_CHARACTERS });
+const abiSelectorSchema = maxCodePoints(
+  z.string().min(1, ABI_SELECTOR_MESSAGE),
+  ABI_SELECTOR_MAX_CHARACTERS,
+  ABI_SELECTOR_MESSAGE,
+).regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE);
 
 /** Bounded printable-run selection, independent of snapshot structural coverage. */
 const DART_POOL_DEFAULTS = {
@@ -233,11 +225,7 @@ export const flutterResultSchemas = {
       ),
     }),
     string_pool: z.strictObject({
-      policy: dartPoolPolicySchema
-        .optional()
-        .describe(
-          "Effective selection and budgets; absent from older Evidence",
-        ),
+      policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
       coverage: z
         .enum(["complete", "partial"])
         .describe(

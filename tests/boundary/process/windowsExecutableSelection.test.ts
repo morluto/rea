@@ -74,7 +74,6 @@ processTest.skipIf(process.platform !== "win32")(
       ["--input-type=module", "--eval", program],
       {
         cwd: working,
-        timeoutMs: 30_000,
         windowsHide: true,
       },
     );
@@ -133,7 +132,6 @@ processTest.skipIf(process.platform !== "win32")(
       ["--input-type=module", "--eval", program],
       {
         cwd: root,
-        timeoutMs: 40_000,
         windowsHide: true,
       },
     );

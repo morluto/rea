@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -60,7 +61,7 @@ it.skipIf(process.platform === "win32")(
     const registrations = await readClientRegistrationStatuses(
       home,
       entrypoint,
-      { environment: {} },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
     expect(registrations).toEqual([
       expect.objectContaining({ client: "cursor", state: "aligned" }),
@@ -134,7 +135,7 @@ it.each([
     const registrations = await readClientRegistrationStatuses(
       home,
       undefined,
-      { environment: {} },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
     expect(registrations).toEqual([
       expect.objectContaining({ state, command_identity: identity }),
@@ -177,6 +178,7 @@ it("offers detected missing and manual clients without treating absent launcher 
   const grokbotPath = pathInside(workspace.root, ".grokbot");
   await mkdir(grokbotPath);
   const registrations = await readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
     environment: {},
   });
   expect(registrations).toEqual([

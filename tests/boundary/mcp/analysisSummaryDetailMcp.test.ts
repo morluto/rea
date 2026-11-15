@@ -1,6 +1,6 @@
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";

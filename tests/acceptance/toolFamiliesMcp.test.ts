@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 
-it.each(["full", "compact", "off"] as const)(
+it.each(["compact", "off"] as const)(
   "keeps real stdio discovery, status identity and disabled calls in the same family scope (%s)",
   async (outputProfile) => {
     const { client, call } = await connectLocalToolsMcp({

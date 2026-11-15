@@ -3,6 +3,7 @@ import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
@@ -615,6 +616,7 @@ it("preserves distinct results across concurrent tool calls", async () => {
     ["list_names", [{ address: "0x3000", value: "fixture_global" }]],
   ]);
   const pending = new Map<string, () => void>();
+  let releaseRemaining = false;
   let allStarted: () => void = () => {
     throw new Error("start gate missing");
   };
@@ -629,6 +631,7 @@ it("preserves distinct results across concurrent tool calls", async () => {
       await new Promise<void>((resolve) => {
         pending.set(name, resolve);
         if (pending.size === payloads.size) allStarted();
+        if (releaseRemaining) resolve();
       });
       return ok(payload);
     },
@@ -637,18 +640,28 @@ it("preserves distinct results across concurrent tool calls", async () => {
   const requests = names.map((name) =>
     client.callTool({ name, arguments: {} }),
   );
-  await started;
-  for (const name of [...names].reverse()) {
-    const release = pending.get(name);
-    if (release === undefined)
-      throw new Error("request did not reach provider");
-    release();
-  }
-  const results = await Promise.all(requests);
-  results.forEach((result, index) => {
-    expect(result.isError).not.toBe(true);
-    expect(structured(result)).toMatchObject({
-      normalized_result: payloads.get(names[index] ?? ""),
+  try {
+    await awaitAcknowledgement(
+      started,
+      Promise.all(requests),
+      "MCP tool calls",
+    );
+    for (const name of [...names].reverse()) {
+      const release = pending.get(name);
+      if (release === undefined)
+        throw new Error("request did not reach provider");
+      release();
+    }
+    const results = await Promise.all(requests);
+    results.forEach((result, index) => {
+      expect(result.isError).not.toBe(true);
+      expect(structured(result)).toMatchObject({
+        normalized_result: payloads.get(names[index] ?? ""),
+      });
     });
-  });
+  } finally {
+    releaseRemaining = true;
+    for (const release of pending.values()) release();
+    await Promise.allSettled(requests);
+  }
 });

@@ -5,8 +5,9 @@ import { basename, join } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -134,7 +135,7 @@ export const snapshotAdbInput = async (
     } else {
       primaryCause =
         signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause })
+          ? cancelledBy(operation, carriedReason(cause))
           : cause;
     }
   }

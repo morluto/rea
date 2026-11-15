@@ -373,8 +373,11 @@ The terminal finalizer then freezes PTY input, retains normalized and rendered
 facts, and releases the renderer. Cleanup retry reuses those completed facts.
 All new captures commit
 `terminal_observation_version: "deferred-rendered-journal-v1"`, including when
-PID and port normalization are disabled. Historical Evidence remains readable;
-recapture both sides with the same observation version before comparison.
+PID and port normalization are disabled. An Evidence bundle exported by an
+earlier release, without `evidence_format`, is refused; recreate the
+observation. A standalone record with an earlier observation version remains
+readable; recapture both sides with the same observation version before
+comparison.
 
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
@@ -638,6 +641,31 @@ An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the
 remaining family after its group signals. Coverage is bounded by the native
 snapshots and generations inspected; sampled group IDs select candidates.
+
+Settlement records the observation before final owned-process cleanup. Even a
+quiesced sampled group can have token-owned descendants discovered during that
+cleanup. If the ownership layer reports that cleanup sent termination signals,
+`settlement.cleanup_outcome` is `cleaned` on success, and process residual
+unknowns explain that the intervention may have ended further terminal or
+filesystem work. Failed resource cleanup remains `failed` and retains the same
+intervention fact in partial observations. This does not establish how an
+uncaptured run would have continued or change which processes REA may signal.
+
+An observed signal is retained even if a later group signal or final ownership
+verification fails. It does not establish complete cleanup: the failed resource,
+original diagnostic, and retry authority remain visible. A successful retry can
+clear the live cleanup status without rewriting the earlier partial observations.
+
+If capture completion fails before a capture exists, the intervention is retained
+in `partial_observation.observations.residual_unknowns`, alongside the available
+observations and explicit unavailable fields. Older records may omit this optional
+array. No intervention entry is added without an observed signaling fact; absence
+does not prove that cleanup sent no signals.
+
+Readers that previously accepted only `not_required` for a quiesced settlement
+must refresh the advertised MCP schema or update their saved-capture reader to
+accept `cleaned` as well. Existing saved captures remain valid and keep their
+recorded outcome; missing historical signal facts are not reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

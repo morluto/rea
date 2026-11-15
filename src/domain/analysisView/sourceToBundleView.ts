@@ -162,7 +162,7 @@ export const projectSourceToBundleView = (
       view,
       ...shared,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const paths = selected(view.source_paths),
     ids = selected(view.mapping_ids),

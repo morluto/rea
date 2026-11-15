@@ -2,7 +2,7 @@ import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { FULL_CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
@@ -213,7 +213,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   const skillMetadata = parseSkillManifestMetadata(skill);
   if (
     !skillMetadata.ok ||
-    skillMetadata.value.toolCount !== FULL_CATALOG_IDENTITY.counts.mcp_tools ||
+    skillMetadata.value.toolCount !==
+      DEFAULT_CATALOG_IDENTITY.counts.mcp_tools ||
     skillMetadata.value.hasCatalogDigest
   )
     throw new Error(

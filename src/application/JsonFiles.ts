@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   link,
   lstat,
@@ -18,6 +19,9 @@ import {
   AnalysisCancelledError,
   type AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
+  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
@@ -161,7 +165,7 @@ const readJsonFileInput = async <Value>(
   } catch (cause: unknown) {
     // Caller reasons are opaque, including instances of lifecycle failure types.
     if (signal?.aborted === true && cause === signal.reason)
-      return err(new AnalysisCancelledError(operation, { cause }));
+      return err(cancelledBy(operation, carriedReason(cause)));
     if (cause instanceof RegularFileCleanupFailure)
       return err(
         jsonFileCleanupError(
@@ -174,13 +178,15 @@ const readJsonFileInput = async <Value>(
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
       const primary =
         cause.reason === "cancelled"
-          ? new AnalysisCancelledError(operation, {
-              cause:
+          ? cancelledBy(
+              operation,
+              carriedReason(
                 cause.cancellation === undefined
                   ? cause.cause
                   : cause.cancellation.reason,
-              partialObservation: cause.partialObservation,
-            })
+              ),
+              { partialObservation: cause.partialObservation },
+            )
           : undefined;
       const error = new EvidenceFileError("read", "io", {
         cause,
@@ -232,14 +238,14 @@ const jsonFileReadFailure = (
 ): JsonFileReadFailure => {
   if (cause instanceof AnalysisResourceConstraintError) return cause;
   if (cause instanceof JsonInputCancellationFailure)
-    return new AnalysisCancelledError(operation, { cause: cause.reason });
+    return cancelledBy(operation, carriedReason(cause.reason));
   if (cause instanceof JsonInputPhysicalReadFailure)
     return new EvidenceFileError("read", "io", {
       cause: cause.physicalCause,
       path,
     });
   if (isJsonReadCancellation(cause, signal))
-    return new AnalysisCancelledError(operation, { cause: signal?.reason });
+    return cancelledBy(operation, signal);
   return new EvidenceFileError(
     "read",
     cause instanceof NonRegularFileReadError
@@ -275,14 +281,12 @@ const jsonFileCleanupError = <Value>(
     primary =
       cancellation === undefined
         ? jsonFileReadFailure(failure.outcome.cause, path, operation, signal)
-        : new AnalysisCancelledError(operation, { cause: cancellation.reason });
+        : cancelledBy(operation, carriedReason(cancellation.reason));
   } else {
     const decoded = decodedJsonFileResult(failure.outcome.value, path);
     if (!decoded.ok) primary = decoded.error;
     else if (cancellation !== undefined)
-      primary = new AnalysisCancelledError(operation, {
-        cause: cancellation.reason,
-      });
+      primary = cancelledBy(operation, carriedReason(cancellation.reason));
   }
   if (primary === undefined) return cleanup;
   const combined = new EvidenceFileError("read", "io", {
@@ -303,7 +307,7 @@ const jsonFileCleanupError = <Value>(
 const isJsonReadCancellation = (
   cause: unknown,
   signal?: AbortSignal,
-): boolean => {
+): signal is AbortedSignal => {
   if (signal?.aborted !== true) return false;
   if (cause === signal.reason) return true;
   return (
@@ -375,7 +379,7 @@ const writeTextPartsOwned = async (
   const requestedPath = absoluteCallerPath(path);
   try {
     assertWriteActive(cancellation);
-    if (process.platform !== "win32" && requestedPath.endsWith("/"))
+    if (HOST_PLATFORM.platform !== "win32" && requestedPath.endsWith("/"))
       return err(
         new EvidenceFileError("write", "not-file", { path: requestedPath }),
       );
@@ -430,11 +434,11 @@ const writeTextPartsOwned = async (
         );
       if (cause.outcome.error instanceof AnalysisCancelledError)
         return stagedCleanupFailure(
-          new AnalysisCancelledError(cause.outcome.error.operation, {
-            cause: cause.outcome.error.cause,
-            cleanupPrimary: cause.outcome.error,
-            cleanup,
-          }),
+          cancelledBy(
+            cause.outcome.error.operation,
+            carriedReason(cause.outcome.error.cause),
+            { cleanupPrimary: cause.outcome.error, cleanup },
+          ),
           cause.lease,
         );
       const failure = classifyWriteFailure(cause.outcome.error);
@@ -683,9 +687,7 @@ const writeStagedParts = async (
 
 const assertWriteActive = (cancellation?: TextWriteCancellation): void => {
   if (cancellation?.signal.aborted === true)
-    throw new AnalysisCancelledError(cancellation.operation, {
-      cause: cancellation.signal.reason,
-    });
+    throw cancelledBy(cancellation.operation, cancellation.signal);
 };
 
 const fileErrorCode = (cause: unknown): unknown =>

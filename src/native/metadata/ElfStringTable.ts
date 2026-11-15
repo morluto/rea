@@ -1,12 +1,8 @@
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   BinaryFormatFailure,
-  BinaryStringReadLimitFailure,
+  binaryStringReadLimit,
 } from "./BinaryContainer.js";
-
-export const readElfString = (bytes: Buffer, offset: number): string => {
-  return readElfStringBytes(bytes, offset).toString("latin1");
-};
 
 /** Read exact string-table bytes; ELF does not prescribe a character encoding. */
 export const readElfStringBytes = (bytes: Buffer, offset: number): Buffer => {
@@ -18,7 +14,7 @@ export const readElfStringBytes = (bytes: Buffer, offset: number): Buffer => {
     );
   if (observed.state === "truncated") {
     if (offset + observed.examinedBytes < bytes.length)
-      throw new BinaryStringReadLimitFailure(observed.examinedBytes);
+      throw binaryStringReadLimit(observed.examinedBytes);
     throw new BinaryFormatFailure(
       "malformed",
       "ELF string is unterminated inside its string table",

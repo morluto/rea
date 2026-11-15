@@ -121,7 +121,7 @@ describe("canonical product catalog", () => {
       await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
-  }, 60_000);
+  });
 });
 
 describe("canonical CLI catalog", () => {
@@ -129,7 +129,7 @@ describe("canonical CLI catalog", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
-  }, 30_000);
+  });
 
   it("describes every primary command argument and option", () => {
     expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
@@ -179,7 +179,7 @@ describe("canonical product catalog drift", () => {
     ]);
   });
 
-  it("requires setup-client facts in the canonical installation guide", async () => {
+  it("requires setup-client facts in the installation guide and the skill's repair list", async () => {
     const catalog = await createProductCatalog(root);
     const drifted = {
       ...catalog,
@@ -198,6 +198,9 @@ describe("canonical product catalog drift", () => {
       "docs/getting-started/installation.md: missing Future Client",
     );
     expect(issues).not.toContain("README.md: missing Future Client");
+    expect(issues).toContain(
+      ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md: missing `future_client`",
+    );
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {

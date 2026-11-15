@@ -781,7 +781,7 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       expect(analysisArguments).toEqual([]);
       expect(resources.hasPending).toBe(false);
-    }, 5000);
+    });
   },
 );
 

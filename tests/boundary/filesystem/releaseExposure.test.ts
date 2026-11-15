@@ -340,5 +340,5 @@ describe("release exposure ASAR header admission", () => {
     } finally {
       await lowered.close();
     }
-  }, 60_000);
+  });
 });

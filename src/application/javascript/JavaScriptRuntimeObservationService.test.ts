@@ -1,10 +1,7 @@
 import { expect, it } from "vitest";
 
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRuntimeTargetList } from "../../domain/javascript/javascriptRuntimeObservation.js";
@@ -48,6 +45,7 @@ const runtimeObservation = javascriptRuntimeObservationSchema.parse({
   scripts: {
     items: [],
     observed_total: 0,
+    parse_failed_total: 0,
     excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
   },
   execution_contexts: [],

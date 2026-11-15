@@ -1,11 +1,12 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -48,6 +49,8 @@ export class CutterBridgeService {
       readonly sessionId: string;
       readonly completionToken?: string;
       readonly failure: AnalysisOutputError;
+      /** Confirmed by the producer's terminal receipt; the failure reads it. */
+      readonly release: AnalysisCleanupRelease;
     }
   >();
 
@@ -82,8 +85,7 @@ export class CutterBridgeService {
           ).bindCleanupDependencies([pending.failure, receipt.error]),
         );
       if (!receipt.value) return err(pending.failure);
-      const { failure } = pending;
-      failure.resolveCleanup();
+      pending.release.confirm();
       this.#pendingCleanup.delete(requestId);
     }
     return ok(null);
@@ -94,19 +96,11 @@ export class CutterBridgeService {
   ): Promise<Result<CutterBridgeDiscovery, AnalysisError>> {
     const { signal } = options;
     if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("list_cutter_sessions", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("list_cutter_sessions", signal));
     try {
       const discovery = await this.client.listSessions(options);
       if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("list_cutter_sessions", {
-            cause: signal.reason,
-          }),
-        );
+        return err(cancelledBy("list_cutter_sessions", signal));
       return ok(discovery);
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
@@ -156,14 +150,10 @@ export class CutterBridgeService {
     const parsed = cutterCommandInputSchema.safeParse(rawInput);
     if (!parsed.success) return err(new AnalysisInputError("cutter_command"));
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("cutter_command", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("cutter_command", options.signal));
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
-    if (!cleanup.ok) return err(cleanup.error);
+    if (!cleanup.ok) return cleanup;
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,
@@ -212,9 +202,18 @@ export class CutterBridgeService {
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
                 ]
               : []),
-            ...(output.outputTruncated
+            ...(output.outputTruncated === true
               ? [
                   "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+                ]
+              : output.outputTruncated === null
+                ? [
+                    "The bridge did not declare whether output was omitted, so the output may be incomplete.",
+                  ]
+                : []),
+            ...(output.documentGeneration === null
+              ? [
+                  "The bridge did not report the document generation after this command; list Cutter sessions again before selecting an expected_generation.",
                 ]
               : []),
           ],
@@ -233,19 +232,20 @@ export class CutterBridgeService {
             partialObservation: evidence,
           },
         );
+        const release = new AnalysisCleanupRelease();
         this.#pendingCleanup.set(output.requestId, {
           sessionId: input.session_id,
           ...(output.completionToken === undefined
             ? {}
             : { completionToken: output.completionToken }),
-          failure,
+          failure: release.bind(failure),
+          release,
         });
         return err(failure);
       }
       if (options.signal?.aborted)
         return err(
-          new AnalysisCancelledError("cutter_command", {
-            cause: options.signal.reason,
+          cancelledBy("cutter_command", options.signal, {
             partialObservation: evidence,
           }),
         );

@@ -5,7 +5,7 @@ import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives
 import { goBinarySchema } from "../../src/domain/go/goBinary.js";
 import { createGoBinaryFixture, GO_MODULE_TEXT } from "../fixtures/go/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
   "inspects ELF64 Go metadata with four-byte amd64p32 pointers through CLI",
@@ -20,7 +20,7 @@ cliTest(
     });
     const path = join(root, "nacl-amd64p32.nexe");
     await writeFile(path, fixture.bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
 
