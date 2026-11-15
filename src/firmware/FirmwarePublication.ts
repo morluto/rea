@@ -10,7 +10,6 @@ import {
   firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
@@ -50,6 +49,7 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const depthContinuation = (
   maxDepth: number,
@@ -383,7 +383,7 @@ const extractionGaps = (
   const continuation = (instruction: string): string => {
     const known = instructions.get(instruction);
     if (known !== undefined) return known;
-    const id = createHash("sha256").update(instruction).digest("hex");
+    const id = sha256Hex(instruction);
     instructions.set(instruction, id);
     return id;
   };

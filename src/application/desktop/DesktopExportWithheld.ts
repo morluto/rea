@@ -34,6 +34,7 @@ import {
   withRetainedContent,
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest retained file read back, as the export reads seeds. */
@@ -280,7 +281,7 @@ const writeWithheldCopy = (
           Readable.from([bytes]),
           {
             bytes: bytes.length,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
           },
           signal,
         );
