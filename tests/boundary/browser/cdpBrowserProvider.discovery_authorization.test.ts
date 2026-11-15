@@ -315,9 +315,11 @@ it("tracks a known root replacement through later frame-scope events", async () 
         ]
       : undefined,
   );
+  // Both events select the replacement main frame; the document change is
+  // reported before the later document's scope.
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
+    error: { _tag: "BrowserObservationError", reason: "target_changed" },
   });
 });
 

@@ -1,3 +1,4 @@
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -32,7 +33,7 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   capturedPwntoolsOutput,
-  pwntoolsDecoderFailure,
+  pwntoolsFailureDialect,
   pwntoolsBudgetRecovery,
 } from "../pwntools/PwntoolsFailures.js";
 import {
@@ -156,13 +157,15 @@ export const inspectPwndbgCore = async ({
     producerLimits,
   };
   const failure = (cause: unknown) =>
-    pwntoolsDecoderFailure(
+    classifyProviderFailure(
       cause,
-      "debugger",
-      gdb,
-      environment.REA_PWNTOOLS_PYTHON ?? "",
-      {},
-      failureContext,
+      pwntoolsFailureDialect(
+        "debugger",
+        gdb,
+        environment.REA_PWNTOOLS_PYTHON ?? "",
+        {},
+        failureContext,
+      ),
     );
   try {
     checkCancelled();
@@ -306,18 +309,20 @@ export const inspectPwndbgCore = async ({
     return { context: { ...reply.value, diagnostics: output }, finalization };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
-    const primary = pwntoolsDecoderFailure(
+    const primary = classifyProviderFailure(
       cause,
-      "debugger",
-      gdb,
-      environment.REA_PWNTOOLS_PYTHON ?? "",
-      await readPwntoolsFailureEvidence(
-        cause,
-        stage,
-        resources,
-        producerLimits,
+      pwntoolsFailureDialect(
+        "debugger",
+        gdb,
+        environment.REA_PWNTOOLS_PYTHON ?? "",
+        await readPwntoolsFailureEvidence(
+          cause,
+          stage,
+          resources,
+          producerLimits,
+        ),
+        failureContext,
       ),
-      failureContext,
     );
     throw primary;
   }

@@ -12,7 +12,10 @@ import {
 } from "../../domain/browserDeadline.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
 import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
-import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
+import {
+  observedFrameUrl,
+  type CdpFrameTree,
+} from "../protocol/CdpFrameTree.js";
 import type {
   CdpDomainWith,
   CdpCommand,
@@ -32,7 +35,9 @@ import {
   type CdpEndpointDiscovery,
 } from "../CdpEndpoint.js";
 import {
+  compareCdpDocuments,
   openCdpTargetSession,
+  type CdpDocumentIdentity,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
 
@@ -62,6 +67,8 @@ export class CdpRuntimeSession {
     readonly options: ExecutionOptions,
     readonly owner: CdpTargetSessionOwner,
     readonly commandTimeoutMs: number,
+    /** The selected document, compared before any live evidence is joined. */
+    readonly document: CdpDocumentIdentity,
   ) {}
 
   /** Acquire a validated target; failed setup releases its owned socket. */
@@ -133,6 +140,7 @@ export class CdpRuntimeSession {
         options,
         owner,
         commandTimeoutMs,
+        frame.document,
       );
     } catch (cause: unknown) {
       try {
@@ -208,29 +216,38 @@ export class CdpRuntimeSession {
     await this.command(`${domain}.enable` as const);
   }
 
-  /** Check document identity before joining any live node or final coverage evidence. */
+  /**
+   * Check document identity before joining any live node or final coverage
+   * evidence. A changed document is reported before scope; scope applies to
+   * the current document. Runtime evidence cannot carry limited coverage, so
+   * an unprovable document that moved or gained a loader stays a change.
+   */
   async assertDocument(): Promise<void> {
     const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
       this.allowedOrigins,
       this.operation,
     );
-    if (
-      frame.id !== this.target.frame_id ||
-      (frame.loaderId ?? null) !== this.target.loader_id ||
-      (this.target.loader_id === null &&
-        ((frame.url !== undefined && frame.url !== this.target.initial_url) ||
-          frame.scope === "outside_policy" ||
-          frame.scope === "unsupported"))
-    )
-      throw new BrowserObservationError(this.operation, "target_changed", {
+    const changed = new BrowserObservationError(
+      this.operation,
+      "target_changed",
+      {
         detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
-      });
+      },
+    );
+    const comparison = compareCdpDocuments(this.document, frame.document);
+    if (comparison === "changed") throw changed;
     runtimeFrameUrl(
       frame,
       this.operation,
       `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
     );
+    if (
+      comparison === "unknown" &&
+      (frame.document.url !== this.document.url ||
+        frame.document.loaderId !== this.document.loaderId)
+    )
+      throw changed;
   }
 
   /** Cleanup uses its own deadline after caller cancellation, then closes REA's transport. */
@@ -349,6 +366,7 @@ const runtimeMainFrame = (
   return {
     id: frameId,
     loaderId,
+    document: { frameId, loaderId, url: observedFrameUrl(tree.root.url) },
     ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
   };
 };
