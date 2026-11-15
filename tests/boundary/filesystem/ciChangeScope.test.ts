@@ -393,6 +393,36 @@ it("emits an observational owner proposal without changing ordinary or full port
   expect(output).toContain('test_selection={"version":1,"mode":"full"');
 });
 
+it("passes the workflow environment through the entrypoint unchanged", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, ["src/evm/Example.ts"]);
+  const { CI_FLAGS } = await loadScopes();
+  // Fast and reused plans exercise BASE_SHA/HEAD_SHA and CI_SKIP_FULL; the
+  // entrypoint must answer exactly as the in-process planner does.
+  for (const [event, skipFull, tier] of [
+    ["pull_request", false, "fast"],
+    ["push", false, "fast"],
+    ["schedule", true, "reused"],
+  ] as const) {
+    const expected = await classify(
+      directory,
+      base,
+      head,
+      event,
+      false,
+      skipFull,
+    );
+    expect(expected.tier).toBe(tier);
+    expect(
+      await runPlanScript(directory, base, head, event, false, skipFull),
+    ).toEqual(expected);
+    const output = await readFile(join(directory, "scope-output"), "utf8");
+    for (const flag of CI_FLAGS)
+      expect(output).toContain(`${flag}=${String(expected[flag])}\n`);
+    expect(output).toContain(`tier=${tier}\n`);
+  }
+});
+
 it("does not charge a documentation PR for unrelated implementation updates on main", async () => {
   const { directory, base } = await fixture();
   await git(directory, ["switch", "-c", "docs/change"]);
