@@ -7,8 +7,10 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
 } from "../resources/index.js";
-import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
-import { targetDigestChangedFailure } from "../artifacts/withArtifactTargetIdentity.js";
+import {
+  hashStableRootArtifactHandle,
+  targetDigestChangedFailure,
+} from "../resources/index.js";
 
 /** A positional reader for one slice of the descriptor bound to the target. */
 export interface NativeMachoSource {

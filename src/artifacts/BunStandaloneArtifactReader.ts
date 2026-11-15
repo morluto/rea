@@ -26,9 +26,9 @@ import {
   ArtifactResourceScope,
   normalizeArtifactPath,
   ArtifactPathRegistry,
+  ArtifactFileSource,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,

@@ -1,13 +1,11 @@
-import {
-  artifactOperationCause,
-  ArtifactReaderFailure,
-  type ArtifactResourceScope,
-} from "../../resources/index.js";
-import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
+import { artifactOperationCause } from "./ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { readArtifactFileChunks } from "../../resources/index.js";
-import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import {
   assertStableRegularFileIdentity,
@@ -16,13 +14,14 @@ import {
   RegularFileAdmissionFailure,
   openRegularFile,
   type StableRegularFileDescriptor,
-} from "../../filesystem/RegularFile.js";
+} from "../filesystem/RegularFile.js";
 import {
   abortIfNeeded,
-  hashReadable,
-  type HashResult,
-} from "../ArtifactHash.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+  digestReadableToCompletion,
+  type StreamDigest,
+  type StreamDigestObserver,
+} from "./StreamDigest.js";
+import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
 
 /** Finalize the admitted root while preserving its completed identity and exact owner. */
 export const releaseRootArtifact = async (
@@ -30,7 +29,7 @@ export const releaseRootArtifact = async (
   owner: OwnedFileHandle,
   resourceScope: ArtifactResourceScope,
   outcome:
-    | { readonly kind: "completed"; readonly digest: HashResult | null }
+    | { readonly kind: "completed"; readonly digest: StreamDigest | null }
     | { readonly kind: "failed"; readonly cause: unknown },
   signal?: AbortSignal,
 ): Promise<void> => {
@@ -114,14 +113,14 @@ export const hashStableRootArtifact = async (
   path: string,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<HashResult> => {
+): Promise<StreamDigest> => {
   const { handle, initial, owner } = await openRootArtifact(
     path,
     resourceScope,
     signal,
   );
   let outcome:
-    | { readonly kind: "completed"; readonly value: HashResult }
+    | { readonly kind: "completed"; readonly value: StreamDigest }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
     outcome = {
@@ -144,18 +143,21 @@ export const hashStableRootArtifact = async (
   return outcome.value;
 };
 
-/** Hash and revalidate the same open descriptor used for root classification. */
+/** Hash and revalidate the same open descriptor, feeding `observe` the hashed bytes. */
 export const hashStableRootArtifactHandle = async (
   path: string,
   handle: FileHandle,
   initial: Stats,
   signal?: AbortSignal,
-): Promise<HashResult> => {
-  const digest = await hashReadable(
+  observe?: StreamDigestObserver,
+): Promise<StreamDigest> => {
+  const digest = await digestReadableToCompletion(
     // Read at most the admitted extent plus one byte to detect growth without
     // following an actively appended file indefinitely.
     readArtifactFileChunks(handle, { start: 0, end: initial.size, signal }),
     signal,
+    undefined,
+    observe,
   );
   abortIfNeeded(signal);
   try {

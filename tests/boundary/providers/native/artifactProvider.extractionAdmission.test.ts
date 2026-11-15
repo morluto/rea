@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import * as rootHash from "../../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import * as rootHash from "../../../../src/resources/StableRootArtifact.js";
 import * as pckLocation from "../../../../src/artifacts/GodotPckLocation.js";
 import * as seaLocation from "../../../../src/artifacts/nodeSea/NodeSeaLocation.js";
 import * as pyInstallerLocation from "../../../../src/artifacts/pyinstaller/CArchiveLayout.js";
