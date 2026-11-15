@@ -1,7 +1,8 @@
+import { contractNamed } from "./contractCliDescription.js";
 import type { Logger } from "pino";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import {
   registerContractCommand,
   type runDirectOnTarget,
@@ -18,7 +19,7 @@ export const registerDecompileDirectoryCommand = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("decompile_all"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "decompile_all"),
     {
       command: CLI_COMMANDS.decompileAll,
       description:
