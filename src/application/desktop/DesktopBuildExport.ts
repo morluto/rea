@@ -33,8 +33,8 @@ import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,
-  type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   ENDS,
