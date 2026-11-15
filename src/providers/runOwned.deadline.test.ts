@@ -13,6 +13,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ok, err, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned, type Finalized } from "./runOwned.js";
 
@@ -258,4 +259,58 @@ it("keeps a caller abort during cleanup a cancellation with the caller's reason 
   expect(error).toBeInstanceOf(AnalysisCancelledError);
   expect(error.cause).toBe(callerReason);
   expect(error.partialObservation).toEqual(project({ count: 1 }));
+});
+
+it("follows a late close rejection's own retry owner when no leases were supplied", async () => {
+  let rejectClose!: (cause: unknown) => void;
+  const producerCleanup = new ProviderCleanupError("fixture", ["/owned/root"], {
+    reason: "still owned",
+  });
+  const finalized = await runOwned(async () => ok({ count: 3 }), {
+    providerId: "fixture",
+    operation,
+    deadline: Deadline.after(1000, { finalizeMs: 10 }),
+    close: () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectClose = reject;
+      }),
+    partial: project,
+  });
+  if (finalized.kind !== "completed-cleanup-retained")
+    throw new Error(`expected retained cleanup, got ${finalized.kind}`);
+  rejectClose(producerCleanup);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(finalized.error.cleanupIncomplete).toBe(true);
+  // The producer's own retry confirms release; the late failure follows it.
+  producerCleanup.resolveCleanup();
+  expect(finalized.error.cleanupIncomplete).toBe(false);
+});
+
+it("keeps captured output when a budget cancellation becomes a timeout", async () => {
+  const capturedOutput = {
+    stdout: "partial stdout",
+    stderr: "",
+    truncated: false,
+  };
+  const finalized = await runOwned(
+    async (signal) => {
+      const result = await untilAborted(signal);
+      if (result.ok) return result;
+      return err(
+        cancelledBy(operation, signal as AbortSignal & { aborted: true }, {
+          capturedOutput,
+        }),
+      );
+    },
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5),
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  const error = failure(finalized);
+  expect(error).toBeInstanceOf(AnalysisTimeoutError);
+  expect(error.capturedOutput).toEqual(capturedOutput);
 });

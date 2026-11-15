@@ -253,15 +253,13 @@ const closeWithin = async (
   } finally {
     clearTimeout(timer);
   }
-  let pending: Promise<void> | undefined = closing;
+  // Without exact leases, the close still running is the lease: its success
+  // confirms release.
   const leases = options.cleanupLeases ?? [
-    new AnalysisCleanupLease(() => {
-      // The first release waits for the close still running; a retry
-      // closes again.
-      const attempt = pending ?? options.close();
-      pending = undefined;
-      return attempt;
-    }, [options.fallbackResource ?? `${options.operation} resources`]),
+    new AnalysisCleanupLease(
+      () => closing,
+      [options.fallbackResource ?? `${options.operation} resources`],
+    ),
   ];
   const resources = leases.flatMap((lease) => lease.cleanupResources ?? []);
   const failure = new ProviderCleanupError(
@@ -275,9 +273,26 @@ const closeWithin = async (
     { operation: options.operation },
   );
   new AnalysisCleanupLeaseGroup(failure, leases);
-  if (options.cleanupLeases === undefined)
-    void leases[0]!.release().catch(() => undefined);
-  else void closing.catch(() => undefined);
+  if (options.cleanupLeases === undefined) {
+    // A late rejection names its own retry owner: a producer-bound error, or
+    // an artifact reader failure with its leases. Completion then follows
+    // that owner, the same way an in-budget close failure would.
+    let late: AnalysisError | undefined;
+    failure.bindCleanupReleaseClaim({
+      get cleanupReleased() {
+        return late !== undefined && !late.cleanupIncomplete;
+      },
+    });
+    void leases[0]!.release().catch((cause: unknown) => {
+      late = closeFailure(cause, options);
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.cleanup !== undefined &&
+        cause.cleanupLeases !== undefined
+      )
+        new AnalysisCleanupLeaseGroup(late, cause.cleanupLeases);
+    });
+  } else void closing.catch(() => undefined);
   return failure;
 };
 
@@ -431,12 +446,18 @@ export const runOwned = async <Value>(
           ...(outcome.error.diagnostics === undefined
             ? {}
             : { diagnostics: outcome.error.diagnostics }),
+          ...(outcome.error.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: outcome.error.capturedOutput }),
         }),
       };
   } else if (workTimedOut && options.deadline !== undefined) {
     const timeout = (
       replaced: Partial<
-        Pick<AnalysisError, "partialObservation" | "diagnostics">
+        Pick<
+          AnalysisError,
+          "partialObservation" | "diagnostics" | "capturedOutput"
+        >
       >,
       cause?: unknown,
     ): AnalysisTimeoutError =>
@@ -448,6 +469,9 @@ export const runOwned = async <Value>(
         ...(replaced.diagnostics === undefined
           ? {}
           : { diagnostics: replaced.diagnostics }),
+        ...(replaced.capturedOutput === undefined
+          ? {}
+          : { capturedOutput: replaced.capturedOutput }),
       });
     if (outcome.ok && !committed) {
       // The value arrived after the budget elapsed and was not published.
