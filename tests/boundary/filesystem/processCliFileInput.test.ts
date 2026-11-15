@@ -529,6 +529,53 @@ it("reports a comparison capture whose file close fails as incomplete cleanup", 
   expect(owner?.handle.fd).toBe(-1);
 });
 
+it("retries a transient comparison capture close refusal through its owner", async () => {
+  const root = await createTestTempDirectory("rea-process-cli-compare-retry-");
+  const path = join(root, "capture.json");
+  await writeFile(path, JSON.stringify(processCaptureEvidence()));
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementationOnce(async () => {
+      throw new Error("transient close refusal");
+    });
+  try {
+    expect(await compareProcessCaptureFiles(path, path)).toMatchObject({
+      operation: "compare_process_captures",
+    });
+    // The refused close and its retry, then the right capture's close.
+    expect(close).toHaveBeenCalledTimes(3);
+  } finally {
+    close.mockRestore();
+  }
+});
+
+it("keeps a malformed capture's input issue beside its incomplete cleanup", async () => {
+  const root = await createTestTempDirectory(
+    "rea-process-cli-compare-primary-",
+  );
+  const path = join(root, "capture.json");
+  await writeFile(path, "{not json");
+  let owner: OwnedFileHandle | undefined;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owner = this;
+      throw new Error("injected file close failure");
+    });
+  try {
+    const result = await compareProcessCaptureFiles(path, path);
+    expect(result).toMatchObject({
+      code: "cleanup_incomplete",
+      input_path: path,
+      details: { cleanup: "incomplete", resources: [path] },
+    });
+    expect(JSON.stringify(result)).toContain("invalid_format");
+  } finally {
+    close.mockRestore();
+    await owner?.close();
+  }
+});
+
 describe("process CLI UTF-8 input diagnostics", () => {
   it("names a leading byte-order mark instead of quoting it as a token", async () => {
     const path = join(

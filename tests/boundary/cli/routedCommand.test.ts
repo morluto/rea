@@ -142,3 +142,36 @@ it("advertises each option's default without supplying it to routing", async () 
     details: { issues: [{ path: ["report"] }] },
   });
 });
+
+it("refuses routes that check a shared JSON input differently", () => {
+  const cli = Cli.create("rea-routed-check-test", {
+    version: "1",
+    sync: false,
+  });
+  const command = { command: "probe", description: "Probe" };
+  const route = (name: string, check: () => { ok: true; value: string }) =>
+    commandRoute(
+      {
+        name,
+        inputSchema: z.object({ policy: z.object({}).optional() }),
+      },
+      {
+        ...command,
+        jsonInputs: { policy: "policy must be JSON" },
+        jsonInputChecks: { policy: check },
+      },
+      async () => ({}),
+      { takes: async () => true, requirement: name },
+    );
+  expect(() =>
+    registerRoutedCommand(
+      cli as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("first_probe", () => ({ ok: true, value: "first" })),
+        route("second_probe", () => ({ ok: true, value: "second" })),
+      ],
+    ),
+  ).toThrow("probe routes check --policy differently");
+});

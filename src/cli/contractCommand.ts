@@ -1024,15 +1024,17 @@ const sharedJsonInputs = (
     [...keys[0]!].filter((key) => keys.every((own) => own.has(key))),
   );
   for (const key of shared) {
-    const refusals = new Set(
-      routes.map(
-        ({ description }) =>
-          description.parameters.find((parameter) => parameter.key === key)!
-            .runtimeJson,
-      ),
+    const parameters = routes.map(({ description }) =>
+      description.parameters.find((parameter) => parameter.key === key)!,
     );
-    if (refusals.size !== 1)
+    if (new Set(parameters.map(({ runtimeJson }) => runtimeJson)).size !== 1)
       throw new Error(`${command} routes refuse --${key} differently`);
+    // A shared input is checked before the route is chosen, so every route
+    // must check it the same way.
+    if (
+      new Set(parameters.map(({ checkJsonInput }) => checkJsonInput)).size !== 1
+    )
+      throw new Error(`${command} routes check --${key} differently`);
   }
   return shared;
 };
