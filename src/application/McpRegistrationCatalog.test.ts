@@ -144,7 +144,8 @@ const CATALOG_PROGRAM = `
       const observe = async (changes = {}) => {
         const result = await resources.run(() => resolveMcpRegistrationClients({ ...selection, ...changes }, resources));
         if (!result.ok) return { ok: false, error: { tag: result.error._tag, message: result.error.message } };
-        for (const client of result.value) for (const source of [client.configPath,...client.configPaths ?? []]) {
+        // System layers (Goose's /etc file) are read-only; every writable path stays in HOME.
+        for (const client of result.value) for (const source of [client.configPath,...(client.setupClient?.readOnlyLowerLayers ? [] : client.configPaths ?? [])]) {
           const path = relative(home, source);
           if (path.startsWith('..') || isAbsolute(path)) throw Error('Catalog path escaped temporary HOME: ' + client.id);
         }
