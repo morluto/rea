@@ -2129,8 +2129,12 @@ export const describeContractCommand = <
       operation: contract.name,
       fields: Object.fromEntries(
         [
-          ...parameters.flatMap(({ field, key, member }) =>
-            member === undefined ? [{ field, key }] : [],
+          // A selector field is named by its own option: its positional may
+          // share another key, and selection issues already use the option.
+          ...parameters.flatMap(({ field, key, member, selectorOption }) =>
+            member === undefined
+              ? [{ field, key: selectorOption?.key ?? key }]
+              : [],
           ),
           ...(evidenceTargets?.targets ?? []),
         ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
