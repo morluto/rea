@@ -373,7 +373,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "compare-process-captures",
-  "export-web-scripts",
   "guided-workflows",
   "inspect-android-jni-bindings",
   "inspect-api-contract",
@@ -382,7 +381,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "inspect-with-objdump",
   "observe-web-execution",
   "recover-javascript-sources",
-  "trace-web-module-imports",
   "trace-web-source-location",
 ];
 
