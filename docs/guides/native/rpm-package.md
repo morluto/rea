@@ -48,10 +48,11 @@ and whether the row is `rpmlib(...)` or scriptlet-only. A missing set is `null`,
 not an empty list.
 
 `scriptlets` lists PREIN/POSTIN/PREUN/POSTUN/PRETRANS/POSTTRANS and triggers
-with interpreter and byte length. Source text is omitted unless
-`include_script_text` is true, and is never executed. `files` lists header
-inventory rows with sizes, modes, digests, `FILEDIGESTALGO`, config/doc flags,
-and owners.
+with interpreter and byte length. Each trigger row lists every `TRIGGERNAME`
+condition that `TRIGGERINDEX` assigns to it in `trigger_names`; other rows
+report `null`. Source text is omitted unless `include_script_text` is true, and
+is never executed. `files` lists header inventory rows with sizes, modes,
+digests, `FILEDIGESTALGO`, config/doc flags, and owners.
 
 `payload.listing_source` is always `header`. The cpio payload is not
 decompressed.

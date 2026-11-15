@@ -745,6 +745,32 @@ const scriptText = (
   return { bytes: source.bytes, text: include ? source.text : null };
 };
 
+/** Group each TRIGGERNAME condition under the TRIGGERSCRIPTS entry its TRIGGERINDEX names. */
+const triggerConditions = (
+  header: DecodedHeader,
+  scriptCount: number,
+): string[][] => {
+  const grouped = Array.from({ length: scriptCount }, (): string[] => []);
+  const names = stringArray(header, RPM_TAG.triggerName) ?? [];
+  if (names.length === 0) return grouped;
+  const indexes = intArray(header, RPM_TAG.triggerIndex);
+  if (indexes?.length !== names.length)
+    fail(
+      `RPM TRIGGERINDEX has ${String(indexes?.length ?? 0)} entries for ${String(names.length)} TRIGGERNAME conditions.`,
+      { field: "trigger index" },
+    );
+  for (const [position, name] of names.entries()) {
+    const scriptIndex = indexes![position]!;
+    if (scriptIndex < 0 || scriptIndex >= scriptCount)
+      fail(
+        `RPM TRIGGERINDEX[${String(position)}] ${String(scriptIndex)} is outside TRIGGERSCRIPTS.`,
+        { field: "trigger index" },
+      );
+    grouped[scriptIndex]!.push(name);
+  }
+  return grouped;
+};
+
 const scriptlets = (
   header: DecodedHeader,
   includeText: boolean,
@@ -776,13 +802,13 @@ const scriptlets = (
       interpreter: text(stringValue(header, item.prog)),
       bytes: body.bytes,
       text: body.text,
-      trigger_name: null,
+      trigger_names: null,
     });
   }
   const triggerScripts = storedStrings(header, RPM_TAG.triggerScripts);
   if (triggerScripts !== undefined) {
     const programs = stringArray(header, RPM_TAG.triggerScriptProg) ?? [];
-    const names = stringArray(header, RPM_TAG.triggerName) ?? [];
+    const conditions = triggerConditions(header, triggerScripts.length);
     for (const [index, source] of triggerScripts.entries()) {
       const body = scriptText(source, includeText, maxBytes, "trigger");
       if (body === undefined) continue;
@@ -791,7 +817,7 @@ const scriptlets = (
         interpreter: text(programs[index]),
         bytes: body.bytes,
         text: body.text,
-        trigger_name: text(names[index]),
+        trigger_names: conditions[index]!,
       });
     }
   }

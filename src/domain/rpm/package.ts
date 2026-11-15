@@ -142,7 +142,7 @@ const scriptletSchema = z.strictObject({
   interpreter: nullableText,
   bytes: uint,
   text: z.string().nullable(),
-  trigger_name: nullableText,
+  trigger_names: z.array(z.string()).nullable(),
 });
 
 const fileSchema = z.strictObject({

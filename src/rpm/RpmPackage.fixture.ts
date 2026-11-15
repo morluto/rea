@@ -302,6 +302,7 @@ const defaultScriptletAndFileTags = (): RpmFixtureTag[] => [
     type: RPM_TYPE.stringArray,
     strings: ["demo"],
   },
+  { tag: RPM_TAG.triggerIndex, type: RPM_TYPE.int32, int32: [0] },
   {
     tag: RPM_TAG.dirNames,
     type: RPM_TYPE.stringArray,
@@ -458,6 +459,32 @@ export const rpmOutOfBoundsIndexFixture = (): Buffer =>
         string: "oob",
         offset: 0xffff,
       },
+    ],
+  });
+
+/** Two trigger scripts whose three TRIGGERNAME conditions map through TRIGGERINDEX. */
+export const rpmGroupedTriggerFixture = (
+  indexes: readonly number[] = [0, 0, 1],
+): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "triggers" },
+      {
+        tag: RPM_TAG.triggerScripts,
+        type: RPM_TYPE.stringArray,
+        strings: ["echo first\n", "echo second\n"],
+      },
+      {
+        tag: RPM_TAG.triggerScriptProg,
+        type: RPM_TYPE.stringArray,
+        strings: ["/bin/sh", "/bin/bash"],
+      },
+      {
+        tag: RPM_TAG.triggerName,
+        type: RPM_TYPE.stringArray,
+        strings: ["foo", "bar", "baz"],
+      },
+      { tag: RPM_TAG.triggerIndex, type: RPM_TYPE.int32, int32: [...indexes] },
     ],
   });
 

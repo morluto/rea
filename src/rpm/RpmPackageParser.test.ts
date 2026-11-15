@@ -9,6 +9,7 @@ import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import {
   encodeRpmPackage,
   rpmBinaryPackageFixture,
+  rpmGroupedTriggerFixture,
   rpmOutOfBoundsIndexFixture,
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
@@ -155,6 +156,37 @@ it("decodes UTF-8 header text and reports stored byte lengths", () => {
   expect(prein?.text).toBe("echo é\n");
   // "echo é\n" is 7 characters but 8 UTF-8 bytes in the data store.
   expect(prein?.bytes).toBe(8);
+});
+
+it("groups every TRIGGERNAME condition under the script TRIGGERINDEX names", () => {
+  const triggers = parse(rpmGroupedTriggerFixture()).scriptlets?.filter(
+    (row) => row.kind === "trigger",
+  );
+  expect(
+    triggers?.map((row) => ({
+      interpreter: row.interpreter,
+      trigger_names: row.trigger_names,
+    })),
+  ).toEqual([
+    { interpreter: "/bin/sh", trigger_names: ["foo", "bar"] },
+    { interpreter: "/bin/bash", trigger_names: ["baz"] },
+  ]);
+});
+
+it("refuses a TRIGGERINDEX outside TRIGGERSCRIPTS as malformed", () => {
+  try {
+    parse(rpmGroupedTriggerFixture([0, 0, 2]));
+    throw new Error("expected trigger index refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "malformed",
+      format: "rpm",
+      field: "trigger index",
+    });
+    expect(cause.message).toMatch(/TRIGGERINDEX\[2\] 2 is outside/u);
+  }
 });
 
 it("keeps source RPMs distinct from binary packages", () => {

@@ -91,7 +91,7 @@ const report: RpmPackage = {
       interpreter: "/bin/sh",
       bytes: 11,
       text: null,
-      trigger_name: null,
+      trigger_names: null,
     },
   ],
   files: [
