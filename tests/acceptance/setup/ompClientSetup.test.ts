@@ -69,13 +69,22 @@ for (const [variable, profile] of [
           registrations: expect.arrayContaining([
             expect.objectContaining({
               client: "omp",
-              state: "invalid",
+              state: "unknown",
+              command: [],
+              command_identity: "unknown",
               remediation: expect.stringContaining(
                 "Windows reserved device name",
               ),
             }),
           ]),
         },
+        scope_checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "registration:omp",
+            ok: false,
+            classification: "unknown",
+          }),
+        ]),
       });
       const unrelated = await run(
         ["setup", "--client", "qwen_code", "--yes", "--json"],
