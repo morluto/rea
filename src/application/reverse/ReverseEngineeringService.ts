@@ -1,5 +1,6 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
+import { Budget } from "../../domain/budget.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
@@ -237,7 +238,8 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
-  #reservedOutputBytes = 0;
+  /** Output capture admitted across active operations. */
+  readonly #reservedOutput = new Budget(MAX_ACTIVE_CAPTURE_BYTES);
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #dispatched = 0;
@@ -514,7 +516,7 @@ export class ReverseEngineeringService {
     if (
       this.#activeOperations.size >=
         MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
-      this.#reservedOutputBytes + outputBudgetBytes > MAX_ACTIVE_CAPTURE_BYTES
+      !this.#reservedOutput.tryCharge(outputBudgetBytes)
     )
       return Promise.resolve(
         err(
@@ -527,7 +529,7 @@ export class ReverseEngineeringService {
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
               max_active_capture_bytes: MAX_ACTIVE_CAPTURE_BYTES,
-              reserved_output_bytes: this.#reservedOutputBytes,
+              reserved_output_bytes: this.#reservedOutput.used,
               requested_output_bytes: outputBudgetBytes,
             },
             {
@@ -547,7 +549,6 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    this.#reservedOutputBytes += outputBudgetBytes;
     const running = this.#observeProvider({
       ...request,
       profile: selection.value,
@@ -567,7 +568,7 @@ export class ReverseEngineeringService {
       .finally(() => {
         signal?.removeEventListener("abort", relayAbort);
         this.#activeOperations.delete(controller);
-        this.#reservedOutputBytes -= outputBudgetBytes;
+        this.#reservedOutput.refund(outputBudgetBytes);
       });
     this.#activeOperations.set(controller, tracked);
     return tracked;

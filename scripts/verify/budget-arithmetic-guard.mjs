@@ -7,9 +7,12 @@
 //    by hand (`+=`, `-=`, `++`, `--`) and compared with `<` or `>`: that is a
 //    limit check, whatever the field is called (`#bytes`, `#visits`).
 //
-// Write cursors (`#arenaWriteOffset`) and observation tallies are not
-// allowances; outside a `…Budget` class they are not counted unless named as
-// one.
+// 3. Anywhere else, a field adjusted by hand and compared with `<` or `>`
+//    (or `<=`/`>=`) against a value named as a limit (`…max…`, `…limit…`,
+//    `…allowance…`, `…budget…`, `…capacity…`): a hand-written allowance.
+//
+// Write cursors (`#arenaWriteOffset`) and observation tallies that are never
+// compared with a limit are not allowances and are not counted.
 const namedAllowance =
   /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu;
 
@@ -30,16 +33,41 @@ const comparedIn = (body, name) => {
   ).test(body);
 };
 
+const limitName =
+  "\\b\\w*(?:[Mm]ax|[Ll]imit|MAX_|LIMIT|[Aa]llowance|[Bb]udget|[Cc]apacity)\\w*";
+
+// `<`, `>`, `<=` or `>=` between the field and a limit-named value, one line.
+const comparedWithLimit = (content, name) => {
+  const field = `this\\.${escape(name)}\\b`;
+  const comparison = "(?<![=<>])[<>]=?(?![<>])";
+  return new RegExp(
+    `${field}[^;\\n]*${comparison}[^;\\n]*${limitName}|${limitName}[^;\\n]*${comparison}[^;\\n]*${field}`,
+    "u",
+  ).test(content);
+};
+
+const isNamedAllowance = (text) =>
+  new RegExp(`^${namedAllowance.source}$`, "u").test(text);
+
 /** @param {string} content comment-stripped source */
 export const budgetArithmeticCount = (content) => {
   let count = content.match(namedAllowance)?.length ?? 0;
+  const inBudgetClass = new Set();
   for (const [, body] of content.matchAll(budgetClass)) {
     for (const match of body.matchAll(adjusted)) {
+      const name = match[1] ?? match[2];
+      inBudgetClass.add(name);
       // Already counted as a named allowance.
-      if (new RegExp(`^${namedAllowance.source}$`, "u").test(match[0]))
-        continue;
-      if (comparedIn(body, match[1] ?? match[2])) count += 1;
+      if (isNamedAllowance(match[0])) continue;
+      if (comparedIn(body, name)) count += 1;
     }
   }
-  return count;
+  const limited = new Set();
+  for (const match of content.matchAll(adjusted)) {
+    const name = match[1] ?? match[2];
+    if (isNamedAllowance(match[0]) || inBudgetClass.has(name)) continue;
+    if (limited.has(name)) continue;
+    if (comparedWithLimit(content, name)) limited.add(name);
+  }
+  return count + limited.size;
 };
