@@ -175,8 +175,17 @@ type SchemaNormalization = {
   readonly changed: boolean;
 };
 
+// A branch that also references another schema is not judged by its own
+// keywords: draft-07 ignores a reference's siblings, and the target may admit
+// more than a boolean. Such unions keep the `anyOf` fallback.
+const hasReference = (schema: Readonly<Record<string, unknown>>): boolean =>
+  ["$ref", "$dynamicRef", "$recursiveRef"].some(
+    (keyword) => typeof schema[keyword] === "string",
+  );
+
 const isBooleanLiteralSchema = (schema: unknown): boolean =>
   isObject(schema) &&
+  !hasReference(schema) &&
   (typeof schema.const === "boolean" ||
     (Array.isArray(schema.enum) &&
       schema.enum.length > 0 &&
@@ -184,7 +193,8 @@ const isBooleanLiteralSchema = (schema: unknown): boolean =>
 
 const isBooleanSchema = (schema: unknown): boolean =>
   isObject(schema) &&
-  (schema.type === "boolean" || isBooleanLiteralSchema(schema));
+  ((schema.type === "boolean" && !hasReference(schema)) ||
+    isBooleanLiteralSchema(schema));
 
 const isObjectKeyword = (key: string) => schemaMaps.has(key);
 const isArrayKeyword = (key: string) => schemaArrays.has(key);
@@ -306,11 +316,32 @@ const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
  */
 const REMOVABLE_KEYWORDS = new Set(["oneOf", "not", "if", "then", "else"]);
 
-/** Whether a pointer passes through a keyword normalization may remove. */
-const throughRemovableLocation = (path: readonly string[]): boolean =>
-  schemaPointerSteps(path).some(
-    (step) => step.kind === "keyword" && REMOVABLE_KEYWORDS.has(step.keyword),
-  );
+/**
+ * Whether a pointer from `root` passes through a keyword normalization may
+ * remove. An `anyOf` is removed only when it collapses: every branch boolean.
+ */
+const throughRemovableLocation = (
+  root: unknown,
+  path: readonly string[],
+): boolean => {
+  let value = root;
+  for (const [index, step] of schemaPointerSteps(path).entries()) {
+    if (
+      step.kind === "keyword" &&
+      (REMOVABLE_KEYWORDS.has(step.keyword) ||
+        (step.keyword === "anyOf" &&
+          isObject(value) &&
+          Array.isArray(value.anyOf) &&
+          value.anyOf.every(isBooleanSchema)))
+    )
+      return true;
+    value =
+      typeof value === "object" && value !== null
+        ? Reflect.get(value, path[index]!)
+        : undefined;
+  }
+  return false;
+};
 
 const normalizationContext = (
   root: Readonly<Record<string, unknown>>,
@@ -400,7 +431,10 @@ const normalizationContext = (
     }
     if (typeof schema.$ref === "string") {
       const target = references.resolve(scope, schema.$ref);
-      if (target.kind === "target" && !throughRemovableLocation(target.path)) {
+      if (
+        target.kind === "target" &&
+        !throughRemovableLocation(scope?.root, target.path)
+      ) {
         const dependency = factAt(target.value, scope);
         dependency?.dependents.add(fact);
         dependency?.evaluationDependents.add(fact);

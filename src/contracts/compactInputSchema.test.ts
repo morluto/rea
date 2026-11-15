@@ -226,6 +226,25 @@ describe("compact advertised input schema", () => {
   });
 });
 
+it("keeps pattern-admitted property names open in reduced schemas", () => {
+  const canonical = {
+    type: "object",
+    properties: { a: { type: "string", pattern: "x" } },
+    patternProperties: { "^b$": { type: "string" } },
+    additionalProperties: false,
+  };
+  const { schema, presentation } = compactAdvertisedInputSchema(
+    canonical,
+    10_000,
+  );
+  expect(presentation).toBe("reduced");
+  const compact = new Ajv2020({ strict: false }).compile(schema);
+  expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
+    true,
+  );
+  expect(compact({ b: "ok" })).toBe(true);
+});
+
 it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   // Minimal trigger from morluto/rea#9581: Moonshot rejects a $ref whose
   // target is a oneOf whose branches contain another $ref ("detected

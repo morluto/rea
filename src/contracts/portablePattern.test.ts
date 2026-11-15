@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { INVALID_BASE64_PADDING_PATTERN } from "../domain/stringPatterns.js";
 
@@ -358,6 +359,59 @@ describe("advertised pattern presentation through pointers", () => {
       };
       const validate = new Ajv2020({ strict: false }).compile(present(schema));
       expect(validate({ first: "con", second: "con" })).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "keeps %s pointers valid into a boolean anyOf that collapses",
+    (_kind, present) => {
+      const schema = {
+        $defs: {
+          flags: {
+            anyOf: [
+              { type: "boolean", pattern: "^\\s+$" },
+              { type: "boolean" },
+            ],
+          },
+        },
+        type: "object",
+        properties: { flag: { $ref: "#/$defs/flags/anyOf/0" } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ flag: true })).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "does not collapse %s draft-07 references with ignored literal siblings",
+    (_kind, present) => {
+      // Embedded resources are unresolved here, so once a pattern widens the
+      // references relax; draft-07 ignores each reference's `const` sibling.
+      const schema = {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        definitions: {
+          word: { $id: "https://example.test/word", type: "string" },
+          count: { $id: "https://example.test/count", type: "number" },
+        },
+        type: "object",
+        properties: {
+          value: {
+            oneOf: [
+              { $ref: "https://example.test/word", const: true },
+              { $ref: "https://example.test/count", const: false },
+            ],
+          },
+          name: { type: "string", pattern: lookAround },
+        },
+      };
+      const create = () =>
+        new Ajv({ strict: false, ignoreKeywordsWithRef: true });
+      const canonical = create().compile(schema);
+      const validate = create().compile(present(schema));
+      for (const value of ["word", 1]) {
+        expect(canonical({ value })).toBe(true);
+        expect(validate({ value })).toBe(true);
+      }
     },
   );
 
