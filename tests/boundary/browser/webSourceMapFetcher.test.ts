@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,7 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
       expectInvalidSourceMaps({
         ...result,
         items: [
