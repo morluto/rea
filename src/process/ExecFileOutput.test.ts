@@ -858,7 +858,12 @@ describe("execFileOutput failure metadata", () => {
 });
 
 describe("execFileOutput cancellation provenance", () => {
-  it.each([null, "caller stopped", new Error("caller stopped")] as const)(
+  it.each([
+    null,
+    Number.NaN,
+    "caller stopped",
+    new Error("caller stopped"),
+  ] as const)(
     "retains producer cancellation and exact %s reason",
     async (reason) => {
       const controller = new AbortController();
@@ -881,7 +886,12 @@ describe("execFileOutput cancellation provenance", () => {
       expect(failure.cause).toBe(reason);
     },
   );
-  it.each([null, "caller stopped", new Error("caller stopped")] as const)(
+  it.each([
+    null,
+    Number.NaN,
+    "caller stopped",
+    new Error("caller stopped"),
+  ] as const)(
     "reports execFile's own abort with exact %s reason",
     async (reason) => {
       const controller = new AbortController();
