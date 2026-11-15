@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
@@ -338,21 +341,10 @@ export const replaceClientRegistrationLauncher = (
             ([key]) => !launcherConnectionKeys.has(key),
           ),
         );
-  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
-    if (Object.hasOwn(retained, "envs"))
-      return err(
-        new ConfigurationError(
-          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
-          {
-            settings: [
-              {
-                setting: "envs",
-                constraint: "env and envs declare the same native field",
-              },
-            ],
-          },
-        ),
-      );
+  const gooseField =
+    dialect === "goose" ? gooseEnvironmentField(retained) : ok("envs");
+  if (!gooseField.ok) return gooseField;
+  if (gooseField.value === "env") {
     const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
     if (!alias.success)
       return err(
