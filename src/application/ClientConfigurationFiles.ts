@@ -295,7 +295,7 @@ export const inlineRegistrationOverride = (
   client: Pick<SetupClient, "configPath" | "configPaths">,
   sources: readonly ClientConfigurationSource[],
   desired: unknown,
-  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  platform: NodeJS.Platform,
 ): ClientInlineConfiguration["origin"] | undefined => {
   const name = PRODUCT_IDENTITY.mcpServerKey;
   const inline = sources.filter(

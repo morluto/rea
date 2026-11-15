@@ -2104,7 +2104,7 @@ export const supportedClients = (
  */
 export const resolveSupportedClients = async (
   home: string,
-  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): Promise<readonly SetupClient[]> => {
