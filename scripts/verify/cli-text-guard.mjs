@@ -46,9 +46,10 @@ export const cliTextGuardSelects = (path) =>
   !/^src\/cli[^/]*\.ts$/u.test(path) &&
   !CLI_ONLY_FILES.has(path);
 
-// One `rea <command>` with the arguments written after it, up to the closing
-// backtick or parenthesis.
-const reaCommand = /\brea ([a-z][a-z-]*)[^`)\n]*/gu;
+// One `rea <command>` with the arguments written after it. They end at a
+// closing backtick or parenthesis, a comma or semicolon, or the next
+// `rea <command>`, so one exemption never removes another command.
+const reaCommand = /\brea ([a-z][a-z-]*)(?:(?!\brea [a-z])[^`)\n,;])*/gu;
 const remainingCliText = /--[a-z]|\brea [a-z]|\bon the CLI\b/u;
 
 /**

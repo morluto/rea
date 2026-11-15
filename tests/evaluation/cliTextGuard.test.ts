@@ -55,6 +55,14 @@ it.each([
     "another command beside a host-only command",
     '"(CLI: `rea doctor`, then `rea function`)"',
   ],
+  [
+    "an unquoted command between host-only commands",
+    '"(CLI: rea doctor, then rea function, then rea setup)"',
+  ],
+  [
+    "an unquoted command right after a host-only command's arguments",
+    '"(CLI: rea doctor --json rea function)"',
+  ],
 ])("still counts %s", (_name, content) => {
   expect(cliTextOutsideCliCount(content)).toBeGreaterThan(0);
 });
