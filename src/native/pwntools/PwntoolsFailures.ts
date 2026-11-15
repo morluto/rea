@@ -1,4 +1,5 @@
 import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import { producerLimitControl } from "../../domain/producerResourceLimits.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import {
   PWNTOOLS_LIMITS,
@@ -63,7 +64,7 @@ const pwntoolsInputLimitRecovery = (
   const shared =
     "CPU, memory, output and transport allowances remain independent.";
   if (source === "request")
-    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call (CLI --producer-limits JSON). ${shared}`;
+    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call. ${shared}`;
   if (source === "runtime")
     return `pwntools.max_input_bytes is ${effective} bytes (source runtime) and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that ceiling on the next call. ${shared}`;
   if (source === "setting")
@@ -75,7 +76,7 @@ const pwntoolsInputLimitRecovery = (
 export const pwntoolsBudgetRecovery = (
   limits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
 ): string =>
-  `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call (CLI --producer-limits JSON); no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
+  `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call; no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
 
 /** Name the file-size cap and any reported effective limit, not address space. */
 const fileSizeAllowance = (
@@ -84,7 +85,7 @@ const fileSizeAllowance = (
 ): string => {
   const cap = String(selectedBytes);
   const inherited =
-    "A tighter inherited limit is retained. Increase producer_limits.file_bytes on the next call (CLI --producer-limits JSON); no restart is required. pwntools_timeout_ms does not raise the file-size allowance.";
+    "A tighter inherited limit is retained. Increase producer_limits.file_bytes on the next call; no restart is required. pwntools_timeout_ms does not raise the file-size allowance.";
   return reportedBytes === undefined
     ? `The file-size cap is ${cap} bytes (producer_limits.file_bytes). The effective file_size_bytes limit was not reported. ${inherited}`
     : `The effective file-size allowance is ${String(reportedBytes)} bytes (file_size_bytes). The file-size cap is ${cap} bytes (producer_limits.file_bytes). ${inherited}`;
@@ -223,6 +224,12 @@ const pwntoolsCommandContext = (
     limits.file_bytes,
   );
   const fileSizeRecovery = `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`;
+  // File output follows the selected output allowance unless file_bytes is explicit.
+  const fileSizeLimit = producerLimitControl(
+    "file_bytes",
+    limits.file_bytes,
+    PWNTOOLS_LIMITS.output_bytes,
+  );
   const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
   const deadline = nativeDeadlineRecovery({
     timeoutMs,
@@ -269,14 +276,20 @@ const pwntoolsCommandContext = (
             limits: reportedLimits,
             detail: `${reportFailure} ${allowance}`.trim(),
             recovery: { remediationAction: fileSizeRecovery },
+            limit: fileSizeLimit,
           }
         : {
             limits: reportedLimits,
             detail:
               `${reportFailure} Selected producer_limits.cpu_seconds is ${String(limits.cpu_seconds)} seconds; inherited tighter limits remain enforced.`.trim(),
             recovery: {
-              remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call (CLI --producer-limits JSON) when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
+              remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
             },
+            limit: producerLimitControl(
+              "cpu_seconds",
+              limits.cpu_seconds,
+              PWNTOOLS_LIMITS.cpu_seconds,
+            ),
           },
     dialect: (outcome, details) => {
       if (outcome.kind === "launch-refused")
@@ -303,7 +316,11 @@ const pwntoolsCommandContext = (
           "file-size",
           `The owned Python bridge reported EFBIG while writing a file; the exact write failure cause is unknown.${reportFailure} ${allowance}`,
           reportedLimits,
-          { ...details, remediationAction: fileSizeRecovery },
+          {
+            ...details,
+            remediationAction: fileSizeRecovery,
+            limit: fileSizeLimit,
+          },
         );
       if (marked === "memory" && reservedExit === PWNTOOLS_MEMORY_FAILURE_EXIT)
         return new AnalysisResourceConstraintError(

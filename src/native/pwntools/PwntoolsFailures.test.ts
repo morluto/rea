@@ -165,6 +165,12 @@ it("names the reported file-size allowance instead of address space", () => {
   expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("1111");
   expect(projected.remediation.action).not.toContain("3221225472");
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "producer_limits.file_bytes",
+    effective_value: 67108864,
+  });
 });
 
 it("names the file-size cap when SIGXFSZ has no reported limit", () => {
@@ -189,6 +195,9 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
   expect(projected.remediation.action).toContain("tighter inherited limit");
   expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("3221225472");
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "producer_limits.file_bytes",
+  });
 });
 
 it("names memory in the marker recovery for an allocation failure", () => {

@@ -70,6 +70,8 @@ export interface ProviderOutcomeContext {
   readonly resourceSignal?: (signal: "SIGXCPU" | "SIGXFSZ") => {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
+    /** The per-call control that raises this allowance, when the caller selects it. */
+    readonly limit?: AnalysisLimit;
     /** Provider facts appended to the shared report, such as the selected allowance. */
     readonly detail?: string;
   };
@@ -152,7 +154,11 @@ export const classifyProviderOutcome = (
         outcome.signal === "SIGXFSZ" ? "file-size" : "cpu",
         `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.${reported?.detail === undefined ? "" : ` ${reported.detail}`}`,
         reported?.limits ?? null,
-        { ...details, ...reported?.recovery },
+        {
+          ...details,
+          ...reported?.recovery,
+          ...(reported?.limit === undefined ? {} : { limit: reported.limit }),
+        },
       );
     }
     case "runtime-exhausted": {
