@@ -10,6 +10,10 @@ import {
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import {
+  isComparisonOrCountFile,
+  optionalFactDefaultCount,
+} from "./optional-fact-default-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -326,15 +330,11 @@ const checkCounted = (label, key, selected, pattern, owners) => {
 // Comparison, coverage and count code that reads an optional parsed fact with
 // `?? 0`, `?? []` or `?? false` turns "not reported" into an observed zero,
 // empty list or no. Keep the fact unknown (null with a limitation) instead.
-// The pattern matches a property read only, so Map accumulators
-// (`map.get(k) ?? []`) and indexed bytes (`bytes[i] ?? 0`) are not counted.
-const comparisonOrCountFile =
-  /\/[^/]*(?:compar|diff|delta|reconcil|coverage|summar|count|match)[^/]*\.ts$/iu;
 checkCounted(
   "optional fact defaulted to 0, [] or false in comparison or count code (keep it unknown)",
   "optional-fact-default",
-  files.filter(({ path }) => comparisonOrCountFile.test(path)),
-  /\??\.[a-z_][\w$]* \?\? (?:0|\[\]|false)(?![\w.$])/gu,
+  files.filter(({ path }) => isComparisonOrCountFile(path)),
+  optionalFactDefaultCount,
   [],
 );
 
