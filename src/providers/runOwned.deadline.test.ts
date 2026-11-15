@@ -13,6 +13,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ok, err, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned, type Finalized } from "./runOwned.js";
@@ -313,4 +314,90 @@ it("keeps captured output when a budget cancellation becomes a timeout", async (
   const error = failure(finalized);
   expect(error).toBeInstanceOf(AnalysisTimeoutError);
   expect(error.capturedOutput).toEqual(capturedOutput);
+});
+
+it("keeps the caller's reason when the caller aborts after the budget but before work settles", async () => {
+  const caller = new AbortController();
+  const callerReason = { caller: "stop" };
+  const finalized = await runOwned(
+    async (signal) => {
+      const result = await untilAborted(signal);
+      // The budget aborted first; the caller aborts during work's teardown.
+      caller.abort(callerReason);
+      return result;
+    },
+    {
+      providerId: "fixture",
+      operation,
+      signal: caller.signal,
+      deadline: Deadline.after(5),
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(finalized.kind).toBe("cancelled");
+  const error = failure(finalized);
+  expect(error.cause).toBe(callerReason);
+});
+
+it("keeps the work's retained cleanup when a budget cancellation becomes a timeout and close also fails", async () => {
+  const childRelease = new AnalysisCleanupLease(
+    async () => undefined,
+    ["/owned/child"],
+  );
+  const finalized = await runOwned(
+    async (signal) => {
+      const result = await untilAborted(signal);
+      if (result.ok) return result;
+      const child = new ProviderCleanupError("fixture", ["/owned/child"], {
+        reason: "child still owned",
+      });
+      childRelease.bindCleanupError(child);
+      return err(
+        analysisErrorWithCleanupFailure(
+          result.error,
+          child,
+          operation,
+        ).bindCleanupDependencies([child]),
+      );
+    },
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5),
+      close: async () => {
+        throw new ProviderCleanupError("fixture", ["/owned/root"], {
+          reason: "root still owned",
+        }).bindCleanupReleaseClaim({ cleanupReleased: true });
+      },
+      partial: project,
+    },
+  );
+  const error = failure(finalized);
+  expect(primaryAnalysisError(error)).toBeInstanceOf(AnalysisTimeoutError);
+  // The close failure resolved; the child's lease has not released yet.
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.cleanupResources).toContain("/owned/child");
+  await childRelease.release();
+  expect(error.cleanupIncomplete).toBe(false);
+});
+
+it("treats an empty lease list as none when close outlasts the finalize budget", async () => {
+  let finishClose!: () => void;
+  const finalized = await runOwned(async () => ok({ count: 3 }), {
+    providerId: "fixture",
+    operation,
+    deadline: Deadline.after(1000, { finalizeMs: 10 }),
+    cleanupLeases: [],
+    close: () =>
+      new Promise<void>((resolve) => {
+        finishClose = resolve;
+      }),
+    partial: project,
+  });
+  if (finalized.kind !== "completed-cleanup-retained")
+    throw new Error(`expected retained cleanup, got ${finalized.kind}`);
+  finishClose();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(finalized.error.cleanupIncomplete).toBe(false);
 });

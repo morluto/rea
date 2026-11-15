@@ -255,7 +255,11 @@ const closeWithin = async (
   }
   // Without exact leases, the close still running is the lease: its success
   // confirms release.
-  const leases = options.cleanupLeases ?? [
+  const supplied =
+    options.cleanupLeases !== undefined && options.cleanupLeases.length > 0
+      ? options.cleanupLeases
+      : undefined;
+  const leases = supplied ?? [
     new AnalysisCleanupLease(
       () => closing,
       [options.fallbackResource ?? `${options.operation} resources`],
@@ -273,7 +277,7 @@ const closeWithin = async (
     { operation: options.operation },
   );
   new AnalysisCleanupLeaseGroup(failure, leases);
-  if (options.cleanupLeases === undefined) {
+  if (supplied === undefined) {
     // A late rejection names its own retry owner: a producer-bound error, or
     // an artifact reader failure with its leases. Completion then follows
     // that owner, the same way an in-budget close failure would.
@@ -320,7 +324,10 @@ export const runOwned = async <Value>(
   }
   bound.stop();
   // A caller abort stays a cancellation even when the budget also elapsed.
-  const workTimedOut = bound.elapsed() && !isAborted(options.signal);
+  // Budget expiry is tracked apart from the caller: the caller may abort
+  // after the budget did, and its reason still takes precedence below.
+  const budgetElapsed = bound.elapsed();
+  const workTimedOut = budgetElapsed && !isAborted(options.signal);
   let committed = false;
   const commit = async (
     value: Value,
@@ -418,12 +425,6 @@ export const runOwned = async <Value>(
         );
     }
   }
-  if (
-    cleanup.kind === "released" &&
-    !outcome.ok &&
-    outcome.error.cleanupIncomplete
-  )
-    cleanup = { kind: "retained", failure: outcome.error };
   // Whether this outcome is the work's own observation of the budget's abort.
   const budgetCancellation = (error: AnalysisError): boolean => {
     const primaryError = primaryAnalysisError(error);
@@ -432,24 +433,41 @@ export const runOwned = async <Value>(
       primaryError.cause === OwnerCancellation.deadlineElapsed
     );
   };
-  if (workTimedOut && isAborted(signal)) {
-    // The caller aborted during cleanup: a caller abort stays a cancellation,
-    // and its reason replaces the budget's. A late completed value becomes
-    // that cancellation below, as any pre-commit cancellation does.
+  // A replacement keeps the replaced error's live cleanup as its own
+  // dependency, so its resources and completion are not lost.
+  const replacing = (
+    replaced: AnalysisError,
+    replacement: AnalysisError,
+  ): AnalysisError =>
+    replaced.cleanupIncomplete
+      ? analysisErrorWithCleanupFailure(
+          replacement,
+          replaced,
+          options.operation,
+        ).bindCleanupDependencies([replaced])
+      : replacement;
+  if (budgetElapsed && isAborted(signal)) {
+    // The caller aborted after the budget, during work or cleanup: a caller
+    // abort stays a cancellation, and its reason replaces the budget's. A
+    // late completed value becomes that cancellation below, as any
+    // pre-commit cancellation does.
     if (!outcome.ok && budgetCancellation(outcome.error))
       outcome = {
         ok: false,
-        error: cancelledBy(options.operation, signal, {
-          ...(outcome.error.partialObservation === undefined
-            ? {}
-            : { partialObservation: outcome.error.partialObservation }),
-          ...(outcome.error.diagnostics === undefined
-            ? {}
-            : { diagnostics: outcome.error.diagnostics }),
-          ...(outcome.error.capturedOutput === undefined
-            ? {}
-            : { capturedOutput: outcome.error.capturedOutput }),
-        }),
+        error: replacing(
+          outcome.error,
+          cancelledBy(options.operation, signal, {
+            ...(outcome.error.partialObservation === undefined
+              ? {}
+              : { partialObservation: outcome.error.partialObservation }),
+            ...(outcome.error.diagnostics === undefined
+              ? {}
+              : { diagnostics: outcome.error.diagnostics }),
+            ...(outcome.error.capturedOutput === undefined
+              ? {}
+              : { capturedOutput: outcome.error.capturedOutput }),
+          }),
+        ),
       };
   } else if (workTimedOut && options.deadline !== undefined) {
     const timeout = (
@@ -486,12 +504,18 @@ export const runOwned = async <Value>(
       };
     } else if (!outcome.ok && budgetCancellation(outcome.error))
       // The work observed the budget's abort; that cancellation is the
-      // timeout's cause, and any cleanup it retains composes below.
+      // timeout's cause, and the cleanup it retains stays bound.
       outcome = {
         ok: false,
-        error: timeout(outcome.error, outcome.error),
+        error: replacing(outcome.error, timeout(outcome.error, outcome.error)),
       };
   }
+  if (
+    cleanup.kind === "released" &&
+    !outcome.ok &&
+    outcome.error.cleanupIncomplete
+  )
+    cleanup = { kind: "retained", failure: outcome.error };
   // The kind follows the primary failure, so a producer's composite whose
   // primary is a cancellation is cancelled, and a failure that only retains a
   // later cancellation as a secondary stays failed.

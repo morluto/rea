@@ -478,7 +478,7 @@ checkCounted(
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/providers/runOwned.ts"],
 );
 
 // The running host is read once by src/platform/HostPlatform; composition
