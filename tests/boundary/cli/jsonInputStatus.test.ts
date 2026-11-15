@@ -125,6 +125,103 @@ describe("compiled CLI JSON document omissions", () => {
       });
       expect(result.exitCode).toBe(1);
     });
+
+  // Delivery is chosen by options beside the document; a delivery field in
+  // the document names its option instead of being dropped or misread.
+  for (const [command, operation, field, message] of [
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "view",
+      "pass --view beside it",
+    ],
+    [
+      "capture-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "validate-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail to capture-browser-scenario",
+    ],
+  ] as const)
+    cliTest(
+      `${command} refuses ${field} inside the document`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-flagged-");
+        const result = await cli.run({
+          arguments: [
+            command,
+            JSON.stringify({
+              [field]: field === "view" ? { collection: "matches" } : "summary",
+            }),
+            "--json",
+          ],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            operation,
+            issues: [
+              { path: [field], message: expect.stringContaining(message) },
+            ],
+          },
+        });
+        expect(result.exitCode).toBe(1);
+      },
+    );
+});
+
+describe("compiled CLI JSON document admission order", () => {
+  // The document frame is checked before any Evidence bundle is read, so a
+  // missing bundle cannot hide document errors.
+  cliTest(
+    "compare-static-and-observed-endpoints refuses a malformed document before reading its bundle",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-frame-");
+      const result = await cli.run({
+        arguments: [
+          "compare-static-and-observed-endpoints",
+          "{}",
+          "--evidence-bundle",
+          join(root, "missing.bundle.json"),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_static_and_observed_endpoints",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: ["application"] }),
+            expect.objectContaining({ path: ["capture"] }),
+          ]),
+        },
+      });
+      expect(JSON.stringify(result.json)).not.toContain("missing.bundle.json");
+      expect(result.exitCode).toBe(1);
+    },
+  );
 });
 
 describe("compiled CLI JSON document caller paths", () => {
