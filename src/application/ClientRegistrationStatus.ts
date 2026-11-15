@@ -698,6 +698,9 @@ const clientEvidencePresent = async (
   // client, so an unreadable config must surface as unreadable instead of
   // collapsing to absence. The probes below serve automatic discovery only.
   if (evidence.selected) return ok(true);
+  // A read-only inline layer (KILO_CONFIG_CONTENT) that sets REA's entry is
+  // parsed evidence on its own, even when none of the client's folders exist.
+  if (inlineRegistrationOrigins(client).length > 0) return ok(true);
   const discoveryPaths = new Set(client.discoveryPaths ?? []);
   const paths = [
     // Only the registration file can hold what REA wrote.

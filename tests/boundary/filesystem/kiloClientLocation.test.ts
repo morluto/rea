@@ -577,3 +577,21 @@ it("leaves an aligned Kilo registration out of update maintenance when KILO_CONF
     }),
   ]);
 });
+
+it("inspects REA's Kilo entry that only KILO_CONFIG_CONTENT sets when no Kilo folder exists", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-evidence-");
+  const statuses = await readClientRegistrationStatuses(
+    home,
+    command[1] ?? "",
+    {
+      environment: {
+        KILO_CONFIG_CONTENT: JSON.stringify({
+          mcp: { rea: { type: "local", command, enabled: true } },
+        }),
+      },
+    },
+  );
+  expect(statuses).toContainEqual(
+    expect.objectContaining({ client: "kilo", state: "aligned" }),
+  );
+});
