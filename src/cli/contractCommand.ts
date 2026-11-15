@@ -601,15 +601,18 @@ export const registerContractCommand = <
   descriptions.set(cli, registered);
 };
 
-/** One contract a target-routed command runs, with the targets it takes. */
-export interface CliTargetRoute {
+/** One contract input a routed command runs, with the inputs it takes. */
+export interface CliCommandRoute {
   readonly description: ContractCliDescription;
   /**
-   * Whether this route takes the target. Only a route that owns every
-   * option the caller gave is asked; the last route takes every other target.
+   * Whether this route takes the given input. Only a route that owns every
+   * option the caller gave is asked; the last route takes every other input.
    */
-  readonly takesTarget: ((target: string) => Promise<boolean>) | undefined;
-  /** What this route's own options need, named when another route refuses them. */
+  readonly takes: ((values: RouteValues) => Promise<boolean>) | undefined;
+  /**
+   * What this route's input is, named when an option the caller gave belongs
+   * to another route.
+   */
   readonly requirement: string;
   readonly run: (
     input: unknown,
@@ -617,8 +620,15 @@ export interface CliTargetRoute {
   ) => Promise<unknown>;
 }
 
-/** Describe one route of a target-routed command from its contract. */
-export const targetRoute = <
+/**
+ * The parsed arguments and options of a routed command, keyed by CLI key.
+ * JSON inputs that every route takes are already decoded, so a route can be
+ * chosen by document content.
+ */
+export type RouteValues = Readonly<Record<string, unknown>>;
+
+/** Describe one route of a routed command from its contract input. */
+export const commandRoute = <
   Contract extends ProjectedContract,
   CliOptions extends CliOptionShape = Record<never, z.ZodType>,
 >(
@@ -629,18 +639,37 @@ export const targetRoute = <
     context: ContractCommandContext<CliOptionValues<CliOptions>>,
   ) => Promise<unknown>,
   route: {
-    readonly takesTarget?: (target: string) => Promise<boolean>;
+    readonly takes?: (values: RouteValues) => Promise<boolean>;
     readonly requirement: string;
   },
-): CliTargetRoute => {
+): CliCommandRoute => {
   if (projection.operationBy !== undefined)
     throw new Error(`${contract.name} routes by target and by an option`);
   return {
     description: describeContractCommand(contract, projection),
-    takesTarget: route.takesTarget,
+    takes: route.takes,
     requirement: route.requirement,
-    run: run as CliTargetRoute["run"],
+    run: run as CliCommandRoute["run"],
   };
+};
+
+/**
+ * The input shape of a union contract that has `field`, as a contract a
+ * route can project: the same operation, admitted by that shape alone.
+ */
+export const contractInputBranch = <Name extends string>(
+  contract: {
+    readonly name: Name;
+    readonly inputSchema: z.ZodUnion<readonly z.ZodObject[]>;
+  },
+  field: string,
+): ProjectedContract<Name> & { readonly inputSchema: z.ZodObject } => {
+  const branches = contract.inputSchema.options.filter((branch) =>
+    Object.hasOwn(branch.shape, field),
+  );
+  if (branches.length !== 1)
+    throw new Error(`${contract.name} has no single input shape with ${field}`);
+  return { name: contract.name, inputSchema: branches[0]! };
 };
 
 /** The argv arguments and options one description takes, keyed by CLI key. */
@@ -675,25 +704,27 @@ const schemaSignature = (schema: z.ZodType): string =>
 
 const routedDescriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
-/** Route descriptions of commands registered through `registerTargetRoutedCommand`. */
-export const targetRoutedCommandDescriptions = (
+/** Route descriptions of commands registered through `registerRoutedCommand`. */
+export const routedCommandDescriptions = (
   cli: CliInstance,
 ): readonly ContractCliDescription[] => routedDescriptions.get(cli) ?? [];
 
 /**
- * Register one CLI command whose target chooses the contract it runs, such
- * as `analyze` running static JavaScript analysis on an application archive
- * and the binary overview on a program. Each route is projected from its own
- * contract; the command takes the union of their options, which must agree
- * on every shared key. The first route that owns every given option and
- * takes the target runs; an option the chosen route does not own is refused
- * naming its CLI key and the route that takes it.
+ * Register one CLI command whose input chooses the contract input it runs,
+ * such as `analyze` running static JavaScript analysis on an application
+ * archive and the binary overview on a program, or `compare-web-captures`
+ * comparing recorded scenarios or passive captures by what the documents
+ * hold. Each route is projected from its own contract input; the command
+ * takes the union of their options, which must agree on every shared key.
+ * The first route that owns every given option and takes the input runs; an
+ * option the chosen route does not own is refused naming its CLI key and the
+ * route that takes it.
  */
-export const registerTargetRoutedCommand = (
+export const registerRoutedCommand = (
   cli: CliInstance,
   logger: Logger,
   command: { readonly command: string; readonly description: string },
-  routes: readonly [...CliTargetRoute[], CliTargetRoute],
+  routes: readonly [...CliCommandRoute[], CliCommandRoute],
 ): void => {
   const shapes = routes.map(({ description }) => {
     if (
@@ -712,7 +743,7 @@ export const registerTargetRoutedCommand = (
   });
   const args = shapes[0]!.args;
   const options = new Map<string, z.ZodType>();
-  const owners = new Map<string, CliTargetRoute>();
+  const owners = new Map<string, CliCommandRoute>();
   for (const [index, shape] of shapes.entries()) {
     if (
       shape.args.length !== args.length ||
@@ -734,12 +765,11 @@ export const registerTargetRoutedCommand = (
       owners.set(key, routes[index]!);
     }
   }
-  const owns = (route: CliTargetRoute, key: string): boolean =>
+  const owns = (route: CliCommandRoute, key: string): boolean =>
     args.some(([argument]) => argument === key) ||
     Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
-  const [targetKey] = args[0] ?? [];
-  if (targetKey === undefined)
-    throw new Error(`${command.command} routes take no target`);
+  // Only JSON inputs every route takes alike are decoded before routing.
+  const sharedJson = sharedJsonInputs(command.command, routes);
   cli.command(command.command, {
     description: command.description,
     args: z.object(Object.fromEntries(args)),
@@ -757,13 +787,19 @@ export const registerTargetRoutedCommand = (
       );
       return withCommandCancellation((signal) =>
         logCliCommand(logger, command.command, async () => {
-          const target = values[targetKey] as string;
+          const shared = await readJsonInputs(
+            routes[0]!.description,
+            values,
+            signal,
+            sharedJson,
+          );
+          if (!shared.ok) return shared.error;
           let route = routes.at(-1)!;
           for (const candidate of routes)
             if (
-              candidate.takesTarget !== undefined &&
+              candidate.takes !== undefined &&
               supplied.every((key) => owns(candidate, key)) &&
-              (await candidate.takesTarget(target))
+              (await candidate.takes(shared.value))
             ) {
               route = candidate;
               break;
@@ -778,11 +814,16 @@ export const registerTargetRoutedCommand = (
                 refused.map((key) => ({
                   path: [key],
                   reason: "invalid_value" as const,
-                  message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; this target runs ${description.contract.name}, which does not take it.`,
+                  message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; the given input selects ${route.requirement}, which does not take it.`,
                 })),
               ),
             );
-          const read = await readJsonInputs(description, values, signal);
+          const read = await readJsonInputs(
+            description,
+            shared.value,
+            signal,
+            ownJsonInputs(description, sharedJson),
+          );
           if (!read.ok) return read.error;
           const admitted = description.admit(read.value);
           if (!admitted.ok) return projectAnalysisError(admitted.error);
@@ -794,7 +835,9 @@ export const registerTargetRoutedCommand = (
               operation: description.contract.name,
               callerInputs: description.callerInputs(values),
               sessionTarget:
-                description.sessionTarget === undefined ? undefined : target,
+                description.sessionTarget === undefined
+                  ? undefined
+                  : (values[description.sessionTarget.key] as string),
               evidenceTargets: undefined,
               opening: opening.value,
               delivery: admitted.value.delivery,
@@ -899,23 +942,68 @@ const refusedDocumentFieldError = (
     : analysisInputErrorFromIssues(operation, issues, document);
 };
 
+/** The CLI keys of a description's JSON inputs. */
+const jsonInputKeys = (
+  description: ContractCliDescription,
+): ReadonlySet<string> =>
+  new Set(
+    description.parameters
+      .filter(({ jsonInput }) => jsonInput)
+      .map(({ key }) => key),
+  );
+
+/**
+ * The JSON inputs every route takes under the same key, with the same
+ * refusal, so they can be decoded once before a route is chosen.
+ */
+const sharedJsonInputs = (
+  command: string,
+  routes: readonly CliCommandRoute[],
+): ReadonlySet<string> => {
+  const keys = routes.map(({ description }) => jsonInputKeys(description));
+  const shared = new Set(
+    [...keys[0]!].filter((key) => keys.every((own) => own.has(key))),
+  );
+  for (const key of shared) {
+    const refusals = new Set(
+      routes.map(
+        ({ description }) =>
+          description.parameters.find((parameter) => parameter.key === key)!
+            .runtimeJson,
+      ),
+    );
+    if (refusals.size !== 1)
+      throw new Error(`${command} routes refuse --${key} differently`);
+  }
+  return shared;
+};
+
+/** The chosen route's JSON inputs that were not decoded before routing. */
+const ownJsonInputs = (
+  description: ContractCliDescription,
+  decoded: ReadonlySet<string>,
+): ReadonlySet<string> =>
+  new Set([...jsonInputKeys(description)].filter((key) => !decoded.has(key)));
+
 /**
  * Read and decode each JSON input the caller gave, inline or from a file,
- * before the parameters are admitted. A file that cannot be read keeps its
- * own failure; inline text that is not JSON is refused under its CLI key.
+ * before the parameters are admitted; `keys` limits which are read. A file
+ * that cannot be read keeps its own failure; inline text that is not JSON is
+ * refused under its CLI key.
  */
 const readJsonInputs = async (
   description: ContractCliDescription,
   values: Readonly<Record<string, unknown>>,
   signal: AbortSignal,
+  keys: ReadonlySet<string> = jsonInputKeys(description),
 ): Promise<
   | { readonly ok: true; readonly value: Readonly<Record<string, unknown>> }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
   const decoded: Record<string, unknown> = { ...values };
-  for (const { key, jsonInput, runtimeJson } of description.parameters) {
+  for (const { key, runtimeJson } of description.parameters) {
     const text = values[key];
-    if (!jsonInput || typeof text !== "string") continue;
+    if (!keys.has(key) || typeof text !== "string") continue;
     const parsed = await parseCliJsonInput(
       text,
       description.contract.name,

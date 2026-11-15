@@ -3,16 +3,20 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import {
+  contractNamed,
   describeContractCommand,
   describeOperationChoices,
   describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
 } from "../../../src/cli/contractCliDescription.js";
+import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 import {
   contractCommandDescriptions,
+  contractInputBranch,
   contractDocumentCommandDescriptions,
-  targetRoutedCommandDescriptions,
+  routedCommandDescriptions,
 } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
@@ -32,10 +36,10 @@ const registered = new Map<string, RegisteredCommand>();
 visitRegisteredCommands(cli, (command, path) => {
   registered.set(path, command);
 });
-// A target-routed command contributes one description per contract it runs.
+// A routed command contributes one description per contract it runs.
 const descriptions = [
   ...contractCommandDescriptions(cli),
-  ...targetRoutedCommandDescriptions(cli),
+  ...routedCommandDescriptions(cli),
 ];
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
@@ -284,6 +288,40 @@ const argvValues = (
 const screenshotExample = toolContract("compare_web_screenshots").examples[0]!
   .input as { readonly before: unknown; readonly after: unknown };
 
+const captureDiff = contractNamed(
+  BROWSER_TOOL_CONTRACTS,
+  "compare_web_captures",
+);
+const scenarioExample = captureDiff.examples[0]!.input as {
+  readonly before_scenario: unknown;
+  readonly after_scenario: unknown;
+};
+
+/**
+ * Argv for each input shape of a command routed by document content, keyed
+ * by the shape its route projects; a passive capture and a scenario capture
+ * cannot both satisfy one fixture.
+ */
+const ROUTE_ARGV: ReadonlyMap<
+  unknown,
+  Readonly<Record<string, unknown>>
+> = new Map([
+  [
+    contractInputBranch(captureDiff, "before").inputSchema,
+    {
+      beforeJson: JSON.stringify({ inspection: passiveNetworkCapture() }),
+      afterJson: JSON.stringify({ inspection: passiveNetworkCapture() }),
+    },
+  ],
+  [
+    contractInputBranch(captureDiff, "before_scenario").inputSchema,
+    {
+      beforeJson: JSON.stringify(scenarioExample.before_scenario),
+      afterJson: JSON.stringify(scenarioExample.after_scenario),
+    },
+  ],
+]);
+
 /**
  * Argv for commands whose contract rules need more than one value per
  * required field: a selector choice, a pattern grammar or a change to make.
@@ -334,7 +372,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "compare-process-captures",
-  "compare-web-captures",
   "cutter-command",
   "execute-rizin-command",
   "export-web-scripts",
@@ -515,7 +552,9 @@ describe("CLI commands projected from tool contracts", () => {
     (command, description) => {
       const values = argvValues(
         description,
-        ARGV_SATISFYING_RULES[command] ?? {},
+        ROUTE_ARGV.get(description.contract.inputSchema) ??
+          ARGV_SATISFYING_RULES[command] ??
+          {},
       );
       // Runtime JSON text is decoded as admission does.
       for (const { key, runtimeJson } of description.parameters)
