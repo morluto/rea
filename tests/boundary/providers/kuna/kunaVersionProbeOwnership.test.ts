@@ -249,6 +249,7 @@ it.skipIf(process.platform === "win32")(
         },
       );
       await waitForFile(parentExited);
+      await launcher.exits[0];
       controller.abort(reason);
       const cause = await pending.catch((error: unknown) => error);
       const cancellation = kunaInstallationCancellation(cause);

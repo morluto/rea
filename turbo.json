@@ -79,6 +79,7 @@
         ".oxlintrc.json",
         "package.json",
         "package-lock.json",
+        "scripts/lib/module-layers.baseline.json",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
@@ -163,8 +164,11 @@
         "docs/**",
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",
-        ".agents/skills/reverse-engineer-anything/**",
+        ".agents/skills/**",
         "README*.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "website/public/**/*.{md,html}",
         {
           "mode": "dependencyOutputs",
           "globs": [
