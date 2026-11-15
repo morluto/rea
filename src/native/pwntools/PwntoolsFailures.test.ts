@@ -173,6 +173,34 @@ it("names the reported file-size allowance instead of address space", () => {
   });
 });
 
+it("reports the selected output allowance as the omitted file-size default", () => {
+  const outputBytes = 128 * 1024 * 1024;
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new OwnedCommandFailure("process", "sigxfsz", {
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: "SIGXFSZ",
+      }),
+      "decoder",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits({ output_bytes: outputBytes }),
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "producer_limits.file_bytes",
+    effective_value: outputBytes,
+    default_value: outputBytes,
+  });
+});
+
 it("names the file-size cap when SIGXFSZ has no reported limit", () => {
   const projected = projectAnalysisError(
     pwntoolsDecoderFailure(

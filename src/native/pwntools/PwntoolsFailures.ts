@@ -224,11 +224,11 @@ const pwntoolsCommandContext = (
     limits.file_bytes,
   );
   const fileSizeRecovery = `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`;
-  // File output follows the selected output allowance unless file_bytes is explicit.
+  // An omitted file_bytes follows this call's selected output allowance.
   const fileSizeLimit = producerLimitControl(
     "file_bytes",
     limits.file_bytes,
-    PWNTOOLS_LIMITS.output_bytes,
+    limits.output_bytes,
   );
   const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
   const deadline = nativeDeadlineRecovery({
