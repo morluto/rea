@@ -123,8 +123,9 @@ export interface CliContractProjection<
   readonly evidenceTargets?: CliEvidenceTargets<Field>;
   /**
    * Optional object fields taken as one option per member, keyed by contract
-   * field and then member. Any member given supplies the whole object, so the
-   * contract reports a missing companion member.
+   * field and then member. Any member given supplies the object with only the
+   * given members, so the contract reports a missing companion member and an
+   * omitted optional member stays omitted.
    */
   readonly flatten?: {
     readonly [Key in Field]?: Readonly<Record<string, CliFieldProjection>>;
@@ -1705,15 +1706,16 @@ export const describeContractCommand = <
           ? value.map((path: string) => absoluteCallerPath(path))
           : absoluteCallerPath(value as string);
     }
-    // Any member given supplies the whole object, absent members included,
-    // so the contract names the missing companion.
+    // Any member given supplies the object, so the contract names a missing
+    // companion; an omitted member stays omitted rather than undefined.
     for (const field of Object.keys(flattened)) {
-      const members = parameters.filter(
-        (candidate) => candidate.field === field,
+      const given = parameters.filter(
+        (candidate) =>
+          candidate.field === field && values[candidate.key] !== undefined,
       );
-      if (members.some(({ key }) => values[key] !== undefined))
+      if (given.length > 0)
         input[field] = Object.fromEntries(
-          members.map(({ member, key }) => [member, values[key]]),
+          given.map(({ member, key }) => [member, values[key]]),
         );
     }
     for (const { field, nullFlag } of parameters)
