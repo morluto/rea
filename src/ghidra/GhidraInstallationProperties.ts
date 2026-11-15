@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
   artifactFileCompletion,
@@ -16,7 +17,7 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
 const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
@@ -112,6 +113,9 @@ export const readGhidraInstallationProperties = async (
           )
         : primary,
     );
-    throw ghidraFileFailure(qualified, "ghidra:installation", diagnostics);
+    throw classifyProviderFailure(
+      qualified,
+      ghidraFileDialect("ghidra:installation", diagnostics),
+    );
   }
 };

@@ -1,4 +1,5 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -30,7 +31,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { acquireOwnedLease, type OwnedLease } from "../process/OwnedLease.js";
 import {
-  ghidraFileFailure,
+  ghidraFileDialect,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
 
@@ -142,14 +143,15 @@ async function readSource(
     );
   } catch (cause: unknown) {
     if (missing(cause) && !resources.hasPending) return null;
-    throw ghidraFileFailure(
+    throw classifyProviderFailure(
       mapArtifactFileFailure(cause, (primary) =>
         primary instanceof SyntaxError || primary instanceof z.ZodError
           ? failure(selection.directory, "the manifest is malformed", primary)
           : primary,
       ),
-      "resolve_analysis_profile",
-      { path: appendCallerPath(selection.directory, "current.json") },
+      ghidraFileDialect("resolve_analysis_profile", {
+        path: appendCallerPath(selection.directory, "current.json"),
+      }),
     );
   }
   if (
@@ -165,7 +167,10 @@ async function readSource(
   try {
     actual = await hashGhidraPackedProgram(path, resources, signal);
   } catch (cause: unknown) {
-    throw ghidraFileFailure(cause, "resolve_analysis_profile", { path });
+    throw classifyProviderFailure(
+      cause,
+      ghidraFileDialect("resolve_analysis_profile", { path }),
+    );
   }
   if (actual !== manifest.source.sha256)
     throw failure(
@@ -375,19 +380,28 @@ export class GhidraCheckpoint {
     } catch (cause: unknown) {
       if (failed)
         throw analysisErrorWithCleanupFailure(
-          ghidraFileFailure(primary, "checkpoint_program", {
-            path: this.selection.directory,
-          }),
-          ghidraFileFailure(cause, "checkpoint_program", {
-            path: this.selection.directory,
-          }),
+          classifyProviderFailure(
+            primary,
+            ghidraFileDialect("checkpoint_program", {
+              path: this.selection.directory,
+            }),
+          ),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("checkpoint_program", {
+              path: this.selection.directory,
+            }),
+          ),
         );
       throw cause;
     }
     if (failed)
-      throw ghidraFileFailure(primary, "checkpoint_program", {
-        path: this.selection.directory,
-      });
+      throw classifyProviderFailure(
+        primary,
+        ghidraFileDialect("checkpoint_program", {
+          path: this.selection.directory,
+        }),
+      );
     assertArtifactReadActive(signal);
   }
 

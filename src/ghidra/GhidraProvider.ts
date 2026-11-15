@@ -1,4 +1,5 @@
 import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   checkpointCapabilities,
   CAPABILITIES,
@@ -78,7 +79,7 @@ import {
   admitGhidraLanguageOverride,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import {
   ghidraProcessorUnsupportedReason,
   isGhidraPspTarget,
@@ -477,9 +478,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         );
       } catch (cause: unknown) {
         return err(
-          ghidraFileFailure(cause, "resolve_analysis_profile", {
-            setting: "REA_GHIDRA_LANGUAGE_ID",
-          }),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("resolve_analysis_profile", {
+              setting: "REA_GHIDRA_LANGUAGE_ID",
+            }),
+          ),
         );
       }
       const refused = admitGhidraLanguageOverride(
