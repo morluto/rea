@@ -1,6 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -18,7 +21,6 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -164,9 +166,7 @@ export const sqliteDatabaseFailure = (
         workerTimeoutMs,
       );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "cancelled")
       return cancelledBy(
         operation,
