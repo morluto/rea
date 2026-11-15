@@ -37,7 +37,6 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
-import { executableLaunchRefusalOf } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -276,9 +275,6 @@ export const runPcapCommand = async (options: {
     const selectedLimiter =
       options.nativeBound?.limiter?.command.invocationPath;
     const launchedPath = selectedLimiter ?? command;
-    /** Only a launcher naming the launched path identifies who refused. */
-    const refusedByLaunchedPath = (refused: unknown): boolean =>
-      executableLaunchRefusalOf(refused)?.executable === launchedPath;
     const preparationFailure = (
       diagnostic: string,
       details: AnalysisErrorOptions,
@@ -291,9 +287,14 @@ export const runPcapCommand = async (options: {
     if (outcome === undefined) {
       const diagnostic = cause instanceof Error ? cause.message : String(cause);
       const details = { cause, ...cleanupDetails };
-      throw commandAttempted
-        ? pcapToolFailure(diagnostic, details)
-        : preparationFailure(diagnostic, details);
+      if (!commandAttempted) throw preparationFailure(diagnostic, details);
+      // An errno the launcher raised without a spawn identity names no stage.
+      if (cause instanceof Error && "code" in cause)
+        throw new AnalysisProtocolError(
+          `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
+          details,
+        );
+      throw pcapToolFailure(diagnostic, details);
     }
     throw classifyProviderOutcome(outcome, {
       operation,
@@ -311,7 +312,8 @@ export const runPcapCommand = async (options: {
       dialect: (failure, details) => {
         if (
           failure.kind === "launch-refused" &&
-          refusedByLaunchedPath(failure.cause)
+          // Only a launcher naming the launched path identifies who refused.
+          failure.refusal.executable === launchedPath
         ) {
           if (selectedLimiter !== undefined) {
             const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${failure.refusal.code}).`;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { beforeAll, expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -101,6 +102,15 @@ it("reads a refused launch with the operating system's code", async () => {
 
 it("is undefined for a failure that is not an owned command outcome", () => {
   expect(providerOutcomeOf(new Error("parse failure"))).toBeUndefined();
+});
+
+it("does not read a file errno as a launch refusal", async () => {
+  const read = await readFile(`/nonexistent-${randomUUID()}/carrier`).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(read).toMatchObject({ code: "ENOENT" });
+  expect(providerOutcomeOf(read)).toBeUndefined();
 });
 
 it.skipIf(process.platform === "win32")(

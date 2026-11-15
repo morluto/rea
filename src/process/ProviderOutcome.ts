@@ -1,4 +1,4 @@
-import { classifyLaunchFailure, type LaunchRefusal } from "./launchFailure.js";
+import { launcherRefusalOf, type LauncherRefusal } from "./launchFailure.js";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
@@ -30,7 +30,7 @@ export type ProviderOutcome =
   /** The operating system refused to start the selected executable. */
   | (ProviderOutcomeFacts & {
       readonly kind: "launch-refused";
-      readonly refusal: LaunchRefusal;
+      readonly refusal: LauncherRefusal;
     })
   /** The caller cancelled; `reason` is the caller's opaque abort reason. */
   | (ProviderOutcomeFacts & {
@@ -140,7 +140,8 @@ export function providerOutcomeOf(cause: OwnedCommandFailure): ProviderOutcome;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined {
   if (cause instanceof OwnedCommandFailure) return ownedCommandOutcome(cause);
-  const refusal = classifyLaunchFailure(cause);
+  // Only a launcher's errno is a launch refusal; one from reading a file is not.
+  const refusal = launcherRefusalOf(cause);
   if (refusal === undefined || !(cause instanceof Error)) return undefined;
   return {
     kind: "launch-refused",

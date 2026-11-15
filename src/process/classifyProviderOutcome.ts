@@ -10,6 +10,7 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
@@ -50,8 +51,12 @@ export interface ProviderOutcomeContext {
     readonly userMessage?: string;
     /** The setting or action that changes that deadline. */
     readonly remediationAction?: string;
+    /** The analysis setting that selected the deadline, when one did. */
+    readonly limit?: AnalysisSettingLimit;
   };
   readonly outputLimit: {
+    /** The budget that was exceeded, when the generic report is not enough. */
+    readonly reason?: string;
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
@@ -109,12 +114,15 @@ export const classifyProviderOutcome = (
         ...(context.timeout.remediationAction === undefined
           ? {}
           : { remediationAction: context.timeout.remediationAction }),
+        ...(context.timeout.limit === undefined
+          ? {}
+          : { limit: context.timeout.limit }),
       });
     case "output-limit":
       return new AnalysisResourceConstraintError(
         operation,
         "memory",
-        outcome.message,
+        context.outputLimit.reason ?? outcome.message,
         context.outputLimit.limits,
         { ...details, ...context.outputLimit.recovery },
       );
