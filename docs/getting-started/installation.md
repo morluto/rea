@@ -1311,7 +1311,9 @@ that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
 reported as unresolved because Kilo's working directory is unknown.
 `KILO_CONFIG_CONTENT` is read as Kilo's highest layer and never edited: setup
 reports Kilo as needing manual repair when that value changes the `rea` entry,
-and doctor reports the registration Kilo actually loads. Gemini CLI
+and doctor reports the registration Kilo actually loads. Uninstall changes no
+Kilo file when another layer or that value would keep a `rea` entry in effect,
+or expose a different one, after removal. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
