@@ -45,6 +45,17 @@ const frameTrees =
       ? frameTree(origin, frameReads > reads ? after : before)
       : undefined;
 
+/** Answer frame-tree read N with `documents[N - 1]`, repeating the last one. */
+const frameTreeSequence =
+  (documents: readonly Document[]): NonNullable<FakeOptions["commandResult"]> =>
+  ({ method }, origin, frameReads) =>
+    method === "Page.getFrameTree"
+      ? frameTree(
+          origin,
+          documents[Math.min(frameReads, documents.length) - 1] ?? {},
+        )
+      : undefined;
+
 const start = async (options: FakeOptions) => {
   const browser = await startFakeCdpBrowser(options);
   trackBrowser(browser);
@@ -134,6 +145,45 @@ describe("page capture", () => {
     });
     expectOutcome(result, outcome, "frames");
   });
+
+  // Reads: 1 selects the document, 2 opens final capture, 3+ complete it.
+  it.each([
+    {
+      name: "a pre-capture loader change to another origin",
+      documents: [
+        known,
+        { loaderId: "loader-next", url: "https://outside.example/" },
+      ],
+      outcome: "target_changed",
+    },
+    {
+      name: "a final retry that reaches another loader",
+      documents: [
+        known,
+        known,
+        { ...known, url: "" },
+        { loaderId: "loader-next" },
+      ],
+      outcome: "target_changed",
+    },
+    {
+      name: "a final retry that settles on the selected loader",
+      documents: [known, known, { ...known, url: "" }, known],
+      outcome: "verified",
+    },
+  ] as readonly {
+    name: string;
+    documents: readonly Document[];
+    outcome: Outcome;
+  }[])(
+    "reports $name across authorization retries as $outcome",
+    async ({ documents, outcome }) => {
+      const result = await inspect({
+        commandResult: frameTreeSequence(documents),
+      });
+      expectOutcome(result, outcome, "frames");
+    },
+  );
 
   it.each([
     {
@@ -267,5 +317,34 @@ describe("screenshot capture", () => {
       }),
     );
     expectOutcome(result, outcome, "screenshot");
+  });
+
+  it("reports a navigation that fails the screenshot command as target_changed", async () => {
+    const browser = await start({
+      commandEvents: (command, origin) =>
+        command.method === "Page.getLayoutMetrics"
+          ? [
+              frameNavigated(command, {
+                id: "frame-main",
+                loaderId: "loader-next",
+                url: `${origin}/next`,
+              }),
+            ]
+          : undefined,
+      commandError: ({ method }) =>
+        method === "Page.captureScreenshot"
+          ? { code: -32_000, message: "Target navigated" }
+          : undefined,
+    });
+    const result = await new CdpBrowserProvider().captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      }),
+    );
+    if (result.ok) throw new Error("Expected target_changed");
+    expect(result.error).toMatchObject({ reason: "target_changed" });
+    expect(result.error.cause).toBeDefined();
   });
 });

@@ -8,6 +8,8 @@ import {
   decodeCanonicalBase64,
 } from "../domain/webScreenshot.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import {
   selectCdpFrameIdentity,
@@ -143,6 +145,20 @@ export const captureCdpScreenshot = async (
       context.sessionId,
       context.signal,
     );
+  } catch (cause: unknown) {
+    // A navigation can fail an in-flight screenshot or metrics read. Report
+    // the proven document change first, keeping the command failure as its
+    // cause, while preserving caller cancellation.
+    if (
+      navigation.document.changed &&
+      context.signal?.aborted !== true &&
+      !(cause instanceof AnalysisCancelledError) &&
+      !(cause instanceof AnalysisError && cause.userCategory === "cancelled")
+    )
+      throw new BrowserObservationError("inspect_web_page", "target_changed", {
+        cause,
+      });
+    throw cause;
   } finally {
     removeListener();
   }
