@@ -15,11 +15,12 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -329,10 +330,11 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = new AnalysisCancelledError(operation, {
-    cause: artifactFileCancellationCause(cause),
-    capturedOutput,
-  });
+  const cancellation = cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(cause)),
+    { capturedOutput },
+  );
   return analysisErrorWithCleanupFailure(
     cancellation,
     cleanup,

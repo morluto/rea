@@ -1,5 +1,4 @@
 import { Deadline } from "../domain/deadline.js";
-import { STARTUP_OWNER_CLOSED } from "./SharedStartupAttempt.js";
 
 /** Result of an abort-aware interval wait. */
 export type AbortableWaitResult = "elapsed" | "aborted";
@@ -47,7 +46,6 @@ export class ProviderStartupDeadline {
   readonly #onExternalAbort: () => void;
   #timer: NodeJS.Timeout | undefined;
   #interruption: "cancelled" | "timeout" | undefined;
-  #ownerClosed = false;
 
   constructor(
     readonly timeoutMs: number,
@@ -68,8 +66,6 @@ export class ProviderStartupDeadline {
         return;
       }
       this.#interruption = "cancelled";
-      // The startup owner closing is not a caller's cancellation.
-      this.#ownerClosed = signal?.reason === STARTUP_OWNER_CLOSED;
       this.#abort(signal?.reason);
     };
     if (signal?.aborted === true) {
@@ -90,14 +86,6 @@ export class ProviderStartupDeadline {
     return (
       this.#interruption ?? (this.#budget.expired() ? "timeout" : undefined)
     );
-  }
-
-  /**
-   * True when the cancellation came from the shared startup owner closing,
-   * not from a caller. Decided when the caller's signal aborted.
-   */
-  get ownerClosed(): boolean {
-    return this.#ownerClosed;
   }
 
   /** Milliseconds still available to the next startup phase. */

@@ -35,6 +35,7 @@ import {
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -116,7 +117,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       maximum !== undefined &&
       (!Number.isSafeInteger(maximum) || maximum < 0)
     )
-      throw new RangeError(
+      throw invariantViolation(
         "Directory traversal maximumEntries must be a nonnegative safe integer",
       );
     let examined = 0;

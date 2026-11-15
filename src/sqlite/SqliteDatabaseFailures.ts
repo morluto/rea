@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
 import {
@@ -18,6 +19,8 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -26,10 +29,7 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
-import {
-  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
-  MAX_SQLITE_WORKER_TIMEOUT_MS,
-} from "../domain/sqlite/sqliteDatabase.js";
+import { DEFAULT_SQLITE_WORKER_TIMEOUT_MS } from "../domain/sqlite/sqliteDatabase.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
   SQLITE_DATABASE_LIMITS,
@@ -130,12 +130,14 @@ export const sqliteDatabaseDialect = (
           : stableArtifactInputFailure(cause, OPERATION);
       }
       if (cause instanceof Error && cause.name === "AbortError")
-        return new AnalysisCancelledError(OPERATION, {
-          cause:
+        return cancelledBy(
+          OPERATION,
+          carriedReason(
             signal?.aborted === true && cause.cause === signal.reason
               ? signal.reason
               : cause,
-        });
+          ),
+        );
       // Windows reports a sharing violation as EBUSY: another process holds
       // the file without read sharing. The unchanged request succeeds once
       // that process releases it. Name the member of the file set that was
@@ -212,9 +214,9 @@ const sqliteWorkerTimeout = (
   ms: workerTimeoutMs,
   userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
   remediationAction: `${
-    workerTimeoutMs < MAX_SQLITE_WORKER_TIMEOUT_MS
-      ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
-      : `worker_timeout_ms is already at the maximum supported ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
+    workerTimeoutMs < MAX_NODE_TIMER_DELAY_MS
+      ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
+      : `worker_timeout_ms is already at the maximum supported ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
   } This per-call setting needs no server restart. It covers worker startup, queries and reply writing, not snapshot acquisition or final reply reads/cleanup. Allow client headroom for the whole call; increasing only the client deadline does not change the worker budget. Keep the selected database/WAL and requested facts; narrow table/columns/schema_scope/row_limit only if the question permits it. Byte and heap safety limits remain fixed. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
 });
 

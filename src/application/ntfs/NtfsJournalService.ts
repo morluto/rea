@@ -29,6 +29,8 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -76,9 +78,10 @@ const readFailure = (
   const { cause } = artifactFilePrimaryFacts(failure);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, cause.message, {
         cause,

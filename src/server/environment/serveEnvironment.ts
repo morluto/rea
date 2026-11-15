@@ -29,6 +29,7 @@ import {
   type EnvironmentToolDefinition,
 } from "../../application/environment/environmentTools.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   AnalysisOutputError,
@@ -62,6 +63,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
@@ -80,9 +82,6 @@ class EnvironmentMcpServer extends RequestTrackingMcpServer {
     return super.connect(new TargetContentTransport(transport));
   }
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** At most this many messages in one data-plane batch; a larger batch is refused whole. */
 const MAX_RPC_BATCH_MESSAGES = 100;
@@ -521,7 +520,8 @@ export const serveEnvironment = async (
   let responseClosePending = false;
   let settledSuccessful = false;
   let closing: Promise<void> | undefined;
-  const shutdownFailures = new Set<AnalysisError>();
+  // Every shutdown failure reports this release until a close succeeds.
+  let shutdownRelease: AnalysisCleanupRelease | undefined;
   const owner: EnvironmentShutdownOwner = {
     get cleanupResources() {
       const stateResources = stateFiles.cleanupResources;
@@ -600,12 +600,13 @@ export const serveEnvironment = async (
                 "Keep this REA process available for cleanup. Confirm the reported resources are released before starting a replacement environment server.",
             },
           ).bindCleanupResourceOwner(owner);
-          shutdownFailures.add(failure);
-          throw failure;
+          throw (shutdownRelease ??= new AnalysisCleanupRelease()).bind(
+            failure,
+          );
         }
         retainedEnvironmentShutdowns.delete(owner);
-        for (const failure of shutdownFailures) failure.resolveCleanup();
-        shutdownFailures.clear();
+        shutdownRelease?.confirm();
+        shutdownRelease = undefined;
         settledSuccessful = true;
       })();
       closing = attempt;
@@ -627,7 +628,7 @@ export const serveEnvironment = async (
         closing = undefined;
       }
     } else if (
-      shutdownFailures.size === 0 &&
+      shutdownRelease === undefined &&
       !httpClosePending &&
       !stateClosePending
     ) {

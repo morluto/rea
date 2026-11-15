@@ -27,6 +27,7 @@ import {
 } from "./evidenceErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
+import { isDoctorProviderId } from "./doctorProviderIds.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import {
@@ -81,6 +82,8 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ProviderAdapterError && error.userMessage === undefined)
+    return unclassifiedProviderRemediation(error.providerId);
   if (
     error instanceof BrowserObservationError &&
     error.remediationAction !== undefined
@@ -506,6 +509,8 @@ const outcomeUserMessage = (error: AnalysisError): string => {
   if (error.userMessage !== undefined) return error.userMessage;
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Required runtime controls are unavailable for this attempt.";
+  if (error instanceof ProviderAdapterError)
+    return `The ${error.providerId} provider could not complete ${error.operation}, and REA did not classify the failure. Any reason the provider reported is in details.diagnostics.`;
   const standardMessage = standardErrorMessage(error);
   if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError) return artifactMessage(error);
@@ -554,10 +559,19 @@ const outcomeUserMessage = (error: AnalysisError): string => {
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??
-      "Process capture could not complete. Run `rea doctor`, then review capture policy and try again."
+      "Process capture could not complete. Review the reported details and capture policy, then try again."
     );
-  return "Analysis could not complete. Run `rea doctor`, then try again.";
+  return "Analysis could not complete, and REA did not classify the failure. Review the reported details.";
 };
+
+/**
+ * Recovery for a provider failure no typed variant classified. Doctor is
+ * named only for providers whose readiness it can check.
+ */
+const unclassifiedProviderRemediation = (providerId: string): string =>
+  isDoctorProviderId(providerId)
+    ? `Review the reported details. If the ${providerId} installation or configuration may be at fault, run \`rea doctor --provider ${providerId}\` and apply its fixes. Repeating the unchanged request is not expected to succeed.`
+    : "Review the reported details for the provider's reason; REA has no specific recovery for this unclassified failure. Repeating the unchanged request is not expected to succeed.";
 
 /**
  * Standard text by tag, or by the code an error that presents itself
@@ -567,17 +581,11 @@ const standardErrorMessage = (error: AnalysisError): string | undefined => {
   const tag = error._tag;
   const code = error.ownPresentation()?.code;
   if (UNREADABLE_OUTPUT_TAGS.has(tag) || code === "unreadable_output")
-    return "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.";
+    return "Analysis returned a result REA could not read. Review the reported details; repeating the unchanged request is not expected to succeed.";
   if (UNSUPPORTED_PROVIDER_TAGS.has(tag))
     return "This analysis is unavailable for the current target. Choose another analysis or target.";
   if (CANCELLED_TAGS.has(tag) || code === "cancelled")
     return "Analysis was cancelled. Start it again when ready.";
-  if (TIMEOUT_TAGS.has(tag) || code === "provider_timeout")
-    return "Analysis took too long. Try a smaller request, then run `rea doctor` if it continues.";
-  if (ADAPTER_FAILURE_TAGS.has(tag) || code === "execution_failure")
-    return "Analysis could not complete. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.";
-  if (code === "provider_unavailable")
-    return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
   return undefined;
 };
 
@@ -597,12 +605,6 @@ const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
 ]);
 const CANCELLED_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
   "AnalysisCancelledError",
-]);
-const TIMEOUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "AnalysisTimeoutError",
-]);
-const ADAPTER_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "ProviderAdapterError",
 ]);
 
 /** Operations that accept integrity_policy for declared-integrity mismatches. */

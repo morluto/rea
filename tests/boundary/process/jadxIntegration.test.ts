@@ -1,4 +1,5 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
@@ -1002,6 +1003,7 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         snapshot: apk,
         jarHash: "0".repeat(64),
         bridgeHash: "0".repeat(64),
+        bridgeIdentity: packagedJadxBridgeIdentity(),
         signal: new AbortController().signal,
         timeoutMs: 300,
         resources: new ArtifactResourceScope(),
@@ -1399,6 +1401,32 @@ it("retains the execution failure while cleanup is pending and resumes after cle
     await verifyCleanup(launches);
   } finally {
     cleanupFails = false;
+    await provider.close();
+  }
+});
+
+it("does not send a jadx-reported request failure to doctor", async () => {
+  const { service, apk, launches, provider } = await setup("tool-error");
+  try {
+    const outcome = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (outcome.ok) throw new Error("Expected the reported tool error");
+    const projected = projectAnalysisError(outcome.error);
+    expect(projected).toMatchObject({
+      code: "execution_failure",
+      retryable: false,
+      details: {
+        diagnostics: {
+          reason: "manifest decoder rejected malformed binary XML",
+        },
+      },
+    });
+    expect(projected.message).toContain("details.diagnostics.reason");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
+    await verifyCleanup(launches);
+  } finally {
     await provider.close();
   }
 });

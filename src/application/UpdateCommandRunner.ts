@@ -1,4 +1,5 @@
 import spawn from "cross-spawn";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { spawn as spawnWindows } from "node:child_process";
 import { win32 } from "node:path";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -121,6 +122,7 @@ const runUpdateProcess = async (
     return commandFailure("No executable supplied.", "launch");
   const environment = snapshotEnvironment(
     withoutPackageRunnerIdentity(selectedEnvironment),
+    HOST_PLATFORM.platform,
   );
   let selectedExecutable = executable;
   let selectedArguments = args;

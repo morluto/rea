@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import {
   deserializeMessage,
   serializeMessage,
@@ -17,6 +18,11 @@ import {
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  processInspectionCleanupFailures,
+  type ProcessInspectionCleanupFailure,
+} from "./ProcessInspectionCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
@@ -34,6 +40,18 @@ export type OwnedMcpTransportFailure =
   | { readonly kind: "exit" }
   | { readonly kind: "protocol"; readonly cause: Error }
   | { readonly kind: "interrupted"; readonly reason: unknown };
+
+/** A frame or per-operation byte budget the protocol process exceeded. */
+export class OwnedMcpOutputLimitError extends Error {
+  constructor(
+    readonly scope: "frame" | "operation",
+    readonly limitBytes: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OwnedMcpOutputLimitError";
+  }
+}
 
 /** SDK-framed stdio with REA-owned process cleanup rather than an unowned child. */
 export class OwnedMcpStdioTransport implements Transport {
@@ -53,6 +71,10 @@ export class OwnedMcpStdioTransport implements Transport {
     [this.runId],
   );
   #starting: Promise<void> | undefined;
+  /** Preparation cleanup owners a failed launch transferred and that closed. */
+  readonly #releasedPreparations = new Set<unknown>();
+  /** Ends a launch still resolving or spawning when the transport closes. */
+  readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
 
   constructor(
@@ -63,11 +85,14 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly operation?: string;
       readonly label: string;
       readonly maxFrameBytes: number;
-      readonly maxOperationBytes: number;
+      /** Bytes one serialized operation may produce; omit when only frames are bounded. */
+      readonly maxOperationBytes?: number;
       readonly gracefulInputCloseMs?: number;
       readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
       /** Observe the owned child's stderr from acquisition onward, including when it closes early. */
       readonly onStderr?: (chunk: unknown) => void;
+      /** Owner-redacted output attached to cleanup failures when the owner retains its own tail. */
+      readonly capturedOutput?: () => AnalysisCapturedOutput;
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
@@ -90,6 +115,10 @@ export class OwnedMcpStdioTransport implements Transport {
       ...this.options,
       runId: this.runId,
       stdin: "pipe",
+      signal:
+        this.options.signal === undefined
+          ? this.#acquisition.signal
+          : AbortSignal.any([this.options.signal, this.#acquisition.signal]),
     });
     this.#spawned = spawned;
     this.#supervisor = new ProviderProcessSupervisor(
@@ -186,6 +215,14 @@ export class OwnedMcpStdioTransport implements Transport {
     return this.#failure;
   }
 
+  /**
+   * Stop the retained process from holding the host's event loop after its
+   * cleanup failed; a later close restores the references for the retry.
+   */
+  detach(): void {
+    this.#supervisor?.unref();
+  }
+
   /** Scope both the byte budget and diagnostic retention to the next serialized request. */
   beginOperation(): void {
     this.#bytes = 0;
@@ -195,8 +232,15 @@ export class OwnedMcpStdioTransport implements Transport {
   async #stop(): Promise<void> {
     this.#frameBuffer = Buffer.alloc(0);
     this.#frameLength = 0;
-    // A cancellation may race acquisition. Join it before inspecting ownership.
-    await this.#starting?.catch(() => undefined);
+    // A cancellation may race acquisition: end a launch that is still
+    // resolving its command, then join it before inspecting ownership.
+    this.#acquisition.abort(OwnerCancellation.ownerClosed);
+    // A failed launch may transfer ownership-preparation cleanup (a helper
+    // directory or file handle it could not remove); this close owns it.
+    const startFailure = await this.#starting?.then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
     const process = this.#spawned?.process;
     process?.stdout?.off("data", this.#read);
     process?.stdout?.off("error", this.#error);
@@ -235,13 +279,59 @@ export class OwnedMcpStdioTransport implements Transport {
           reason: stopped.reason,
           stderr: this.diagnostics()?.stderr ?? "",
         },
-        this.settings.operation === undefined
-          ? undefined
-          : { operation: this.settings.operation },
+        {
+          ...(this.settings.operation === undefined
+            ? {}
+            : { operation: this.settings.operation }),
+          ...(this.settings.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: this.settings.capturedOutput() }),
+        },
       );
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
     }
+    for (const preparation of processInspectionCleanupFailures(startFailure))
+      await this.#releasePreparation(preparation);
+  }
+
+  /**
+   * Close one transferred preparation owner. Until it closes (or when the
+   * launch reported a failure without an owner) the close fails and a later
+   * close retries it.
+   */
+  async #releasePreparation(
+    preparation: ProcessInspectionCleanupFailure,
+  ): Promise<void> {
+    const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
+    const owner = darwin ? preparation.cleanupOwner : preparation.owner;
+    if (owner !== undefined && this.#releasedPreparations.has(owner)) return;
+    let reason = preparation.message;
+    if (owner !== undefined)
+      try {
+        await owner.close();
+        this.#releasedPreparations.add(owner);
+        return;
+      } catch (cause: unknown) {
+        reason = cause instanceof Error ? cause.message : String(cause);
+      }
+    const failure = new ProviderCleanupError(
+      this.settings.provider,
+      [darwin ? "process ownership inspection" : preparation.path],
+      { reason },
+      {
+        cause: preparation,
+        ...(this.settings.operation === undefined
+          ? {}
+          : { operation: this.settings.operation }),
+      },
+    );
+    // The transport's close retries the owner; the failure keeps naming the
+    // preparation resource rather than the process run.
+    new AnalysisCleanupLeaseGroup(failure, [this.#cleanup], {
+      preserveResourceAttribution: true,
+    });
+    throw failure;
   }
 
   readonly #error = (error: Error): void => {
@@ -260,26 +350,27 @@ export class OwnedMcpStdioTransport implements Transport {
     if (this.settings.notifyOnExit !== true) this.onclose?.();
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
-    this.#bytes += Buffer.byteLength(chunk);
-    if (this.#bytes > this.settings.maxOperationBytes)
-      this.#fail(
-        new Error(
-          `${this.settings.label} operation output exceeds ${this.settings.maxOperationBytes} bytes; no complete result is available`,
-        ),
-      );
+    this.#countOperationBytes(Buffer.byteLength(chunk));
   };
+  /** Charge output to the operation budget; false once it is exceeded. */
+  #countOperationBytes(bytes: number): boolean {
+    const limit = this.settings.maxOperationBytes;
+    if (limit === undefined) return true;
+    this.#bytes += bytes;
+    if (this.#bytes <= limit) return true;
+    this.#fail(
+      new OwnedMcpOutputLimitError(
+        "operation",
+        limit,
+        `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
+      ),
+    );
+    return false;
+  }
   readonly #read = (chunk: Buffer | string): void => {
     if (this.#closed) return;
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    this.#bytes += bytes.length;
-    if (this.#bytes > this.settings.maxOperationBytes) {
-      this.#fail(
-        new Error(
-          `${this.settings.label} operation output exceeds ${this.settings.maxOperationBytes} bytes; no complete result is available`,
-        ),
-      );
-      return;
-    }
+    if (!this.#countOperationBytes(bytes.length)) return;
     try {
       let offset = 0;
       while (offset < bytes.length) {
@@ -288,7 +379,9 @@ export class OwnedMcpStdioTransport implements Transport {
         const fragment = bytes.subarray(offset, end);
         const frameBytes = this.#frameLength + fragment.length;
         if (frameBytes > this.settings.maxFrameBytes)
-          throw new Error(
+          throw new OwnedMcpOutputLimitError(
+            "frame",
+            this.settings.maxFrameBytes,
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
         this.#appendFrame(fragment, frameBytes);

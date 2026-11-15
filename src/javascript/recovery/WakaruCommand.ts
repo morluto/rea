@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -200,9 +201,7 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
         context.signal?.aborted === true
           ? analysisErrorWithCancellation(
               physical,
-              new AnalysisCancelledError(OPERATION, {
-                cause: context.signal.reason,
-              }),
+              cancelledBy(OPERATION, context.signal),
             )
           : physical;
     }
@@ -269,9 +268,7 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
   if (context.signal?.aborted === true) {
-    const cancelled = new AnalysisCancelledError(OPERATION, {
-      cause: context.signal.reason,
-    });
+    const cancelled = cancelledBy(OPERATION, context.signal);
     if (failure === undefined || failure instanceof AnalysisError)
       failure = analysisErrorWithCancellation(failure, cancelled);
   }
