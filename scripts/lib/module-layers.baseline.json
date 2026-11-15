@@ -7,7 +7,6 @@
     "application -> mcpStartupPolicy.ts": 3,
     "application -> serverIdentity.ts": 1,
     "artifacts -> application": 2,
-    "captures -> application": 1,
     "composition -> cliCommandNames.ts": 3,
     "config -> application": 2,
     "config -> native": 1,
@@ -18,7 +17,6 @@
     "il2cpp -> application": 1,
     "native -> application": 2,
     "process -> artifacts": 17,
-    "signals -> application": 1,
     "windows -> artifacts": 2
   },
   "cycles": [
