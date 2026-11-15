@@ -13,8 +13,11 @@ import {
   type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import {
+  assertCdpEvent,
   registeredCdpEvent,
+  type CdpEventName,
   type CdpRegisteredEvent,
+  type CdpRegisteredEventOf,
 } from "./protocol/CdpEvents.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
@@ -627,6 +630,25 @@ export class CdpConnection {
   /** Subscribe to validated CDP event envelopes. */
   onEvent(listener: (event: CdpTransportEvent) => void): () => void {
     return this.core.onEvent(listener);
+  }
+
+  /**
+   * Subscribe to one registered event. An unregistered name is refused here,
+   * before subscribing, because no event of that name could reach the
+   * listener: JavaScript verifiers name events the compiler cannot check.
+   */
+  onRegisteredEvent<E extends CdpEventName>(
+    method: E,
+    listener: (
+      registered: CdpRegisteredEventOf<E>,
+      event: CdpTransportEvent,
+    ) => void,
+  ): () => void {
+    assertCdpEvent(method, this.operation);
+    return this.core.onEvent((event) => {
+      if (event.registered?.method === method)
+        listener(event.registered as CdpRegisteredEventOf<E>, event);
+    });
   }
 
   /** Subscribe to an unexpected transport loss while an operation is active. */

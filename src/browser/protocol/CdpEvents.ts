@@ -1,6 +1,8 @@
 import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 
+import { BrowserObservationError } from "../../domain/browserObservationError.js";
+import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
@@ -268,6 +270,21 @@ export type CdpRegisteredEventOf<E extends CdpEventName> = Extract<
 /** Whether a payload schema is registered for this event name. */
 export const isCdpEvent = (method: string): method is CdpEventName =>
   Object.hasOwn(CDP_EVENT_PAYLOADS, method);
+
+/**
+ * Refuse a subscription to an event without a registered payload schema: no
+ * event of that name could reach the listener. TypeScript callers cannot name
+ * one; JavaScript verifiers can.
+ */
+export function assertCdpEvent(
+  method: string,
+  operation: BrowserObservationOperation,
+): asserts method is CdpEventName {
+  if (!isCdpEvent(method))
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail: `REA refused to subscribe to CDP event ${JSON.stringify(method)}: no payload schema is registered for it.`,
+    });
+}
 
 /** Parse one event's payload by its registered schema, or undefined when unregistered. */
 export const registeredCdpEvent = (
