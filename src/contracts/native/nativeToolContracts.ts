@@ -57,6 +57,7 @@ const native = <
     ...toolContractMetadata(name),
     description,
     kind: "native-provider",
+    cli: true,
     requiresActiveTarget: true,
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,

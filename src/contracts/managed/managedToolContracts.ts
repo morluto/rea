@@ -62,6 +62,7 @@ const nativeBoundaryOutputSchema = requireOutputSchema(
 export const MANAGED_TOOL_CONTRACTS = [
   {
     name: "inspect_managed_artifact",
+    cli: true,
     retainedSummary: { evidenceParameters: "omit-detail" },
     ...toolContractMetadata("inspect_managed_artifact"),
     description:
@@ -83,6 +84,7 @@ export const MANAGED_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_managed_members",
+    cli: true,
     retainedSummary: { evidenceParameters: "omit-detail" },
     ...toolContractMetadata("inspect_managed_members"),
     description:
@@ -114,6 +116,7 @@ export const MANAGED_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_managed_native_boundaries",
+    cli: true,
     ...toolContractMetadata("inspect_managed_native_boundaries"),
     description:
       "Inspect PE/CLI ModuleRef, ImplMap/PInvoke declarations, CLI native-header indicators, and non-IL method implementation flags without loading or executing target code. Results are managed declarations and degraded native-boundary observations, not verified native exports or addresses.",

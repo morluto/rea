@@ -19,13 +19,27 @@ import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
+import { decompileAnalysisSchema } from "../domain/analysisView/procedurePseudocodeSchemas.js";
 
-export const decompileAnalysisSelection = z
-  .enum(["independent_fresh"])
+export const decompileAnalysisSelection = decompileAnalysisSchema
   .optional()
   .describe(
     "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
   );
+
+/** The contracts below that the CLI exposes as commands. */
+const OFFICIAL_CLI_CONTRACTS: ReadonlySet<string> = new Set([
+  "annotate_native_function",
+  "inspect_native_load_image",
+  "inspect_native_data_type",
+  "inspect_native_instruction",
+  "resolve_native_call_targets",
+  "procedure_references",
+  "xrefs",
+  "search_bytes",
+  "read_bytes",
+  "address_to_file_offset",
+]);
 
 const official = <
   Name extends keyof typeof officialOutputSchemas,
@@ -42,6 +56,7 @@ const official = <
     ...toolContractMetadata(name),
     description,
     kind: "official-proxy",
+    ...(OFFICIAL_CLI_CONTRACTS.has(name) ? { cli: true as const } : {}),
     requiresActiveTarget: true,
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,

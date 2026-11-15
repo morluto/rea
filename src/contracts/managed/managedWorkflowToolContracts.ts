@@ -35,6 +35,7 @@ const managedApplicationGraphOutputSchema = requireOutputSchema(
 export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
   {
     name: "compare_managed_members",
+    cli: true,
     ...toolContractMetadata("compare_managed_members"),
     description:
       "Compare two authenticated inspect_managed_members Evidence records, inline or retained, using unique exact type/name/signature/CIL or decoded structural matches. Names alone never establish correspondence; undecoded signatures, unresolved declaring types and ambiguous candidates remain unknown rather than added/removed. Structural cross-name matching cannot consume a member whose own type/name counterpart remains unpaired. Matched methods compare aligned call-site shapes and observed target names; unaligned or missing facts stay unknown. Tokens remain local to each artifact SHA-256/MVID; tuple hashes do not remap them. Static call names do not prove overload identity or runtime dispatch.",
@@ -53,6 +54,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
   },
   {
     name: "verify_managed_native_boundaries",
+    cli: true,
     ...toolContractMetadata("verify_managed_native_boundaries"),
     description:
       "Verify managed P/Invoke/native-boundary declarations against authenticated native export or function Evidence, with inline or exact retained sources, without executing managed code or translating managed metadata tokens into native addresses. The workflow preserves declaration-only, verified, inferred, contradicted, and unresolved states; a name candidate with missing managed or native module identity remains unresolved with its candidate evidence retained.",
@@ -73,6 +75,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
   },
   {
     name: "import_managed_reconstruction",
+    cli: true,
     ...toolContractMetadata("import_managed_reconstruction"),
     description:
       "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence supplied inline or by exact retained reference. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and the limited decoded-IL tuple hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
@@ -93,6 +96,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
   },
   {
     name: "project_managed_application_graph",
+    cli: true,
     ...toolContractMetadata("project_managed_application_graph"),
     description:
       "Project authenticated managed artifact, member, and native-boundary Evidence, supplied inline or by exact retained reference, into the provider-neutral application graph without executing managed code, loading assemblies, or translating managed metadata tokens to native addresses. The graph preserves managed static observations as managed-specific nodes linked to source Evidence, with in-module calls and field-access edges; other call and field-access sites are counted in limitations.",

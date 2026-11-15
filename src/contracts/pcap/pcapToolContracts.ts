@@ -15,6 +15,7 @@ import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/an
 export const PCAP_TOOL_CONTRACTS = [
   {
     name: "inspect_pcap_client",
+    cli: true,
     ...toolContractMetadata("inspect_pcap_client"),
     description:
       "Inspect the caller-selected tshark and capinfos binaries: selected commands, selection sources, and versions. Both tools must be usable. Reads no capture file. REA never installs the Wireshark suite; select binaries with REA_TSHARK_COMMAND and REA_CAPINFOS_COMMAND (absolute) or from PATH.",
@@ -26,6 +27,7 @@ export const PCAP_TOOL_CONTRACTS = [
   {
     name: "inspect_pcap_capture",
     availability: { host: "pcapCapture" },
+    cli: true,
     ...toolContractMetadata("inspect_pcap_capture"),
     description:
       "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",
