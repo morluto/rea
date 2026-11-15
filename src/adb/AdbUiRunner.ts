@@ -42,6 +42,7 @@ import {
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -235,7 +236,7 @@ export class AdbUiRunner {
   readonly #pending = new Map<string, RemoteRequest>();
   readonly #commands = new Map<ProviderProcessSupervisor, string>();
   readonly #preparationResources = new ArtifactResourceScope();
-  readonly #cleanupErrors = new Set<WeakRef<AnalysisError>>();
+  #cleanupLease: AnalysisCleanupLease | undefined;
   #cleanup: Promise<readonly RecoveredActionOutcome[]> | undefined;
   /** Outcomes survive remote forget/acknowledgement failures until reported to a caller. */
   #recoveredActionOutcomes = new Map<string, RecoveredActionOutcome>();
@@ -298,10 +299,21 @@ export class AdbUiRunner {
   }
 
   #trackCleanupError(error: AnalysisError): void {
-    for (const reference of this.#cleanupErrors)
-      if (reference.deref() === undefined)
-        this.#cleanupErrors.delete(reference);
-    this.#cleanupErrors.add(new WeakRef(error));
+    const runner = this;
+    this.#cleanupLease ??= new AnalysisCleanupLease(
+      () => this.#close().then(() => undefined),
+      {
+        get cleanupResources() {
+          return runner.pendingResources;
+        },
+      },
+    );
+    this.#cleanupLease.bindCleanupError(error);
+  }
+
+  /** Attribute an adapter's retry error to this exact UI cleanup generation. */
+  bindCleanupError(error: AnalysisError): void {
+    this.#trackCleanupError(error);
   }
 
   async #settleCommands(): Promise<void> {
@@ -641,7 +653,13 @@ export class AdbUiRunner {
   }
 
   #retryCleanup(): Promise<readonly RecoveredActionOutcome[]> {
-    this.#cleanup ??= this.#close().finally(() => {
+    this.#cleanup ??= (async () => {
+      const lease = this.#cleanupLease;
+      if (lease === undefined) return this.#close();
+      await lease.release();
+      if (this.#cleanupLease === lease) this.#cleanupLease = undefined;
+      return [...this.#recoveredActionOutcomes.values()];
+    })().finally(() => {
       this.#cleanup = undefined;
     });
     return this.#cleanup;
@@ -760,9 +778,6 @@ export class AdbUiRunner {
       this.#trackCleanupError(error);
       throw error;
     }
-    for (const reference of this.#cleanupErrors)
-      reference.deref()?.resolveCleanup();
-    this.#cleanupErrors.clear();
     return [...this.#recoveredActionOutcomes.values()];
   }
 
@@ -1315,7 +1330,7 @@ export class AdbUiRunner {
         primary,
         cleanup,
         request.operation,
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
       this.#trackCleanupError(combined);
       delivered = true;
       returned = combined;

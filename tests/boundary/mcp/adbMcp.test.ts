@@ -7,6 +7,7 @@ import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDevi
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { ADB_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -360,37 +361,8 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
   const { client } = await connectAdbMcpClient(provider, "adb-boundary");
 
   const { tools } = await client.listTools();
-  const names = tools.map((tool) => tool.name);
-  const operationNames = [
-    "inspect_adb_client",
-    "list_adb_devices",
-    "inspect_adb_device",
-    "list_adb_packages",
-    "pull_adb_package",
-    "read_adb_logcat",
-    "inspect_adb_package",
-    "pull_adb_file",
-    "push_adb_file",
-    "capture_adb_screen",
-    "list_adb_processes",
-    "list_adb_directory",
-    "list_adb_features",
-    "list_adb_services",
-    "inspect_adb_display",
-    "inspect_adb_window",
-    "inspect_adb_ui",
-    "find_adb_ui_elements",
-    "wait_for_adb_ui",
-    "read_adb_setting",
-    "collect_adb_bugreport",
-    "resolve_adb_packages",
-    "install_adb_package",
-    "uninstall_adb_package",
-    "start_adb_app",
-    "start_adb_activity",
-    "stop_adb_app",
-  ] as const;
-  for (const name of operationNames) expect(names, name).toContain(name);
+  // Every ADB contract must be advertised once, with its input schema intact.
+  const operationNames = ADB_TOOL_CONTRACTS.map(({ name }) => name);
 
   assertAdvertisedMcpContracts(operationNames, tools);
   const listed = await client.callTool({

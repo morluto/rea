@@ -13,6 +13,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
   MAX_EVM_TIMEOUT_MS,
+  selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 
@@ -258,3 +259,91 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("names producer_limits.diagnostic_bytes when worker diagnostics exceed it", () => {
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(
+      new OwnedCommandFailure("output-limit", "Output exceeded.", snapshot),
+      {
+        phase: "worker",
+        path: "/selected.hex",
+        producerLimits: {
+          ...selectedEvmProducerLimits(undefined),
+          diagnostic_bytes: 4096,
+        },
+      },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        maximum_diagnostic_bytes: 4096,
+        parameter: "producer_limits.diagnostic_bytes",
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain(
+    "producer_limits.diagnostic_bytes",
+  );
+});
+
+it("reports the worker's V8 heap exhaustion against its fixed heap", () => {
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(
+      new OwnedCommandFailure("process", "exited", {
+        ...snapshot,
+        exitCode: 134,
+        runtimeExhaustion: {
+          runtime: "v8",
+          area: "heap",
+          stream: "stderr",
+          line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+          lineComplete: true,
+          truncated: false,
+          invalidUtf8: false,
+        },
+      }),
+      { phase: "worker", path: "/selected.hex" },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { worker_heap_mib: 256 },
+    },
+  });
+});
+
+it("does not report a private storage errno as a limiter launch refusal", async () => {
+  const denied = await readFile("/nonexistent-evm-root/request.json").then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(
+    evmInterfaceFailure(denied, { phase: "worker", path: "/selected.hex" }),
+  ).toMatchObject({
+    _tag: "ProviderAdapterError",
+    diagnostics: { phase: "worker" },
+  });
+});
+
+it("keeps the recorded exit status when collecting worker output failed", () => {
+  const failure = evmInterfaceFailure(
+    new OwnedCommandFailure(
+      "process",
+      "stdout stream failed",
+      { ...snapshot, exitCode: 3 },
+      null,
+      { collectionFailure: true },
+    ),
+    { phase: "worker", path: "/selected.hex" },
+  );
+  expect(failure).toMatchObject({
+    _tag: "ProviderAdapterError",
+    diagnostics: { failure_kind: "protocol", exit_code: 3, signal: null },
+  });
+});

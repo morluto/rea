@@ -636,6 +636,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         {
           timeoutMs,
           diagnosticBytes: producerLimits.diagnostic_bytes,
+          runtime: "v8",
         },
         {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),

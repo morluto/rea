@@ -1339,6 +1339,7 @@ export class AdbProvider {
     // its successor must still join the predecessor, not overtake it.
     this.#tail = predecessor.then(() => completed);
     try {
+      let retryOwner: "ui" | "artifacts" = "ui";
       try {
         await awaitPredecessor(predecessor, request.operation, options?.signal);
         // Retained UI work can still affect the device. Reconcile it before
@@ -1348,6 +1349,7 @@ export class AdbProvider {
           options?.signal,
         );
         if (recovered !== undefined) return err(recovered);
+        retryOwner = "artifacts";
         await this.#resources.retryCleanup();
       } catch (cause: unknown) {
         if (cause instanceof AnalysisCancelledError && !cause.cleanupIncomplete)
@@ -1358,8 +1360,12 @@ export class AdbProvider {
           [cause],
           this.#cleanupResources(cause, "ADB provider-owned resource"),
         );
-        if (cause instanceof AnalysisError && cause.cleanupIncomplete)
-          error.bindCleanupDependencies([cause]);
+        if (
+          retryOwner === "ui" &&
+          cause instanceof AnalysisError &&
+          cause.cleanupIncomplete
+        )
+          this.#ui.bindCleanupError(error);
         const leases =
           cause instanceof ArtifactResourceRetryFailure
             ? cause.cleanupLeases
