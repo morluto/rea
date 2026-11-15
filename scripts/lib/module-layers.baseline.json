@@ -12,7 +12,6 @@
   "crossProvider": {
     "android -> artifacts": 2,
     "apktool -> artifacts": 2,
-    "artifacts -> dotnet": 3,
     "browser -> artifacts": 2,
     "captures -> pcap": 2,
     "desktop -> electron": 1,

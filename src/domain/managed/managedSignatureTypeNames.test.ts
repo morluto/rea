@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_TYPE_NESTING_DEPTH,
   nestedTypeNames,
-} from "./ManagedSignatureTypeNames.js";
+} from "./managedSignatureTypeNames.js";
 
 /** Rows 1..length, each nested in the row before it. */
 const chain = (length: number) => {

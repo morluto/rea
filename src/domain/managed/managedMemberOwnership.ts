@@ -1,14 +1,14 @@
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
 import {
   memberListRowLookup,
   memberListTable,
-} from "./ManagedMemberPointers.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+} from "./managedMemberPointers.js";
+import { ManagedReaderFailure } from "./managedReaderFailure.js";
 import type {
   MemberDefinitionTable,
   TypeMemberListFacts,
-} from "./ManagedTypeMemberLists.js";
+} from "./managedTypeMemberLists.js";
 
 type OwnerLookup = (definitionRow: number) => number;
 const lookups = new WeakMap<
