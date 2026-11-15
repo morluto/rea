@@ -154,8 +154,10 @@ class LongRunTest(unittest.TestCase):
         if not pid_path.exists():
             return
         pid = int(pid_path.read_text())
+        # The test holds no live handle to this descendant, so a pid alone does
+        # not prove it is still ours; report a survivor rather than signal it.
         if not self.wait_until(lambda: not self.process_exists(pid), seconds=2):
-            os.kill(pid, signal.SIGKILL)
+            self.fail(f"descendant pid {pid} did not exit after its release file appeared")
 
     @staticmethod
     def process_exists(pid):
