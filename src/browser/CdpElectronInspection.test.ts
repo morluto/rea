@@ -503,7 +503,7 @@ describe("Electron frame capture", () => {
     const completeness = new CdpCaptureCompleteness();
     const ingest = (method: string, params: unknown): void =>
       ingestElectronScriptEvent({
-        event: { method, params },
+        event: receiveCdpEvent({ method, params }),
         scripts,
         executionContextFrames,
         retention,

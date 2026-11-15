@@ -63,6 +63,84 @@ describe("registered CDP event payloads", () => {
     });
   });
 
+  it("derives tolerant script facts and the strict runtime declaration from one parse", () => {
+    const params = {
+      scriptId: "script-1",
+      url: "https://app.test/app.js",
+      executionContextId: 3,
+      startLine: 0,
+      startColumn: 0,
+      endLine: 1,
+      endColumn: 4,
+    };
+    const event = receiveCdpEvent({ method: "Debugger.scriptParsed", params });
+    if (event.registered?.method !== "Debugger.scriptParsed")
+      throw new TypeError("expected a registered script event");
+    expect(event.registered.payload.facts).toMatchObject({
+      scriptId: "script-1",
+      contextKey: "3",
+    });
+    expect(event.registered.payload.runtime.success).toBe(true);
+    expect(event.registered.payload.declarationBytes).toBe(
+      Buffer.byteLength(JSON.stringify(params)),
+    );
+
+    const partial = receiveCdpEvent({
+      method: "Debugger.scriptParsed",
+      params: { scriptId: "script-2", url: "https://app.test/b.js" },
+    });
+    if (partial.registered?.method !== "Debugger.scriptParsed")
+      throw new TypeError("expected a registered script event");
+    // Passive capture keeps the partial facts; the active runtime refuses them.
+    expect(partial.registered.payload.facts.scriptId).toBe("script-2");
+    expect(partial.registered.payload.facts.contextKey).toBeNull();
+    expect(partial.registered.payload.runtime.success).toBe(false);
+  });
+
+  it("keeps an execution context's identity unknown when its id is malformed", () => {
+    const created = receiveCdpEvent({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: "7", auxData: { frameId: "main" } } },
+    });
+    if (created.registered?.method !== "Runtime.executionContextCreated")
+      throw new TypeError("expected a registered context event");
+    expect(created.registered.payload.facts).toMatchObject({
+      id: undefined,
+      contextKey: null,
+      frameClaim: { state: "observed", frameId: "main" },
+    });
+    expect(created.registered.payload.runtime.success).toBe(false);
+
+    const destroyed = receiveCdpEvent({
+      method: "Runtime.executionContextDestroyed",
+      params: { executionContextId: 7 },
+    });
+    expect(destroyed.registered).toEqual({
+      method: "Runtime.executionContextDestroyed",
+      payload: { id: 7, contextKey: "7" },
+    });
+  });
+
+  it("keeps console argument positions and a malformed call stack as facts", () => {
+    const event = receiveCdpEvent({
+      method: "Runtime.consoleAPICalled",
+      params: {
+        type: "log",
+        timestamp: 12,
+        args: [{ type: "string", value: "a" }, 5],
+        stackTrace: { callFrames: "not-a-list" },
+      },
+    });
+    if (event.registered?.method !== "Runtime.consoleAPICalled")
+      throw new TypeError("expected a registered console event");
+    expect(event.registered.payload).toEqual({
+      topFrame: { ok: false, error: { _tag: "MalformedCdpCallFrame" } },
+      arguments: [{ type: "string", value: "a" }, undefined],
+      timestamp: 12,
+      type: "log",
+    });
+  });
+
   it("leaves an unregistered event unparsed", () => {
     const event = receiveCdpEvent({
       method: "Network.dataReceived",
