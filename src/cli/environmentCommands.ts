@@ -15,7 +15,7 @@ import {
   CLI_COMMANDS,
   DEFAULT_INFO_LOGGING_COMMANDS,
 } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {

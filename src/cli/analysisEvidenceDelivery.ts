@@ -18,7 +18,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { parseCliJsonOption } from "./cliJsonOption.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
@@ -35,8 +34,6 @@ import {
   isObject,
   projectCliAnalysisResult,
 } from "./projectCliAnalysisResult.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
@@ -105,48 +102,6 @@ export const cliEvidenceDeliveryInputError = (
         },
       ])
     : undefined;
-};
-
-/** Parse delivery JSON once and enforce its owning schema before opening a target. */
-export const parseCliAnalysisEvidenceDelivery = <
-  Delivery extends {
-    readonly detail: "complete" | "summary";
-    readonly view?: AnalysisViewRequest | undefined;
-  },
->(
-  operation: string,
-  options: {
-    readonly detail: "complete" | "summary";
-    readonly evidence_output?: string | undefined;
-    readonly view?: string | undefined;
-  },
-  schema: {
-    readonly safeParse: (input: unknown) => ZodSafeParseResult<Delivery>;
-  },
-): Result<
-  Delivery & { readonly evidenceOutput: string | undefined },
-  AnalysisError
-> => {
-  const decoded = parseCliJsonOption(
-    operation,
-    "view",
-    options.view,
-    "view must be valid JSON",
-  );
-  if (!decoded.ok) return decoded;
-  const view = decoded.value;
-  const raw = {
-    detail: options.detail,
-    ...(view === undefined ? {} : { view }),
-  };
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, raw),
-    );
-  const value = { ...parsed.data, evidenceOutput: options.evidence_output };
-  const invalid = cliEvidenceDeliveryInputError({ ...value, operation });
-  return invalid === undefined ? ok(value) : err(invalid);
 };
 
 /** One-shot delivery owns report publication; analysis keeps its own cleanup owner. */

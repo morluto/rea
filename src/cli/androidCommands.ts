@@ -1,13 +1,10 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
@@ -15,17 +12,7 @@ import {
   type ContractCommandContext,
 } from "./contractCommand.js";
 import { ANDROID_TOOL_CONTRACTS } from "../contracts/android/androidToolContracts.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-  parseCliAnalysisEvidenceDelivery,
-} from "./analysisEvidenceDelivery.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { parseCliJsonOption } from "./cliJsonOption.js";
-import { parseAnalysisInput } from "../application/AnalysisInput.js";
-import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
-import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
-import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 
 /** Expose the same explicit APK requests through one-shot CLI commands. */
 export const registerAndroidCommands = (
@@ -35,76 +22,6 @@ export const registerAndroidCommands = (
 ): void => {
   const provider = createAndroidAnalysisProvider(environment);
   const service = new AndroidAnalysisService(provider);
-  const path = androidInputSchemas.inspect_android_package.shape.path;
-  cli.command(CLI_COMMANDS.inspectAndroidJniBindings, {
-    description:
-      "Link raw DEX native declarations to static JNI export/table candidates without executing the APK",
-    args: z.object({ path }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      query: z
-        .string()
-        .optional()
-        .describe(
-          "JSON selection: class_name, method_names, descriptors, abis, library_paths; arrays preserve exact names",
-        ),
-      view: z
-        .string()
-        .optional()
-        .describe(
-          "JSON android-jni collection page; requires --detail summary and --evidence_output",
-        ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectAndroidJniBindings,
-          async () => {
-            const operation = "inspect_android_jni_bindings";
-            const delivery = parseCliAnalysisEvidenceDelivery(
-              operation,
-              options,
-              androidJniDeliverySchema,
-            );
-            if (!delivery.ok) return projectAnalysisError(delivery.error);
-            const decoded = parseCliJsonOption(
-              operation,
-              "query",
-              options.query,
-              "query must be a JSON selection object.",
-            );
-            if (!decoded.ok) return projectAnalysisError(decoded.error);
-            const query = decoded.value === undefined ? {} : decoded.value;
-            const selected = parseAnalysisInput(
-              operation,
-              query,
-              androidJniSelectionSchema,
-              signal,
-            );
-            if (!selected.ok) return projectAnalysisError(selected.error);
-            return deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                service.execute(
-                  operation,
-                  { ...selected.value, path: args.path },
-                  { signal },
-                ),
-              service: { close: () => provider.close() },
-              providerId: "jadx",
-              operation,
-              signal,
-              detail: delivery.value.detail,
-              evidenceOutput: delivery.value.evidenceOutput,
-              ...(delivery.value.view === undefined
-                ? {}
-                : { view: delivery.value.view }),
-            });
-          },
-        ),
-      ),
-  });
   const contract = <Name extends AndroidOperation>(name: Name) =>
     contractNamed(ANDROID_TOOL_CONTRACTS, name);
   /**
@@ -143,6 +60,40 @@ export const registerAndroidCommands = (
         ...(delivery.view === undefined ? {} : { view: delivery.view }),
       });
     };
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_android_jni_bindings"),
+    {
+      command: CLI_COMMANDS.inspectAndroidJniBindings,
+      description:
+        "Link raw DEX native declarations to static JNI export/table candidates without executing the APK",
+      positionals: ["path"],
+      fieldGroups: {
+        query: {
+          fields: [
+            "class_name",
+            "method_names",
+            "descriptors",
+            "abis",
+            "library_paths",
+          ],
+          description:
+            "JSON selection: class_name, method_names, descriptors, abis, library_paths; arrays preserve exact names",
+          invalidJson: "query must be a JSON selection object.",
+        },
+      },
+      fields: {
+        view: {
+          description:
+            "JSON android-jni collection page; requires --detail summary and --evidence_output",
+        },
+      },
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
+    },
+    run("inspect_android_jni_bindings"),
+  );
   registerContractCommand(
     cli,
     logger,
