@@ -28,6 +28,7 @@ import type {
   ProcessSample,
   RecordProcessCaptureEvent,
   TerminalFrame,
+  ProcessCaptureRootProcess,
 } from "../../domain/process/processCapture.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import {
@@ -104,6 +105,8 @@ interface StartedCaptureRuntime {
   readonly stopSampler: ReturnType<typeof startProcessSampler>;
   /** One ownership ledger shared by observations and final cleanup for this run. */
   readonly ownershipEvidence: ProcessOwnershipEvidenceOwner;
+  /** The root's start identity, read once at launch. */
+  readonly rootIdentity: Promise<RetainedRootIdentity>;
   /** Signals the captured root only while its launch-time start identity still matches. */
   readonly signalRoot: (signal: "SIGTERM" | "SIGKILL") => Promise<{
     readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
@@ -111,62 +114,64 @@ interface StartedCaptureRuntime {
   }>;
 }
 
-/** Identity observation and signalling used for finalization signals; injectable for tests. */
+/** Root identity observation and finalization signalling; injectable for tests. */
 export interface FinalizationHost {
   readonly observe: typeof observeProcessStartIdentity;
   readonly signal: typeof signalProcessWithStartIdentity;
 }
 
-/** Bind the captured root's initial identity to its run token before retaining it. */
+/** The captured root's launch-time start identity, bound to its run token. */
+export type RetainedRootIdentity =
+  | { readonly state: "identity"; readonly identity: string }
+  | { readonly state: "gone" }
+  | { readonly state: "unverified"; readonly reason: string };
+
+/**
+ * Read the captured root's start identity once at launch, bound to its run
+ * token. Finalization signals and the capture's root process fact both use
+ * this one observation; nothing re-reads it later.
+ */
+export const retainRootIdentity = (
+  pid: number,
+  runId: string,
+  observe: FinalizationHost["observe"] = (rootPid) =>
+    observeProcessStartIdentity(rootPid, undefined, runId),
+): Promise<RetainedRootIdentity> =>
+  observe(pid).then(
+    (observation) =>
+      observation === undefined
+        ? ({ state: "gone" } as const)
+        : observation.state === "readable"
+          ? ({ state: "identity", identity: observation.identity } as const)
+          : ({
+              state: "unverified",
+              reason:
+                observation.reason.trim() === ""
+                  ? "start identity is unavailable without a diagnostic"
+                  : observation.reason,
+            } as const),
+    (cause: unknown) =>
+      ({
+        state: "unverified",
+        reason: describeUnverifiedCause(
+          cause,
+          "start identity inspection failed without a message",
+        ),
+      }) as const,
+  );
+
+/** Signal the captured root only while its retained launch identity still matches. */
 export const retainRootSignaller = (
   pid: number,
-  finalizationMs: number,
-  runId: string,
-  host: FinalizationHost = {
-    observe: (rootPid) =>
-      observeProcessStartIdentity(rootPid, undefined, runId),
-    signal: signalProcessWithStartIdentity,
-  },
+  retained: Promise<RetainedRootIdentity>,
+  signalProcess: FinalizationHost["signal"] = signalProcessWithStartIdentity,
 ): StartedCaptureRuntime["signalRoot"] => {
-  const retained =
-    finalizationMs > 0
-      ? host.observe(pid).then(
-          (observation) =>
-            observation === undefined
-              ? ({ state: "gone" } as const)
-              : observation.state === "readable"
-                ? ({
-                    state: "identity",
-                    identity: observation.identity,
-                  } as const)
-                : ({
-                    state: "unverified",
-                    reason:
-                      observation.reason.trim() === ""
-                        ? "start identity is unavailable without a diagnostic"
-                        : observation.reason,
-                  } as const),
-          (cause: unknown) =>
-            ({
-              state: "unverified",
-              reason: describeUnverifiedCause(
-                cause,
-                "start identity inspection failed without a message",
-              ),
-            }) as const,
-        )
-      : undefined;
   return async (signal) => {
     const identity = await retained;
-    if (identity === undefined)
-      return {
-        delivery: "unverified",
-        reason: "root identity was not retained",
-      };
     if (identity.state === "unverified")
       return { delivery: "unverified", reason: identity.reason };
     if (identity.state === "gone") return { delivery: "gone" };
-    const delivery = await host.signal(pid, identity.identity, signal);
+    const delivery = await signalProcess(pid, identity.identity, signal);
     return delivery === "unverified"
       ? {
           delivery,
@@ -176,6 +181,28 @@ export const retainRootSignaller = (
       : { delivery };
   };
 };
+
+/**
+ * The capture's root process fact: the PID with its retained launch
+ * identity, withheld when the caller selected PID normalization, or unknown
+ * with the reason. A PID without its start identity is not an identity.
+ */
+export const capturedRootProcess = (
+  pid: number,
+  identity: RetainedRootIdentity,
+  pidsNormalized: boolean,
+): ProcessCaptureRootProcess =>
+  pidsNormalized
+    ? { state: "withheld-by-caller" }
+    : identity.state === "identity"
+      ? { state: "observed", pid, start_time: identity.identity }
+      : {
+          state: "unknown",
+          reason:
+            identity.state === "gone"
+              ? "the root process exited before its start identity was read"
+              : identity.reason,
+        };
 
 const cleanupFailedStartup = async (options: {
   readonly cause: unknown;
@@ -383,6 +410,11 @@ const startCaptureRuntime = async (
       renderer,
       started,
     });
+    const rootIdentity = retainRootIdentity(
+      terminal.pid,
+      options.runId,
+      options.finalizationHost?.observe,
+    );
     stopSampler = startProcessSampler({
       rootPid: terminal.pid,
       runId: options.runId,
@@ -403,11 +435,11 @@ const startCaptureRuntime = async (
       lastOutput: () => lastOutput,
       terminalObservation,
       stopSampler,
+      rootIdentity,
       signalRoot: retainRootSignaller(
         terminal.pid,
-        scenario.finalization_ms,
-        options.runId,
-        options.finalizationHost,
+        rootIdentity,
+        options.finalizationHost?.signal,
       ),
     };
   } catch (cause: unknown) {
@@ -734,6 +766,11 @@ const completeCapture = async (options: {
       runtime.startedAt,
       new Date(),
       runtime.executableIdentity,
+      capturedRootProcess(
+        runtime.terminal.pid,
+        await runtime.rootIdentity,
+        scenario.normalization.pids,
+      ),
       {
         platform: options.hostPlatform,
         architecture: HOST_PLATFORM.architecture,
