@@ -1,9 +1,14 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 
-import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteXdgConfigHome,
+  vscodeUserDirectory,
+  type ClientRootContext,
+} from "./ClientConfigRoots.js";
+import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
@@ -65,17 +70,20 @@ export const fromSetup =
     };
   };
 
-export const platformPaths = (context: McpRegistrationLocationContext) => {
-  const { home, platform, environment } = context;
-  const config = environment.XDG_CONFIG_HOME || join(home, ".config");
-  const appSupport =
-    platform === "win32"
-      ? environment.APPDATA || win32.join(home, "AppData", "Roaming")
-      : platform === "darwin"
-        ? join(home, "Library", "Application Support")
-        : config;
-  return { config, appSupport, vscode: join(appSupport, "Code", "User") };
-};
+/** The client-root context of one registration selection. */
+export const rootContext = ({
+  home,
+  platform,
+  environment,
+}: McpRegistrationLocationContext): ClientRootContext => ({
+  home,
+  platform,
+  env: environment,
+});
+
+/** Windows roaming application data, read as setup reads it. */
+const windowsRoaming = (context: McpRegistrationLocationContext): string =>
+  windowsAppDataRoots(context.home, context.environment).roaming;
 
 const location = (
   path: string,
@@ -113,21 +121,13 @@ export const clineLocation = async (
 ): Promise<McpRegistrationGlobalLocation> =>
   location(
     join(
-      platformPaths(context).vscode,
+      vscodeUserDirectory(rootContext(context)),
       "globalStorage",
       "saoudrizwan.claude-dev",
       "settings",
       "cline_mcp_settings.json",
     ),
   );
-export const clineCliLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const selected = resolveClineCliSettingsPath(context);
-  if (!selected.ok) throw selected.error;
-  const pathApi = context.platform === "win32" ? win32 : posix;
-  return location(selected.value, pathApi.dirname(selected.value));
-};
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
@@ -138,18 +138,12 @@ export const gooseLocation = async (
     const selected = pathApi.join(root, "config", "config.yaml");
     return location(selected, selected);
   }
-  const xdg = environment.XDG_CONFIG_HOME;
+  // etcetera's Windows and XDG strategies; only an absolute XDG root counts.
   const path =
     platform === "win32"
-      ? join(
-          platformPaths(context).appSupport,
-          "Block",
-          "goose",
-          "config",
-          "config.yaml",
-        )
+      ? join(windowsRoaming(context), "Block", "goose", "config", "config.yaml")
       : join(
-          xdg && posix.isAbsolute(xdg) ? xdg : join(home, ".config"),
+          absoluteXdgConfigHome({ home, env: environment }),
           "goose",
           "config.yaml",
         );
@@ -195,14 +189,22 @@ export const mcporterLocation = async (
 export const zedLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> =>
+  // Zed's paths::config_dir. On Windows it reads the RoamingAppData known
+  // folder, which APPDATA normally names; on Linux, `dirs::config_dir`
+  // admits only an absolute XDG_CONFIG_HOME.
   location(
     context.platform === "darwin"
       ? join(context.home, ".config", "zed", "settings.json")
-      : join(
-          platformPaths(context).appSupport,
-          context.platform === "win32" ? "Zed" : "zed",
-          "settings.json",
-        ),
+      : context.platform === "win32"
+        ? join(windowsRoaming(context), "Zed", "settings.json")
+        : join(
+            absoluteXdgConfigHome({
+              home: context.home,
+              env: context.environment,
+            }),
+            "zed",
+            "settings.json",
+          ),
   );
 
 export const fxLocation = async (

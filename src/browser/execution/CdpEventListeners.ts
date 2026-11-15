@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import type {
   InspectWebEventListenersInput,
   WebEventListenersObservation,
 } from "../../domain/webEventListeners.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
-import { runtimeListenersSchema } from "./CdpRuntimeProtocol.js";
+import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import { queryListenerSelector } from "./CdpListenerSelector.js";
 
 /** Inspect native DOM listener descriptors without evaluating JavaScript or invoking handlers. */
@@ -20,47 +19,31 @@ export const captureWebEventListeners = async (
     sources.ingest(event),
   );
   try {
-    for (const domain of ["Page", "Runtime", "Debugger", "DOM"])
+    for (const domain of ["Page", "Runtime", "Debugger", "DOM"] as const)
       await session.enable(domain);
     await session.assertDocument();
-    const document = z
-      .object({ root: z.object({ nodeId: z.int().min(1) }) })
-      .parse(await session.command("DOM.getDocument", { depth: 0 }));
-    const selected = z
-      .object({ nodeId: z.int().min(0) })
-      .parse(
-        await queryListenerSelector(
-          session,
-          document.root.nodeId,
-          input.selector,
-        ),
-      );
+    const document = await session.command("DOM.getDocument", { depth: 0 });
+    const selected = await queryListenerSelector(
+      session,
+      document.root.nodeId,
+      input.selector,
+    );
     let backendNodeId: number | null = null;
-    let descriptors: z.infer<typeof runtimeListenersSchema>["listeners"] = [];
+    let descriptors: CdpCommandResult<"DOMDebugger.getEventListeners">["listeners"] =
+      [];
     if (selected.nodeId !== 0) {
-      const described = z
-        .object({ node: z.object({ backendNodeId: z.int().min(1) }) })
-        .parse(
-          await session.command("DOM.describeNode", {
-            nodeId: selected.nodeId,
-          }),
-        );
+      const described = await session.command("DOM.describeNode", {
+        nodeId: selected.nodeId,
+      });
       backendNodeId = described.node.backendNodeId;
-      const resolved = z
-        .object({ object: z.object({ objectId: z.string().min(1) }) })
-        .parse(
-          await session.command("DOM.resolveNode", {
-            nodeId: selected.nodeId,
-            objectGroup: group,
-          }),
-        );
-      descriptors = runtimeListenersSchema.parse(
-        await session.command("DOMDebugger.getEventListeners", {
-          objectId: resolved.object.objectId,
-          depth: 0,
-          pierce: false,
-        }),
-      ).listeners;
+      const resolved = await session.command("DOM.resolveNode", {
+        nodeId: selected.nodeId,
+        objectGroup: group,
+      });
+      ({ listeners: descriptors } = await session.command(
+        "DOMDebugger.getEventListeners",
+        { objectId: resolved.object.objectId, depth: 0, pierce: false },
+      ));
     }
     const retained = await sources.read(
       descriptors

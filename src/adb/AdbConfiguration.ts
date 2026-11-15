@@ -1,7 +1,8 @@
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute, win32 } from "node:path";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
@@ -96,9 +97,7 @@ const resolveWindowsAdb = async (
     const failure = found.error;
     if (failure.kind === "interrupted") {
       if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError("inspect_adb_client", {
-          cause: signal?.reason,
-        });
+        throw cancelledBy("inspect_adb_client", carriedReason(signal?.reason));
       throw new AnalysisTimeoutError("inspect_adb_client", VERSION_TIMEOUT_MS, {
         diagnostics: { phase: "windows_path_lookup" },
       });
@@ -216,12 +215,13 @@ export const inspectAdbClient = async (
     if (cause instanceof AdbConfigurationFailure) throw cause;
     const failure = execFileOutputFailure(cause);
     if (cause instanceof ExecFileOutputCancelledError)
-      throw new AnalysisCancelledError("inspect_adb_client", {
-        cause: cause.cause,
-        ...(failure === undefined
+      throw cancelledBy(
+        "inspect_adb_client",
+        carriedReason(cause.cause),
+        failure === undefined
           ? {}
-          : { capturedOutput: execFileFailureCapturedOutput(failure) }),
-      });
+          : { capturedOutput: execFileFailureCapturedOutput(failure) },
+      );
     const diagnostics = {
       selected_binary: selection.binary,
       path_source: selection.pathSource,
