@@ -6,7 +6,6 @@
     "application -> serverIdentity.ts": 1,
     "artifacts -> application": 1,
     "composition -> cliCommandNames.ts": 3,
-    "config -> native": 1,
     "dotnet -> application": 1
   },
   "cycles": [

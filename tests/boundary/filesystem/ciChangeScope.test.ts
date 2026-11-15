@@ -208,6 +208,9 @@ it.each([
   // Hopper launcher discovery moved out of config; the packaged Hopper
   // baseline still checks the launcher it selects.
   ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
