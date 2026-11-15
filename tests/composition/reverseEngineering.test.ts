@@ -11,6 +11,7 @@ import { digestFile } from "../../src/application/reverse/ReverseEngineeringServ
 import { ok } from "../../src/domain/result.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import {
+  fixtureCommandRepair,
   ownedFailure,
   ownedLaunchRefusal,
   ownedOutput,
@@ -32,6 +33,7 @@ it.each(["objdump", "rizin"] as const)(
     const profile = {
       executable: process.execPath,
       arguments: ["-e", "process.stdout.write('complete-output')"],
+      repair: fixtureCommandRepair,
       identity: {
         id: "fixture-command",
         name: "Fixture command",
