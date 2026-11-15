@@ -41,6 +41,13 @@ import {
   selectedDiscoveryTimeout,
 } from "../cliObservationOptions.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
+import {
+  browserTargetProjection,
+  observeThroughBrowser,
+} from "./browserContractCommands.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { cliProgressReporter } from "./cliProgress.js";
 
@@ -49,60 +56,55 @@ export const registerBrowserCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  registerTargetList(cli, logger);
+  const listTargets = contractNamed(
+    BROWSER_TOOL_CONTRACTS,
+    "list_browser_targets",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    listTargets,
+    {
+      command: CLI_COMMANDS.listBrowserTargets,
+      description:
+        "List page targets from a selected loopback CDP browser, optionally filtered by origin",
+      positionals: ["cdp_endpoint"],
+      fields: {
+        cdp_endpoint: { name: "endpoint" },
+        allowed_origins: { description: "Optional exact-origin filter" },
+      },
+    },
+    observeThroughBrowser(listTargets, listBrowserTargets),
+  );
   registerPageInspection(cli, logger);
   registerBundleAnalysis(cli, logger);
-  registerObservationSession(cli, logger);
-};
-
-const registerTargetList = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.listBrowserTargets, {
-    description:
-      "List page targets from a selected loopback CDP browser, optionally filtered by origin",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listBrowserTargetsInputSchema.shape.cdp_endpoint,
-      ),
-    }),
-    options: z.object({
-      allowedOrigins: passiveBrowserScopeOptions.allowedOrigins,
-      discoveryTimeoutMs: passiveBrowserScopeOptions.discoveryTimeoutMs,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "list-browser-targets", async () => {
-          const provider = createBrowserObservationProvider();
-          const input = {
-            cdp_endpoint: args.endpoint,
-            allowed_origins: options.allowedOrigins,
-            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
-          };
-          const parsed = listBrowserTargetsInputSchema.safeParse(input);
-          if (!parsed.success)
-            return browserCliError(
-              analysisInputErrorFromIssues(
-                "list_browser_targets",
-                parsed.error.issues,
-                input,
-              ),
-            );
-          return await finishAnalysisCommand(
-            () => listBrowserTargets(provider, parsed.data, { signal }),
-            {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            provider.identity().id,
-            "list_browser_targets",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+  const observeSession = contractNamed(
+    BROWSER_TOOL_CONTRACTS,
+    "observe_web_session",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    observeSession,
+    {
+      command: CLI_COMMANDS.observeWebSession,
+      description: "Observe user-driven page navigation during a chosen window",
+      ...browserTargetProjection,
+      fields: {
+        ...browserTargetProjection.fields,
+        observation_ms: {
+          description: "Observation duration in milliseconds",
+        },
+      },
+    },
+    observeThroughBrowser(observeSession, (provider, input, options) =>
+      observeWebSession(provider, input, {
+        ...options,
+        // Report the armed observation on stderr, as MCP does.
+        progress: cliProgressReporter,
+      }),
+    ),
+  );
 };
 
 const registerPageInspection = (
@@ -274,66 +276,6 @@ const registerBundleAnalysis = (
             operation: "analyze_web_bundle",
             signal,
           });
-        }),
-      ),
-  });
-};
-
-const registerObservationSession = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.observeWebSession, {
-    description: "Observe user-driven page navigation during a chosen window",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listBrowserTargetsInputSchema.shape.cdp_endpoint,
-      ),
-      targetId: observeWebSessionInputSchema.shape.target_id.describe(
-        "Target ID from list-browser-targets",
-      ),
-    }),
-    options: z.object({
-      ...passiveBrowserScopeOptions,
-      observationMs: observationDuration(10_000, 1),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "observe-web-session", async () => {
-          const provider = createBrowserObservationProvider();
-          const input = {
-            cdp_endpoint: args.endpoint,
-            allowed_origins: options.allowedOrigins,
-            target_id: args.targetId,
-            observation_ms: options.observationMs,
-            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
-            ...selectedCommandTimeout(options.commandTimeoutMs),
-          };
-          const parsed = observeWebSessionInputSchema.safeParse(input);
-          if (!parsed.success)
-            return browserCliError(
-              analysisInputErrorFromIssues(
-                "observe_web_session",
-                parsed.error.issues,
-                input,
-              ),
-            );
-          return await finishAnalysisCommand(
-            () =>
-              observeWebSession(provider, parsed.data, {
-                signal,
-                // Report the armed observation on stderr, as MCP does.
-                progress: cliProgressReporter,
-              }),
-            {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            provider.identity().id,
-            "observe_web_session",
-            signal,
-          ).then(projectCliAnalysisResult);
         }),
       ),
   });
