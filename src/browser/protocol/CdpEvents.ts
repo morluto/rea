@@ -149,11 +149,39 @@ const targetDetached = z.unknown().transform((params) => ({
 
 const targetAttached = z.unknown().transform((params) => {
   const record = recordValue(params);
+  const targetInfo = recordValue(record?.targetInfo);
   return {
     sessionId: cdpStringValue(record?.sessionId),
-    targetType: cdpStringValue(recordValue(record?.targetInfo)?.type),
+    targetId: cdpStringValue(targetInfo?.targetId),
+    targetType: cdpStringValue(targetInfo?.type),
   };
 });
+
+/** A non-flat child session's protocol message, still JSON text. */
+const targetMessage = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    message: cdpStringValue(record?.message),
+  };
+});
+
+/**
+ * A pause's call frames. Resuming is target-wide, so a consumer that resumes
+ * needs every frame's identity; the declaration is kept as one parse result.
+ */
+const debuggerPaused = z.unknown().transform((params) =>
+  z
+    .object({
+      callFrames: z.array(
+        z.object({
+          callFrameId: z.string(),
+          location: z.object({ scriptId: z.string() }),
+        }),
+      ),
+    })
+    .safeParse(params),
+);
 
 /** A frame lifecycle milestone; the timeline decides frame selection and time policy. */
 const lifecycleEvent = z.unknown().transform((params) => {
@@ -195,6 +223,9 @@ const CDP_EVENT_PAYLOADS = {
     .unknown()
     .transform(readCdpExecutionContextDestroyed),
   "Runtime.consoleAPICalled": consoleApiCalled,
+  "Runtime.executionContextsCleared": z.unknown().transform(() => ({})),
+  "Debugger.paused": debuggerPaused,
+  "Target.receivedMessageFromTarget": targetMessage,
   "Network.requestWillBeSent": requestWillBeSent,
   "Network.responseReceived": z.unknown().transform(readCdpResponseReceived),
   "Network.loadingFinished": z.unknown().transform(readCdpLoadingFinished),
@@ -226,6 +257,12 @@ export type CdpRegisteredEvent = {
     readonly payload: CdpEventPayload<E>;
   };
 }[CdpEventName];
+
+/** The registered event of one method (distributes over a union of methods). */
+export type CdpRegisteredEventOf<E extends CdpEventName> = Extract<
+  CdpRegisteredEvent,
+  { readonly method: E }
+>;
 
 const isRegistered = (method: string): method is CdpEventName =>
   Object.hasOwn(CDP_EVENT_PAYLOADS, method);
