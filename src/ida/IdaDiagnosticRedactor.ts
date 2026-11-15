@@ -157,12 +157,17 @@ export const createIdaDiagnosticRedactor = (
     // Fetch normalizes surrounding HTTP whitespace before sending headers.
     const normalized = value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
     if (normalized.length === 0) return [];
+    const field = name.toLowerCase();
     return [
       value,
       normalized,
-      ...(name.toLowerCase() === "cookie"
+      ...(field === "cookie"
         ? cookiePayloads(normalized)
-        : authorizationPayloads(normalized)),
+        : field === "set-cookie"
+          ? // RFC 6265 4.1: only the leading cookie-pair carries the credential;
+            // attributes such as Path=/ are not secrets.
+            cookiePayloads(normalized.split(";", 1)[0] ?? "")
+          : authorizationPayloads(normalized)),
     ];
   });
   const secrets = [
