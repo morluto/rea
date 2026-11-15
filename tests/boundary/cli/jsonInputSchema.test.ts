@@ -160,10 +160,12 @@ const documents: readonly {
   {
     command: CLI_COMMANDS.captureBrowserScenario,
     schema: browserScenarioSchema,
+    callerPaths: [["browser", "executable_path"]],
   },
   {
     command: CLI_COMMANDS.validateBrowserScenario,
     schema: browserScenarioSchema,
+    callerPaths: [["browser", "executable_path"]],
   },
 ] as const;
 
