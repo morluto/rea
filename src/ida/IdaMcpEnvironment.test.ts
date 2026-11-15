@@ -29,8 +29,7 @@ input.on('line', (line) => {
   vi.stubEnv("REA_SELECTED_CONTEXT", "ambient");
   vi.stubEnv("REA_AMBIENT_CONTEXT", "ambient-only");
   vi.stubEnv("HOME", "/ambient-home");
-  // REA's own PATH stays real: owned process cleanup inspects the process
-  // table through it. The child must still see only the selected PATH.
+  vi.stubEnv("PATH", "/ambient-path");
   const environment = {
     REA_SELECTED_CONTEXT: "selected",
     REA_REGISTRATION_CONTEXT: "selected-base",
