@@ -14,6 +14,20 @@ import {
 
 /** Shared loader interpretation; language adapters choose their public errors. */
 export class ElfPointerRelocationFailure extends Error {
+  /** The exceeded workspace bound, set only for `native-index-capacity`. */
+  readonly maximum: number | undefined;
+  constructor(
+    reason:
+      | "malformed-container"
+      | "unsupported-container"
+      | "unsupported-pointer-encoding",
+    message: string,
+  );
+  constructor(
+    reason: "native-index-capacity",
+    message: string,
+    maximum: number,
+  );
   constructor(
     readonly reason:
       | "malformed-container"
@@ -21,8 +35,10 @@ export class ElfPointerRelocationFailure extends Error {
       | "unsupported-pointer-encoding"
       | "native-index-capacity",
     message: string,
+    maximum?: number,
   ) {
     super(message);
+    this.maximum = maximum;
   }
 }
 export interface ElfPointerRelocationSource {
@@ -252,6 +268,7 @@ function* dynamicTags(
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      16 * 1024 * 1024,
     );
   if (
     declaration.size % BigInt(width) !== 0n ||
@@ -659,6 +676,7 @@ class ElfVirtualWriteIndex {
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
           `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
+          this.maximumBytes,
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
@@ -809,6 +827,7 @@ export function* readElfPointerRelocationsSteps(
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
           `ELF sparse relocation index exceeds ${MAX_RELOCATION_RECORDS} retained writes`,
+          MAX_RELOCATION_RECORDS,
         );
       writes.push(write);
       index.add(write);
@@ -874,7 +893,8 @@ export function* readElfPointerValuesSteps(
       if (index.unresolvedSize + zeroFill.size > MAX_RELOCATION_RECORDS)
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
-          "ELF unresolved and zero-fill overlay exceeds 65536 entries",
+          `ELF unresolved and zero-fill overlay exceeds ${MAX_RELOCATION_RECORDS} entries`,
+          MAX_RELOCATION_RECORDS,
         );
     }
     next = steps.next();
