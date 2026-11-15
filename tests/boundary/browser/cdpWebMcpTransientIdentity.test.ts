@@ -430,3 +430,100 @@ it("retains the committed loader through same-document updates before a replacem
     }),
   );
 });
+
+// A committed subframe navigation is compared with the frame's document by the
+// target session's document owner. Only a proven change removes its tools; an
+// unknown comparison keeps them visible but reports them as unverified.
+it.each([
+  ["a new loader", { loaderId: "loader-B" }, "/child", "removed"],
+  ["the same loader", { loaderId: "loader-A" }, "/child", "kept"],
+  [
+    "the same loader at another URL",
+    { loaderId: "loader-A" },
+    "/other",
+    "kept",
+  ],
+  ["no loader", {}, "/child", "unverified"],
+  ["an empty loader", { loaderId: "" }, "/child", "unverified"],
+  ["no loader at another URL", {}, "/other", "unverified"],
+] as const)(
+  "decides subframe tools after a committed navigation with %s",
+  async (_label, loader, path, expected) => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: origin + "/app",
+                },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "child",
+                      parentId: "frame-main",
+                      loaderId: "loader-A",
+                      url: origin + "/child",
+                    },
+                  },
+                ],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }, origin) => {
+        if (method !== "WebMCP.enable") return undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        return [
+          {
+            method: "WebMCP.toolsAdded",
+            ...scope,
+            params: {
+              tools: [{ name: "old", frameId: "child", inputSchema: {} }],
+            },
+          },
+          {
+            method: "Page.frameNavigated",
+            ...scope,
+            params: {
+              frame: {
+                id: "child",
+                parentId: "frame-main",
+                ...loader,
+                url: origin + path,
+              },
+            },
+          },
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items.map((tool) => tool.name)).toEqual(
+      expected === "removed" ? [] : ["old"],
+    );
+    const unverified = result.value.limitations.filter((limitation) =>
+      limitation.startsWith("Document identity could not be established"),
+    );
+    expect(unverified).toEqual(
+      expected === "unverified"
+        ? [expect.stringContaining("frames child:")]
+        : [],
+    );
+    if (expected === "unverified")
+      expect(result.value.completeness.attach_limited_sections).toContain(
+        "webmcp_tools",
+      );
+  },
+);

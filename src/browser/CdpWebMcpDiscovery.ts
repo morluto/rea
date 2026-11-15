@@ -36,6 +36,7 @@ import {
   type CdpFrameTree,
 } from "./protocol/CdpFrameTree.js";
 import {
+  CdpDocumentTracker,
   cdpRootDocument,
   compareCdpDocuments,
   unverifiedDocumentLimitation,
@@ -150,6 +151,13 @@ export const discoverWebMcp = async (
     });
     if (frameScope.transientFrames.size > 0)
       completeness.attachLimited("webmcp_tools");
+    const unverified = unverifiedSubframeTools(frameUrls, tools);
+    if (unverified.length > 0) {
+      completeness.attachLimited("webmcp_tools");
+      limitations.push(
+        `Document identity could not be established for frames ${unverified.join(", ")}: CDP reported no loader for a committed navigation, so tools listed for those frames may belong to an earlier document.`,
+      );
+    }
     result = buildWebMcpResult({
       context,
       frameTree,
@@ -184,7 +192,8 @@ interface FrameScopeFrame {
   readonly url: string;
   readonly origin: string | null;
   readonly parentFrameId: string | null;
-  readonly loaderId?: string | undefined;
+  /** The frame's document across committed navigations; replaced when a change is proven. */
+  readonly document: CdpDocumentTracker;
 }
 
 const ingestInitialFrameTree = (
@@ -301,17 +310,21 @@ const updateFrameScope = (
     return;
   }
   const previous = state.frames.get(frameId);
-  const loaderId = documentCommitted
-    ? sourceFacts.loaderId
-    : previous?.loaderId;
-  if (hasNewDocument(documentCommitted, previous, facts.url, loaderId))
-    removeFrameTools(frameId, state.tools);
+  const observed = { frameId, loaderId: sourceFacts.loaderId, url: facts.url };
+  let document = previous?.document;
+  // Only a proven document change removes the frame's tools. An unknown
+  // comparison keeps them, and the tracker keeps that identity unknown, so the
+  // result reports them as unverified (`unverifiedSubframeTools`).
+  const comparison = documentCommitted ? document?.observe(observed) : "same";
+  if (comparison === "changed") removeFrameTools(frameId, state.tools);
+  if (document === undefined || comparison === "changed")
+    document = new CdpDocumentTracker(observed);
   if (documentCommitted && state.transientFrames.has(frameId))
     state.resolvedTransientFrames.add(frameId);
   state.frames.set(frameId, {
     url: facts.url,
     origin: facts.origin,
-    ...(loaderId === undefined ? {} : { loaderId }),
+    document,
     parentFrameId:
       sourceFacts.parentRelation === "not_applicable"
         ? (previous?.parentFrameId ?? null)
@@ -319,18 +332,26 @@ const updateFrameScope = (
   });
 };
 
-const hasNewDocument = (
-  documentCommitted: boolean,
-  previous: FrameScopeFrame | undefined,
-  url: string,
-  loaderId: string | undefined,
-): boolean =>
-  documentCommitted &&
-  previous !== undefined &&
-  (previous.url !== url ||
-    (loaderId !== undefined &&
-      previous.loaderId !== undefined &&
-      previous.loaderId !== loaderId));
+/**
+ * Subframes whose tools are kept although a committed navigation could not be
+ * compared with their earlier document (CDP reported no loader). Their tools
+ * stay visible, but may belong to that earlier document.
+ */
+const unverifiedSubframeTools = (
+  frames: ReadonlyMap<string, FrameScopeFrame>,
+  tools: ReadonlyMap<string, WebMcpDiscovery["tools"]["items"][number]>,
+): string[] => {
+  const withTools = new Set([...tools.values()].map((tool) => tool.frame_id));
+  return [...frames]
+    .filter(
+      ([frameId, frame]) =>
+        frame.parentFrameId !== null &&
+        frame.document.unknown &&
+        withTools.has(frameId),
+    )
+    .map(([frameId]) => frameId)
+    .sort(compareUnicodeCodePoints);
+};
 
 const removeFrameTools = (
   frameId: string,
