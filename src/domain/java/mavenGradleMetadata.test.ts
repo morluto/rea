@@ -119,7 +119,9 @@ it("admits a complete POM report with unresolved parent and property references"
       relative_path: "../pom.xml",
       relative_path_declared: true,
     },
-    properties: [{ name: "revision", value: "1.2.3" }],
+    properties: [
+      { name: "revision", value: "1.2.3", value_credentials_redacted: false },
+    ],
     dependencies: [],
     dependency_management: [],
     gradle: null,

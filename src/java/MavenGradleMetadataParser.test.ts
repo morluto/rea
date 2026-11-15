@@ -73,8 +73,12 @@ it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolv
     relative_path_declared: true,
   });
   expect(report.properties).toEqual([
-    { name: "revision", value: "1.2.3" },
-    { name: "jackson.version", value: "2.17.2" },
+    { name: "revision", value: "1.2.3", value_credentials_redacted: false },
+    {
+      name: "jackson.version",
+      value: "2.17.2",
+      value_credentials_redacted: false,
+    },
   ]);
   expect(report.dependency_management).toEqual([
     expect.objectContaining({
@@ -264,13 +268,13 @@ it("lists every property in a compound CI-friendly version", () => {
   <artifactId>demo</artifactId>
   <version>\${revision}\${sha1}\${changelist}</version>
 </project>`);
-  expect(report.coordinates.version).toBe("\${revision}\${sha1}\${changelist}");
+  expect(report.coordinates.version).toBe("${revision}${sha1}${changelist}");
   expect(
     report.unresolved.filter(
       (entry) => entry.owner === "project" && entry.field === "version",
     ),
   ).toEqual(
-    ["\${revision}", "\${sha1}", "\${changelist}"].map((reference) => ({
+    ["${revision}", "${sha1}", "${changelist}"].map((reference) => ({
       kind: "property",
       reference,
       field: "version",
@@ -322,6 +326,36 @@ it("removes credentials from Gradle available-at URLs", () => {
   expect(JSON.stringify(report)).not.toContain("password");
 });
 
+it("removes credentials from POM property values", () => {
+  const report = parse(`<project>
+  <modelVersion>4.0.0</modelVersion>
+  <artifactId>demo</artifactId>
+  <properties>
+    <repo.url>https://user:password@repo.example/maven</repo.url>
+    <mirror.url>https://repo.example/mirror</mirror.url>
+    <owner>user@example.com</owner>
+  </properties>
+</project>`);
+  expect(report.properties).toEqual([
+    {
+      name: "repo.url",
+      value: "https://repo.example/maven",
+      value_credentials_redacted: true,
+    },
+    {
+      name: "mirror.url",
+      value: "https://repo.example/mirror",
+      value_credentials_redacted: false,
+    },
+    {
+      name: "owner",
+      value: "user@example.com",
+      value_credentials_redacted: false,
+    },
+  ]);
+  expect(JSON.stringify(report)).not.toContain("password");
+});
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>
@@ -342,17 +376,17 @@ it("lists properties in packaging, scope, type and classifier", () => {
   expect(report.unresolved).toEqual([
     {
       kind: "property",
-      reference: "\${artifact.packaging}",
+      reference: "${artifact.packaging}",
       field: "packaging",
       owner: "project",
       index: null,
     },
     ...(
       [
-        ["scope", "\${lib.scope}"],
-        ["type", "\${lib.type}"],
-        ["classifier", "\${os}"],
-        ["classifier", "\${arch}"],
+        ["scope", "${lib.scope}"],
+        ["type", "${lib.type}"],
+        ["classifier", "${os}"],
+        ["classifier", "${arch}"],
       ] as const
     ).map(([field, reference]) => ({
       kind: "property",
@@ -446,7 +480,7 @@ it("keeps an empty relativePath and a property-spelled optional distinct from om
     expect.objectContaining({
       artifact_id: "declared",
       optional: null,
-      optional_spelling: "\${dep.optional}",
+      optional_spelling: "${dep.optional}",
     }),
     expect.objectContaining({
       artifact_id: "omitted",
@@ -456,7 +490,7 @@ it("keeps an empty relativePath and a property-spelled optional distinct from om
   ]);
   expect(report.unresolved).toContainEqual({
     kind: "property",
-    reference: "\${dep.optional}",
+    reference: "${dep.optional}",
     field: "optional",
     owner: "dependency",
     index: 0,
@@ -621,6 +655,7 @@ it("reads POM values written as CDATA and as mixed text and CDATA", () => {
   expect(report.properties).toContainEqual({
     name: "revision",
     value: "1.2.3",
+    value_credentials_redacted: false,
   });
 });
 

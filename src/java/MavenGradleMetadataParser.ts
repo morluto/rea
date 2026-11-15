@@ -379,7 +379,13 @@ const parsePom = (
       ? []
       : childElements(propertiesElement).flatMap((property) => {
           const name = nonempty(property.localName);
-          return name === null ? [] : [{ name, value: elementText(property) }];
+          if (name === null) return [];
+          // A property may hold a repository URL; its userinfo never leaves the parser.
+          const {
+            url: value,
+            url_credentials_redacted: value_credentials_redacted,
+          } = redactTransportCredentials(elementText(property));
+          return [{ name, value, value_credentials_redacted }];
         });
   const dependencyManagementElement = firstNamed(root, "dependencyManagement");
   const managedContainer = dependencyManagementElement

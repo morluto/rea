@@ -202,6 +202,7 @@ export const mavenGradleMetadataSchema = z.strictObject({
     z.strictObject({
       name: z.string().min(1),
       value: nullableText,
+      value_credentials_redacted: z.boolean(),
     }),
   ),
   dependencies: z.array(dependencySchema),

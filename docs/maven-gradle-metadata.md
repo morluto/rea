@@ -37,7 +37,9 @@ properties or inherit parent or BOM values.
 For a POM, `parent` records the declared parent coordinates and `relative_path`
 when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
 which disables Maven's local parent lookup, from an omitted tag. `properties`
-lists each child of `<properties>` as name and value.
+lists each child of `<properties>` as name and value. URL userinfo
+credentials in a property value are removed and `value_credentials_redacted`
+is `true`; when the credential span cannot be located, `value` is `null`.
 `dependencies` comes from the project's `<dependencies>` list.
 `dependency_management` comes from `<dependencyManagement>`. A managed
 dependency with `type` `pom` and `scope` `import` is a BOM import
