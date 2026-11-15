@@ -16,8 +16,6 @@ import {
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { NugetNupkgPort } from "../application/nuget/NugetNupkgPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
@@ -204,7 +202,11 @@ const nupkgFailure = (
 };
 
 /** Portable parser over one bounded, identity-checked regular file. */
-export class NugetNupkgProvider implements NugetNupkgPort {
+/**
+ * Satisfies the application's NugetNupkgPort structurally; composition checks
+ * the fit, so this provider does not import the application layer.
+ */
+export class NugetNupkgProvider {
   readonly identity = NUGET_NUPKG_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
@@ -220,7 +222,10 @@ export class NugetNupkgProvider implements NugetNupkgPort {
     }
   }
 
-  async inspect(input: InspectNugetNupkgInput, options?: ExecutionOptions) {
+  async inspect(
+    input: InspectNugetNupkgInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
     let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
