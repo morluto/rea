@@ -8,7 +8,8 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  parseMcpJsonOrText,
+  decodeMcpTextReply,
+  type McpTextReplyKind,
 } from "../providers/McpToolResult.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
@@ -65,6 +66,8 @@ export interface IdaMcpConnection {
     options?: {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
+      /** The tool's declared text reply kind; JSON unless the tool returns plain text. */
+      readonly reply?: McpTextReplyKind | undefined;
     },
   ): Promise<JsonValue>;
   readResource?(
@@ -102,21 +105,25 @@ const toolResultSchema = mcpToolResultSchema.extend({
 
 const IDA_STDIO_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 
-const parseIdaJsonText = (text: string): JsonValue => {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
+const parseIdaTextReply = (
+  text: string,
+  reply: McpTextReplyKind = "json",
+): JsonValue => {
+  const decoded = decodeMcpTextReply(text, reply);
+  if (!decoded.ok)
     throw new AnalysisProtocolError("IDA MCP returned malformed JSON text.");
-  }
-  return jsonValueSchema.parse(value);
+  return decoded.value;
 };
 
-/** Decode Python FastMCP's scalar wrapper without dropping structured dictionaries. */
+/**
+ * Decode Python FastMCP's scalar wrapper without dropping structured
+ * dictionaries. A text block is read as the tool's declared reply kind.
+ */
 export const decodeIdaToolResult = (
   input: unknown,
   protocol?: "native",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
+  reply: McpTextReplyKind = "json",
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -147,7 +154,7 @@ export const decodeIdaToolResult = (
       throw new AnalysisProtocolError(
         "Native IDA MCP omitted its complete JSON text result.",
       );
-    return parseIdaJsonText(text);
+    return parseIdaTextReply(text);
   }
   if (result.structuredContent !== undefined) {
     const value = jsonObjectSchema.parse(result.structuredContent);
@@ -159,7 +166,7 @@ export const decodeIdaToolResult = (
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  return parseMcpJsonOrText(text);
+  return parseIdaTextReply(text, reply);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -633,6 +640,7 @@ export const createIdaMcpConnection = (
         }),
         config.protocol,
         redactor,
+        options?.reply,
       );
     },
     async readResource(uri, options) {
@@ -732,5 +740,5 @@ const decodeIdaJsonResource = (uri: string, response: unknown): JsonValue => {
         .length(1),
     })
     .parse(response);
-  return parseIdaJsonText(resource.contents[0]!.text);
+  return parseIdaTextReply(resource.contents[0]!.text);
 };

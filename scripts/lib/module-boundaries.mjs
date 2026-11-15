@@ -148,18 +148,36 @@ const failedBoundary = (file, target, typeOnly) => {
   return undefined;
 };
 
-/** Check resolved source ownership, including type imports and reexports. */
-export const inspectModuleBoundaries = (file, source, root) => {
+/** Each own-source import of a file, resolved to its repository path. */
+export const resolveModuleImports = (file, source, root) => {
   const absoluteFile = resolve(root, file);
   const importer = repositoryPath(root, absoluteFile);
-  const violations = [];
+  const imports = [];
   for (const { specifier, line, typeOnly } of readImportSpecifiers(source)) {
     const resolved = sourceTarget(root, absoluteFile, specifier);
     if (resolved === undefined) continue;
-    const target = repositoryPath(root, resolved);
-    const boundary = failedBoundary(importer, target, typeOnly);
+    imports.push({
+      file: importer,
+      line,
+      specifier,
+      typeOnly,
+      target: repositoryPath(root, resolved),
+    });
+  }
+  return imports;
+};
+
+/** Check resolved source ownership, including type imports and reexports. */
+export const inspectModuleBoundaries = (file, source, root) =>
+  inspectResolvedModuleBoundaries(resolveModuleImports(file, source, root));
+
+/** Check already resolved imports, as returned by resolveModuleImports. */
+export const inspectResolvedModuleBoundaries = (imports) => {
+  const violations = [];
+  for (const { file, line, specifier, typeOnly, target } of imports) {
+    const boundary = failedBoundary(file, target, typeOnly);
     if (boundary !== undefined)
-      violations.push({ file: importer, line, specifier, target, boundary });
+      violations.push({ file, line, specifier, target, boundary });
   }
   return violations;
 };

@@ -6,6 +6,7 @@ import {
 } from "./ProcessInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
+import { nameSpawnedExecutable } from "./launchFailure.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -363,11 +364,11 @@ export const spawnOwnedProviderProcess = async (
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     });
     await waitForSpawn(child);
-  } catch (cause) {
-    // Node's pre-spawn error means the command did not execute. Errors after
-    // the spawn event are handled by the supervisor and cannot prove absence.
+  } catch (cause: unknown) {
+    // A pre-spawn error proves no execution; later failures belong to the
+    // supervisor. Preserve that fact alongside the exact executable diagnostic.
     options.onLaunchState?.("not_started");
-    throw cause;
+    throw nameSpawnedExecutable(cause, options.command);
   }
   const pid = child.pid;
   if (pid === undefined)

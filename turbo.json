@@ -79,6 +79,7 @@
         ".oxlintrc.json",
         "package.json",
         "package-lock.json",
+        "scripts/lib/module-layers.baseline.json",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
