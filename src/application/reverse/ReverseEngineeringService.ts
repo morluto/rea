@@ -48,6 +48,7 @@ import {
 } from "../../domain/reverseEngineering.js";
 import type {
   ReverseEngineeringCommandPort,
+  ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
 import {
@@ -170,6 +171,51 @@ interface ReverseCommandObservation {
   readonly timeoutMs: number;
   readonly outputBudgetBytes: number;
 }
+
+/** The provider a reverse command runs and how a caller repairs its command. */
+const reverseCommandRepair = (
+  operation: ReverseEngineeringOperation,
+): { readonly provider: string; readonly remediationAction: string } => {
+  const objdump = operation === "inspect_with_objdump";
+  return {
+    provider: objdump ? "objdump" : "rizin",
+    remediationAction: `Set ${objdump ? "REA_OBJDUMP_COMMAND" : "REA_RIZIN_COMMAND"} to an installed executable ${objdump ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
+  };
+};
+
+/** A configured command the host search did not find; nothing was launched. */
+const reverseCommandUnavailable = (
+  operation: ReverseEngineeringOperation,
+  unavailable: ReverseEngineeringCommandUnavailable,
+): AnalysisCapabilityUnavailableError => {
+  const { provider, remediationAction } = reverseCommandRepair(operation);
+  const { command, reason } = unavailable;
+  return new AnalysisCapabilityUnavailableError(
+    unavailable.identity.id,
+    operation,
+    reason.kind === "not_found"
+      ? "Configured command was not found on PATH"
+      : `Configured command could not be searched on PATH (invalid PATHEXT entry ${JSON.stringify(reason.extension)})`,
+    {
+      userMessage:
+        reason.kind === "not_found"
+          ? `Could not find the selected ${provider} command ${JSON.stringify(command)} on PATH; REA did not search the current directory.`
+          : `Could not search PATH for the selected ${provider} command ${JSON.stringify(command)}: PATHEXT entry ${JSON.stringify(reason.extension)} is not a filename extension.`,
+      remediationAction:
+        reason.kind === "not_found"
+          ? remediationAction
+          : `Remove ${JSON.stringify(reason.extension)} from PATHEXT, or ${remediationAction.charAt(0).toLowerCase()}${remediationAction.slice(1)}`,
+      diagnostics: {
+        boundary: "provider-lookup",
+        command,
+        lookup_failure: reason.kind,
+        ...(reason.kind === "invalid_pathext"
+          ? { pathext_entry: reason.extension }
+          : {}),
+      },
+    },
+  );
+};
 
 /** Shared application workflow for caller-selected local analysis commands. */
 export class ReverseEngineeringService {
@@ -356,7 +402,12 @@ export class ReverseEngineeringService {
       );
       if (!ready.ok) return ready;
     }
-    const command = this.#commands.objdump(input);
+    const selected = this.#commands.objdump(input);
+    if (!selected.ok)
+      return err(
+        reverseCommandUnavailable("inspect_with_objdump", selected.error),
+      );
+    const command = selected.value;
     let parameters: Readonly<Record<string, JsonValue>>;
     if (input.operation === "disassemble") {
       const { symbol, ...base } = input;
@@ -400,7 +451,12 @@ export class ReverseEngineeringService {
       max_output_bytes: maxOutputBytes,
       ...input
     } = request;
-    const command = this.#commands.rizin(input);
+    const selected = this.#commands.rizin(input);
+    if (!selected.ok)
+      return Promise.resolve(
+        err(reverseCommandUnavailable("execute_rizin_command", selected.error)),
+      );
+    const command = selected.value;
     return this.#observe({
       operation: "execute_rizin_command",
       profile: command,
@@ -900,12 +956,8 @@ export class ReverseEngineeringService {
             ...reverseCommandTimeoutGuidance(timeoutMs),
           });
         else {
-          const provider =
-            operation === "inspect_with_objdump" ? "objdump" : "rizin";
-          const setting =
-            provider === "objdump"
-              ? "REA_OBJDUMP_COMMAND"
-              : "REA_RIZIN_COMMAND";
+          const { provider, remediationAction } =
+            reverseCommandRepair(operation);
           earlyFailure = new AnalysisCapabilityUnavailableError(
             profile.identity.id,
             operation,
@@ -913,7 +965,7 @@ export class ReverseEngineeringService {
             {
               cause,
               userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction: `Set ${setting} to an installed executable ${provider === "objdump" ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
+              remediationAction,
               diagnostics: {
                 boundary: "provider-launch",
                 command,
