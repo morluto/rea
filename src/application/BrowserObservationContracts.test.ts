@@ -197,23 +197,15 @@ it("retains own provider metadata separately from admitted browser facts", async
   expect(reads).toBe(0);
 });
 
-it("retains source omission when the browser contract supplies defaults", async () => {
+it("refuses a page inspection without the storage fingerprint algorithm", async () => {
   const { fingerprint_algorithm: _algorithm, ...storage } = inspection.storage;
-  const source = { ...inspection, storage };
   const result = await service.inspectWebPage(
-    pageProvider(async () => ok(source as typeof inspection)),
+    pageProvider(async () =>
+      ok({ ...inspection, storage } as typeof inspection),
+    ),
     inspectWebPageInputSchema.parse(selected),
   );
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value.normalized_result).toHaveProperty(
-    "storage.fingerprint_algorithm",
-    "sha256",
-  );
-  expect(result.value.raw_result).toEqual(source);
-  expect(result.value.raw_result).not.toHaveProperty(
-    "storage.fingerprint_algorithm",
-  );
+  expect(result.ok).toBe(false);
 });
 
 it("avoids a redundant raw browser report when parsed facts retain all own JSON", async () => {

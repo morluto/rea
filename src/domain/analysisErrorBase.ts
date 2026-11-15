@@ -194,10 +194,12 @@ export abstract class AnalysisError extends Error {
    * is read from them when asked instead of being pushed to each dependent.
    */
   #cleanupIncomplete: boolean;
+  /** Whether this error ever owned cleanup, apart from whether it finished. */
+  #carriesCleanup: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
-  readonly #cleanupReleaseClaims: AnalysisCleanupReleaseClaim[] = [];
+  readonly #cleanupReleaseClaims = new Set<AnalysisCleanupReleaseClaim>();
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -222,6 +224,7 @@ export abstract class AnalysisError extends Error {
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
     this.#cleanupIncomplete = options?.cleanup !== undefined;
+    this.#carriesCleanup = this.#cleanupIncomplete;
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
@@ -257,26 +260,36 @@ export abstract class AnalysisError extends Error {
     if (!this.#cleanupIncomplete) return false;
     const dependencies = this.#cleanupDependencies;
     if (dependencies === undefined) {
-      if (!this.#cleanupReleaseClaims.some((claim) => claim.cleanupReleased))
-        return true;
+      if (!this.#anyClaimReleased()) return true;
     } else
       for (const dependency of dependencies)
         if (dependency.cleanupIncomplete) return true;
     this.#cleanupIncomplete = false;
     dependencies?.clear();
-    this.#cleanupReleaseClaims.length = 0;
+    this.#cleanupReleaseClaims.clear();
     return false;
   }
 
-  /** Read completion from a lease owner instead of having it pushed here. */
+  #anyClaimReleased(): boolean {
+    for (const claim of this.#cleanupReleaseClaims)
+      if (claim.cleanupReleased) return true;
+    return false;
+  }
+
+  /**
+   * Read completion from a lease owner instead of having it pushed here.
+   * Binding the same claim again is a no-op, so retries do not grow it.
+   */
   bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
-    this.#cleanupReleaseClaims.push(claim);
+    this.#carriesCleanup = true;
+    this.#cleanupReleaseClaims.add(claim);
     return this;
   }
 
   /** A subclass whose own resources are unreleased when it is constructed. */
   protected markCleanupIncomplete(incomplete: boolean): void {
     this.#cleanupIncomplete = incomplete;
+    if (incomplete) this.#carriesCleanup = true;
   }
   /** Later typed failures retained without changing the primary error cause. */
   get secondaryFailures(): readonly AnalysisError[] {
@@ -309,6 +322,16 @@ export abstract class AnalysisError extends Error {
       this.#cleanupCompletionOwner !== undefined ||
       this.#cleanupDependencies !== undefined
     );
+  }
+
+  /**
+   * Whether this error owns cleanup at all: its own resources, a release
+   * claim, or an owner it follows. Unlike `cleanupIncomplete`, this stays
+   * true after that cleanup finished, so a consumer can tell a released
+   * owner from a failure (such as a cancellation) that never had one.
+   */
+  get carriesCleanup(): boolean {
+    return this.#carriesCleanup || this.hasCleanupOwner;
   }
 
   /** Bind attribution only to the producer that owns the complete cleanup set. */

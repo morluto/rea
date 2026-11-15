@@ -3,7 +3,7 @@ import {
   isHostLimitFailure,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
-import { TextDecoder } from "node:util";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
 import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
 import {
@@ -71,6 +71,7 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -284,6 +285,8 @@ const decodeInterfaceBuilderBundle = async (
         if (input.signal?.aborted === true) throw cause;
         // Read/identity failures describe source acquisition, not bad content.
         if (cause instanceof ArtifactReaderFailure) throw cause;
+        // A broken internal assumption is a REA defect, not an invalid archive.
+        if (cause instanceof InternalInvariantError) throw cause;
         if (cause instanceof InterfaceBuilderDecodeBudgetExceeded) {
           // A document rejected while decoding, e.g. beyond the shared depth
           // limit, retains no representation; later documents keep its share.
@@ -727,7 +730,7 @@ const projectNibArchive = (
     try {
       // NSString's NS.bytes representation is UTF-8. A failed conversion
       // does not establish a replacement-character class, title or selector.
-      value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      value = strictUtf8Decoder("preserve").decode(
         Buffer.from(encoded, "base64"),
       );
     } catch {

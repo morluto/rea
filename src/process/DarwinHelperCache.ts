@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import {
   chmod,
@@ -225,7 +226,7 @@ export const createDarwinHelperCache = (options: {
         sources,
         compiler,
         sdk,
-        architecture: process.arch,
+        architecture: HOST_PLATFORM.architecture,
         os_release: release(),
       }),
     );
@@ -247,7 +248,7 @@ export const createDarwinHelperCache = (options: {
     paths: readonly string[],
     signal: AbortSignal | undefined,
   ): Promise<boolean> => {
-    if (process.platform !== "darwin") return true;
+    if (HOST_PLATFORM.platform !== "darwin") return true;
     const { stdout } = await execFileOutput(
       "/bin/ls",
       ["-lde", "--", ...paths],

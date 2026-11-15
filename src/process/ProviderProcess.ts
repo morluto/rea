@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   processInspectionCleanupFailures,
@@ -36,6 +37,7 @@ import {
   type ManagedRuntime,
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -306,7 +308,7 @@ export const spawnOwnedProviderProcess = async (
   assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
   assertProcessOwnershipInspectionActive(options.signal);
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
   let captureBaseline: ProcessOwnershipBaseline | undefined;
@@ -330,7 +332,7 @@ export const spawnOwnedProviderProcess = async (
     { REA_PROCESS_RUN_ID: options.runId },
     platform,
   );
-  if (platform === "win32" && process.platform === "win32") {
+  if (platform === "win32" && HOST_PLATFORM.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -1142,12 +1144,7 @@ class ProcessOutputCapture {
     observedBytes: number,
   ): ProviderProcessSnapshot["stdout"] {
     const text = buffer.toString("utf8");
-    let invalidUtf8 = false;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    } catch {
-      invalidUtf8 = true;
-    }
+    const invalidUtf8 = !isStrictUtf8(buffer);
     return {
       text,
       bytes: buffer.byteLength,

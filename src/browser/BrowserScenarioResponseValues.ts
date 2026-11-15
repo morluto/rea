@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { jsonPointerTokens } from "../domain/jsonPointer.js";
 import { visit, type JSONPath } from "jsonc-parser";
 import { isExactJsonNumber } from "../domain/exactJsonNumber.js";
@@ -68,12 +69,7 @@ export const readResponseValues = (
     return err(issue("the response is too large to save values from."));
   let text: string;
   try {
-    text =
-      typeof body === "string"
-        ? body
-        : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            body,
-          );
+    text = typeof body === "string" ? body : decodeStrictUtf8(body, "preserve");
   } catch {
     return err(
       issue(

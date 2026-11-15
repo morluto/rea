@@ -141,6 +141,7 @@ export const authenticateEvidenceBundleValue = (
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
           cause: failure.cause,
+          detectedKind: "evidence-record",
           userMessage: failure.message,
         }),
       );

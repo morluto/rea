@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { malformedInput } from "../domain/parseFailure.js";
 import { crc32 } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -669,7 +670,9 @@ describe("native UI target and cancellation failures", () => {
     const result = await observeNativeUi(target, "observe_native_ui", scope, {
       environment: {},
       invoke: async () => {
-        throw new Error(
+        // The helper runtime's own report of output that is not JSON.
+        throw malformedInput(
+          "native-ui-helper-output",
           "Native helper returned invalid JSON: Unexpected token",
         );
       },

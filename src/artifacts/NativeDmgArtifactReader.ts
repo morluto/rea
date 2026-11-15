@@ -31,6 +31,7 @@ import {
   type NativeDmgAttachOutput,
   type NativeDmgInfo,
 } from "./NativeDmgOwnership.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
 /** Conditional recovery guidance; a path match never grants attachment ownership. */
 const DMG_EXISTING_ATTACHMENT_RECOVERY =
@@ -594,7 +595,9 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   async #resolveAttachOwnership(): Promise<"owned" | "none" | "unknown"> {
     const mountRoot = this.#mountRoot;
     if (mountRoot === undefined)
-      throw new Error("DMG mount root is unavailable for ownership discovery");
+      throw invariantViolation(
+        "DMG mount root is unavailable for ownership discovery",
+      );
     const ownership = resolveNativeDmgOwnership({
       info: await this.#readInfo(),
       ...(this.#attachOutput === undefined

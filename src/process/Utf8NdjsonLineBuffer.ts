@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import {
   malformedInput,
   type ParseFailureError,
@@ -12,10 +13,7 @@ export class Utf8NdjsonLineBuffer {
   #buffer: Buffer = Buffer.alloc(0);
   #fragments: Buffer[] = [];
   #nextNewline = -1;
-  readonly #decoder = new TextDecoder("utf-8", {
-    fatal: true,
-    ignoreBOM: true,
-  });
+  readonly #decoder = strictUtf8Decoder("preserve");
 
   /**
    * Yield each complete trimmed nonblank line; preserve unconsumed lines on
