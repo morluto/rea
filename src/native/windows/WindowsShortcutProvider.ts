@@ -11,7 +11,7 @@ import {
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import {
   artifactFilePrimaryFacts,

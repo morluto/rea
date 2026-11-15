@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect, it, onTestFinished } from "vitest";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import {
   artifactFileCompletion,
   ArtifactFileCleanupFailure,

@@ -6,7 +6,7 @@ import {
   readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,

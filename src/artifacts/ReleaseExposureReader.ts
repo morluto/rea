@@ -52,7 +52,7 @@ import {
   releaseRootArtifact,
 } from "./inventory/hashStableRootArtifact.js";
 import { createArtifactReader } from "./createArtifactReader.js";
-import { readStableArtifact } from "./readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,

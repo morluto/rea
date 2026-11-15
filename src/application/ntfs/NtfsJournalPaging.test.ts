@@ -9,7 +9,7 @@ import {
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import * as stableArtifact from "../../artifacts/readStableArtifact.js";
+import * as stableArtifact from "../../resources/readStableArtifact.js";
 import * as mftDecoder from "../../domain/windows/ntfsMft.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../domain/evidence.js";

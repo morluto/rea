@@ -29,7 +29,7 @@ import {
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   classifyProviderFailure,

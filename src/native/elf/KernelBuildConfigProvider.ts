@@ -6,7 +6,7 @@ import {
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,

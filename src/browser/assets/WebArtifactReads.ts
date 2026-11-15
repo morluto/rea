@@ -13,7 +13,7 @@ import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScop
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   AnalysisError,
   primaryAnalysisError,

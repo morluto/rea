@@ -3,7 +3,7 @@
 import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
-import { readStableArtifact } from "../../../dist/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../dist/resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../../dist/resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,

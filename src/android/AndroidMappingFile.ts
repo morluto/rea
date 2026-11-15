@@ -9,7 +9,7 @@ import {
   readerIntegrityFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   ANDROID_MAPPING_LIMITS,
   type AndroidMappingSource,

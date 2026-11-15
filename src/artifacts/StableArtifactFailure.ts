@@ -1,4 +1,4 @@
-import type { StableArtifactSnapshot } from "./readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,

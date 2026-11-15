@@ -17,7 +17,7 @@ import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,

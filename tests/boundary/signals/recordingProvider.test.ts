@@ -9,7 +9,7 @@ import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import {
