@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { unmarkedMatchCount } from "../../scripts/verify/reason-marker.mjs";
 
@@ -61,4 +62,27 @@ it("reads a reason with quotes and a marker after a string", () => {
 
 it("does not count slices inside comments", () => {
   expect(count("// s.slice(0, MAX)\n/* t.slice(0, MAX) */")).toBe(0);
+});
+
+it("reads regular expressions and template substitutions as code", () => {
+  expect(
+    count('const re = /"/.test(v); const q = "//"; items.slice(0, MAX);'),
+  ).toBe(1);
+  expect(
+    count(
+      "const t = `${\n  // generation-cap: suggestions\n  s.slice(0, MAX)\n}`;",
+    ),
+  ).toBe(0);
+  expect(count("const t = `${/* s.slice(0, MAX) */ 1}`;")).toBe(0);
+  expect(count("const t = `${s.slice(0, MAX)}`;")).toBe(1);
+});
+
+it("loads without installed dependencies, as CI runs it before npm ci", async () => {
+  for (const module of ["reason-marker.mjs", "source-tokens.mjs"]) {
+    const source = await readFile(
+      new URL(`../../scripts/verify/${module}`, import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\bfrom\s+["'](?!node:|\.)/u);
+  }
 });
