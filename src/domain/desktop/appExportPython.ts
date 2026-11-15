@@ -177,7 +177,7 @@ def _ensure_state_aliases(home: Path) -> None:
         link.symlink_to(destination)
 
 
-def _dconf(arguments: list, environment: dict, stdin=None) -> str:
+def _dconf(arguments: list, environment: dict) -> str:
     child_environment = {**os.environ, **environment}
     refusal = None
     missing = None
@@ -187,7 +187,7 @@ def _dconf(arguments: list, environment: dict, stdin=None) -> str:
             command = os.path.join(os.getcwd(), command)
         try:
             child = subprocess.Popen([command, *arguments], env=child_environment,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=stdin)
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         except OSError as error:
             # Popen identifies an exec failure with the executable filename;
             # parent capacity, pipe setup and cwd failures are not PATH misses.
@@ -232,11 +232,13 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text("file-db:/dev/fd/0\n")
                 with database.open("rb") as source:
+                    # Parent ownership survives wrappers replacing stdin or closing child fds.
+                    source_path = f"/proc/{os.getpid()}/fd/{source.fileno()}"
                     # Missing descriptor paths must not become a successful empty dump.
-                    os.stat(f"/dev/fd/{source.fileno()}")
-                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())}, stdin=source)
+                    os.stat(source_path)
+                    profile.write_text(f"file-db:{source_path}\n")
+                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())})
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})

@@ -21,7 +21,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     stat: async (...args: Parameters<typeof actual.stat>) => {
       if (
         closeFault.missingDescriptorPath &&
-        String(args[0]).startsWith("/dev/fd/")
+        String(args[0]).startsWith(`/proc/${process.pid}/fd/`)
       )
         throw Object.assign(new Error("descriptor path unavailable"), {
           code: "ENOENT",
@@ -52,7 +52,7 @@ afterEach(async () => {
   await Promise.all(closeFault.handles.splice(0).map((file) => file.close()));
 });
 
-describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
+describe.skipIf(process.platform !== "linux")("dumpDconfDatabase", () => {
   it.each(["ordinary", "hash#stage", "line\nbreak"])(
     "binds the selected descriptor without changing the launch directory: %s",
     async (name) => {
@@ -75,10 +75,15 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
         REA_DCONF_COMMAND: command,
       });
 
-      expect(dump).toEqual({
-        ok: true,
-        text: `${process.cwd()}\nfile-db:/dev/fd/0\n`,
-      });
+      expect(dump.ok).toBe(true);
+      if (!dump.ok) throw new Error(dump.error);
+      expect(dump.text.split("\n")).toEqual([
+        process.cwd(),
+        expect.stringMatching(
+          new RegExp(`^file-db:/proc/${process.pid}/fd/\\d+$`),
+        ),
+        "",
+      ]);
       expect((await readdir(staged)).sort()).toEqual(["profile", "user"]);
     },
   );
@@ -89,7 +94,11 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
       const staged = await createTestTempDirectory("dconf-profile-name-");
       await writeFile(join(staged, name), "GVariant");
       const command = join(staged, "reader");
-      await writeFile(command, "#!/bin/sh\ncat <&0\n", { mode: 0o755 });
+      await writeFile(
+        command,
+        `#!${process.execPath}\nconst fs = require("node:fs"); const profile = fs.readFileSync(process.env.DCONF_PROFILE, "utf8"); process.stdout.write(fs.readFileSync(profile.trim().slice("file-db:".length)));\n`,
+        { mode: 0o755 },
+      );
       expect(
         await dumpDconfDatabase(join(staged, name), {
           PATH: process.env.PATH,
@@ -137,22 +146,6 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
       );
     },
   );
-
-  it("retains a physical profile write failure", async () => {
-    const staged = await createTestTempDirectory("dconf-existing-profile-");
-    const profile = join(staged, "profile");
-    await writeFile(profile, "existing staged profile");
-
-    const dump = await dumpDconfDatabase(join(staged, "user"), {
-      REA_DCONF_COMMAND: "/must-not-start-after-profile-write-failure",
-    });
-
-    expect(dump).toEqual({
-      ok: false,
-      error: expect.stringContaining("EEXIST"),
-    });
-    expect(await readFile(profile, "utf8")).toBe("existing staged profile");
-  });
 
   it.each([true, false])(
     "retains exact cancellation before acquisition=%s or from the owned command",
@@ -203,15 +196,15 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
         });
         await expect(readFile(ready)).rejects.toMatchObject({ code: "ENOENT" });
       } else {
-        expect(await readFile(join(staged, "profile"), "utf8")).toBe(
-          "file-db:/dev/fd/0\n",
+        expect(await readFile(join(staged, "profile"), "utf8")).toMatch(
+          new RegExp(`^file-db:/proc/${process.pid}/fd/\\d+\n$`),
         );
       }
     },
   );
 });
 
-describe.skipIf(process.platform === "win32")(
+describe.skipIf(process.platform !== "linux")(
   "dconf command diagnostics",
   () => {
     it("retains the selected command and errno when execution is denied", async () => {
@@ -275,7 +268,7 @@ describe.skipIf(process.platform === "win32")(
 );
 
 it
-  .skipIf(process.platform === "win32")
+  .skipIf(process.platform !== "linux")
   .each(["completed", "failed", "cancelled"] as const)(
   "retains a failed database descriptor close with its %s outcome",
   async (outcome) => {
@@ -300,40 +293,45 @@ it
       { REA_DCONF_COMMAND: command },
       controller.signal,
     ).catch((cause: unknown) => cause);
-    if (outcome === "cancelled") {
-      try {
+    let failure: unknown;
+    try {
+      if (outcome === "cancelled") {
         await expect
           .poll(() => readFile(ready, "utf8").catch(() => null))
           .toBe("ready");
-      } finally {
         controller.abort(reason);
       }
+      failure = await pending;
+
+      expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+      if (!(failure instanceof ArtifactFileCleanupFailure)) throw failure;
+      expect(failure.fileCleanupFailure.outcome.kind).toBe(
+        outcome === "completed" ? "completed" : "failed",
+      );
+      if (outcome === "completed")
+        expect(failure.fileCleanupFailure.outcome).toEqual({
+          kind: "completed",
+          value: { ok: true, text: "selected" },
+        });
+      if (outcome === "failed")
+        expect(failure.fileCleanupFailure.outcome).toMatchObject({
+          kind: "failed",
+          cause: { code: 17 },
+        });
+      if (outcome === "cancelled") {
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cancellation?.reason).toBe(reason);
+      }
+    } finally {
+      controller.abort(reason);
+      const settled = await pending;
+      if (settled instanceof ArtifactFileCleanupFailure)
+        await settled.cleanupLease.release();
     }
-    const failure = await pending;
-    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
-    if (!(failure instanceof ArtifactFileCleanupFailure)) throw failure;
-    expect(failure.fileCleanupFailure.outcome.kind).toBe(
-      outcome === "completed" ? "completed" : "failed",
-    );
-    if (outcome === "completed")
-      expect(failure.fileCleanupFailure.outcome).toEqual({
-        kind: "completed",
-        value: { ok: true, text: "selected" },
-      });
-    if (outcome === "failed")
-      expect(failure.fileCleanupFailure.outcome).toMatchObject({
-        kind: "failed",
-        cause: { code: 17 },
-      });
-    if (outcome === "cancelled") {
-      expect(failure.reason).toBe("cancelled");
-      expect(failure.cancellation?.reason).toBe(reason);
-    }
-    await failure.cleanupLease.release();
   },
 );
 
-it.skipIf(process.platform === "win32")(
+it.skipIf(process.platform !== "linux")(
   "refuses unavailable descriptor paths instead of reporting an empty database",
   async () => {
     const root = await createTestTempDirectory("dconf-no-fd-path-");
@@ -348,5 +346,25 @@ it.skipIf(process.platform === "win32")(
       ok: false,
       error: expect.stringContaining("descriptor path unavailable"),
     });
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains a physical profile write failure",
+  async () => {
+    const staged = await createTestTempDirectory("dconf-existing-profile-");
+    const profile = join(staged, "profile");
+    await writeFile(join(staged, "user"), "GVariant");
+    await writeFile(profile, "existing staged profile");
+
+    const dump = await dumpDconfDatabase(join(staged, "user"), {
+      REA_DCONF_COMMAND: "/must-not-start-after-profile-write-failure",
+    });
+
+    expect(dump).toEqual({
+      ok: false,
+      error: expect.stringContaining("EEXIST"),
+    });
+    expect(await readFile(profile, "utf8")).toBe("existing staged profile");
   },
 );

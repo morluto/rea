@@ -27,8 +27,6 @@ type ExecFileOutputOptions = Omit<
   readonly stopSignal?: NodeJS.Signals;
   /** Wait for inherited copies of an extra drained descriptor to close. Requires stopSignal. */
   readonly lifetimePipe?: boolean;
-  /** Borrow a caller-owned descriptor as child stdin. Requires stopSignal; never closes the parent's descriptor. */
-  readonly stdinFile?: number;
 };
 
 /** How long a stopped process may take to exit before it is killed. */
@@ -199,20 +197,10 @@ export const execFileBytes = (
   options: ExecFileOutputOptions = {},
 ): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
-    const {
-      stopSignal,
-      signal,
-      timeout,
-      lifetimePipe,
-      stdinFile,
-      ...execOptions
-    } = options;
+    const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } =
+      options;
     if (lifetimePipe === true && stopSignal === undefined) {
       reject(new TypeError("lifetimePipe requires stopSignal"));
-      return;
-    }
-    if (stdinFile !== undefined && stopSignal === undefined) {
-      reject(new TypeError("stdinFile requires stopSignal"));
       return;
     }
     const invalid = timeout === undefined ? undefined : invalidTimeout(timeout);
@@ -290,14 +278,7 @@ const startStoppableCommand = (
   options: ExecFileOutputOptions & { readonly stopSignal: NodeJS.Signals },
   complete: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
 ): void => {
-  const {
-    stopSignal,
-    signal,
-    timeout,
-    lifetimePipe,
-    stdinFile,
-    ...execOptions
-  } = options;
+  const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } = options;
   const maxBuffer = options.maxBuffer ?? Number.POSITIVE_INFINITY;
   if (typeof maxBuffer !== "number" || !(maxBuffer >= 0)) {
     const error = new RangeError("maxBuffer must be a nonnegative number");
@@ -317,8 +298,8 @@ const startStoppableCommand = (
     ...execOptions,
     stdio:
       lifetimePipe === true
-        ? [stdinFile ?? "ignore", "pipe", "pipe", "pipe"]
-        : [stdinFile ?? "ignore", "pipe", "pipe"],
+        ? ["ignore", "pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
     killSignal: stopSignal,
     // POSIX detach starts a new session, so the command leads a process group
     // REA can stop as one family. Windows detach would only open a console.

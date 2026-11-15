@@ -31,7 +31,7 @@ const available = (command: string, args: string[]) => {
   }
 };
 // The real provider is optional, as in the other external-tool conformance cases.
-const hasDconf = process.platform !== "win32" && available("dconf", ["help"]);
+const hasDconf = process.platform === "linux" && available("dconf", ["help"]);
 const hasPython = available("python3", ["-I", "-c", "import sqlite3"]);
 const python = hasPython
   ? execFileSync("python3", ["-I", "-c", "import sys; print(sys.executable)"], {
@@ -67,7 +67,12 @@ const databaseAt = async (directory: string) => {
   return { path, bytes: await readFile(path) };
 };
 
-for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
+for (const [name, background] of [
+  ["ordinary", false],
+  ["hash#directory", false],
+  ["line\nbreak", false],
+  ["background-wrapper", true],
+] as const) {
   cliTest.skipIf(!hasDconf)(
     `real dconf retains the selected capture's settings under ${JSON.stringify(name)}`,
     async ({ cli }) => {
@@ -96,6 +101,13 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
         undefined,
         [database.bytes],
       );
+      const command = background ? join(root, "background-reader") : dconf;
+      if (background)
+        await writeFile(
+          command,
+          `#!/bin/sh\n'${dconf.replaceAll("'", "'\\''")}' "$@" &\nwait $!\n`,
+          { mode: 0o755 },
+        );
       const result = await cli.run({
         arguments: ["inspect-desktop-application-state", folder, "--json"],
         environment: {
@@ -103,7 +115,7 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
           TMPDIR: temporary,
           TMP: temporary,
           TEMP: temporary,
-          REA_DCONF_COMMAND: "dconf",
+          REA_DCONF_COMMAND: command,
         },
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -154,7 +166,9 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
       await symlink("/bin/sh", join(tools, "sh"));
       await writeFile(
         join(tools, "dconf"),
-        '#!/usr/bin/env sh\nexec dconf-helper "$@"\n',
+        background
+          ? '#!/usr/bin/env sh\ndconf-helper "$@" &\nwait $!\n'
+          : '#!/usr/bin/env sh\nexec dconf-helper "$@"\n',
         { mode: 0o755 },
       );
       await writeFile(

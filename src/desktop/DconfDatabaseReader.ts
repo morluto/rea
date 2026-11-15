@@ -26,7 +26,7 @@ export type DconfDump =
   | { readonly ok: false; readonly error: string };
 
 /**
- * Read an offline dconf database through the child's read-only stdin fd.
+ * Read an offline dconf database through a parent-owned read-only descriptor.
  * The profile contains no selected path syntax, and cwd/PATH stay unchanged for
  * wrapper interpreters and helpers. file-db has no live D-Bus authority.
  */
@@ -39,10 +39,6 @@ export const dumpDconfDatabase = async (
   try {
     const directory = await realpath(dirname(database));
     const profile = join(directory, "profile");
-    await writeFile(profile, "file-db:/dev/fd/0\n", {
-      mode: 0o600,
-      flag: "wx",
-    });
     const file = await open(database, "r");
     return await withArtifactFileHandle(
       database,
@@ -52,7 +48,14 @@ export const dumpDconfDatabase = async (
       async (source) => {
         // dconf silently treats an unreadable file-db as empty. Refuse a host
         // without descriptor paths rather than publish a false empty view.
-        await stat(`/dev/fd/${source.fd}`);
+        // Refer to the owning process: a shell background job replaces stdin,
+        // and another interpreter may close inherited non-stdio descriptors.
+        const sourcePath = `/proc/${process.pid}/fd/${source.fd}`;
+        await stat(sourcePath);
+        await writeFile(profile, `file-db:${sourcePath}\n`, {
+          mode: 0o600,
+          flag: "wx",
+        });
         const command = environment.REA_DCONF_COMMAND ?? "dconf";
         // Preserve the first refusal's candidate spelling for diagnostics. cwd and
         // PATH stay unchanged for interpreter and helper lookup as well.
@@ -80,7 +83,6 @@ export const dumpDconfDatabase = async (
               candidate.path,
               ["dump", "/"],
               {
-                stdinFile: source.fd,
                 stopSignal: "SIGTERM",
                 env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
                 timeout: DCONF_TIMEOUT_MS,
