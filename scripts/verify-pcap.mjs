@@ -131,7 +131,7 @@ async function run(name, input) {
   if (input.path !== undefined) {
     assert.equal(cli.subject.local_path, input.path);
     assert.equal(
-      cli.subject.digest.sha256,
+      cli.subject.identity.sha256,
       cli.normalized_result.target.sha256,
     );
   }

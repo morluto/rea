@@ -21,6 +21,7 @@ import {
   textBytes,
   type Reserve,
 } from "./webNetworkRouteTemplates.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Shared retained/temporary byte accounting for views that group retained HAR records. */
 export abstract class WebNetworkProjectionAccumulator {
@@ -218,11 +219,11 @@ export const admitHarCaptureParent = (
   // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
   const { artifact } = parsed.data;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     viewKind !== "api-surface" &&
     artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== artifact.sha256)
+    (subject == null || subject.sha256 !== artifact.sha256)
   )
     return err(
       analysisViewInputError([

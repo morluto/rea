@@ -35,7 +35,7 @@ import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
-} from "./NativeExportParser.js";
+} from "../../domain/native/nativeExportParser.js";
 
 const OPERATION = "inspect_native_exports";
 

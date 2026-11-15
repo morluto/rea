@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createEvidence } from "../dist/domain/evidence.js";
+import { unknownTarget } from "../dist/domain/targetIdentity.js";
 
 /** Round-trip historical reference import and evidence bundles. */
 export async function verifyPackageEvidence({
@@ -30,7 +31,7 @@ export async function verifyPackageEvidence({
   );
   const sourceBundle = createEvidenceBundle([
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "package", name: "Package verifier", version: "1" },
       { operation: "health", parameters: {}, result: true },
     ),

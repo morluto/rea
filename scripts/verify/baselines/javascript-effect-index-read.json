@@ -1,10 +1,6 @@
 {
-  "src/domain/javascript/javascriptRouteScan.ts": 1,
   "src/domain/javascript/javascriptSemanticAmbientWrites.ts": 25,
   "src/domain/javascript/javascriptSemanticAnalysis.ts": 4,
-  "src/domain/javascript/javascriptSemanticDataEffectHelpers.ts": 3,
   "src/domain/javascript/javascriptSemanticMemberMutations.ts": 5,
-  "src/domain/javascript/javascriptSemanticMutationInitializers.ts": 3,
-  "src/domain/javascript/javascriptSemanticProjectedSources.ts": 3,
-  "src/domain/javascript/javascriptSemanticProjection.ts": 1
+  "src/domain/javascript/javascriptSemanticMutationInitializers.ts": 3
 }

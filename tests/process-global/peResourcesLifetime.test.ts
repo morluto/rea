@@ -15,11 +15,11 @@ const parsing = vi.hoisted(() => {
 });
 
 vi.mock(
-  "../../src/artifacts/pe/PeResourceParser.js",
+  "../../src/domain/pe/peResourceInventory.js",
   async (importOriginal) => {
     const original =
       await importOriginal<
-        typeof import("../../src/artifacts/pe/PeResourceParser.js")
+        typeof import("../../src/domain/pe/peResourceInventory.js")
       >();
     return {
       ...original,
@@ -36,7 +36,7 @@ vi.mock(
 
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
-import { peResourceFixture } from "../../src/artifacts/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
@@ -40,7 +41,9 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
           location.kind !== "artifact-path" || !location.path.includes(literal),
       ),
     ).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
   },
 );
 
@@ -79,7 +82,7 @@ it("keeps observed artifact identity when the entire sensitive path is excluded"
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     local_path: "",
-    digest: { sha256: "a".repeat(64) },
+    identity: { sha256: "a".repeat(64) },
   });
   expect(result.value.locations).toEqual([]);
 });
@@ -121,7 +124,7 @@ it.each(["a".repeat(64), "aaaa"])(
       sensitive_values: [literal],
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.normalized_result).toMatchObject({
       artifact: { path: "/capture.har", sha256: null, bytes: 10 },
     });
@@ -142,7 +145,7 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
     sensitive_values: ["a"],
   });
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
   expect(result.value.limitations).toContainEqual(
     expect.stringMatching(/digest.*unknown.*Evidence/u),
   );
@@ -351,7 +354,9 @@ it.each([
     ].flat();
     for (const literal of literals)
       expect(texts.every((text) => !text.includes(literal))).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
     expect(projected.decoder).toEqual(report.decoder);
     expect(projected.records[0]?.reported).toEqual(first.reported);
   },

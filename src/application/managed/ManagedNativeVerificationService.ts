@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -67,20 +68,24 @@ const createManagedNativeVerificationEvidence = (
   source: ManagedNativeVerificationSource,
   result: ManagedNativeVerificationResult,
 ): Evidence =>
-  createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-native-verification",
-    operation: OPERATION,
-    parameters: {
-      managed_boundaries_evidence_id: source.managedEvidence.evidence_id,
-      native_evidence_ids: source.nativeObservations.map(
-        ({ evidence }) => evidence.evidence_id,
-      ),
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-native-verification",
+      operation: OPERATION,
+      parameters: {
+        managed_boundaries_evidence_id: source.managedEvidence.evidence_id,
+        native_evidence_ids: source.nativeObservations.map(
+          ({ evidence }) => evidence.evidence_id,
+        ),
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    evidenceLinks: result.evidence_links,
-  });
+  );

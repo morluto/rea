@@ -15,18 +15,16 @@ import {
   withArtifactFileHandle,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
 } from "../resources/index.js";
-import { asarNodeSchema } from "../artifacts/AsarNode.js";
+import { asarNodeSchema } from "../domain/asarNode.js";
 import {
   regularFileState,
   sameRegularFileState,
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
 
-import {
-  admitAsarHeader,
-  asarHeaderAdmissionFailure,
-} from "../artifacts/AsarHeader.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,

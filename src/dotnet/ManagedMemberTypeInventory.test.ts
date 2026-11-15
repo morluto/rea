@@ -1,4 +1,4 @@
-import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { ManagedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import { expect, it } from "vitest";
 
@@ -12,22 +12,22 @@ import {
   buildManagedMemberCapacityFixture,
   buildManagedMemberSelectionCapacityFixture,
 } from "../../tests/fixtures/managedMemberCapacity.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   parseTypes,
   readTypeDefinitions,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   readManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
-import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataInventory.js";
+import { managedMetadataTypeNames } from "../domain/managed/managedMetadataInventoryRows.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 
 it("retains admitted type names, member counts and artifact identity", () => {
   const bytes = buildManagedMemberCapacityFixture();
