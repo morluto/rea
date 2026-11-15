@@ -5,7 +5,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../src/resources/AnalysisCleanupLease.js";
 import type {
   AnalysisClient,
   AnalysisProvider,

@@ -17,7 +17,7 @@ import { NativeCommandFailure } from "../native/CommandRunner.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");

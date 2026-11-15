@@ -1,4 +1,4 @@
-import { artifactOperationCause } from "./ArtifactFileOperation.js";
+import { artifactOperationCause } from "../resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {
@@ -21,7 +21,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 

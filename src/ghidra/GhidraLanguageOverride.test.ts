@@ -20,7 +20,7 @@ import {
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/x86/data/languages/x86.ldefs.
 const X86_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>

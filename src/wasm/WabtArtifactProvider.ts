@@ -17,14 +17,14 @@ import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type {
   AnalysisError,
   AnalysisCapturedOutput,

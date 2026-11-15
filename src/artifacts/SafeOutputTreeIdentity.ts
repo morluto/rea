@@ -3,7 +3,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 
 export type DirectoryIdentity = Pick<BigIntStats, "dev" | "ino">;
 export type FileIdentity = DirectoryIdentity;

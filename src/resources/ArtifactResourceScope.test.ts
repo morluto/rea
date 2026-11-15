@@ -19,7 +19,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
 } from "./ArtifactReader.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../artifacts/ArtifactOperationFailure.js";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};

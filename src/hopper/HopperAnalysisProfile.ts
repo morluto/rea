@@ -1,6 +1,6 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import { ArtifactResourceRetryFailure } from "../resources/ArtifactResourceScope.js";
 import {
   hashStableFile,
   stableFileHashCause,

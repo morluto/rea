@@ -4,7 +4,7 @@ import { copyFile } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFile } from "./RegularFileRead.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 export interface RecoveryBackupSelection {
   readonly backupPath: string;

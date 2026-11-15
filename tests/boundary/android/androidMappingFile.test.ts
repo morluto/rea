@@ -3,7 +3,7 @@ import { stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { readAndroidMapping } from "../../../src/android/AndroidMappingFile.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,

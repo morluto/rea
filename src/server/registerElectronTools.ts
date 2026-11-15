@@ -15,7 +15,7 @@ import {
   listElectronTargets,
 } from "../application/javascript/ElectronObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";

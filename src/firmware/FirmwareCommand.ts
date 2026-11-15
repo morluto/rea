@@ -2,12 +2,12 @@ import {
   processInspectionCancellationError,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,

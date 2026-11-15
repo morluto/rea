@@ -6,12 +6,12 @@ import {
   DirectoryArtifactTraversalLimit,
   type DirectoryArtifactEntry,
 } from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactFileCompletion } from "./ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { artifactFileCompletion } from "../resources/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";

@@ -17,17 +17,17 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
 import {
   InternalInvariantError,
@@ -52,7 +52,7 @@ import {
   releaseRootArtifact,
 } from "./inventory/hashStableRootArtifact.js";
 import { createArtifactReader } from "./createArtifactReader.js";
-import { readStableArtifact } from "./readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,

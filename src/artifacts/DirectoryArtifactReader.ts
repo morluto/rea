@@ -17,7 +17,7 @@ import {
   type ArtifactReaderFailureOptions,
   type ArtifactTraversalOmission,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -31,8 +31,8 @@ import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+} from "../resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
 import { invariantViolation } from "../domain/internalInvariant.js";

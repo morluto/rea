@@ -1,7 +1,7 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,

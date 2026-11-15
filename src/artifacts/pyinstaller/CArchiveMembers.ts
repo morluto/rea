@@ -1,5 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
+import {
+  copyArtifactEntry,
+  type ArtifactEntry,
+} from "../../resources/ArtifactReader.js";
 import {
   isCArchiveDeclaration,
   isCArchivePythonModule,

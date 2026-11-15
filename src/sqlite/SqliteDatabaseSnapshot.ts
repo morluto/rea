@@ -1,8 +1,8 @@
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -12,13 +12,13 @@ import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentit
 import {
   withArtifactFileHandle,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
   type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {

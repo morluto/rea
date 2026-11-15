@@ -26,7 +26,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
@@ -35,8 +35,8 @@ import {
   bindArtifactFileCleanup,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactFileOperation.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,

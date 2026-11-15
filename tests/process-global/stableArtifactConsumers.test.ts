@@ -86,8 +86,8 @@ import {
   mapArtifactFileFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../src/resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {
@@ -96,8 +96,8 @@ import {
   regularFileCancellation,
 } from "../../src/filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactAnalysisResources } from "../../src/process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../../src/process/LinuxResourceLimits.js";
 import { LocalWebSourceLocationArtifacts } from "../../src/browser/assets/WebSourceLocationArtifacts.js";
@@ -106,7 +106,7 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";

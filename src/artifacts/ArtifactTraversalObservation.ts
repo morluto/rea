@@ -5,7 +5,7 @@ import type {
   ArtifactReaderTraversal,
   ArtifactTraversalOmission,
   ArtifactTraversalSink,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 
 /** A reader whose traversal reports through a sink; its format names it in limitations. */
 interface TraversableArtifactReader<Entry, Options> {

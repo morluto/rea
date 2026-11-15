@@ -1,7 +1,7 @@
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
 import { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,

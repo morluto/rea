@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { SafeOutputTree } from "./SafeOutputTree.js";
 
 /** Setup failed after this tree was acquired; callers still own this exact tree. */

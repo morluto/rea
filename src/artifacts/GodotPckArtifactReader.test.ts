@@ -18,7 +18,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { DEFAULT_GODOT_READER_LIMITS } from "../domain/artifactReaderLimits.js";

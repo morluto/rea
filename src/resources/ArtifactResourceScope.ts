@@ -10,9 +10,21 @@ import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "./ArtifactReader.js";
-import type { SafeOutputTree } from "./SafeOutputTree.js";
-import type { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+
+/**
+ * Capabilities the scope needs from an output tree and a private runtime
+ * root. Their owners (SafeOutputTree in src/artifacts, PrivateRuntimeRoot in
+ * src/process) implement them; the scope names no higher unit.
+ */
+export interface ArtifactOutputTreeOwner {
+  /** Remove the tree's unpublished output, or close a published one's handles. */
+  rollback(): Promise<unknown>;
+}
+export interface ArtifactPrivateRootOwner {
+  readonly path: string;
+  close(): Promise<void>;
+}
 
 /** One artifact resource and the capability that owns its cleanup. */
 export type ArtifactResourceOwner =
@@ -44,7 +56,7 @@ export type ArtifactResourceOwner =
   | {
       readonly kind: "output-tree";
       readonly resource: string;
-      readonly tree: SafeOutputTree;
+      readonly tree: ArtifactOutputTreeOwner;
     }
   | {
       readonly kind: "staged-output";
@@ -54,7 +66,7 @@ export type ArtifactResourceOwner =
   | {
       readonly kind: "private-runtime-root";
       readonly resource: string;
-      readonly root: Pick<PrivateRuntimeRoot, "path" | "close">;
+      readonly root: ArtifactPrivateRootOwner;
     };
 
 export type ArtifactCleanupAttempt =

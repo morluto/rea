@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   X11_WINDOW_PROPERTY_NAMES,
   parseX11ClientList,

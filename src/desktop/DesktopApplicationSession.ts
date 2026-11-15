@@ -2,7 +2,7 @@ import {
   SamplingReadBatchFailure,
   samplingInspectionFailures,
 } from "../process/capture/ProcessSamplingObservation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -11,7 +11,7 @@ import {
 } from "../process/ProcessInspectionCancellation.js";
 import { randomUUID } from "node:crypto";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
   type DesktopCaptureEvent,

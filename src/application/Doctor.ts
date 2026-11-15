@@ -9,13 +9,13 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorCheck,

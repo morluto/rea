@@ -38,7 +38,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";

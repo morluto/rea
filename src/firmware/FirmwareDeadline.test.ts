@@ -5,7 +5,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { firmwareRequestSchema } from "../domain/firmware/firmwareAnalysis.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   firmwareFailureDialect,

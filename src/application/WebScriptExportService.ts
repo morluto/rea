@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/AnalysisCleanupLease.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
 import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
 import {
@@ -44,7 +44,7 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,

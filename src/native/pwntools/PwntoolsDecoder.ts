@@ -6,11 +6,11 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/AnalysisCleanupLease.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
@@ -34,9 +34,9 @@ import type {
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+} from "../../resources/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,

@@ -2,8 +2,8 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewReq
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../domain/investigationProviders.js";
 import { createProgressReporter } from "../ports/ProgressReporter.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { completeProviderEvidence } from "../application/ProviderOperationExecution.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

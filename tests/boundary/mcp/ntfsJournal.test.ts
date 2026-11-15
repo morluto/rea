@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, vi } from "vitest";
 import { z } from "zod";
 import { linkedMftFixture } from "../../fixtures/ntfsMftExtension.js";
-import * as stableArtifact from "../../../src/artifacts/readStableArtifact.js";
+import * as stableArtifact from "../../../src/resources/readStableArtifact.js";
 import * as mftDecoder from "../../../src/domain/windows/ntfsMft.js";
 
 import { createBinarySession } from "../../../src/composition/binary.js";

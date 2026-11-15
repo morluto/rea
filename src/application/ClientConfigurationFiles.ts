@@ -12,7 +12,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";

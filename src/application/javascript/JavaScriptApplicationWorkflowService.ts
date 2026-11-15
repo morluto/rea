@@ -10,7 +10,7 @@ import {
   traceApplicationFeatureRequestSchema,
 } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { ResolvedSourceToBundleReference } from "./SourceToBundleReference.js";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";

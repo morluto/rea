@@ -8,7 +8,7 @@ import {
   ANDROID_JNI_LIBRARY_LIMITS,
 } from "../../../src/android/AndroidJniLibraries.js";
 import { JadxInterruption } from "../../../src/android/JadxInterruption.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import {
   AnalysisCancelledError,

@@ -21,12 +21,12 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../../resources/ArtifactFileOperation.js";
 import type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";
@@ -43,7 +43,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { SafeOutputTree } from "../SafeOutputTree.js";

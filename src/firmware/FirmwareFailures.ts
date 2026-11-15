@@ -1,9 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,

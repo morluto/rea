@@ -19,8 +19,8 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactReader.js";
+import type { ArtifactResourceOwner } from "../../resources/ArtifactResourceScope.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,

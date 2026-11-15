@@ -2,11 +2,11 @@ import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import {
   ArtifactReaderFailure,
   type ArtifactTraversalOptions,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { chmod, open } from "node:fs/promises";
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
 import {
   assertArtifactReadActive,
@@ -14,7 +14,7 @@ import {
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,

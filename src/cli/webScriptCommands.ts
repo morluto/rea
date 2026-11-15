@@ -2,7 +2,7 @@ import { Cli, z } from "incur";
 
 import { exportWebScripts } from "../application/WebScriptExportService.js";
 import { exportWebScriptsInputSchema } from "../domain/webScriptExport.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";

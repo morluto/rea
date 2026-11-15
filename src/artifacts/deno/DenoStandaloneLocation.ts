@@ -40,7 +40,7 @@ import {
   type ReadAt,
 } from "../apple/MachoLoadCommandReader.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";

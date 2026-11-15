@@ -2,7 +2,7 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi, onTestFinished } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
@@ -13,8 +13,8 @@ import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";

@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {

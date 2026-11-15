@@ -6,7 +6,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   RegularFileCapacityError,

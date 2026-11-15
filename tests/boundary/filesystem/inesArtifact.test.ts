@@ -24,7 +24,7 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   extractArtifact,
   materializeArtifactInventoryInScope as materializeInScope,
