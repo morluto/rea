@@ -94,27 +94,38 @@ mcpTest(
   },
 );
 
+type Operation = () => Promise<never>;
+type DevicetreeBinding = NonNullable<
+  ContractToolBindings["inspect_devicetree"]
+>;
+type PeImportsBinding = NonNullable<ContractToolBindings["inspect_pe_imports"]>;
+
 mcpTest(
   "binds exactly one handler, and a retained summary only to a contract that selects detail",
   () => {
-    const bindings: ContractToolBindings = {
-      inspect_pe_imports: {
-        admission: "sdk",
-        // @ts-expect-error inspect_pe_imports has no detail selection.
-        summary: () => Promise.reject(new Error("never registered")),
-      },
-    };
-    const both: ContractToolBindings = {
-      inspect_devicetree: {
-        admission: "application",
-        run: () => Promise.reject(new Error("never registered")),
-        // @ts-expect-error a binding selects exactly one handler.
-        summary: () => Promise.reject(new Error("never registered")),
-      },
-    };
-    expect(Object.keys({ ...bindings, ...both })).toEqual([
-      "inspect_pe_imports",
-      "inspect_devicetree",
-    ]);
+    // Type-level checks hold under every supported TypeScript checker,
+    // whichever line it reports an excess-property error on.
+    const summaryAccepted: {
+      readonly admission: "application";
+      readonly summary: Operation;
+    } extends DevicetreeBinding
+      ? true
+      : false = true;
+    const bothRefused: {
+      readonly admission: "application";
+      readonly run: Operation;
+      readonly summary: Operation;
+    } extends DevicetreeBinding
+      ? false
+      : true = true;
+    const summaryWithoutDetailRefused: {
+      readonly admission: "sdk";
+      readonly summary: Operation;
+    } extends PeImportsBinding
+      ? false
+      : true = true;
+    expect([summaryAccepted, bothRefused, summaryWithoutDetailRefused]).toEqual(
+      [true, true, true],
+    );
   },
 );
