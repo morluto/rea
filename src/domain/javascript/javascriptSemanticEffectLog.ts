@@ -1,6 +1,19 @@
+/**
+ * The effect log: one owner of the questions readers ask about recorded
+ * effects (docs/adr/javascript/pushed-effect-invalidation.md). Readers ask
+ * whether a read may observe an effect; the timing, capture and path proofs
+ * stay here. Recorded opaque sites live in javascriptSemanticEffectRecord.ts.
+ */
 import * as t from "@babel/types";
 import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import {
   isUnshadowedGlobal,
   semanticEffectTiming,
@@ -10,8 +23,10 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticReferenceEffectsAtSite,
 } from "./javascriptSemanticState.js";
 
 export const indexSemanticOpaqueEffects = (
@@ -364,4 +379,194 @@ const strictEval = (
       return true;
   }
   return false;
+};
+
+/** Ambient root paths a global reference may alias; the ambient-write owner
+ * resolves them, so the effect log takes the resolver from its caller. */
+export type SemanticAmbientRootPaths = (
+  root: t.Node,
+) => readonly (readonly (string | null)[])[];
+
+/** One owner projects source-site effects for complete reports or early exit. */
+const visitSemanticReferenceEffectsAtSite = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  visit: (
+    effect: JavaScriptSemanticReferenceEffectsAtSite["effects"][number],
+  ) => boolean,
+  requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
+): Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> => {
+  const { root, path: inferredPath } = semanticReferenceRoot(referenceNode);
+  const memberEffectsIndexed = state.memberMutationFactsComplete;
+  if (!t.isIdentifier(root))
+    return {
+      bindingId: null,
+      resolution: "unknown",
+      memberEffectsIndexed,
+    };
+  const lookup = semanticBindingLookupAt(state, root, root.name);
+  const binding = "binding" in lookup ? lookup.binding : undefined;
+  const blocked = lookup.kind !== "binding" && lookup.kind !== "ambient";
+  const resolution =
+    lookup.kind === "binding" ? "resolved" : blocked ? "unknown" : "unbound";
+  const path = requestedPath ?? inferredPath;
+  const metadata: Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> = {
+    bindingId: binding?.bindingId ?? null,
+    resolution,
+    memberEffectsIndexed,
+  };
+  const retain = (
+    kind: JavaScriptSemanticReferenceEffectsAtSite["effects"][number]["kind"],
+    node: t.Node | undefined,
+    effectPath?: JavaScriptSemanticPropertyPath,
+  ): boolean => {
+    if (effectPath !== undefined && !semanticPathsOverlap(path, effectPath))
+      return true;
+    return visit({
+      kind,
+      ...(effectPath === undefined ? {} : { path: effectPath }),
+      timing: effectTiming(site, node, state),
+    });
+  };
+  if (binding !== undefined) {
+    for (const { kind, node } of semanticOpaqueReferenceEffects(binding, state))
+      if (!retain(kind, node, kind === "escape" ? [] : undefined))
+        return metadata;
+    for (const node of state.bindingWrites.get(binding.bindingId) ?? [])
+      if (!retain("binding-write", node)) return metadata;
+    // The mutation producer also queries its growing facts during convergence.
+    // Completion stays explicit in metadata; callers cannot infer readiness.
+    for (const effect of binding.memberWrites)
+      if (!retain("member-write", effect.node, effect.path)) return metadata;
+    for (const effect of binding.escapedPaths)
+      if (!retain("escape", effect.node, effect.path)) return metadata;
+  } else if (lookup.kind === "ambient" || lookup.kind === "uncertain-ambient") {
+    for (const node of state.ambientBindingWrites.get(root.name) ?? [])
+      if (!retain("ambient-write", node)) return metadata;
+    const ambientRoots = ambientPaths(root);
+    for (const ambientRoot of ambientRoots) {
+      const selectedPath = [...ambientRoot, ...path];
+      for (const [kind, effects] of [
+        ["member-write", state.ambientWriteEffects],
+        ["escape", state.ambientEscapeEffects],
+      ] as const)
+        for (const effect of effects)
+          if (
+            semanticPathsOverlap(selectedPath, effect.path) &&
+            !retain(kind, effect.node, effect.path.slice(ambientRoot.length))
+          )
+            return metadata;
+    }
+  }
+  return metadata;
+};
+
+/** Query current producer facts; public consumers additionally require completion. */
+export const semanticReferenceEffectsMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  propertyPath?: JavaScriptSemanticPropertyPath,
+): boolean => {
+  let changed = false;
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    (effect) => {
+      changed = effect.timing !== "after";
+      return !changed;
+    },
+    propertyPath,
+  );
+  return metadata.resolution !== "resolved" || changed;
+};
+
+/**
+ * Whether a read of `referenceNode` (at `propertyPath`) at `site` may observe
+ * a recorded effect. Before the member-mutation phase completes, every read
+ * may observe one.
+ */
+export const semanticReferenceMayHaveChangedAt = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  propertyPath?: JavaScriptSemanticPropertyPath,
+): boolean =>
+  !state.memberMutationFactsComplete ||
+  semanticReferenceEffectsMayHaveChanged(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    propertyPath,
+  );
+
+/** Preserve the complete diagnostic contract for consumers needing every effect. */
+export const semanticReferenceEffectsAtSite = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
+): JavaScriptSemanticReferenceEffectsAtSite => {
+  const effects: JavaScriptSemanticReferenceEffectsAtSite["effects"][number][] =
+    [];
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    (effect) => {
+      effects.push(effect);
+      return true;
+    },
+    requestedPath,
+    effectTiming,
+  );
+  return { ...metadata, effects };
+};
+
+export const semanticReferenceRoot = (
+  node: t.Node,
+): { readonly root: t.Node; readonly path: JavaScriptSemanticPropertyPath } => {
+  const path: (string | number | null)[] = [];
+  let current = unwrapJavaScriptExpression(node).node;
+  while (
+    t.isMemberExpression(current) ||
+    t.isOptionalMemberExpression(current)
+  ) {
+    const key = semanticStaticPropertyKey(current.property, current.computed);
+    path.unshift(key ?? null);
+    current = unwrapJavaScriptExpression(current.object).node;
+  }
+  return { root: current, path };
+};
+
+const semanticPathsOverlap = (
+  left: JavaScriptSemanticPropertyPath,
+  right: JavaScriptSemanticPropertyPath,
+): boolean => {
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    const leftKey = left[index];
+    const rightKey = right[index];
+    if (leftKey === undefined || rightKey === undefined) return true;
+    const leftMatchesRight =
+      typeof rightKey === "string" || typeof rightKey === "number"
+        ? semanticPropertyPathKeyMatches(leftKey, String(rightKey))
+        : true;
+    const rightMatchesLeft =
+      typeof leftKey === "string" || typeof leftKey === "number"
+        ? semanticPropertyPathKeyMatches(rightKey, String(leftKey))
+        : true;
+    if (!leftMatchesRight && !rightMatchesLeft) return false;
+  }
+  return true;
 };

@@ -30,7 +30,8 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
-import { opaqueCodeMayRebindBinding } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayRebindBinding } from "./javascriptSemanticEffectLog.js";
+import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -756,7 +757,7 @@ export const createSemanticModuleInterop = (
       return result;
     },
     aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
-      if (state.opaqueEffects.byScope.size === 0) return false;
+      if (!semanticDirectEvalRecorded(state)) return false;
       const cached = aliasChangedCache.get(binding.bindingId);
       if (cached !== undefined) return cached;
       origin(binding);

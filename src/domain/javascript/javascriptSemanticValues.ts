@@ -2,7 +2,7 @@ import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.
 import {
   opaqueCodeMayReachBindingReference,
   opaqueCodeMayRebindBinding,
-} from "./javascriptSemanticOpaqueEffects.js";
+} from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";

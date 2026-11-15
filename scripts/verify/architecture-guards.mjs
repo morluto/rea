@@ -80,10 +80,21 @@ check(
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
-// Opaque-effect checks are private to javascriptSemanticOpaqueEffects.ts, so the
-// compiler keeps readers on its questions. A method read on an intrinsic
+// Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
+// compiler keeps readers on its questions, and only the log and its record
+// module read the recorded sites. A method read on an intrinsic
 // instance asks one owner, which checks the method, the instance's prototype
 // link and the intrinsic prototypes.
+check(
+  "reader-side read of recorded opaque effects (ask javascriptSemanticEffectLog.ts or the javascriptSemanticEffectRecord.ts accessors)",
+  files,
+  /\.opaqueEffects\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticEffectRecord.ts",
+  ],
+);
+
 check(
   "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
   files,
