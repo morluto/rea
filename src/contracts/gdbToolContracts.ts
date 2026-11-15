@@ -16,6 +16,7 @@ const sessionId = z.string().uuid();
 export const GDB_TOOL_CONTRACTS = [
   {
     name: "start_gdb_session",
+    availability: { host: "persistentDebugger" },
     ...toolContractMetadata("start_gdb_session"),
     kind: "native-provider",
     description:

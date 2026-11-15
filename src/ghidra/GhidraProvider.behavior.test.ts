@@ -617,6 +617,35 @@ describe("Ghidra provider", () => {
   });
 });
 
+describe("Ghidra Xtensa ELF support", () => {
+  it("admits parsed Xtensa targets through profile selection", async () => {
+    const parsed = parseExecutableHeader(elf(1, 1, 94), "x64");
+    if (!parsed.ok) throw new Error("Expected valid Xtensa ELF target");
+    const target: BinaryTarget = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      ...parsed.value,
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "elf",
+          architecture: "xtensa",
+          loader: "auto-from-header",
+          language_id: "auto-from-header",
+          compiler_spec_id: "auto-default",
+        },
+      },
+    });
+  });
+});
+
 describe("Ghidra raw-binary profile", () => {
   it("admits raw 6502 on Windows and binds its 16-bit language without mutation authority", async () => {
     const ghidra = provider(installationHost("win32"));
@@ -749,6 +778,7 @@ describe("Ghidra Mach-O slice support", () => {
         "riscv",
         "powerpc",
         "hexagon",
+        "xtensa",
         "6502",
         "m68k",
       ]),

@@ -186,9 +186,14 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
 module. Files that still construct one directly are listed with their counts in
-`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
-count, and after removing copies run
+`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
+exceed its count, and after removing copies run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+Each counted guard keeps its baseline in its own
+`scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
+changes to different guards never edit the same file. Resolve a conflict in one
+of these files by keeping both sides' entries (the higher count where they
+differ) and rerunning `--shrink-baselines`.
 
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
@@ -333,16 +338,18 @@ run the check, because it needs a current build. `--package-root=DIR` lists
 an installed package instead of the checkout's build; the release guide uses
 it to [check the qualified archive](releasing.md#check-the-packed-catalog-with-client-engines).
 
-The same run compares the listings with
-`scripts/verify/advertised-schemas/summary.json`, which records each advertised
-pattern with the tool schemas that carry it and a digest of every tool's
-schema per input or output profile. A difference fails the check and prints
-lines such as `119 tool schemas gained pattern /…/`, so a change that reaches
-many tools at once is visible in review. Regenerate it with
-`npm run verify:advertised-schemas -- --update-summary` and commit it with the
-schema change. Absolute local paths advertise the host's pattern, so the
-summary records the POSIX advertisement and Windows hosts skip the
-comparison.
+The same run compares the listings with the per-tool summaries in
+`scripts/verify/advertised-schemas/tools/`: each file records one tool's
+schema digest per input or output profile and the patterns its schemas
+advertise. A difference fails the check and prints aggregated lines such as
+`119 tool schemas gained pattern /…/`, so a change that reaches many tools at
+once is visible in review, followed by the expected contents of every missing
+or stale file. Commit those contents with the schema change, or regenerate
+them with `npm run verify:advertised-schemas -- --update-summary`, which also
+deletes the files of removed tools. A PR that adds a tool adds only its own
+file, so PRs adding different tools do not conflict. Absolute local paths
+advertise the host's pattern, so the summaries record the POSIX advertisement
+and Windows hosts skip the comparison.
 
 The same run builds a validator for every distinct advertised input and output
 schema with the Rust `jsonschema` crate's defaults, which check the declared
@@ -855,7 +862,12 @@ native Windows Job Object behavior.
 
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
-owned cleanup seams while preserving real cleanup where feasible. Check server
+owned cleanup seams while preserving real cleanup where feasible.
+`tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
+holds a late handshake or in-flight work at a boundary and releases it with a
+value or a rejection, `cancelDuringCleanup`
+cancels from inside final cleanup, and `controlledCleanup` gives children
+refused or confirmed outcomes with counted retries. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
