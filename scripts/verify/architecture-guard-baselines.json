@@ -435,7 +435,7 @@
     "src/hopper/HopperClient.ts": 1,
     "src/hopper/HopperFileOffset.ts": 1,
     "src/hopper/HopperImageCopy.ts": 1,
-    "src/ida/IdaSessionClient.ts": 2,
+    "src/ida/IdaSessionClient.ts": 1,
     "src/inspector/V8InspectorProvider.ts": 1,
     "src/javascript/sourceMaps/SourceMapCommand.ts": 4,
     "src/jeb/JebMcpConnectionOwner.ts": 1,
