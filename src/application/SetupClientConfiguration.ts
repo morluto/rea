@@ -124,11 +124,15 @@ export const configureClientConfiguration = async (
       ),
     );
   } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError)
+    if (cause instanceof ConfigurationError && !cause.cleanupIncomplete)
       return { status: "failed", reason: "readback" };
     throw cause;
   }
 };
+
+/** An error that still owns an unreleased resource must reach the caller. */
+const cleanupIncomplete = (cause: unknown): boolean =>
+  cause instanceof ConfigurationError && cause.cleanupIncomplete;
 
 const configureClientDocument = async (
   {
@@ -408,7 +412,8 @@ const persistClientConfiguration = async ({
       },
     );
   } catch (cause: unknown) {
-    if (isClientConfigurationCleanupFailure(cause)) throw cause;
+    if (isClientConfigurationCleanupFailure(cause) || cleanupIncomplete(cause))
+      throw cause;
     if (isConfigurationConflict(cause))
       return conflictFailure(recoveryBackupPath);
     return {
@@ -508,7 +513,11 @@ export const clientConfigurationAligned = async (
       throwCleanupFailure(policy.error);
       return false;
     }
-    return policy.value === undefined && registrationCurrent(parsed, desired);
+    return (
+      policy.value === undefined &&
+      registrationCurrent(parsed, desired) &&
+      (await privateProfileCurrent(client, original))
+    );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Unreadable configuration is treated as not aligned so setup repairs it.
