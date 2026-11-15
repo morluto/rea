@@ -49,6 +49,7 @@ vi.mock("./CdpTargetSession.js", () => ({
       send: mocks.policySend,
       onEvent: events.onEvent,
       onProtocolFailure: () => () => undefined,
+      onDisconnect: () => () => undefined,
       close: mocks.policyTransportClose,
       beginCleanupGrace: mocks.policyBeginCleanupGrace,
     } as unknown as import("./CdpConnection.js").CdpConnection;
