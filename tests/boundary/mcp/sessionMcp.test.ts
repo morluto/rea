@@ -796,9 +796,13 @@ describe("json depth bounds over MCP", () => {
         code: "evidence_integrity_mismatch",
         category: "integrity_mismatch",
         message: expect.stringContaining(
-          `The left Evidence failed validation (at parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.)`,
+          `maximum nesting depth of ${MAX_JSON_DEPTH}`,
         ),
-        details: { reason: "left Evidence failed validation" },
+        details: {
+          reason: "left Evidence failed validation",
+          side: "left",
+          issue_path: ["parameters"],
+        },
       },
     });
     const recovered = await mcp.callTool({
