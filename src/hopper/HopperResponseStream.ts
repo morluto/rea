@@ -11,6 +11,8 @@ interface HopperResponseStreamOptions {
   readonly abort: (message: string, cause?: Error) => void;
 }
 
+const NOT_UTF8 = "Hopper bridge response is not valid UTF-8";
+
 /** Incrementally validates Hopper NDJSON response frames. */
 export class HopperResponseStream {
   readonly #lines = new Utf8NdjsonLineBuffer();
@@ -18,12 +20,18 @@ export class HopperResponseStream {
   constructor(readonly options: HopperResponseStreamOptions) {}
 
   push(chunk: Buffer): void {
-    for (const line of this.#lines.push(chunk))
-      if (!this.#acceptLine(line)) break;
+    for (const line of this.#lines.push(chunk)) {
+      if (!line.ok) {
+        this.options.abort(NOT_UTF8, line.error);
+        break;
+      }
+      if (!this.#acceptLine(line.value)) break;
+    }
   }
 
   finish(): void {
-    this.#lines.finish();
+    const tail = this.#lines.finish();
+    if (!tail.ok) this.options.abort(NOT_UTF8, tail.error);
   }
 
   reset(): void {
