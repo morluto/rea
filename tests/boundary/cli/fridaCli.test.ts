@@ -311,7 +311,15 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
       },
     },
   );
-  expect(exitCode).not.toBe(0);
+  // A remote credential without its address is refused by the contract
+  // before any device is contacted.
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "list_frida_devices",
+      issues: [{ path: ["remote", "address"], reason: "missing_argument" }],
+    },
+  });
   expect(calls).toHaveLength(3);
   expect(stdout).not.toContain("synthetic-secret-token");
 });
