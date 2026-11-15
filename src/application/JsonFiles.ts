@@ -239,7 +239,7 @@ const jsonFileReadFailure = (
       cause: cause.physicalCause,
       path,
     });
-  if (isJsonReadCancellation(cause, signal))
+  if (isAbortOf(cause, signal))
     return new AnalysisCancelledError(operation, { cause: signal?.reason });
   return new EvidenceFileError(
     "read",
@@ -300,11 +300,6 @@ const jsonFileCleanupError = <Value>(
   if (!primary.cleanupIncomplete) rememberJsonReadCleanup(combined, failure);
   return combined;
 };
-
-const isJsonReadCancellation = (
-  cause: unknown,
-  signal?: AbortSignal,
-): boolean => isAbortOf(cause, signal);
 
 /** Atomically write text to the caller-supplied path. */
 export const writeTextFile = async (

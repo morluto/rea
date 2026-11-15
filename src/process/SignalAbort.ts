@@ -6,12 +6,13 @@ import type { AbortedSignal } from "../domain/analysisErrorCore.js";
  * which keeps the abort reason as its `cause`.
  */
 export const isAbortWithReason = (cause: unknown, reason: unknown): boolean =>
-  cause === reason ||
+  // Object.is: an abort reason may be NaN, which === never matches.
+  Object.is(cause, reason) ||
   (cause instanceof Error &&
     cause.name === "AbortError" &&
     "code" in cause &&
     cause.code === "ABORT_ERR" &&
-    cause.cause === reason);
+    Object.is(cause.cause, reason));
 
 /**
  * Whether `cause` is this aborted signal's own cancellation, as raised by the
