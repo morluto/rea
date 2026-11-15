@@ -779,7 +779,7 @@ export class HopperClient {
       return;
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       HOPPER_SHUTDOWN_TIMEOUT_MS,
     );
     this.#closing = true;

@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -61,7 +64,8 @@ export class HopperRegexSearch {
 
   /** Abort matching workers before their provider session closes. */
   async close(): Promise<void> {
-    for (const controller of this.#active.keys()) controller.abort();
+    for (const controller of this.#active.keys())
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.all(this.#active.values());
   }
 

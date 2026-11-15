@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipInspectionCancelled,
@@ -697,7 +698,7 @@ export const createDarwinProcessRunTokenReader = (
         !operation.aborting
       ) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.noLongerNeeded);
         const finalized = await operation.promise;
         if (
           waited.kind === "cancelled" &&
@@ -873,7 +874,7 @@ export const createDarwinProcessRunTokenReader = (
       const operation = compilation;
       if (operation !== undefined && !operation.settled) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.ownerClosed);
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);
