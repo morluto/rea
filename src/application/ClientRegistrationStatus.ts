@@ -40,11 +40,11 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
   recordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type {
   OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
   RecordedProviderSettings,
-} from "./ClientRegistrationEnvironment.js";
+} from "../ports/DesktopBuildHost.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 import {

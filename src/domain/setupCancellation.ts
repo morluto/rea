@@ -1,4 +1,4 @@
-import { cancelledBy } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "./analysisErrorCore.js";
 
 /** Preserve the caller's exact reason while setup unwinds its resource owners. */
 export const assertSetupActive = (

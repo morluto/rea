@@ -11,7 +11,7 @@ import {
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "../domain/windowsNativeArtifact.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
 export const windowsHandleSchema = z.custom<object>(

@@ -66,10 +66,7 @@ import {
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
-import type {
-  OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
-} from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
@@ -80,11 +77,12 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
-import {
-  selectedDesktopBuildChecks,
-  type DesktopBuildFacts,
-  type DesktopBuildFactsInput,
-} from "./DesktopBuildDoctor.js";
+import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import type {
+  DesktopBuildFacts,
+  DesktopBuildFactsInput,
+  OwnedProviderSetting,
+} from "../ports/DesktopBuildHost.js";
 
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
