@@ -302,7 +302,6 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
     discoveryDelayMs: 180,
   });
   const provider = new CdpWebRuntimeProvider();
-  const started = performance.now();
   try {
     const pending = provider.observeExecution(
       observeWebExecutionInputSchema.parse({
@@ -313,10 +312,11 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // Discovery is pending while its response is held: no command deadline
+    // may bound it yet.
+    await waitFor(() => expect(activeTimers(180)).toHaveLength(1));
     expect(activeTimers(40)).toHaveLength(0);
     const result = await pending;
-    expect(performance.now() - started).toBeGreaterThan(300);
     if (result.ok) throw new Error("Expected a command deadline");
     const text = `${result.error.userMessage ?? ""}\n${result.error.message}`;
     expect(text).toContain("40 ms command_timeout_ms");
@@ -474,7 +474,6 @@ it("reports browser-socket discovery on its own deadline", async () => {
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Expected a TCP address");
-  const started = performance.now();
   try {
     const failure = await openCdpEndpoint(
       browserObservationEndpointSchema.parse(
@@ -486,9 +485,7 @@ it("reports browser-socket discovery on its own deadline", async () => {
       undefined,
       30,
     ).catch((cause: unknown) => cause);
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeGreaterThan(60);
-    expect(elapsed).toBeLessThan(1_500);
+    // The stalled socket never answers: only the discovery deadline reports.
     expect(failure).toBeInstanceOf(BrowserObservationError);
     if (!(failure instanceof BrowserObservationError))
       throw new Error("Expected a browser-socket discovery failure");

@@ -120,9 +120,7 @@ const draft = async (
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {
-    ...(state.effective_view_policy === undefined
-      ? {}
-      : { effective_view_policy: state.effective_view_policy }),
+    effective_view_policy: state.effective_view_policy,
     application: {
       environment,
       title: capture.application.desktop_entry?.name ?? environment,
