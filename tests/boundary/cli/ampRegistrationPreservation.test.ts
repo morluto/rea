@@ -29,7 +29,6 @@ cliTest(
         arguments: ["mcp", "add", "--agent=amp", ...options, "--json"],
         cwd: root,
         environment,
-        timeoutMs: 20_000,
       });
     const settingsPath = ampSettings(home);
     const original = JSON.stringify(
@@ -133,7 +132,6 @@ cliTest(
         arguments: ["mcp", "add", "--agent", "amp", "--json"],
         cwd: root,
         environment,
-        timeoutMs: 20_000,
       });
       expect(rejected.exitCode, rejected.stderr).toBe(1);
       expect(mcpRegistrationReportSchema.parse(rejected.json)).toMatchObject({

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -315,11 +316,13 @@ goMcpTest(
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_go_binary",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Go metadata must publish both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     expect(
@@ -347,15 +350,11 @@ goMcpTest(
       moduleText: "path\texample.com/tool\nnew-record\tfuture\n",
     });
     await writeFile(path, fixture.bytes);
-    const response = await client.callTool({
-      name: "inspect_go_binary",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_go_binary", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );

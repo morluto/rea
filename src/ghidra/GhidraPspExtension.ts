@@ -4,11 +4,12 @@ import { lstat, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
@@ -19,9 +20,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
   assertArtifactReadActive,
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 
@@ -59,7 +58,7 @@ export const inspectGhidraPspExtension = async (
       fingerprint(root, ghidraVersion, resources, signal),
     );
   } catch (cause: unknown) {
-    throw ghidraPspInspectionError(cause);
+    throw classifyProviderFailure(cause, GHIDRA_PSP_INSPECTION_DIALECT);
   }
 };
 
@@ -226,45 +225,40 @@ export const resolveGhidraPspExtension = async (
       ),
     );
   } catch (cause: unknown) {
-    return err(ghidraPspInspectionError(cause));
+    return err(classifyProviderFailure(cause, GHIDRA_PSP_INSPECTION_DIALECT));
   }
 };
 
-/** Preserve the producer's primary failure and its live cleanup dependencies. */
-const ghidraPspInspectionError = (cause: unknown): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  const cleanup =
-    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const { cause: primary } = artifactFilePrimaryFacts(cause);
-  const admission =
-    primary instanceof GhidraAdmissionError ? primary : undefined;
-  const identity =
-    admission?.code ??
-    (primary instanceof Error ? primary.message : String(primary));
-  const reason = `PSP_EXTENSION_UNAVAILABLE: ${identity} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
-  const diagnostics =
-    admission === undefined
-      ? undefined
-      : { code: admission.code, ...admission.detail };
-  const error =
-    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError("resolve_analysis_profile", {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-        })
-      : new AnalysisCapabilityUnavailableError(
-          "ghidra",
-          "resolve_analysis_profile",
-          reason,
-          {
-            cause,
-            userMessage: reason,
-            cleanup,
-            ...(diagnostics === undefined ? {} : { diagnostics }),
-          },
-        );
-  bindArtifactFileCleanup(cause, error);
-  return error;
+/**
+ * How a failed extension inspection is reported. The shared classifier keeps
+ * typed failures, a cancelled read and the read's live cleanup; anything else
+ * means no compatible caller-installed extension was established.
+ */
+const GHIDRA_PSP_INSPECTION_DIALECT: ProviderFailureDialect = {
+  providerId: "ghidra",
+  operation: "resolve_analysis_profile",
+  unclassified: (cause, details) => {
+    const { cause: primary } = artifactFilePrimaryFacts(cause);
+    const admission =
+      primary instanceof GhidraAdmissionError ? primary : undefined;
+    const identity =
+      admission?.code ??
+      (primary instanceof Error ? primary.message : String(primary));
+    const reason = `PSP_EXTENSION_UNAVAILABLE: ${identity} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+    return new AnalysisCapabilityUnavailableError(
+      "ghidra",
+      "resolve_analysis_profile",
+      reason,
+      {
+        ...details,
+        cause,
+        userMessage: reason,
+        ...(admission === undefined
+          ? {}
+          : { diagnostics: { code: admission.code, ...admission.detail } }),
+      },
+    );
+  },
 };
 
 /** Close before descending, retaining the exact directory owner on uncertainty. */
@@ -313,11 +307,12 @@ const readChildren = async (
               { cause: signal.reason },
             )
           : attempt.cause;
-    const error = ghidraPspInspectionError(
+    const error = classifyProviderFailure(
       ArtifactReaderFailure.withCleanup(
         primary,
         ArtifactReaderFailure.cleanupObservation(attempt.cause, path),
       ),
+      GHIDRA_PSP_INSPECTION_DIALECT,
     );
     lease.bindCleanupError(error);
     throw error;

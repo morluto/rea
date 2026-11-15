@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { redactSecrets } from "../../domain/desktop/buildSecrets.js";
 import { createEvidence } from "../../domain/evidence.js";
-import {
-  GUEST_FILE_ANSWER_SOURCE,
-  guestFileAnswerCeiling,
-} from "../../desktop/AgentEnvComputer.js";
+import { guestFileAnswerCeiling } from "../../desktop/AgentEnvComputer.js";
 import { readOutput } from "./DesktopBuildCommands.js";
 import { endedCapture } from "./DesktopBuildCaptureFailure.js";
 import {
@@ -38,7 +35,7 @@ describe("readOutput", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
   });
 
@@ -101,7 +98,7 @@ describe("endedCapture", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
   });
 

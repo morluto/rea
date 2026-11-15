@@ -176,6 +176,20 @@ describe("WxapkgArtifactReader", () => {
       });
     });
   });
+
+  it("reports cancellation during encrypted-directory coverage", async () => {
+    await withReader(wxapkgEncryptedBytes(), async (reader) => {
+      const controller = new AbortController();
+      const entries = reader
+        .entries(controller.signal, {
+          onCoverage: () => controller.abort(),
+        })
+        [Symbol.asyncIterator]();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: "cancelled",
+      });
+    });
+  });
 });
 
 describe("WxapkgArtifactReader malformed inputs", () => {

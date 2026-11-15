@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
 
+import type { LibraryFileProbe } from "../domain/desktop/libraryPackages.js";
+
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   ArtifactFileCancelled,
@@ -81,6 +83,33 @@ export const readHostFile = async (
   }
 };
 
-/** Whether a host path names a regular file, following links. */
-export const isHostFile = async (path: string): Promise<boolean> =>
-  (await stat(path).catch(() => undefined))?.isFile() === true;
+/**
+ * The stat failure that ld.so searches past: a candidate under a directory it
+ * cannot search. glibc's open_path continues only after ENOENT and EACCES, and
+ * fails the load on any other error (observed with glibc 2.36: a looping
+ * symlink candidate ends the search). An EACCES candidate is therefore not the
+ * object the linker loads with the same credentials, but REA's credentials may
+ * differ, so it stays unknown rather than absent.
+ */
+const UNREACHABLE_CODES = new Set(["EACCES"]);
+
+/** The host file at `path`, with why a check could not tell it. */
+export const probeHostFile = async (
+  path: string,
+): Promise<LibraryFileProbe> => {
+  try {
+    return { kind: "file", isFile: (await stat(path)).isFile() };
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code ?? "";
+    // Only a missing name establishes that no file is there.
+    return code === "ENOENT" || code === "ENOTDIR"
+      ? { kind: "file", isFile: false }
+      : { kind: "unknown", unreachable: UNREACHABLE_CODES.has(code) };
+  }
+};
+
+/** Whether a host path names a regular file, following links; null when the check could not tell, such as a denied parent folder. */
+export const hostFileKind = async (path: string): Promise<boolean | null> => {
+  const probe = await probeHostFile(path);
+  return probe.kind === "file" ? probe.isFile : null;
+};

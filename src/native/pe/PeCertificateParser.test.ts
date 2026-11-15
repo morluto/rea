@@ -12,19 +12,18 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
 import {
-  ASN1_NODE_BUDGET,
-  MAX_DECODED_NAME_BYTES,
-  MAX_OID_ARC_BYTES,
-  MAX_OID_BYTES,
-  decodeOid,
   parseCertificate,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import {
-  parsePeCertificates,
-  UNSIGNED_ATTRIBUTES_LIMITATION,
-} from "./PeCertificateParser.js";
+import { parsePeCertificates } from "./PeCertificateParser.js";
+
+// Independent boundary examples: changing an allowance requires reviewing
+// both the admitted and rejected certificate shapes.
+const ASN1_NODE_BUDGET = 16_384;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -96,7 +95,9 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
       status: "partial",
       certificates: 1,
     });
-    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    expect(report.limitations).toContain(
+      "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+    );
     const control = parse(peCertificateFixture(plus));
     expect(
       control.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
@@ -687,11 +688,25 @@ it("rejects headers whose section table does not fit SizeOfHeaders", () => {
 });
 
 it("decodes OBJECT IDENTIFIER arcs without truncation", () => {
-  expect(decodeOid(Buffer.from([0x88, 0x37, 0x03]))).toBe("2.999.3");
-  expect(decodeOid(Buffer.from([0x69, 0x90, 0x80, 0x80, 0x80, 0x00]))).toBe(
-    "2.25.4294967296",
+  const algorithms = [
+    [0x88, 0x37, 0x03],
+    [0x69, 0x90, 0x80, 0x80, 0x80, 0x00],
+    [0x2a, 0x86, 0x48],
+  ].map((oid) => derSeq(der(0x06, Buffer.from(oid))));
+  const signer = derSeq(
+    derInt(1),
+    derSeq(derSeq(), derInt(1)),
+    SHA256_ALG,
+    SHA256_ALG,
+    der(0x04, Buffer.from([1])),
   );
-  expect(decodeOid(Buffer.from([0x2a, 0x86, 0x48]))).toBe("1.2.840");
+  const payload = contentInfo(
+    derSeq(derInt(1), derSet(...algorithms), derSeq(DATA_OID), derSet(signer)),
+  );
+  expect(
+    parse(peCertificateFixture(false, payload)).entries[0]?.pkcs7
+      ?.digest_algorithm_oids,
+  ).toEqual(["2.999.3", "2.25.4294967296", "1.2.840"]);
 });
 
 it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
@@ -704,7 +719,11 @@ it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
   const arc = Buffer.alloc(MAX_OID_ARC_BYTES + 1, 0x80);
   arc[0] = 0x81;
   arc[arc.length - 1] = 0x00;
-  expect(() => decodeOid(Buffer.concat([Buffer.from([0x2a]), arc]))).toThrow(
+  const arcOid = derSeq(
+    der(0x06, Buffer.concat([Buffer.from([0x2a]), arc])),
+    der(0xa0, derSeq(derInt(1))),
+  );
+  expect(() => parse(peCertificateFixture(false, arcOid))).toThrow(
     /arc exceeds/u,
   );
 });
@@ -1258,6 +1277,10 @@ it("rejects malformed and repeated certificate extensions", () => {
     derSeq(ski, derInt(1)),
     derSeq(ski, derInt(1), skiValue),
     derSeq(ski, critical(0xff, 0xff), skiValue),
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    ...[0x00, 0x01, 0x7f, 0xfe].map((value) =>
+      derSeq(ski, critical(value), skiValue),
+    ),
     derSeq(ski, skiValue, critical(0xff)),
     derSeq(ski, skiValue, der(0x05, Buffer.alloc(0))),
   ])

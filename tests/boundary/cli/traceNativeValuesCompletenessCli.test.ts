@@ -13,8 +13,8 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
-import { CLEANUP_STOPPED_VALUE_TRACE } from "../../../src/application/native/NativeValueTrace.js";
 import {
+  EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
   valueTraceDiamond,
   valueTraceProvider,
@@ -254,7 +254,7 @@ it.each([
     expect(admitted.unknowns).toContainEqual({
       procedure: "0x2000",
       address: null,
-      reason: CLEANUP_STOPPED_VALUE_TRACE,
+      reason: EXPECTED_CLEANUP_STOPPED_TRACE,
     });
   },
 );

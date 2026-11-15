@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -7,20 +8,17 @@ const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 /** Default analysis phase budget, excluding queue admission and publication. */
 export const DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS = 120_000;
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_FIRMWARE_TIMEOUT_MS = 2_147_483_647;
 /** Largest staging file-byte budget the schema accepts. */
 export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
 /** Largest staging entry budget the schema accepts. */
 export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
 /** Largest extraction depth the input contract accepts. */
 export const MAX_FIRMWARE_EXTRACTION_DEPTH = 10;
-const timeout = z.number().int().min(1).max(MAX_FIRMWARE_TIMEOUT_MS);
 const target = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute local firmware file; never executed. Relative paths are rejected.",
   ),
-  analysis_timeout_ms: timeout
+  analysis_timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
       "Analysis wall-clock budget in milliseconds (default 120000), from tool resolution through inspection and its final workspace cleanup, or extraction through inventory. Excludes queue admission and extraction publication. Does not raise fixed CPU, memory or byte limits.",
@@ -61,7 +59,7 @@ export const firmwareInputSchemas = {
       .max(MAX_FIRMWARE_STAGING_ENTRIES)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
-    publication_timeout_ms: timeout
+    publication_timeout_ms: timerDurationMsSchema
       .default(120_000)
       .describe(
         "Publication and final cleanup budget in milliseconds, started after extraction and inventory; increase for a slow destination",
@@ -100,7 +98,7 @@ const engine = z.strictObject({
 });
 /** Small execution metadata contract; historical omissions remain unknown. */
 export const firmwareExecutionBudgetSchema = z.object({
-  analysis_timeout_ms: timeout
+  analysis_timeout_ms: timerDurationMsSchema
     .exactOptional()
     .describe(
       "Actual analysis phase budget in milliseconds; absent in historical Evidence means unknown",

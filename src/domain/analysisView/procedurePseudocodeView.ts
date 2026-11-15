@@ -103,7 +103,7 @@ export const projectProcedurePseudocodeView = (
                 unit: "utf16-code-units" as const,
               },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (text === null)
     return ok({
@@ -112,7 +112,7 @@ export const projectProcedurePseudocodeView = (
       ...common,
       procedure_address: null,
       item: unavailable,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const page = analysisTextPage(text, view.offset, view.limit);
   return page.ok

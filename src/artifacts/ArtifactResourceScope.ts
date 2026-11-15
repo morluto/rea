@@ -136,13 +136,33 @@ export class ArtifactResourceScope {
         await this.retryCleanup();
         continue;
       }
-      const running = Promise.resolve().then(operation);
-      this.#active.add(running);
-      try {
-        return await running;
-      } finally {
-        this.#active.delete(running);
-      }
+      return this.#track(operation);
+    }
+  }
+
+  /**
+   * Run optional work, such as diagnostic sampling, that may retain owners but
+   * must not wait for or fail on earlier pending cleanup. Cleanup drains still
+   * join it, so an owner it retains is not left behind by a finished drain.
+   */
+  track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#closed)
+      return Promise.reject(
+        new ArtifactReaderFailure(
+          "unavailable",
+          "Artifact resource scope is closed",
+        ),
+      );
+    return this.#track(operation);
+  }
+
+  async #track<T>(operation: () => Promise<T>): Promise<T> {
+    const running = Promise.resolve().then(operation);
+    this.#active.add(running);
+    try {
+      return await running;
+    } finally {
+      this.#active.delete(running);
     }
   }
 
@@ -307,20 +327,29 @@ export class ArtifactResourceScope {
   }
 
   async #drainAndRetry(): Promise<void> {
-    while (this.#active.size > 0) await Promise.allSettled(this.#active);
-    const failures: {
-      readonly owner: ArtifactResourceOwner;
-      readonly cause: unknown;
-    }[] = [];
-    for (const owner of this.#pending) {
-      try {
-        await this.#lease(owner).release();
-        this.#pending.delete(owner);
-      } catch (cause: unknown) {
-        this.#observeCleanupFailure(owner, cause);
-        failures.push({ owner, cause });
+    const failed = new Map<ArtifactResourceOwner, unknown>();
+    // Tracked work may start while an earlier owner is being released, and may
+    // retain owners of its own; repeat until no work is active and every
+    // retained owner has had one attempt in this drain.
+    while (true) {
+      while (this.#active.size > 0) await Promise.allSettled(this.#active);
+      for (const owner of this.#pending) {
+        if (failed.has(owner)) continue;
+        try {
+          await this.#lease(owner).release();
+          this.#pending.delete(owner);
+        } catch (cause: unknown) {
+          this.#observeCleanupFailure(owner, cause);
+          failed.set(owner, cause);
+        }
       }
+      if (
+        this.#active.size === 0 &&
+        [...this.#pending].every((owner) => failed.has(owner))
+      )
+        break;
     }
+    const failures = [...failed].map(([owner, cause]) => ({ owner, cause }));
     if (failures.length === 0) return;
     const observations = failures.map(({ owner, cause }) =>
       ArtifactReaderFailure.cleanupObservation(

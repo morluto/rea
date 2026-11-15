@@ -17,10 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { espFlashSelectionError } from "../../../src/domain/firmware/espFlashSelection.js";
-import {
-  resolveAppBundleExecutable,
-  type AppBundleFileSystem,
-} from "../../../src/application/AppBundleExecutable.js";
+import { resolveAppleBundleExecutable } from "../../../src/application/AppBundleExecutable.js";
 import {
   dosMz,
   elf,
@@ -355,13 +352,15 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await mkdir(join(app, "Contents"), { recursive: true });
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const denied = Object.assign(new Error("denied"), { code });
-    const fileSystem: AppBundleFileSystem = {
+    const fileSystem: NonNullable<
+      Parameters<typeof resolveAppleBundleExecutable>[1]
+    > = {
       readFile: async () => {
         throw denied;
       },
       realpath,
     };
-    const result = await resolveAppBundleExecutable(app, fileSystem);
+    const result = await resolveAppleBundleExecutable(app, fileSystem);
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -380,7 +379,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await mkdir(join(app, "Contents"), { recursive: true });
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const readError = Object.assign(new Error("I/O failure"), { code: "EIO" });
-    const result = await resolveAppBundleExecutable(app, {
+    const result = await resolveAppleBundleExecutable(app, {
       readFile: async () => {
         throw readError;
       },
@@ -392,31 +391,6 @@ describe("binary target I/O: app plist permissions and decoding", () => {
         path: join(app, "Contents", "Info.plist"),
         reason: expect.stringContaining("could not read app Info.plist"),
         cause: readError,
-      },
-    });
-  });
-
-  it("does not label binary plist decoder I/O failures as malformed data", async () => {
-    const directory = await createTestTempDirectory("rea-app-decode-error-");
-    const app = join(directory, "DecodeError.app");
-    await mkdir(join(app, "Contents"), { recursive: true });
-    await writeFile(join(app, "Contents", "Info.plist"), "bplist00");
-    const decodeError = Object.assign(new Error("I/O failure"), {
-      code: "EIO",
-    });
-    const result = await resolveAppBundleExecutable(app, {
-      readFile: async () => Buffer.from("bplist00"),
-      realpath,
-      decodeBinaryPlist: async () => {
-        throw decodeError;
-      },
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        path: join(app, "Contents", "Info.plist"),
-        reason: expect.stringContaining("could not decode app Info.plist"),
-        cause: decodeError,
       },
     });
   });
@@ -433,14 +407,16 @@ describe("binary target I/O: app plist permissions and decoding", () => {
         "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
       );
       const denied = Object.assign(new Error("denied"), { code });
-      const fileSystem: AppBundleFileSystem = {
+      const fileSystem: NonNullable<
+        Parameters<typeof resolveAppleBundleExecutable>[1]
+      > = {
         readFile,
         realpath: async (path) => {
           if (String(path) === join(programs, "App")) throw denied;
           return realpath(path);
         },
       };
-      const result = await resolveAppBundleExecutable(app, fileSystem);
+      const result = await resolveAppleBundleExecutable(app, fileSystem);
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -461,7 +437,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     const directory = await createTestTempDirectory("rea-app-diagnostics-");
     const missing = join(directory, "Missing.app");
     await mkdir(join(missing, "Contents"), { recursive: true });
-    const missingResult = await resolveAppBundleExecutable(missing);
+    const missingResult = await resolveAppleBundleExecutable(missing);
     expect(missingResult).toMatchObject({
       ok: false,
       error: { reason: expect.stringContaining("missing") },
@@ -470,7 +446,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     const notDirectory = join(directory, "NotDirectory.app");
     await mkdir(notDirectory, { recursive: true });
     await writeFile(join(notDirectory, "Contents"), "not a directory");
-    const notDirectoryResult = await resolveAppBundleExecutable(notDirectory);
+    const notDirectoryResult = await resolveAppleBundleExecutable(notDirectory);
     expect(notDirectoryResult).toMatchObject({
       ok: false,
       error: { reason: expect.stringContaining("missing") },
@@ -482,7 +458,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
       join(malformed, "Contents", "Info.plist"),
       "<plist><dict></dict></plist>",
     );
-    const malformedResult = await resolveAppBundleExecutable(malformed);
+    const malformedResult = await resolveAppleBundleExecutable(malformed);
     expect(malformedResult).toMatchObject({
       ok: false,
       error: {
@@ -509,7 +485,7 @@ describe("binary target I/O: OpenStep app plist escapes", () => {
       await mkdir(programs, { recursive: true });
       await writeFile(join(app, "Contents", "Info.plist"), plistContent);
       await writeFile(join(programs, "Main"), "binary");
-      const result = await resolveAppBundleExecutable(app);
+      const result = await resolveAppleBundleExecutable(app);
       expect(result).toEqual({
         ok: true,
         value: {
@@ -1578,7 +1554,7 @@ describe("binary Info.plist app bundle targets", () => {
         join(app, "Contents", "MacOS", "Forged"),
         thinMach(0xfeedfacf, 0x0100000c),
       );
-      expect(await resolveAppBundleExecutable(app)).toMatchObject({
+      expect(await resolveAppleBundleExecutable(app)).toMatchObject({
         ok: false,
         error: {
           reason: expect.stringContaining("CFBundleExecutable is missing"),

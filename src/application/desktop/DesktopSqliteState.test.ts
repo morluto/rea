@@ -40,6 +40,7 @@ const report = (selected: string | undefined): SqliteDatabase => ({
   artifact: { path: "/staged/state.db", sha256: "a".repeat(64), bytes: 4096 },
   wal: null,
   engine: { name: "SQLite", version: "3.50.2" },
+  worker_timeout_ms: 30_000,
   database_encoding: "UTF-8",
   schema: {
     scope: "database",

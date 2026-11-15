@@ -1,110 +1,11 @@
 import { expect, it } from "vitest";
 import type { WebBundleAnalysis } from "../webBundleAnalysis.js";
+import { sampleWebBundleAnalysis } from "../../../tests/fixtures/webBundleAnalysis.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
-
-const sampleAnalysis = (): WebBundleAnalysis => ({
-  capture: {
-    target_url: "https://example.test/app",
-    target_origin: "https://example.test",
-    scripts_observed: 3,
-    scripts_analyzed: 2,
-    source_artifacts: [],
-  },
-  observations: {
-    chunks: {
-      nodes: [
-        {
-          script_key: "app.js",
-          url: "https://example.test/app.js",
-          artifact_sha256: "a".repeat(64),
-          bytes: 1200,
-        },
-        {
-          script_key: "vendor.js",
-          url: "https://example.test/vendor.js",
-          artifact_sha256: "b".repeat(64),
-          bytes: 4500,
-        },
-      ],
-      edges: [],
-    },
-    routes: [],
-    endpoints: [
-      {
-        value: "/api/users",
-        mechanism: "call:fetch",
-        location: { script_key: "app.js", line: 10, column: 2 },
-      },
-      {
-        value: "/api/users",
-        mechanism: "call:fetch",
-        location: { script_key: "vendor.js", line: 42, column: 8 },
-      },
-      {
-        value: "/api/orders",
-        mechanism: "call:sendBeacon",
-        location: { script_key: "app.js", line: 85, column: 4 },
-      },
-    ],
-    webmcp_declarations: [],
-    source_maps: {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    },
-  },
-  inferences: [
-    {
-      kind: "endpoint_candidate",
-      value: "/api/dynamic-user",
-      confidence: "low",
-      basis: [
-        {
-          script_key: "app.js",
-          artifact_sha256: "a".repeat(64),
-          line: 25,
-          column: 4,
-          detector: "call:client.get:unverified-network-receiver",
-        },
-      ],
-    },
-    {
-      kind: "vendor_fingerprint",
-      value: "React",
-      confidence: "high",
-      basis: [
-        {
-          script_key: "vendor.js",
-          artifact_sha256: "b".repeat(64),
-          line: 1,
-          column: 0,
-          detector: "vendor:react",
-        },
-      ],
-    },
-  ],
-  unknowns: [
-    {
-      dimension: "network",
-      reason: "Unverified client receiver",
-      affected_script_keys: ["app.js"],
-    },
-  ],
-  completeness: {
-    status: "partial",
-    parsed_scripts: 2,
-    parse_failures: 1,
-    visited_ast_nodes: 150,
-  },
-  limitations: ["Script evaluation was omitted"],
-});
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const makeParent = (
   overrides?: Partial<WebBundleAnalysis>,
@@ -114,7 +15,7 @@ const makeParent = (
   operation: "analyze_web_bundle",
   limitations: ["Parent run was bounded"],
   normalizedResult: {
-    ...sampleAnalysis(),
+    ...sampleWebBundleAnalysis(),
     ...overrides,
   },
 });
@@ -131,12 +32,11 @@ const query = (
   return result.value;
 };
 
-it.each([undefined, null, "https://example.test"])(
-  "preserves historical omitted and explicit target origins: %s",
+it.each([null, "https://example.test"])(
+  "projects the recorded target origin: %s",
   (origin) => {
-    const report = sampleAnalysis();
-    if (origin === undefined) delete report.capture.target_origin;
-    else report.capture.target_origin = origin;
+    const report = sampleWebBundleAnalysis();
+    report.capture.target_origin = origin;
     const parent = makeParent(report);
     for (const selection of [
       { kind: "summary" },
@@ -144,20 +44,23 @@ it.each([undefined, null, "https://example.test"])(
       { kind: "web-bundle", collection: "endpoints", fields: ["value"] },
     ]) {
       const view = query(parent, selection);
-      if (origin === undefined)
-        expect(view).not.toHaveProperty("target_origin");
-      else expect(view).toHaveProperty("target_origin", origin);
+      expect(view).toHaveProperty("target_origin", origin);
       if (
         view.kind === "summary" ||
         (view.kind === "web-bundle" && view.summary !== null)
-      ) {
-        if (origin === undefined)
-          expect(view.summary).not.toHaveProperty("target_origin");
-        else expect(view.summary).toHaveProperty("target_origin", origin);
-      }
+      )
+        expect(view.summary).toHaveProperty("target_origin", origin);
     }
   },
 );
+
+it("refuses a web-bundle report without its target origin", () => {
+  const report = sampleWebBundleAnalysis();
+  Reflect.deleteProperty(report.capture, "target_origin");
+  expect(() =>
+    query(makeParent(report), { kind: "web-bundle", collection: "summary" }),
+  ).toThrow(AnalysisInputError);
+});
 
 it("counts the distinct full parent/report limitation union before bounding", () => {
   const base = makeParent({
@@ -247,7 +150,7 @@ it("pages endpoints and concatenated pages match original records exactly, prese
   });
 
   const concatenated = [...page1.items, ...page2.items];
-  const original = sampleAnalysis().observations.endpoints;
+  const original = sampleWebBundleAnalysis().observations.endpoints;
   expect(concatenated).toEqual(
     original.map((row, source_index) => ({ source_index, ...row })),
   );
@@ -399,7 +302,7 @@ it("returns typed AnalysisResourceConstraintError when a single record exceeds 1
   };
   const parent = makeParent({
     observations: {
-      ...sampleAnalysis().observations,
+      ...sampleWebBundleAnalysis().observations,
       endpoints: [hugeEndpoint],
     },
   });
@@ -430,7 +333,7 @@ it.each([undefined, ["call:fetch"]])(
     });
     const parent = makeParent({
       observations: {
-        ...sampleAnalysis().observations,
+        ...sampleWebBundleAnalysis().observations,
         endpoints: [
           largeRecord(1),
           largeRecord(2),
@@ -480,7 +383,7 @@ it("rejects non-web-bundle parent operation with invalid_value", () => {
     evidenceId: `ev_${"d".repeat(64)}`,
     operation: "analyze_javascript_application",
     limitations: [],
-    normalizedResult: sampleAnalysis(),
+    normalizedResult: sampleWebBundleAnalysis(),
   };
 
   const result = projectAnalysisView(
@@ -500,7 +403,7 @@ it("rejects non-web-bundle parent operation with invalid_value", () => {
 });
 
 it("continues filtered pages by matching ordinal while preserving original indices", () => {
-  const report = sampleAnalysis();
+  const report = sampleWebBundleAnalysis();
   const row = report.observations.endpoints[0]!;
   const endpoints = [
     { ...row, mechanism: "call:sendBeacon" },

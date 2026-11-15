@@ -1,3 +1,6 @@
+import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { failedJavaScriptStaticAnalysis } from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   type JavaScriptSemanticPrecisionInput,
@@ -15,10 +18,7 @@ import {
   ELECTRON_REFERENCE_KINDS,
 } from "./javascriptElectronMemberWrites.js";
 
-import {
-  completeSemanticSteps,
-  traverseJavaScriptAstSteps,
-} from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 
 import {
   electronRendererLoadAuthority,
@@ -37,7 +37,6 @@ import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpre
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
-  failedJavaScriptStaticAnalysis,
   registrationKey,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -71,14 +70,12 @@ import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
-import {
-  parseJavaScriptSource,
-  type ParsedJavaScriptSource,
-} from "./javascriptSourceParser.js";
+import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
@@ -87,32 +84,61 @@ import {
   type JavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
 
-/** Parse one JavaScript artifact and recover static structure only. */
-export const analyzeJavaScriptStaticSource = (
-  source: string,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis => {
-  const file = parseJavaScriptSource(source);
-  return file === null
-    ? failedJavaScriptStaticAnalysis()
-    : analyzeParsedJavaScriptStaticSource(source, file, precision);
-};
-
-/** Recover static structure from an already parsed JavaScript artifact. */
-export const analyzeParsedJavaScriptStaticSource = (
+/**
+ * Syntax-level facts for a parsed source whose member-mutation phase was
+ * refused. Every finding that reads mutation facts is unexamined, so its
+ * absence here is not evidence of absence; parser, comment and text facts
+ * remain, marked with the refused phase.
+ */
+export const memberMutationRefusedJavaScriptStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis =>
-  completeSemanticSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(source, file, precision),
-  );
+  refusal: AnalysisResourceConstraintError,
+): JavaScriptStaticAnalysis => {
+  const parserErrors = file.errors.length;
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  addSourceMapDirectives(source, file.comments ?? [], accumulator);
+  const reason = `The member-mutation phase was refused (${refusal.reason}); findings that depend on member-mutation facts were not examined.`;
+  const coverage: JavaScriptStaticCoverage = {
+    syntax:
+      parserErrors === 0
+        ? { status: "complete", error_count: 0 }
+        : { status: "recovered", error_count: parserErrors },
+    semantics: { unknown_findings: null, uncertainty: [] },
+    examination: {
+      status: "not-examined",
+      semantic_resource_limits: [],
+      electron_call_paths_limited: false,
+      refused_phase: "member-mutations",
+    },
+    applicability: { electron: "unknown" },
+    unexamined_reason: reason,
+  };
+  return {
+    ...failedJavaScriptStaticAnalysis(),
+    parse_status: javaScriptStaticParseStatus(coverage),
+    analysis_coverage: coverage,
+    parse_error_count: parserErrors,
+    source_map_urls: accumulator.sourceMaps,
+    vendors: detectVendors(source),
+    limitations: [
+      `${reason} Absence of findings is not evidence of absence.`,
+      ...(parserErrors > 0
+        ? [
+            "The parser recovered from syntax errors; affected bindings are partial.",
+          ]
+        : []),
+      "JavaScript syntax was parsed as data and was never evaluated.",
+    ],
+  };
+};
 
 /** Static analysis that yields during its source traversal; results are unchanged. */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
@@ -120,6 +146,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     undefined,
     precision,
+    memberMutationAllowance,
   );
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
@@ -307,11 +334,7 @@ const finalizeStaticAnalysis = (
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
-    ...(typeOnlySideEffect
-      ? [
-          "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-        ]
-      : []),
+    ...(typeOnlySideEffect ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION] : []),
     ...(electronObserved ? [ELECTRON_IDENTITY_LIMITATION] : []),
     ...(candidateElectron
       ? [

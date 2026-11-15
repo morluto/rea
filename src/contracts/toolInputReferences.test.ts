@@ -3,6 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { toolContract } from "./toolContracts.js";
 import {
@@ -831,3 +832,155 @@ it.each(["$ref", "$dynamicRef"])(
       expect(advertised(value)).toBe(canonical(value));
   },
 );
+
+describe("root union default presentation", () => {
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "omits a nested default the other root group would refuse in %s",
+    (target) => {
+      const normalization = z
+        .strictObject({ rules: z.array(z.string()).default([]) })
+        .default({ rules: [] });
+      const schema = z.union([
+        z.strictObject({ before: z.string(), after: z.string() }),
+        z.strictObject({
+          before_scenario: z.string(),
+          after_scenario: z.string(),
+          normalization,
+        }),
+      ]);
+      const canonical = z.toJSONSchema(schema, { io: "input", target });
+      const advertised = presentInputJsonSchema(
+        canonical,
+        (property) => property,
+      );
+      const defaults: string[] = [];
+      const collect = (value: unknown, path: readonly string[]): void => {
+        if (Array.isArray(value)) {
+          value.forEach((child, index) =>
+            collect(child, [...path, String(index)]),
+          );
+          return;
+        }
+        if (typeof value !== "object" || value === null) return;
+        if (Object.hasOwn(value, "default")) defaults.push(path.join("."));
+        for (const [key, child] of Object.entries(value))
+          collect(child, [...path, key]);
+      };
+      collect(advertised, []);
+      // `normalization` belongs to the scenario group only. Leaving its
+      // `rules` default behind made a client that fills nested defaults send
+      // an object the strict passive group rejects.
+      expect(defaults).toEqual([]);
+      const ajv =
+        target === "draft-2020-12"
+          ? new Ajv2020({ strict: false })
+          : new Ajv({ strict: false });
+      expect(
+        ajv.compile(advertised)({ before: "first", after: "second" }),
+      ).toBe(true);
+      expect(
+        schema.safeParse({
+          before: "first",
+          after: "second",
+          normalization: { rules: [] },
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "keeps a nested default a reference inside its resource targets in %s",
+    (target) => {
+      const schema = z.union([
+        z.strictObject({ before: z.string(), after: z.string() }),
+        z.strictObject({
+          before_scenario: z.string(),
+          after_scenario: z.string(),
+          normalization: z
+            .object({ rules: z.array(z.string()).optional() })
+            .default({ rules: [] }),
+        }),
+      ]);
+      const canonical = z.toJSONSchema(schema, { io: "input", target }) as {
+        anyOf: {
+          properties: Record<string, Record<string, unknown>>;
+          required: string[];
+          additionalProperties: boolean;
+        }[];
+      };
+      // A nested resource keeps the group, so the union still flattens. Its
+      // sibling reference points into the default the flattening would drop.
+      const scenario = canonical.anyOf[1] as NonNullable<
+        (typeof canonical.anyOf)[1]
+      >;
+      const normalization = scenario.properties.normalization as Record<
+        string,
+        unknown
+      >;
+      canonical.anyOf[1] = {
+        ...scenario,
+        properties: {
+          ...scenario.properties,
+          normalization: {
+            $id: "https://example.test/normalization",
+            ...normalization,
+            properties: {
+              ...(normalization.properties as Record<string, unknown>),
+              alias: { $ref: "#/default/rules" },
+            },
+          },
+        },
+      };
+      const advertised = presentInputJsonSchema(
+        canonical,
+        (property) => property,
+      );
+      expect(advertised).not.toHaveProperty("anyOf");
+      const ajv =
+        target === "draft-2020-12"
+          ? new Ajv2020({ strict: false })
+          : new Ajv({ strict: false });
+      const validate = ajv.compile(advertised);
+      expect(validate({ before: "first", after: "second" })).toBe(true);
+    },
+  );
+});
+
+describe("advertised empty-string literal edge cases", () => {
+  it("widens empty-string literals under contentSchema", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: { type: "string", contentSchema: { const: "" } },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({
+      value: {
+        type: "string",
+        contentSchema: { type: "string" },
+      },
+    });
+  });
+
+  it("removes the recorded trace seed's empty-string literals from the advertisement", () => {
+    const canonical = z.toJSONSchema(
+      z.strictObject({ seed: applicationFeatureSeedSchema }),
+      { io: "input", target: "draft-2020-12" },
+    );
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(JSON.stringify(advertised)).not.toContain('"const":""');
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    const emptyRoute = { kind: "route", value: "", match: "exact" };
+    expect(canonicalValidate({ seed: emptyRoute })).toBe(true);
+    expect(advertisedValidate({ seed: emptyRoute })).toBe(true);
+    expect(
+      canonicalValidate({
+        seed: { kind: "route", value: "", match: "contains" },
+      }),
+    ).toBe(false);
+  });
+});

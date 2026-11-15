@@ -40,18 +40,11 @@ export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
       failure.message,
       {
         cause: failure,
-        userMessage: failure.userMessage,
-        resolvedPath: failure.resolvedPath,
+        ...failure.primaryFacts(),
         cancellation: failure.cancellation,
         cleanup: failure.cleanup,
         cleanupLeases: failure.cleanupLeases,
         partialObservation: failure.partialObservation,
-        ...(failure.boundary === undefined
-          ? {}
-          : { boundary: failure.boundary }),
-        ...(failure.admission === undefined
-          ? {}
-          : { admission: failure.admission }),
       },
       failure.details,
     );

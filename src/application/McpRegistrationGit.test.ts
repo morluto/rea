@@ -3,16 +3,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
-import {
-  ProcessOwnershipIdentityBatchFailure,
-  ProcessOwnershipInspectionCancelled,
-} from "../process/ProcessInspectionCancellation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import * as owned from "../process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import * as exec from "../process/ExecFileOutput.js";
 import { resolveKiloRegistrationWorktree } from "./McpRegistrationGit.js";
 import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
 import * as locations from "./McpRegistrationLocations.js";
@@ -21,8 +15,7 @@ import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.
 let resources: ArtifactResourceScope;
 beforeEach(() => {
   resources = new ArtifactResourceScope();
-  vi.spyOn(owned, "prepareOwnedCommand").mockResolvedValue(undefined);
-  vi.spyOn(owned, "runOwnedCommand").mockRejectedValue(
+  vi.spyOn(exec, "execFileBytes").mockRejectedValue(
     new Error("An inert Git outcome must be selected by the fixture"),
   );
 });
@@ -30,8 +23,7 @@ afterEach(async () => {
   try {
     await resources.close();
   } finally {
-    vi.mocked(owned.prepareOwnedCommand).mockRestore();
-    vi.mocked(owned.runOwnedCommand).mockRestore();
+    vi.mocked(exec.execFileBytes).mockRestore();
   }
 });
 
@@ -51,19 +43,26 @@ const context = async (
   };
 };
 
-it.each(["process", "timeout", "output-limit"] as const)(
+const physicalFailures = {
+  process: () => Object.assign(new Error("Command failed: git"), { code: 128 }),
+  timeout: () =>
+    Object.assign(new Error("Command timed out"), {
+      code: "ETIMEDOUT",
+      killed: true,
+    }),
+  "output-limit": () =>
+    Object.assign(new RangeError("stdout maxBuffer length exceeded"), {
+      code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    }),
+};
+
+it.each(Object.keys(physicalFailures) as (keyof typeof physicalFailures)[])(
   "keeps observed %s failure primary when cancellation arrives during Git completion",
   async (reason) => {
     const abort = new AbortController();
     const opaque = { operator: "cancel", detail: new Error("opaque reason") };
-    const failure = new owned.OwnedCommandFailure(
-      reason,
-      "Physical Git observation failed",
-      null,
-      null,
-      { cancellation: { reason: opaque }, cause: new Error("physical cause") },
-    );
-    vi.mocked(owned.runOwnedCommand).mockImplementation(async () => {
+    const failure = physicalFailures[reason]();
+    vi.mocked(exec.execFileBytes).mockImplementation(async () => {
       abort.abort(opaque);
       throw failure;
     });
@@ -79,22 +78,13 @@ it.each(["process", "timeout", "output-limit"] as const)(
       AnalysisCancelledError,
     );
     expect(observed.secondaryFailures[0]?.cause).toBe(opaque);
-    expect(failure.cancellation?.reason).toBe(opaque);
   },
 );
 
 it("retains primary cancellation and its opaque caller reason", async () => {
   const opaque = { operator: "cancel", detail: new Error("opaque reason") };
-  vi.mocked(owned.runOwnedCommand).mockRejectedValue(
-    new owned.OwnedCommandFailure(
-      "cancelled",
-      "Git observation cancelled",
-      null,
-      null,
-      {
-        cancellation: { reason: opaque },
-      },
-    ),
+  vi.mocked(exec.execFileBytes).mockRejectedValue(
+    new exec.ExecFileOutputCancelledError(opaque),
   );
   const observed: unknown = await resolveKiloRegistrationWorktree(
     await context(),
@@ -105,14 +95,29 @@ it("retains primary cancellation and its opaque caller reason", async () => {
   expect(observed.cause).toBe(opaque);
 });
 
-it("retains the exact incomplete UTF-8 snapshot behind the Git observation failure", async () => {
-  const snapshot: ProviderProcessSnapshot = {
-    stdout: { text: "\uFFFD", invalidUtf8: true, bytes: 1, observedBytes: 1 },
-    stderr: { text: "native diagnostic", bytes: 17, observedBytes: 17 },
-    exitCode: 0,
-    signal: null,
-  };
-  vi.mocked(owned.runOwnedCommand).mockResolvedValue(snapshot);
+it("runs each Git query as a stoppable process group with the caller's environment", async () => {
+  const selected = await context();
+  vi.mocked(exec.execFileBytes).mockRejectedValue(new Error("stop here"));
+  await resolveKiloRegistrationWorktree(selected).catch(() => undefined);
+  expect(exec.execFileBytes).toHaveBeenCalledWith(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    expect.objectContaining({
+      cwd: expect.any(String),
+      env: selected.environment,
+      stopSignal: "SIGTERM",
+      timeout: 10_000,
+    }),
+  );
+});
+
+const undecodable = {
+  stdout: Buffer.from([0xff]),
+  stderr: Buffer.from("native diagnostic"),
+};
+
+it("retains the exact undecodable observation behind the Git failure", async () => {
+  vi.mocked(exec.execFileBytes).mockResolvedValue(undecodable);
   const observed: unknown = await resolveKiloRegistrationWorktree(
     await context(),
   ).catch((cause: unknown) => cause);
@@ -124,21 +129,15 @@ it("retains the exact incomplete UTF-8 snapshot behind the Git observation failu
   expect(observed.cause).toBeInstanceOf(Error);
   if (!(observed.cause instanceof Error))
     throw new Error("Incomplete Git observation lost its immediate failure");
-  expect(observed.cause.cause).toBe(snapshot);
+  expect(observed.cause.cause).toBe(undecodable);
 });
 
-it("preserves an incomplete Git observation and a late cancellation through selection", async () => {
+it("preserves an undecodable Git observation and a late cancellation through selection", async () => {
   const controller = new AbortController();
   const reason = { operator: "cancel incomplete observation" };
-  const snapshot: ProviderProcessSnapshot = {
-    stdout: { text: "\uFFFD", invalidUtf8: true, bytes: 1, observedBytes: 1 },
-    stderr: { text: "native diagnostic", bytes: 17, observedBytes: 17 },
-    exitCode: 0,
-    signal: null,
-  };
-  vi.mocked(owned.runOwnedCommand).mockImplementation(async () => {
+  vi.mocked(exec.execFileBytes).mockImplementation(async () => {
     controller.abort(reason);
-    return snapshot;
+    return undecodable;
   });
   const selected = await context(controller.signal);
   const result = await resolveMcpRegistrationClients(
@@ -156,7 +155,7 @@ it("preserves an incomplete Git observation and a late cancellation through sele
   if (result.ok) throw new Error("Incomplete observation must fail");
   expect(result.error).toBeInstanceOf(ConfigurationError);
   expect(result.error.cause).toBeInstanceOf(Error);
-  expect((result.error.cause as Error).cause).toBe(snapshot);
+  expect((result.error.cause as Error).cause).toBe(undecodable);
   expect(result.error.secondaryFailures).toEqual([
     expect.objectContaining({ _tag: "AnalysisCancelledError", cause: reason }),
   ]);
@@ -201,70 +200,4 @@ it("preserves a native location access failure and late cancellation through sel
   } finally {
     present.mockRestore();
   }
-});
-
-it.each(["descriptor", "batch"] as const)(
-  "retains actual %s inspection cleanup through Git discovery and retry",
-  async (kind) => {
-    const descriptor = await failedInspectionDescriptor();
-    const reason = { operator: "cancel during Git preparation" };
-    const controller = new AbortController();
-    const failure =
-      kind === "descriptor"
-        ? descriptor.failure
-        : new ProcessOwnershipIdentityBatchFailure(
-            [
-              { pid: process.pid, requestIndex: 0, cause: descriptor.failure },
-              {
-                pid: process.pid,
-                requestIndex: 1,
-                cause: new ProcessOwnershipInspectionCancelled(reason),
-              },
-            ],
-            new Map(),
-          );
-    vi.mocked(owned.prepareOwnedCommand).mockImplementation(async () => {
-      controller.abort(reason);
-      throw failure;
-    });
-    const observed: unknown = await resolveKiloRegistrationWorktree(
-      await context(controller.signal),
-    ).catch((cause: unknown) => cause);
-    expect(observed).toBeInstanceOf(ConfigurationError);
-    if (!(observed instanceof ConfigurationError))
-      throw new Error("Physical inspection failure lost configuration context");
-    expect(observed.cause).toBe(failure);
-    expect(observed.cleanupIncomplete).toBe(true);
-    expect(observed.cleanupResources).toContain(descriptor.path);
-    expect(observed.secondaryFailures).toEqual([
-      expect.objectContaining({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
-      }),
-    ]);
-    expect(resources.hasPending).toBe(true);
-    await expect(resources.close()).rejects.toBeDefined();
-    expect(observed.cleanupIncomplete).toBe(true);
-    expect(descriptor.handle.fd).toBeGreaterThanOrEqual(0);
-    descriptor.allow();
-    await resources.close();
-    expect(descriptor.handle.fd).toBe(-1);
-    expect(resources.hasPending).toBe(false);
-    expect(observed.cleanupIncomplete).toBe(false);
-  },
-);
-
-it("keeps plain producer-owned inspection cancellation primary during Git preparation", async () => {
-  const reason = { operator: "cancel Git inspection" };
-  vi.mocked(owned.prepareOwnedCommand).mockRejectedValue(
-    new ProcessOwnershipInspectionCancelled(reason),
-  );
-  const observed: unknown = await resolveKiloRegistrationWorktree(
-    await context(),
-  ).catch((cause: unknown) => cause);
-  expect(observed).toBeInstanceOf(AnalysisCancelledError);
-  if (!(observed instanceof AnalysisCancelledError))
-    throw new Error("Inspection cancellation lost its producer origin");
-  expect(observed.cause).toBe(reason);
-  expect(resources.hasPending).toBe(false);
 });

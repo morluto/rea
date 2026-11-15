@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each(["direct", "call"])(
   "recovers standalone module factories dispatched with %s",

@@ -1,15 +1,12 @@
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-import {
-  inspectAnalysisSettingSeeds,
-  launchAnalysisSetting,
-} from "../config/analysisSettings.js";
-import {
-  parseEnvironment,
-  parseEnvironmentValues,
-  type Environment,
-} from "../config/environment.js";
+import { launchAnalysisSetting } from "../config/analysisSettings.js";
+import type { Environment } from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -102,16 +99,16 @@ const expressionSettings = (
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -120,9 +117,9 @@ export const clientRegistrationEnvironment = (
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
@@ -148,7 +145,10 @@ export const clientRegistrationEnvironmentDetails = (
     registration,
     client?.registrationProfile,
   );
-  const raw = source.connection?.[key];
+  const field =
+    key === "envs" ? gooseEnvironmentField(source.connection) : ok(key);
+  if (!field.ok) return field;
+  const raw = source.connection?.[field.value];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
@@ -156,7 +156,7 @@ export const clientRegistrationEnvironmentDetails = (
         settings: existing.error.issues.map((issue) => ({
           setting: [
             ...(source.nested ? ["transport"] : []),
-            key,
+            field.value,
             ...issue.path,
           ].join("."),
           constraint:
@@ -207,7 +207,7 @@ export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
@@ -219,9 +219,9 @@ export const recordedProviderSettings = (
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     {},
     "fragment",
-    platform,
   );
   if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
   const recorded = snapshotEnvironment(details.value.values, platform);
@@ -273,16 +273,16 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   if (!details.ok) return details;
   const unresolved = [...details.value.unresolvedSettings].filter(
@@ -314,34 +314,24 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
-  platform: NodeJS.Platform = process.platform,
-  expressionSettings: ReadonlySet<string> = new Set(),
+  platform: NodeJS.Platform,
+  expressionSettings: ReadonlySet<string>,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
-  const runtimeEnvironment = snapshotEnvironment(environment, platform);
-  const unresolved = new Set(
-    Object.keys(
-      snapshotEnvironment(
-        Object.fromEntries([...expressionSettings].map((name) => [name, ""])),
-        platform,
-      ),
-    ),
+  const validated = validateRegistrationEnvironment(
+    environment,
+    expressionSettings,
+    validation,
+    platform,
   );
-  const validated =
-    validation === "fragment"
-      ? parseEnvironmentValues(runtimeEnvironment, unresolved)
-      : parseEnvironment(runtimeEnvironment, unresolved);
-  if (!validated.ok) return validated;
-  const seedIssues = inspectAnalysisSettingSeeds(
-    runtimeEnvironment,
-    unresolved,
-  );
-  if (seedIssues.length > 0)
-    return err(
-      new ConfigurationError("Invalid REA environment configuration", {
-        settings: seedIssues,
-      }),
-    );
-  return ok(environmentDetails(environment, validated.value, unresolved));
+  return validated.ok
+    ? ok(
+        environmentDetails(
+          environment,
+          validated.value.configuration,
+          validated.value.unresolvedSettings,
+        ),
+      )
+    : validated;
 };
 
 const admittedTimeout = (
@@ -397,7 +387,7 @@ const registrationTimeoutInputs = (
 const environmentDetails = (
   environment: Readonly<Record<string, string>>,
   configuration: Environment,
-  unresolvedSettings: ReadonlySet<string> = new Set(),
+  unresolvedSettings: ReadonlySet<string>,
 ): ClientRegistrationEnvironmentDetails => ({
   values: Object.fromEntries(
     Object.entries(environment).sort(([left], [right]) =>

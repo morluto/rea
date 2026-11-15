@@ -29,7 +29,7 @@ const startServer = async () => {
     import.meta.url,
   ).href;
   const analyzerUrl = new URL(
-    "../../domain/javascript/javascriptStaticAnalysis.ts",
+    "../../../tests/fixtures/javascriptStaticAnalysis.ts",
     import.meta.url,
   ).href;
   const child = spawn(
@@ -83,6 +83,7 @@ const startServer = async () => {
         },
         package_type: "unknown",
         purpose: "analysis",
+        member_mutation_allowance: { alias_states: 524_288, source: "default" },
       });
     },
     close: async () => {

@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
@@ -717,7 +718,7 @@ async function* decodedChunks(
   observe?: (bytes: Uint8Array) => void,
   physicalRead: JsonInputPhysicalReadObservation = {},
 ): AsyncGenerator<string> {
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   let leading = true;
   const checked = (text: string): string => {
     if (leading && text.length > 0) {
