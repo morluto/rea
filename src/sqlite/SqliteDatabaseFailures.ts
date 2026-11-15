@@ -18,7 +18,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -131,11 +130,9 @@ export const sqliteDatabaseDialect = (
           ? undefined
           : stableArtifactInputFailure(cause, OPERATION);
       }
-      // This signal's own abort carries its reason; another abort error
-      // is still a cancellation, reported as itself.
+      // Only the caller's own abort is a cancellation. An abort error with
+      // another reason, or with no caller abort, is classified as itself.
       if (isAbortOf(cause, signal)) return cancelledBy(OPERATION, signal);
-      if (cause instanceof Error && cause.name === "AbortError")
-        return cancelledBy(OPERATION, carriedReason(cause));
       // Windows reports a sharing violation as EBUSY: another process holds
       // the file without read sharing. The unchanged request succeeds once
       // that process releases it. Name the member of the file set that was
