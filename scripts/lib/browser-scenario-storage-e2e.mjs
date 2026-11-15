@@ -360,14 +360,15 @@ const assertStorageKeyPartition = async (connection, origin) => {
             {},
             sessionId,
           );
-          const frame = tree.frameTree?.frame;
+          const frame = tree.root;
           if (
-            typeof frame?.id === "string" &&
-            frame.url ===
+            typeof frame.facts.frameId === "string" &&
+            frame.url.kind === "observed" &&
+            frame.url.url ===
               `${origin.replace("127.0.0.1", "localhost")}/storage-frame`
           ) {
             childSession = sessionId;
-            childFrameId = frame.id;
+            childFrameId = frame.facts.frameId;
             break;
           }
         } catch {
@@ -387,7 +388,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     );
     const rootTree = await connection.send("Page.getFrameTree");
     const beforeRoot = await connection.send("Storage.getStorageKey", {
-      frameId: rootTree.frameTree.frame.id,
+      frameId: rootTree.root.facts.frameId,
     });
     await connection.send("Page.navigate", {
       url: `${origin.replace("127.0.0.1", "localhost")}/storage-top`,
@@ -395,7 +396,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     await waitForPagePath(connection, "/storage-top", start.result.value);
     const afterTree = await connection.send("Page.getFrameTree");
     const topLevel = await connection.send("Storage.getStorageKey", {
-      frameId: afterTree.frameTree.frame.id,
+      frameId: afterTree.root.facts.frameId,
     });
     assert.notEqual(
       child.storageKey,

@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import WebSocket, { type RawData } from "ws";
 import { isUtf8 } from "node:buffer";
 
@@ -5,6 +6,12 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import {
+  admitCdpReply,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   cdpCleanupGraceExpired,
@@ -12,7 +19,6 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -577,19 +583,30 @@ export class CdpConnection {
     this.core.reschedulePending(this.#scopedPendingIds, timeoutMs);
   }
 
-  /** Bound each response separately from the caller-selected observation window. */
-  async send(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
+  /**
+   * Bound each response separately from the caller-selected observation
+   * window. A registered command's reply is parsed by its result schema; a
+   * mismatch rejects that command with `CdpMalformedReply`.
+   */
+  async send<M extends CdpCommand>(
+    method: M,
+    params?: CdpCommandParams<M>,
     sessionId?: string,
     signal?: AbortSignal,
-  ): Promise<unknown> {
-    return await this.core.send(method, params, sessionId, signal, {
-      operation: this.operation,
-      commandTimeoutMs: () => this.#commandTimeoutMs,
-      deadlineKind: () => this.#deadlineKind,
-      scopedIds: this.#scopedPendingIds,
-    });
+  ): Promise<CdpCommandResult<M>> {
+    const reply = await this.core.send(
+      method,
+      params ?? {},
+      sessionId,
+      signal,
+      {
+        operation: this.operation,
+        commandTimeoutMs: () => this.#commandTimeoutMs,
+        deadlineKind: () => this.#deadlineKind,
+        scopedIds: this.#scopedPendingIds,
+      },
+    );
+    return admitCdpReply(method, reply, this.operation);
   }
 
   /** Close only REA's socket; never close the browser or selected page. */
@@ -650,7 +667,7 @@ const waitForOpen = async (
       signal?.removeEventListener("abort", onAbort);
     };
     const boundedTimeoutMs = Math.min(
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
       handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {

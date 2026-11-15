@@ -190,12 +190,6 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
 
-/** Clients registered with the compact input-schema profile unless one is selected. */
-export const compactInputSchemaByDefault = ({
-  name,
-}: Pick<SetupClient, "name">): boolean =>
-  name === "kimi" || name === "lm_studio";
-
 /**
  * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
  * existing ~/.cache/lm-studio, then ~/.lmstudio. Setup never writes the pointer.
@@ -327,6 +321,18 @@ export const registrationPersistenceDetail = (
     (detail): detail is string => detail !== undefined,
   );
   return details.length === 0 ? undefined : details.join(" ");
+};
+
+/**
+ * What a direct registration (no approval step) must tell the caller after it
+ * wrote a client that can rewrite its configuration from memory.
+ */
+export const runningClientRewriteNotice = (
+  client: Pick<SetupClient, "name" | "displayName" | "quitBeforeSetup">,
+): string | undefined => {
+  if (client.quitBeforeSetup !== true) return undefined;
+  const name = client.displayName ?? client.name;
+  return `A running ${name} can rewrite its configuration from memory and drop the registration. If ${name} was running, quit it fully (closing its window is not enough), rerun rea mcp add, then start ${name} again.`;
 };
 
 /**

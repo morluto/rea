@@ -1,3 +1,4 @@
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
@@ -9,7 +10,7 @@ import {
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import {
-  pwntoolsDecoderFailure,
+  pwntoolsFailureDialect,
   pwntoolsUnavailable,
   capturedPwntoolsOutput,
   pwntoolsBudgetRecovery,
@@ -324,13 +325,15 @@ export class PwntoolsDecoder<
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
     const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
     const failure = (cause: unknown) =>
-      pwntoolsDecoderFailure(
+      classifyProviderFailure(
         cause,
-        phase,
-        phase === "configuration" ? executablePath : input.path,
-        executablePath,
-        {},
-        context,
+        pwntoolsFailureDialect(
+          phase,
+          phase === "configuration" ? executablePath : input.path,
+          executablePath,
+          {},
+          context,
+        ),
       );
     try {
       if (options?.signal?.aborted)
@@ -679,13 +682,15 @@ export class PwntoolsDecoder<
         this.#resources,
         producerLimits,
       );
-      const primary = pwntoolsDecoderFailure(
+      const primary = classifyProviderFailure(
         cause,
-        phase,
-        phase === "configuration" ? executablePath : input.path,
-        executablePath,
-        evidence,
-        context,
+        pwntoolsFailureDialect(
+          phase,
+          phase === "configuration" ? executablePath : input.path,
+          executablePath,
+          evidence,
+          context,
+        ),
       );
       result = err(primary);
     }

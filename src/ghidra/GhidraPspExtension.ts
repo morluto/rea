@@ -5,8 +5,9 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -248,10 +249,11 @@ const ghidraPspInspectionError = (cause: unknown): AnalysisError => {
       : { code: admission.code, ...admission.detail };
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError("resolve_analysis_profile", {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-        })
+      ? cancelledBy(
+          "resolve_analysis_profile",
+          carriedReason(artifactFileCancellationCause(cause)),
+          { cleanup },
+        )
       : new AnalysisCapabilityUnavailableError(
           "ghidra",
           "resolve_analysis_profile",

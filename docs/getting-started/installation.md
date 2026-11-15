@@ -434,12 +434,15 @@ selected engine. See [provider selection](cli.md#choose-a-provider).
 ### Linux owned-process prerequisite
 
 On Linux, REA's shared process supervisor requires a procps-compatible `ps`
-on REA's `PATH` for ownership checks before launching a child. Ghidra, JADX,
-firmware tools and static JavaScript/Electron analysis use these checks.
-Install your distribution's `procps` or `procps-ng` package, or put another
-procps-compatible `ps` on `PATH` before
+for ownership checks before launching a child. Ghidra, JADX, firmware tools
+and static JavaScript/Electron analysis use these checks. REA runs the first
+executable of `/bin/ps`, `/usr/bin/ps` and `/run/current-system/sw/bin/ps`
+(NixOS), and searches its own `PATH` only when none exists, so a wrapper or
+agent `PATH` cannot replace the system `ps`. On macOS REA always runs
+`/bin/ps`. Install your distribution's `procps` or `procps-ng` package before
 running those workflows. A missing or incompatible command causes a refusal
-before the supervised child starts.
+before the supervised child starts; its message and `ps_command` and
+`ps_source` diagnostics name the `ps` REA ran.
 
 The public error code varies by caller: `capability_unavailable`,
 `provider_unavailable` or `execution_failure`. Some provider adapters report
@@ -1054,14 +1057,17 @@ Loader selection reads the Mach-O container header, including FAT files with a
 single architecture. For FAT32 and FAT64 containers, REA validates the
 architecture table and selected Mach-O header, prepares a private thin image,
 and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
-FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
-2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
-for slice identity. These slices' function-entry encodings decode under
-`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
-selected only when it is the arm64 family's only candidate. REA checks the
-entire source's SHA-256 while copying the slice; source identity and reported
-offsets still refer to the original container. Any other ambiguous architecture
-subtype requires an explicitly extracted thin image; REA does not guess.
+FAT slice choice. Hopper reads the slice that `open_binary` admitted for the
+session, the same slice other tools and the session's Evidence name; it does not
+rank slices again. For arm64 targets, admission prefers subtype bases 0 (plain
+arm64), then 2 (arm64e), then 1 (arm64v8), ignoring capability bits for ranking
+while retaining the raw subtype for slice identity. These slices'
+function-entry encodings decode under `--aarch64`, ahead of Apple's arm64e.x1
+variant (base subtype 12), which is selected only when no preferred subtype is
+present. REA checks the entire source's SHA-256 while copying the slice; source
+identity and reported offsets still refer to the original container. When
+admission cannot choose one slice, open an explicitly extracted thin image; REA
+does not guess.
 Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
 strings to override the derived Hopper loader arguments, for example
 `["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
@@ -1280,6 +1286,10 @@ workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
 to write a Claude Desktop MSIX configuration the running app could overwrite,
 or any file this process's MSIX AppData redirection would divert.
+Because `rea mcp add` writes without an approval step, after it changes Claude
+Desktop's configuration it prints a notice on stderr: a running Claude Desktop
+can rewrite the file from memory and drop the registration, so quit it fully,
+rerun `rea mcp add`, then start it again. The JSON report is unchanged.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those
@@ -1723,6 +1733,8 @@ export REA_GHIDRA_SEED_FILE=/absolute/path/to/seeds.tsv
 Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or `label` (a label needs a name). Addresses are `0x` hex in the default space; `#` lines are comments. A pre-script applies seeds before auto-analysis: functions from the highest address down, then code, then labels. The seed digest is part of the analysis profile, and the session fails if the applied seeds differ. Result limitations report the outcome counts; a seed fails when it overlaps an instruction Ghidra already decoded.
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
+
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation. Neither establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
 
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):

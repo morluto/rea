@@ -31,8 +31,9 @@ import {
   type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -391,8 +392,7 @@ const readHopperProfileFile = async <Value>(
     const diagnostics = { profile_file: { kind, path }, ...completed };
     const failure =
       cancellation !== undefined
-        ? new AnalysisCancelledError("open_binary", {
-            cause: cancellation.reason,
+        ? cancelledBy("open_binary", carriedReason(cancellation.reason), {
             cleanup,
             diagnostics,
           })

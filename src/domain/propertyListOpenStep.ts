@@ -2,6 +2,7 @@ import { parseOpenStep } from "plist";
 
 import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
 import { markPlistDictionary } from "./apple/plistUid.js";
+import type { PlistDuplicateKeyCollector } from "./apple/plistDuplicateKeys.js";
 
 const OPEN_STEP_SYNTAX_CODES = [
   "unterminated_block_comment",
@@ -223,6 +224,7 @@ const skipTrivia = (text: string, start: number, strict = true): number => {
 export const decodeOpenStepPropertyList = (
   text: string,
   maximumDepth = MAX_PLIST_DEPTH,
+  duplicates?: PlistDuplicateKeyCollector,
 ): unknown => {
   let cursor = 0;
   const trivia = () => {
@@ -240,6 +242,7 @@ export const decodeOpenStepPropertyList = (
       assertDepth(depth);
       cursor += 1;
       const dictionary: Record<string, unknown> = {};
+      const keys: string[] = [];
       markPlistDictionary(dictionary);
       while (true) {
         trivia();
@@ -250,6 +253,7 @@ export const decodeOpenStepPropertyList = (
           );
         if (text[cursor] === "}") {
           cursor += 1;
+          duplicates?.dictionary(keys);
           return dictionary;
         }
         const key = value(depth + 1, true);
@@ -258,6 +262,7 @@ export const decodeOpenStepPropertyList = (
           throw new OpenStepPropertyListError("expected_equals", cursor);
         cursor += 1;
         const entry = value(depth + 1);
+        keys.push(String(key));
         Object.defineProperty(dictionary, String(key), {
           value: entry,
           enumerable: true,

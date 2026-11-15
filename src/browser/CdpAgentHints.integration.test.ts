@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import { inspectWebPage } from "../application/BrowserObservationService.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
@@ -105,7 +106,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      send: async (method: string) => {
+      send: fakeCdpSend((method) => {
         if (method === "Page.getFrameTree")
           return {
             frameTree: { frame: { id: "main", url: "https://app.test/" } },
@@ -113,7 +114,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
         if (method === "WebMCP.enable" && stage === "enable" && interrupted)
           throw failure;
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const context: Parameters<typeof discoverWebMcp>[0] = {
       connection,
@@ -244,16 +245,18 @@ it.each(
                 observation_ms: 0,
               }),
             );
-      if (
-        change === "unchanged" ||
-        change === "unknown-loader" ||
-        change === "unknown-initial-loader"
-      ) {
+      // A missing loader leaves the document unproven: coverage is limited
+      // and the initial document stays the subject, never a protocol error.
+      if (change !== "frame" && change !== "loader") {
         if (!result.ok) throw result.error;
         const unknown = change !== "unchanged";
+        const finalOnly =
+          change === "missing-final-loader" || change === "empty-final-loader";
         expect(
           result.value.limitations.some((value) =>
-            value.includes("initial document loader identity was unavailable"),
+            value.includes(
+              `${finalOnly ? "final" : "initial"} document loader identity was unavailable`,
+            ),
           ),
         ).toBe(unknown);
         expect(result.value.completeness.attach_limited_sections).toEqual(
@@ -268,13 +271,7 @@ it.each(
       } else
         expect(result).toMatchObject({
           ok: false,
-          error: {
-            reason:
-              change === "missing-final-loader" ||
-              change === "empty-final-loader"
-                ? "protocol_error"
-                : "target_changed",
-          },
+          error: { reason: "target_changed" },
         });
     } finally {
       await provider.close?.();

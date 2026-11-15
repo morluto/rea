@@ -3,6 +3,10 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  compareCountedBaseline,
+  recordLoweredBaseline,
+} from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -162,6 +166,40 @@ check(
   ],
 );
 
+// Node clamps a timer delay above the signed 32-bit bound to 1 ms. Durations
+// use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from their one owner.
+// The allowed files bound signed 32-bit integers that are not timer delays.
+check(
+  "signed 32-bit bound literal (use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from src/domain/analysisResourceLimits for durations)",
+  files,
+  /\b2_?147_?483_?647\b/u,
+  [
+    "src/domain/analysisResourceLimits.ts",
+    // JADX MCP `limit` argument: a Java int, not a duration.
+    "src/android/JadxAnalysis.ts",
+    // JVM `-XX:ActiveProcessorCount`: a Java int processor count.
+    "src/android/JadxConfiguration.ts",
+    // TShark `-c` packet count: a C int, not a duration.
+    "src/domain/captures/packetCapture.ts",
+    // DEX static `int` value range.
+    "src/domain/android/androidAnalysis.ts",
+    // Signed 32-bit bitmask operand range.
+    "src/domain/javascript/javascriptSemanticResources.ts",
+    // Recorded crash pid, signal number and code fields.
+    "src/domain/native/recordedCrash.ts",
+    // Java int parsing for Ghidra launch properties.
+    "src/ghidra/GhidraInstallationPolicy.ts",
+  ],
+);
+
+// Mach-O load-command codes have one table; a local copy drifts from it.
+check(
+  "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
+  files,
+  /\bLC_[A-Z0-9_]+\s*=\s*(?:0x[0-9a-f]+|\d+)\b/iu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
+);
+
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
@@ -174,44 +212,66 @@ const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
-  const baseline = baselines[key] ?? {};
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
     const count = file.content.match(pattern)?.length ?? 0;
     if (count > 0) counts.set(file.path, count);
   }
-  const grown = [];
-  const stale = [];
-  for (const [path, count] of counts) {
-    const allowed = baseline[path] ?? 0;
-    if (count > allowed)
-      grown.push(`  ${path}: ${count} (baseline ${allowed})`);
-  }
-  for (const [path, allowed] of Object.entries(baseline)) {
-    const count = counts.get(path) ?? 0;
-    if (count < allowed) stale.push({ path, count, allowed });
-  }
-  if (grown.length > 0)
-    failures.push(`${label}; new copies are not allowed:\n${grown.join("\n")}`);
-  if (stale.length === 0) return;
-  if (shrinkBaselines) {
-    for (const { path, count } of stale)
-      if (count === 0) delete baseline[path];
-      else baseline[path] = count;
-    baselines[key] = baseline;
-    baselinesShrunk = true;
-    return;
-  }
-  failures.push(
-    `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${stale
+  const compared = compareCountedBaseline(
+    counts,
+    baselines[key] ?? {},
+    shrinkBaselines,
+  );
+  const lines = (differences) =>
+    differences
       .map(
         ({ path, count, allowed }) =>
           `  ${path}: ${count} (baseline ${allowed})`,
       )
-      .join("\n")}`,
-  );
+      .join("\n");
+  if (compared.grown.length > 0)
+    failures.push(
+      `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
+    );
+  if (recordLoweredBaseline(baselines, key, compared)) baselinesShrunk = true;
+  if (compared.stale.length > 0)
+    failures.push(
+      `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
+    );
 };
+
+// Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
+// direct construction can omit or replace the caller's reason.
+checkCounted(
+  "direct AnalysisCancelledError construction (use cancelledBy from src/domain/analysisErrorCore)",
+  "analysis-cancelled-constructor",
+  files,
+  /new AnalysisCancelledError\(/gu,
+  ["src/domain/analysisErrorCore.ts"],
+);
+
+// A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
+// a wall-clock sum moves with clock changes and has no finalize phase. The
+// remaining copy converts a monotonic budget for a browser page, which can
+// only read its own wall clock.
+checkCounted(
+  "wall-clock deadline computation (use Deadline from src/domain/deadline)",
+  "wall-clock-deadline",
+  files,
+  /Date\.now\(\)\s*\+/gu,
+  [],
+);
+
+// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// which owns malformed JSON, the packet array and each packet's layers.
+checkCounted(
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "tshark-json-envelope",
+  files,
+  /\b_source\s*\.\s*layers\b/gu,
+  ["src/pcap/TsharkJsonPackets.ts"],
+);
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
@@ -279,6 +339,17 @@ checkCounted(
   [],
 );
 
+// A per-format failure class restates the ParseFailure algebra under its own
+// spelling and needs its own catch-site translation; parsers throw a
+// ParseFailureError (or a subclass of it) instead.
+checkCounted(
+  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-format-failure-class",
+  files,
+  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  ["src/domain/parseFailure.ts"],
+);
+
 // JSON.parse keeps the last of repeated member names without saying so; a
 // parser of artifact content must state its duplicate-member policy
 // (src/domain/jsonDuplicateMember.ts finds a repeated name).
@@ -288,6 +359,35 @@ checkCounted(
   parserFiles,
   /JSON\.parse\(/gu,
   [],
+);
+
+// A RangeError can mean a stack overflow, a host string or buffer limit, a
+// raw read or write past a buffer, or whatever its thrower intended. Only
+// known host limits are classified; parsers throw a ParseFailureError.
+checkCounted(
+  "direct RangeError interpretation (use hostRangeErrorKind or parseFailureFromCause from src/domain/parseFailure)",
+  "range-error-interpretation",
+  files,
+  /instanceof RangeError/gu,
+  ["src/domain/parseFailure.ts"],
+);
+
+// Cleanup completion is recorded by the owning lease and read by errors when
+// asked. Pushing it with resolveCleanup() and composing dependency sets with
+// bindCleanupDependencies() are being replaced, so neither may spread.
+checkCounted(
+  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
+  "cleanup-resolve-push",
+  files,
+  /\.resolveCleanup\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+checkCounted(
+  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "cleanup-dependency-binding",
+  files,
+  /\.bindCleanupDependencies\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
 );
 
 if (baselinesShrunk) {

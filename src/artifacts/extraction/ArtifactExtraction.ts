@@ -373,7 +373,7 @@ const materializeSelection = async ({
       throw cause;
     }
     const traversal = new ArtifactTraversalObservation();
-    traversal.onCoverage({
+    traversal.record({
       status: inventory.coverage.status,
       limitations: inventory.limitations,
     });
@@ -478,7 +478,7 @@ const writeSelectedEntries = async ({
     else queue.occurrences.push(occurrence);
   }
   const registry = new ArtifactPathRegistry();
-  for await (const entry of reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(reader, signal)) {
     const path = normalizeArtifactPath(entry.path);
     // Logical declarations may share a query path with a real file. They do
     // not consume that file's selection or participate in materialization.
@@ -730,6 +730,7 @@ const createReader = async (
     | "resourceScope"
     | "espFlashSelection"
     | "readerLimits"
+    | "integrityPolicy"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -791,6 +792,7 @@ const createReader = async (
           admission: transferredSource?.admission,
           espFlashSelection: input.espFlashSelection,
           readerLimits: input.readerLimits,
+          integrity: input.integrityPolicy,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??

@@ -1,5 +1,5 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
@@ -42,27 +42,6 @@ export const resourceContentSize = (
     : err({ _tag: "InvalidCdpResourceSize" });
 };
 
-export const requiredRecord = (value: unknown): UnknownRecord => {
-  const record = recordValue(value);
-  if (record === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return record;
-};
-
-/** Require producer source text; an absent source is distinct from an empty script. */
-export const requiredScriptSource = (
-  value: unknown,
-  operation: BrowserObservationOperation,
-): string => {
-  const source = cdpStringValue(recordValue(value)?.scriptSource);
-  if (source === undefined)
-    throw new BrowserObservationError(operation, "protocol_error", {
-      detail:
-        "Debugger.getScriptSource returned malformed source text: scriptSource must be a string.",
-    });
-  return source;
-};
-
 export const isHttpUrl = (value: string | undefined): boolean => {
   if (value === undefined) return false;
   try {
@@ -103,12 +82,11 @@ export const delayWithCancellation = async (
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<void> => {
-  const maximumTimerDelay = 2_147_483_647;
   let remaining = durationMs;
   while (remaining > 0) {
     if (signal?.aborted === true)
       throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    const delay = Math.min(remaining, maximumTimerDelay);
+    const delay = Math.min(remaining, MAX_NODE_TIMER_DELAY_MS);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);

@@ -73,6 +73,17 @@ export type McpClientRegistrationOutcome = OutcomeLabels &
     | { readonly status: "not_started" }
   );
 
+/**
+ * Whether a registration's settings were published, including a failure that
+ * arrived after publication (for example cancellation during verification).
+ */
+export const mcpClientRegistrationWritten = (
+  result: Result<McpClientRegistrationReceipt, McpClientRegistrationFailure>,
+): boolean =>
+  result.ok
+    ? result.value.status === "configured"
+    : result.error.diagnostics?.["configured"] === true;
+
 /** Preserve every selected client's outcome, including work never started after cancellation. */
 export const registerMcpClients = async (
   clients: readonly McpRegistrationClient[],
