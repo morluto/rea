@@ -24,6 +24,7 @@ import tls from "node:tls";
 export function rejected(url) {
   spawn("");
   fetch(url, { method: "CONNECT" });
+  fetch(url, { headers: { "a b": "1" } });
   new WebSocket("wss://example.test/ws#fragment");
   tls.connect({ port: 443, secureProtocol: "bogus" });
 }
@@ -34,6 +35,7 @@ export function possible(url) {
   tls.connect({ port: 443, secureProtocol: "TLS_method" });
   spawn("node", [], { get a() { this.detached = true; return 0; }, detached: 1 });
   fetch(url, { get cache() { delete this.method; return "default"; }, method: "CONNECT" });
+  fetch(url, { headers: { get x() { delete this["a b"]; return "1"; }, "a b": "1" } });
 }
 `;
     await writeFile(path, source);
@@ -54,7 +56,12 @@ export function possible(url) {
         .map((node) => node.properties.method)
         .sort();
     expect(methods("child-process")).toEqual(["spawn", "spawn"]);
-    expect(methods("request")).toEqual(["WebSocket", "fetch", "fetch"]);
+    expect(methods("request")).toEqual([
+      "WebSocket",
+      "fetch",
+      "fetch",
+      "fetch",
+    ]);
     expect(methods("resource")).toEqual(["connect"]);
     const { call } = await connectLocalToolsMcp();
     const mcp = await call("analyze_javascript_application", {

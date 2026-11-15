@@ -151,3 +151,14 @@ it.each([
 ] as const)("keeps the request for %s", (_name, call, method) => {
   expect(requestsFor(call)).toEqual([method]);
 });
+
+it("keeps header enumeration with getters unknown across hosts", () => {
+  // Chromium 156 accepts this after WebIDL's per-key descriptor checks;
+  // Node 24.22.1 snapshots the invalid name and refuses it. Neither behavior
+  // establishes that every supported host refuses the request.
+  expect(
+    requestsFor(
+      'fetch(url, { headers: { get x() { delete this["a b"]; return "1"; }, "a b": "1" } })',
+    ),
+  ).toEqual(["fetch"]);
+});

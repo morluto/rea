@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   isObjectPrototypeSetter,
+  objectDataPropertyValue,
   primitiveOwnKeys,
   readExactJavaScriptLiteral,
   staticObjectPropertyReader,
@@ -47,14 +48,19 @@ const carriesCredentials = (url: string): boolean => {
 /**
  * Own header names of an object literal, when they are all that a host reads.
  * Headers init uses an object's `@@iterator` when it has one, so a computed
- * key, a spread or a `__proto__` setter leaves the names unknown.
+ * key, a spread, an accessor or a `__proto__` setter leaves the names unknown.
  */
 const recordHeaderNames = (
   record: t.ObjectExpression,
 ): readonly string[] | undefined => {
   const names: string[] = [];
   for (const property of record.properties) {
-    if (t.isSpreadElement(property) || property.computed) return undefined;
+    if (
+      t.isSpreadElement(property) ||
+      property.computed ||
+      objectDataPropertyValue(property) === undefined
+    )
+      return undefined;
     const { key } = property;
     const name = t.isIdentifier(key)
       ? key.name
