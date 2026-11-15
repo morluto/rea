@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, open, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -32,9 +33,10 @@ const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
 /** An owned capture copy and every descriptor needed to release it safely. */
 export class PcapSnapshot {
   private readonly handles = new Set<OwnedFileHandle>();
+  /** Descriptors whose failed completion close an error still reports. */
   private readonly completionCleanup = new Map<
     OwnedFileHandle,
-    AnalysisError
+    AnalysisCleanupLease
   >();
   readonly path: string;
   readonly configurationPath: string;
@@ -62,8 +64,13 @@ export class PcapSnapshot {
   private async release(handle: OwnedFileHandle): Promise<void> {
     await handle.close();
     this.handles.delete(handle);
-    this.completionCleanup.get(handle)?.resolveCleanup();
     this.completionCleanup.delete(handle);
+  }
+  /** Retry through a reported descriptor's lease so its error reads the release. */
+  private retryRelease(handle: OwnedFileHandle): Promise<void> {
+    return (
+      this.completionCleanup.get(handle)?.release() ?? this.release(handle)
+    );
   }
   private async releaseCompleted(
     handle: OwnedFileHandle,
@@ -78,7 +85,12 @@ export class PcapSnapshot {
         { reason: "Owned snapshot descriptor close failed" },
         { operation: OPERATION, cause: cleanupCause },
       );
-      this.completionCleanup.set(handle, cleanup);
+      const lease = new AnalysisCleanupLease(
+        () => this.release(handle),
+        [this.path],
+      );
+      lease.bindCleanupError(cleanup);
+      this.completionCleanup.set(handle, lease);
       if (signal?.aborted !== true) throw cleanup;
       const cancelled = new AnalysisCancelledError(OPERATION, {
         cause: signal.reason,
@@ -297,7 +309,7 @@ export class PcapSnapshot {
 
   async close(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.handles].map((handle) => this.release(handle)),
+      [...this.handles].map((handle) => this.retryRelease(handle)),
     );
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason as unknown] : [],

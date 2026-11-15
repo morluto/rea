@@ -415,8 +415,6 @@
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/pcap/PcapProvider.ts": 3,
-    "src/pcap/PcapSnapshot.ts": 1,
     "src/process/DarwinHelperCache.ts": 1,
     "src/process/DarwinProcessRunTokenReader.ts": 1,
     "src/process/OwnedDebuggerSessionRegistry.ts": 1,
