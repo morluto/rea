@@ -283,7 +283,7 @@ it("honors cancellation both before acquisition and across decoder completion", 
     authority: "historical-reference",
     subject: {
       local_path: fixture.sourceFile.path,
-      digest: { sha256: fixture.sourceFile.sha256 },
+      identity: { sha256: fixture.sourceFile.sha256 },
     },
     parameters: args,
     raw_result: { source_map_text: fixture.sourceMap.text },

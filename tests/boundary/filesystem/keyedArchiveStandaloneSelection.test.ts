@@ -52,7 +52,7 @@ it.skipIf(process.platform === "win32")(
           );
           expect(evidence.subject).toMatchObject({
             local_path: alias,
-            digest: {
+            identity: {
               sha256: createHash("sha256").update(bytes).digest("hex"),
             },
           });

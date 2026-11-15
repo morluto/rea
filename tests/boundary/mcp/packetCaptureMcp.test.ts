@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -68,7 +69,7 @@ it.each(["cancelled", "cleanup"])(
       fields: ["ip.addr"],
     };
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed capture fixture", version: "1" },
       {
         operation: "inspect_packet_capture",

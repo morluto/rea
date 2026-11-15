@@ -2,12 +2,12 @@ import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { expect, it, vi } from "vitest";
 
+import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import {
   admitAsarHeader,
   readAsarHeader,
   createAsarHeaderSignatureProbe,
 } from "./AsarHeader.js";
-import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 
 const makeArchive = (): Buffer => asarHeaderBytes(' \t\r\n{"files":{}} ');
 

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../tests/fixtures/canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -23,6 +24,13 @@ import { createArtifactBinarySession } from "../composition/binary.js";
 import { build } from "plist";
 import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
+
+/** The subject of an observation whose target identity was not observed. */
+const UNOBSERVED_SUBJECT = {
+  identity: { kind: "unknown", reason: "not-observed" },
+} as const;
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-mcp-fixture",
@@ -166,7 +174,7 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     inspected.structuredContent,
   );
   expect(evidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       source_path: plistPath,
       resource_root: { executable_sha256: null },
@@ -176,7 +184,7 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     .object({ evidence_id: z.string() })
     .parse(evidence).evidence_id;
   expect(session.evidenceById(evidenceId)).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     operation: "inspect_plist",
     normalized_result: {
       resource_root: { canonical_path: bundle, executable_sha256: null },
@@ -238,7 +246,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     "decode_interface_builder",
   ).outputSchema.parse(decoded.structuredContent);
   expect(decodedEvidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       target_sha256: null,
       resource_root: {
@@ -293,7 +301,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     inspected.structuredContent,
   );
   expect(evidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,
@@ -311,7 +319,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     .object({ evidence_id: z.string() })
     .parse(evidence).evidence_id;
   expect(session.evidenceById(evidenceId)).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     operation: "inspect_keyed_archive",
     normalized_result: {
       resource_root: {
@@ -413,7 +421,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
   } as const;
   for (const { name, validResult } of schemaCases) {
     const contract = toolContract(name);
-    const validEvidence = createEvidence(undefined, identity, {
+    const validEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: validResult,
@@ -432,7 +440,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         target_sha256: null,
       };
     }
-    const malformedEvidence = createEvidence(undefined, identity, {
+    const malformedEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: malformedResult,
@@ -460,7 +468,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         target_sha256: null,
       };
     }
-    const resourceEvidence = createEvidence(undefined, identity, {
+    const resourceEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: resourceResult,

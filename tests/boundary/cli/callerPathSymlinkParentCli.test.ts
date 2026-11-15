@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,9 +42,10 @@ describe.skipIf(process.platform === "win32")(
             const evidence = toolContract(operation).outputSchema.parse(
               result.json,
             );
-            expect(evidence.subject?.digest.sha256, `${command} ${path}`).toBe(
-              selectedDigest,
-            );
+            expect(
+              fileIdentity(evidence.subject).sha256,
+              `${command} ${path}`,
+            ).toBe(selectedDigest);
           }
       },
     );
@@ -80,7 +82,9 @@ describe.skipIf(process.platform === "win32")(
           const evidence = toolContract(
             "inspect_pe_resources",
           ).outputSchema.parse(result.json);
-          expect(evidence.subject?.digest.sha256, path).toBe(selectedDigest);
+          expect(fileIdentity(evidence.subject).sha256, path).toBe(
+            selectedDigest,
+          );
         }
       },
     );

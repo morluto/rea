@@ -11,6 +11,10 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import {
+  TOOL_REGISTRATION_OWNERS,
+  toolRegistrationCount,
+} from "./tool-registration-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -524,6 +528,15 @@ checkCounted(
   [],
 );
 
+// tool-registration-guard.mjs states the rule and its written owners.
+checkCounted(
+  "MCP tool registered outside the shared binding table (bind it in src/server/serviceToolBindings.ts)",
+  "bespoke-mcp-tool-registration",
+  files.filter(({ path }) => path.startsWith("src/")),
+  toolRegistrationCount,
+  [...TOOL_REGISTRATION_OWNERS.keys()],
+);
+
 // A runtime setting view throws the ConfigurationError of a malformed launch
 // seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
 // as a Result. Catching it by hand mixes it into each site's own failures.
@@ -554,6 +567,8 @@ const PARSER_FOLDERS = [
   "src/model/",
   "src/native/",
   "src/python/",
+  // Shared artifact readers (ZIP, directory, ASAR header) live in resources.
+  "src/resources/",
   "src/rust/",
   "src/v8/",
   "src/wasm/",
@@ -572,11 +587,13 @@ const PARSER_FOLDERS = [
     "managed",
     "model",
     "native",
+    "pcap",
     "python",
     "rust",
     "v8",
     "wasm",
     "windows",
+    "zip",
   ].map((folder) => `src/domain/${folder}/`),
 ];
 const parserFiles = files.filter((file) =>

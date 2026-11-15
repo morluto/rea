@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { z } from "zod";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { WebRuntimePort } from "../ports/WebRuntimePort.js";
@@ -155,7 +156,7 @@ export class WebRuntimeService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(undefined, this.provider.identity(), {
+      createEvidence(unknownTarget("not-observed"), this.provider.identity(), {
         predicateType: `rea.${operation.replaceAll("_", "-")}`,
         operation,
         parameters: input,

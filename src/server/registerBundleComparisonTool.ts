@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -64,7 +65,7 @@ export const registerBundleComparisonTool = (
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);
           const evidence = createEvidence(
-            undefined,
+            unknownTarget("derived-from-linked-evidence"),
             BUNDLE_COMPARISON_PROVIDER,
             {
               predicateType: "rea.bundle-comparison",
