@@ -1,4 +1,3 @@
-import { readCdpRequestWillBeSent } from "./CdpNetworkEventFacts.js";
 import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
@@ -10,7 +9,6 @@ import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import { recordValue } from "./CdpCaptureValues.js";
 import {
   CdpDocumentTracker,
   type CdpDocumentIdentity,
@@ -162,16 +160,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       case "Runtime.consoleAPICalled":
         handlers.handleConsoleAPICalled(this, registered.payload);
         return;
-    }
-    if (event.method === "Runtime.executionContextsCleared") {
-      this.executionContextFrames.clear();
-      return;
-    }
-    const params = recordValue(event.params);
-    if (params === undefined) return;
-    switch (event.method) {
       case "Network.requestWillBeSent": {
-        const facts = readCdpRequestWillBeSent(params);
+        const facts = registered.payload.facts;
         const requestId = facts.requestId;
         const previous =
           requestId === null ? undefined : this.network.get(requestId);
@@ -181,24 +171,26 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
             requestId,
             (this.#networkRequestOccurrences.get(requestId) ?? 0) + 1,
           );
-        break;
+        return;
       }
       case "Network.responseReceived":
-        handlers.handleResponseReceived(this, params);
-        break;
+        handlers.handleResponseReceived(this, registered.payload);
+        return;
       case "Network.loadingFinished":
-        handlers.handleLoadingFinished(this, params);
-        break;
+        handlers.handleLoadingFinished(this, registered.payload);
+        return;
       case "Network.webSocketCreated":
-        handlers.handleWebSocketCreated(this, params);
-        break;
+        handlers.handleWebSocketCreated(this, registered.payload);
+        return;
       case "Network.webSocketFrameSent":
-        handlers.handleWebSocketFrame(this, params, "sent");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "sent");
+        return;
       case "Network.webSocketFrameReceived":
-        handlers.handleWebSocketFrame(this, params, "received");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "received");
+        return;
     }
+    if (event.method === "Runtime.executionContextsCleared")
+      this.executionContextFrames.clear();
   }
 
   /** Resolve a transient execution context to one already authorized frame. */

@@ -20,6 +20,15 @@ import {
   type CdpFrameFacts,
 } from "../CdpFrameIdentity.js";
 import {
+  readCdpLoadingFailed,
+  readCdpLoadingFinished,
+  readCdpRequestWillBeSent,
+  readCdpResponseReceived,
+  readCdpWebSocketCreated,
+  readCdpWebSocketFrame,
+  runtimeRequestSchema,
+} from "../CdpNetworkEventFacts.js";
+import {
   readCdpExecutionContextCreated,
   readCdpExecutionContextDestroyed,
   readCdpScriptParsed,
@@ -118,6 +127,12 @@ const consoleApiCalled = z.unknown().transform((params) => {
   };
 });
 
+/** Passive capture and the timeline read tolerant facts; the active runtime requires the declaration. */
+const requestWillBeSent = z.unknown().transform((params) => ({
+  facts: readCdpRequestWillBeSent(params),
+  runtime: runtimeRequestSchema.safeParse(params),
+}));
+
 /**
  * One payload schema per subscribed event. The connection parses each
  * registered event once, before any subscriber sees it. A schema never
@@ -137,6 +152,15 @@ const CDP_EVENT_PAYLOADS = {
     .unknown()
     .transform(readCdpExecutionContextDestroyed),
   "Runtime.consoleAPICalled": consoleApiCalled,
+  "Network.requestWillBeSent": requestWillBeSent,
+  "Network.responseReceived": z.unknown().transform(readCdpResponseReceived),
+  "Network.loadingFinished": z.unknown().transform(readCdpLoadingFinished),
+  "Network.loadingFailed": z.unknown().transform(readCdpLoadingFailed),
+  "Network.webSocketCreated": z.unknown().transform(readCdpWebSocketCreated),
+  "Network.webSocketFrameSent": z.unknown().transform(readCdpWebSocketFrame),
+  "Network.webSocketFrameReceived": z
+    .unknown()
+    .transform(readCdpWebSocketFrame),
 } as const satisfies {
   readonly [E in CdpProtocolEvent]?: z.ZodType<unknown, unknown>;
 };
