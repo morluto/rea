@@ -1,4 +1,7 @@
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
+import type { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
 import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
@@ -74,6 +77,12 @@ import {
   readSessionStatus,
   type SessionStatusToolOptions,
 } from "./sessionStatusTool.js";
+
+/** The runtime settings owner and the delivery whose limits it reports. */
+export interface AnalysisSettingsToolOptions {
+  readonly settings: AnalysisSettings;
+  readonly delivery: ToolResultDelivery;
+}
 
 /** Deliver a workflow's typed output as the JSON value its contract declares. */
 const jsonValueResult = <Error>(
@@ -499,6 +508,24 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<CutterBridgeService>,
+  // Runtime settings remain usable without an active target or healthy
+  // provider, so they run outside analysis admission.
+  analysisSettings: (({ settings, delivery }) => ({
+    inspect_analysis_settings: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          ok({
+            ...settings.inspect(input),
+            constraints: analysisSettingsConstraints(delivery),
+          }),
+        ),
+    },
+    update_analysis_settings: {
+      admission: "application",
+      value: async (input) => jsonValueResult(settings.update(input)),
+    },
+  })) satisfies Bind<AnalysisSettingsToolOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",

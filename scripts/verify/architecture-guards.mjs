@@ -524,6 +524,24 @@ checkCounted(
   [],
 );
 
+// Each catalog tool is bound once, in the shared binding table
+// (serviceToolBindings.ts / contractToolBindings.ts), so its admission,
+// logging, progress and delivery come from one loop. A bespoke
+// `server.registerTool` call re-implements that wiring for one family.
+// Owners: the binding loop, the server core that wraps the SDK, and the agent
+// environment server, which serves its own catalog rather than REA's.
+checkCounted(
+  "MCP tool registered outside the shared binding table (bind it in src/server/serviceToolBindings.ts)",
+  "bespoke-mcp-tool-registration",
+  files.filter(({ path }) => path.startsWith("src/")),
+  /\.registerTool\(/gu,
+  [
+    "src/server/contractToolBindings.ts",
+    "src/server/EvidenceMcpServerCore.ts",
+    "src/server/environment/serveEnvironment.ts",
+  ],
+);
+
 // A runtime setting view throws the ConfigurationError of a malformed launch
 // seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
 // as a Result. Catching it by hand mixes it into each site's own failures.

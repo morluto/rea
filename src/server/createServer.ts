@@ -7,7 +7,6 @@ import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
-import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
@@ -609,7 +608,6 @@ export const createServer = (
           options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
       }),
     application: () => {
-      registerAnalysisSettingsTools(server, analysisSettings);
       registerAnalysisViewTool(
         server,
         toolLogger,
@@ -621,6 +619,10 @@ export const createServer = (
       registerServiceTools(
         server,
         {
+          analysisSettings: {
+            settings: analysisSettings,
+            delivery: server.delivery,
+          },
           webScripts: artifactResources,
           guidance: artifactResources,
           webModuleTrace,
