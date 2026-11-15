@@ -36,6 +36,29 @@ it("does not exempt without a reason, an unknown name, or across code", () => {
   ).toBe(1);
 });
 
+it("ignores marker text in block comments and strings", () => {
+  expect(
+    count("const a = s.slice(0, MAX); /* // sample-cap: examples */"),
+  ).toBe(1);
+  expect(
+    count("/*\n// generation-cap: x\n*/\nconst a = s.slice(0, MAX);"),
+  ).toBe(1);
+  expect(count('const a = [s.slice(0, MAX), "// sample-cap: examples"];')).toBe(
+    1,
+  );
+});
+
+it("reads a reason with quotes and a marker after a string", () => {
+  expect(
+    count(
+      "const a = s.slice(0, MAX); // sample-cap: the file's change lists all",
+    ),
+  ).toBe(0);
+  expect(
+    count('const a = [s.slice(0, MAX), "//"]; // sample-cap: examples'),
+  ).toBe(0);
+});
+
 it("does not count slices inside comments", () => {
   expect(count("// s.slice(0, MAX)\n/* t.slice(0, MAX) */")).toBe(0);
 });
