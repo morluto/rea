@@ -20,6 +20,7 @@ import {
   type RegisteredCommand,
 } from "../../../src/cli/visitRegisteredCommands.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
@@ -165,9 +166,16 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
-/** Contract fields the handler supplies from each Evidence target. */
-const targetFields = (description: ContractCliDescription): string[] =>
-  (description.evidenceTargets?.targets ?? []).map(({ field }) => field);
+/**
+ * Contract fields the handler supplies: each Evidence target's from its
+ * source, and each handler field from CLI-only values.
+ */
+const handlerSuppliedFields = (
+  description: ContractCliDescription,
+): string[] => [
+  ...(description.evidenceTargets?.targets ?? []).map(({ field }) => field),
+  ...description.handlerFields,
+];
 
 /** The contract schema one parameter supplies: a field, or a flattened member. */
 const suppliedField = (
@@ -181,6 +189,30 @@ const suppliedField = (
   return (
     (object as z.ZodObject).shape[parameter.member] as z.ZodType
   ).optional();
+};
+
+/**
+ * Argv takes a transformed field's inbound text, as tools/list advertises
+ * it; the contract transforms it on admission. CLI help may word the field
+ * differently, and the contract applies its own default.
+ */
+const expectInboundView = (
+  key: string,
+  cliField: z.ZodType,
+  contractField: z.ZodType,
+): void => {
+  const inbound = (schema: z.ZodType) => {
+    const {
+      default: _default,
+      description: _description,
+      ...view
+    } = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+    return view;
+  };
+  expect(inbound(cliField), key).toEqual(inbound(contractField));
+  expect(admits(cliField, undefined), key).toBe(
+    admits(contractField, undefined),
+  );
 };
 
 /** A caller-relative target, or the first probe the argument admits. */
@@ -257,86 +289,96 @@ const ARGV_SATISFYING_RULES: Readonly<
   },
   // The handler selects the local device when the caller selects none.
   "list-frida-processes": { deviceId: "local" },
+  // The contract transforms the endpoint text it admits.
+  "list-browser-targets": { endpoint: "http://127.0.0.1:9222" },
+  "observe-web-session": { endpoint: "http://127.0.0.1:9222" },
+  "inspect-web-page": { endpoint: "http://127.0.0.1:9222" },
+  "list-electron-targets": { endpoint: "http://127.0.0.1:9222" },
+  "inspect-electron-page": { endpoint: "http://127.0.0.1:9222" },
+  "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
+  "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
+  "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
+  "observe-javascript-runtime": { endpoint: "http://127.0.0.1:9229" },
 };
 
 const each = descriptions.map(
   (description) => [description.command, description] as const,
 );
 
-/** Commands whose CLI projection is derived from a tool contract. */
-const MIGRATED_COMMANDS = [
-  "inspect-sqlite-database",
-  "inspect-elf-notes",
-  "inspect-pe-resources",
-  "inspect-devicetree",
-  "inspect-go-binary",
-  "inspect-v8-code-cache",
-  "inspect-rust-binary",
-  "inspect-python-pyc",
-  "inspect-erlang-beam",
-  "inspect-model-artifact",
-  "inspect-apk-signature",
-  "inspect-desktop-application",
-  "inspect-evm-interface",
-  "audit-release-exposure",
-  "inspect-il2cpp-metadata",
-  "inspect-gpu-code-objects",
-  "inspect-signal-decoders",
-  "decode-signal-recording",
-  "inspect-packet-fields",
-  "inspect-packet-capture",
-  "inspect-wasm-artifact",
-  "inspect-firmware-regions",
-  "extract-firmware",
-  "inspect-keyed-archive",
-  "trace-dylib-resolution",
-  "inspect-asset-catalog",
-  "decode-interface-builder",
-  "annotate-native-function",
-  "search-bytes",
-  "inspect-native-load-image",
-  "read-bytes",
-  "address-to-file-offset",
-  "trace-native-values",
-  "inspect-native-data-type",
-  "inspect-native-instruction",
-  "resolve-native-call-targets",
-  "trace-native-ui-action",
-  "inspect-native-dispatch-metadata",
-  "procedure-references",
-  "inspect-native-api",
-  "inspect",
-  "xrefs",
-  "trace",
-  "function",
-  "instructions",
-  "decompile",
-  "search",
-  "decompile-all",
-  "observe-native-ui",
-  "capture-native-ui-scenario",
-  "inspect-macho",
-  "inspect-signature",
-  "list-architectures",
-  "inspect-plist",
-  "demangle-swift",
-  "analyze",
-  "analyze-javascript-application",
-  "inspect-managed-artifact",
-  "inspect-managed-members",
-  "inspect-managed-native-boundaries",
-  "list-frida-devices",
-  "list-frida-processes",
-  "instrument-with-frida",
+/** Every command the contract builders registered, from their registry. */
+const contractBuilt: ReadonlySet<string> = new Set(
+  [...descriptions, ...contractDocumentCommandDescriptions(cli)].map(
+    ({ command }) => command,
+  ),
+);
+
+/**
+ * Commands named after a public tool contract that still register by hand.
+ * Migrating one removes it here; this list may only shrink.
+ */
+const HAND_REGISTERED_CONTRACT_COMMANDS = [
+  "analyze-web-bundle",
+  "compare-process-captures",
+  "compare-web-captures",
+  "compare-web-screenshots",
+  "cutter-command",
+  "execute-rizin-command",
+  "export-web-scripts",
+  "guided-workflows",
+  "inspect-android-jni-bindings",
+  "inspect-api-contract",
+  "inspect-ntfs-journal",
+  "inspect-pcap-capture",
+  "inspect-pcap-client",
+  "inspect-playwright-trace",
+  "inspect-web-event-listeners",
+  "inspect-web-network-capture",
+  "inspect-with-objdump",
+  "list-cutter-sessions",
+  "observe-web-execution",
+  "recover-javascript-sources",
+  "trace-web-module-imports",
+  "trace-web-source-location",
 ];
 
-describe("CLI commands projected from tool contracts", () => {
-  it("registers the migrated commands", () => {
-    expect(descriptions.map(({ command }) => command)).toEqual(
-      expect.arrayContaining(MIGRATED_COMMANDS),
-    );
-  });
+/** Contract-built commands whose name differs from their contract's. */
+const RENAMED_CONTRACT_COMMANDS = [
+  "analyze",
+  "decompile",
+  "function",
+  "inspect",
+  "instructions",
+  "search",
+  "trace",
+  "validate-browser-scenario",
+];
 
+const commandName = (contract: string): string => contract.replaceAll("_", "-");
+
+// Derived from the registries, so a command that stops registering through a
+// contract builder fails here rather than silently leaving the parity cases.
+it("builds every contract-named command from its contract", () => {
+  const named = new Set(TOOL_CONTRACTS.map(({ name }) => commandName(name)));
+  expect(
+    [...named]
+      .filter((name) => registered.has(name) && !contractBuilt.has(name))
+      .toSorted(),
+  ).toEqual(HAND_REGISTERED_CONTRACT_COMMANDS);
+  expect(
+    [...contractBuilt].filter((name) => !named.has(name)).toSorted(),
+  ).toEqual(RENAMED_CONTRACT_COMMANDS);
+});
+
+// An argv fixture names a contract-built command, so it cannot outlive its registration.
+it("keeps every argv fixture on a contract-built command", () => {
+  expect(
+    Object.keys(ARGV_SATISFYING_RULES).filter(
+      (name) => !contractBuilt.has(name),
+    ),
+  ).toEqual([]);
+});
+
+describe("CLI commands projected from tool contracts", () => {
   it.each(each)(
     "%s exposes every contract field or declares its omission",
     (_command, description) => {
@@ -344,8 +386,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
-          ...targetFields(description),
-          ...description.handlerFields,
+          ...handlerSuppliedFields(description),
         ]
           .toSorted()
           .join(),
@@ -413,6 +454,10 @@ describe("CLI commands projected from tool contracts", () => {
             admits(contractField, spelled(absoluteCallerPath("rel/x"))),
           ).toBe(true);
         }
+        if (parameter.inbound) {
+          expectInboundView(parameter.key, cliField, contractField);
+          continue;
+        }
         if (parameter.runtimeJson !== undefined) {
           // JSON text decoded when the command runs; see below. Argv
           // requires the text of a required field.
@@ -463,12 +508,7 @@ describe("CLI commands projected from tool contracts", () => {
         if (runtimeJson !== undefined && typeof values[key] === "string")
           values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
-      // The handler supplies each Evidence target's field from its source,
-      // and each handler field from CLI-only values.
-      const targets = new Set([
-        ...targetFields(description),
-        ...description.handlerFields,
-      ]);
+      const targets = new Set(handlerSuppliedFields(description));
       const admitted =
         targets.size === 0
           ? description.contract.inputSchema
@@ -1103,35 +1143,6 @@ const reachable = (
 };
 
 describe("JSON-document contract commands", () => {
-  it("registers the migrated document commands", () => {
-    expect(documents.map(([command]) => command)).toEqual(
-      expect.arrayContaining([
-        "compare-wasm-interfaces",
-        "import-managed-reconstruction",
-        "verify-managed-native-boundaries",
-        "project-managed-application-graph",
-        "trace-application-feature",
-        "trace-javascript-semantics",
-        "compare-application-versions",
-        "compare-javascript-export-shapes",
-        "project-android-application-graph",
-        "project-apple-application-graph",
-        "project-harmony-application-graph",
-        "reconcile-javascript-runtime",
-        "capture-electron-scenario",
-        "compare-artifacts",
-        "inspect-analysis-view",
-        "match-native-functions",
-        "build-reconstruction-obligation-ledger",
-        "evaluate-reconstruction-coverage",
-        "observe-native-calls",
-        "compare-static-and-observed-endpoints",
-        "capture-browser-scenario",
-        "validate-browser-scenario",
-      ]),
-    );
-  });
-
   it.each(documents)(
     "%s takes one JSON document whose --schema is its contract input",
     (_command, description) => {
