@@ -1,6 +1,10 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
-import { allKeyed, keyedBy } from "../../domain/keyedCollection.js";
+import {
+  allKeyed,
+  keyedBy,
+  uniqueKeyed,
+} from "../../domain/keyedCollection.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
@@ -1109,18 +1113,24 @@ const fileRange = (section: NativeSection): FileRange | null => {
 
 /**
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
- * `.got.plt` address, then the `.got` address. Null when none is declared.
+ * `.got.plt` address, then the `.got` address. Null when none is declared,
+ * or when repeated PT_DYNAMIC headers leave the dynamic table ambiguous.
  */
 const resolveGotBase = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   named: (name: string) => readonly NativeSection[],
 ): { readonly address: bigint; readonly source: string } | null => {
-  const dynamicProgram = directory.programs.find(
-    (program) => program.type === 2,
+  // The ELF gABI allows one PT_DYNAMIC; with repeats, read neither rather
+  // than choosing one by position or falling back to another source.
+  const dynamicPrograms = uniqueKeyed(
+    keyedBy(directory.programs, ({ type }) => type),
+    2,
   );
+  if (!dynamicPrograms.ok) return null;
+  const dynamicProgram = dynamicPrograms.value;
   const dynamic =
-    (dynamicProgram === undefined
+    (dynamicProgram?.type !== 2
       ? undefined
       : { offset: dynamicProgram.offset, fileSize: dynamicProgram.size }) ??
     directory.sections

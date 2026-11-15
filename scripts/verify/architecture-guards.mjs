@@ -336,17 +336,18 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// `find` on a parsed section table silently keeps the first of repeated
-// declarations. Select keyed sections through src/domain/keyedCollection
-// (`uniqueKeyed`, `allKeyed`, or `firstKeyed`/`lastKeyed` with the format's
-// precedence rule); an address-containment test that selects nothing uses
-// `some`. GuidanceAccess looks up a guidance document's heading section by
-// its locator identity, not a parsed binary section table.
+// `find` on a parsed section, program-header or load-command table silently
+// keeps the first of repeated declarations. Select keyed entries through
+// src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
+// `firstKeyed`/`lastKeyed` with the format's precedence rule); an
+// address-containment test that selects nothing uses `some`. GuidanceAccess
+// looks up a guidance document's heading section by its locator identity,
+// not a parsed binary section table.
 checkCounted(
-  "first-match section lookup (select through src/domain/keyedCollection)",
+  "first-match section, program or command lookup (select through src/domain/keyedCollection)",
   "section-first-match",
   files,
-  /\bsections\.find(?:Last)?\(/gu,
+  /\b(?:sections|programs|commands)\.find(?:Last)?\(/gu,
   ["src/application/GuidanceAccess.ts"],
 );
 
