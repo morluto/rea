@@ -1,6 +1,8 @@
 import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 
+import { BrowserObservationError } from "../../domain/browserObservationError.js";
+import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
@@ -19,6 +21,15 @@ import {
   type CdpFrameEventKind,
   type CdpFrameFacts,
 } from "../CdpFrameIdentity.js";
+import {
+  readCdpLoadingFailed,
+  readCdpLoadingFinished,
+  readCdpRequestWillBeSent,
+  readCdpResponseReceived,
+  readCdpWebSocketCreated,
+  readCdpWebSocketFrame,
+  runtimeRequestSchema,
+} from "../CdpNetworkEventFacts.js";
 import {
   readCdpExecutionContextCreated,
   readCdpExecutionContextDestroyed,
@@ -53,6 +64,10 @@ export interface CdpFrameEvent {
   readonly facts: CdpFrameFacts;
   /** `missing` for attach and detach events, which carry no URL. */
   readonly url: CdpFrameUrlObservation;
+  /** The reported reason of a requested navigation. */
+  readonly reason: string | undefined;
+  /** The committed frame's reported transition type. */
+  readonly transitionType: string | undefined;
 }
 
 const frameEvent = (kind: CdpFrameEventKind) =>
@@ -67,6 +82,11 @@ const frameEvent = (kind: CdpFrameEventKind) =>
     return {
       facts: cdpFrameEventPayloadFacts(kind, params),
       url: observeCdpFrameUrl(urlSource),
+      reason: kind === "requested" ? cdpStringValue(record?.reason) : undefined,
+      transitionType:
+        kind === "navigated"
+          ? cdpStringValue(recordValue(record?.frame)?.transitionType)
+          : undefined,
     };
   });
 
@@ -118,6 +138,74 @@ const consoleApiCalled = z.unknown().transform((params) => {
   };
 });
 
+/** Passive capture and the timeline read tolerant facts; the active runtime requires the declaration. */
+const requestWillBeSent = z.unknown().transform((params) => ({
+  facts: readCdpRequestWillBeSent(params),
+  runtime: runtimeRequestSchema.safeParse(params),
+}));
+
+/** The flat session a target event names; undefined when missing or malformed. */
+const targetDetached = z.unknown().transform((params) => ({
+  sessionId: cdpStringValue(recordValue(params)?.sessionId),
+}));
+
+const targetAttached = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  const targetInfo = recordValue(record?.targetInfo);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    targetId: cdpStringValue(targetInfo?.targetId),
+    targetType: cdpStringValue(targetInfo?.type),
+  };
+});
+
+/** A non-flat child session's protocol message, still JSON text. */
+const targetMessage = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    message: cdpStringValue(record?.message),
+  };
+});
+
+/**
+ * A pause's call frames. Resuming is target-wide, so a consumer that resumes
+ * needs every frame's identity; the declaration is kept as one parse result.
+ */
+const debuggerPaused = z.unknown().transform((params) =>
+  z
+    .object({
+      callFrames: z.array(
+        z.object({
+          callFrameId: z.string(),
+          location: z.object({ scriptId: z.string() }),
+        }),
+      ),
+    })
+    .safeParse(params),
+);
+
+/** A frame lifecycle milestone; the timeline decides frame selection and time policy. */
+const lifecycleEvent = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    frameId: cdpStringValue(record?.frameId),
+    loaderId: cdpStringValue(record?.loaderId),
+    name: cdpStringValue(record?.name),
+    timestamp: numberValue(record?.timestamp),
+  };
+});
+
+/**
+ * Declared WebMCP tools. A missing or non-list inventory is undefined, never
+ * empty; malformed entries keep their positions as undefined.
+ */
+const webMcpTools = z.unknown().transform((params) => ({
+  tools: admitRecords(recordValue(params)?.tools)?.map((tool) =>
+    recordValue(tool),
+  ),
+}));
+
 /**
  * One payload schema per subscribed event. The connection parses each
  * registered event once, before any subscriber sees it. A schema never
@@ -137,6 +225,24 @@ const CDP_EVENT_PAYLOADS = {
     .unknown()
     .transform(readCdpExecutionContextDestroyed),
   "Runtime.consoleAPICalled": consoleApiCalled,
+  "Runtime.executionContextsCleared": z.unknown().transform(() => ({})),
+  "Inspector.targetCrashed": z.unknown().transform(() => ({})),
+  "Debugger.paused": debuggerPaused,
+  "Target.receivedMessageFromTarget": targetMessage,
+  "Network.requestWillBeSent": requestWillBeSent,
+  "Network.responseReceived": z.unknown().transform(readCdpResponseReceived),
+  "Network.loadingFinished": z.unknown().transform(readCdpLoadingFinished),
+  "Network.loadingFailed": z.unknown().transform(readCdpLoadingFailed),
+  "Network.webSocketCreated": z.unknown().transform(readCdpWebSocketCreated),
+  "Network.webSocketFrameSent": z.unknown().transform(readCdpWebSocketFrame),
+  "Target.attachedToTarget": targetAttached,
+  "Target.detachedFromTarget": targetDetached,
+  "Page.lifecycleEvent": lifecycleEvent,
+  "WebMCP.toolsAdded": webMcpTools,
+  "WebMCP.toolsRemoved": webMcpTools,
+  "Network.webSocketFrameReceived": z
+    .unknown()
+    .transform(readCdpWebSocketFrame),
 } as const satisfies {
   readonly [E in CdpProtocolEvent]?: z.ZodType<unknown, unknown>;
 };
@@ -155,15 +261,37 @@ export type CdpRegisteredEvent = {
   };
 }[CdpEventName];
 
-const isRegistered = (method: string): method is CdpEventName =>
+/** The registered event of one method (distributes over a union of methods). */
+export type CdpRegisteredEventOf<E extends CdpEventName> = Extract<
+  CdpRegisteredEvent,
+  { readonly method: E }
+>;
+
+/** Whether a payload schema is registered for this event name. */
+export const isCdpEvent = (method: string): method is CdpEventName =>
   Object.hasOwn(CDP_EVENT_PAYLOADS, method);
+
+/**
+ * Refuse a subscription to an event without a registered payload schema: no
+ * event of that name could reach the listener. TypeScript callers cannot name
+ * one; JavaScript verifiers can.
+ */
+export function assertCdpEvent(
+  method: string,
+  operation: BrowserObservationOperation,
+): asserts method is CdpEventName {
+  if (!isCdpEvent(method))
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail: `REA refused to subscribe to CDP event ${JSON.stringify(method)}: no payload schema is registered for it.`,
+    });
+}
 
 /** Parse one event's payload by its registered schema, or undefined when unregistered. */
 export const registeredCdpEvent = (
   method: string,
   params: unknown,
 ): CdpRegisteredEvent | undefined => {
-  if (!isRegistered(method)) return undefined;
+  if (!isCdpEvent(method)) return undefined;
   const schema: z.ZodType<unknown, unknown> = CDP_EVENT_PAYLOADS[method];
   return {
     method,

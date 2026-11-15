@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import { receiveCdpEvent } from "./CdpConnection.js";
 
 const origin = "http://127.0.0.1:43127";
@@ -227,7 +228,7 @@ it("refunds replaced and removed request records while ignoring stale response o
   expect(events.retainedEventBytes).toBe(0);
   request(events, "fresh", deep(600));
   expect(events.network.get("fresh")?.body_shapes.status).toBe("included");
-  events.beginAuthorizedFrame({ frameId: "frame" });
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame" }));
   expect(events.retainedEventBytes).toBe(0);
   request(events, "after-reset", deep(600));
   expect(events.network.get("after-reset")?.body_shapes.status).toBe(

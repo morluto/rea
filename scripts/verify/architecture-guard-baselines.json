@@ -3,14 +3,6 @@
     "src/gdb/GdbSessionManager.ts": 1,
     "src/process/ownedDebuggerSession.ts": 1
   },
-  "cdp-raw-event-params": {
-    "src/browser/CdpCaptureEvents.ts": 1,
-    "src/browser/CdpObservationSession.ts": 1,
-    "src/browser/CdpTargetEvents.ts": 1,
-    "src/browser/CdpWebMcpDiscovery.ts": 1,
-    "src/browser/PlaywrightScenarioServiceWorkers.ts": 2,
-    "src/browser/execution/CdpRuntimeRequests.ts": 1
-  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
