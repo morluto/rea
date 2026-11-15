@@ -26,6 +26,9 @@ import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../contracts/reverseEngineeringToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
 import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
 import {
@@ -271,59 +274,29 @@ export const registerReverseEngineeringCommands = (
         ),
       ),
   });
-  cli.command(CLI_COMMANDS.executeRizinCommand, {
-    description: "Execute one Rizin command against a local artifact",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Path to the local artifact to analyze.",
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(REVERSE_ENGINEERING_TOOL_CONTRACTS, "execute_rizin_command"),
+    {
+      command: CLI_COMMANDS.executeRizinCommand,
+      description: "Execute one Rizin command against a local artifact",
+      positionals: ["path", "command"],
+      fields: {
+        path: { description: "Path to the local artifact to analyze." },
+        command: { description: "One caller-selected Rizin command." },
+      },
+    },
+    async (input, { signal }) =>
+      projectCliAnalysisResult(
+        await executeWithCleanup(
+          service,
+          signal,
+          () => service.executeRizinCommand(input, { signal }),
+          "execute_rizin_command",
+        ),
       ),
-      command: z.string().min(1).describe("One caller-selected Rizin command."),
-    }),
-    options: z.object({
-      asmArch: rizinInputSchema.shape.asm_arch,
-      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
-      asmCpu: rizinInputSchema.shape.asm_cpu,
-      baseAddress: rizinInputSchema.shape.base_address,
-      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
-      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(
-            service,
-            signal,
-            () =>
-              service.executeRizinCommand(
-                {
-                  ...args,
-                  ...(options.asmArch === undefined
-                    ? {}
-                    : { asm_arch: options.asmArch }),
-                  ...(options.asmBits === undefined
-                    ? {}
-                    : { asm_bits: options.asmBits }),
-                  ...(options.asmCpu === undefined
-                    ? {}
-                    : { asm_cpu: options.asmCpu }),
-                  ...(options.baseAddress === undefined
-                    ? {}
-                    : { base_address: options.baseAddress }),
-                  ...(options.maxOutputBytes === undefined
-                    ? {}
-                    : { max_output_bytes: options.maxOutputBytes }),
-                  ...(options.commandTimeoutMs === undefined
-                    ? {}
-                    : { command_timeout_ms: options.commandTimeoutMs }),
-                },
-                { signal },
-              ),
-            "execute_rizin_command",
-          );
-          return projectCliAnalysisResult(result);
-        }),
-      ),
-  });
+  );
   cli.command(CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
