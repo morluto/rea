@@ -617,6 +617,14 @@ it("orders Goose's layers as Goose loads them", () => {
     "C:\\Team Config\\a;b.yaml",
     "C:\\Team\\goose.yaml",
   ]);
+  // A drive-less Windows entry depends on Goose's current drive.
+  const driveless = supportedClients("C:\\Users\\fixture", "win32", {
+    APPDATA: "C:\\Users\\fixture\\AppData\\Roaming",
+    GOOSE_ADDITIONAL_CONFIG_FILES: "\\team\\goose.yaml",
+  }).find(({ name }) => name === "goose");
+  expect(driveless?.configPathError).toContain(
+    "\\team\\goose.yaml, which has no drive",
+  );
 });
 
 it.skipIf(platform === "win32")(

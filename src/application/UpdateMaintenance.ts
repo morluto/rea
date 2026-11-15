@@ -166,13 +166,11 @@ export const existingMaintenanceScope = async (
     // of selecting it. An aligned registration is checked too: setup still
     // preflights it. When the conflict involves only provider settings setup
     // discovers, alignment is unknown here, not aligned or refused.
-    const refusal = await clientRefreshRefusal(
-      client,
-      settings,
-      command,
-      HOST_PLATFORM.platform,
-      resources,
-    );
+    const refusal = await clientRefreshRefusal(client, settings, command, {
+      platform: HOST_PLATFORM.platform,
+      currentCommandPath: entryPoint,
+      ...(resources === undefined ? {} : { resources }),
+    });
     if (refusal !== undefined) {
       unresolved.push({
         ...registration,

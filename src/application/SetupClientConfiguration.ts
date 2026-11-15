@@ -503,7 +503,9 @@ interface ClientRefresh {
   readonly desired: unknown;
   /** The layers the registration was read from. */
   readonly sources: readonly ClientConfigurationSource[];
-  /** Why setup refuses this write: a client policy or an overriding inline layer. */
+  /** The inline layer whose override is the refusal, when it is. */
+  readonly overrideOrigin?: ClientInlineConfiguration["origin"];
+  /** Why setup refuses this write: write-target ownership, a client policy or an overriding inline layer. */
   readonly refusal: string | undefined;
 }
 
@@ -516,8 +518,16 @@ const readClientRefresh = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-  resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
-  resources?: ArtifactResourceScope,
+  {
+    resolveProviderRequestBudget,
+    resources,
+    currentCommandPath,
+  }: {
+    readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
+    readonly resources?: ArtifactResourceScope;
+    /** The entry point whose registrations setup owns; update names the new one. */
+    readonly currentCommandPath?: string;
+  } = {},
 ): Promise<Result<ClientRefresh, ClientConfigurationFileError>> => {
   const files = await readClientConfigurationFiles(
     client,
@@ -553,14 +563,37 @@ const readClientRefresh = async (
     files.value,
     resolveProviderRequestBudget,
   );
-  const override = inlineOverrideBlocker(client, files.value, desired);
-  if (override !== undefined)
+  const target =
+    dshEditabilityBlocker(client, files.value) ??
+    writeTargetOwnershipBlocker(
+      client,
+      files.value,
+      parsed,
+      original,
+      currentCommandPath,
+    );
+  if (target !== undefined)
     return ok({
       original,
       parsed,
       desired,
       sources: files.value,
-      refusal: override,
+      refusal: target,
+    });
+  const overrideOrigin = inlineRegistrationOverride(
+    client,
+    files.value,
+    desired,
+    HOST_PLATFORM.platform,
+  );
+  if (overrideOrigin !== undefined)
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      overrideOrigin,
+      refusal: inlineOverrideRemediation(client, overrideOrigin),
     });
   const policy = await readClientPolicyBlock(
     client,
@@ -600,7 +633,9 @@ export const clientConfigurationAligned = async (
       client,
       providerEnvironment,
       command,
-      resolveProviderRequestBudget,
+      resolveProviderRequestBudget === undefined
+        ? {}
+        : { resolveProviderRequestBudget },
     );
     return (
       refresh.ok &&
@@ -640,8 +675,16 @@ export const clientRefreshRefusal = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-  platform: NodeJS.Platform,
-  resources?: ArtifactResourceScope,
+  {
+    platform,
+    currentCommandPath,
+    resources,
+  }: {
+    readonly platform: NodeJS.Platform;
+    /** The entry point the refreshing setup runs from. */
+    readonly currentCommandPath: string;
+    readonly resources?: ArtifactResourceScope;
+  },
 ): Promise<ClientRefreshRefusal | undefined> => {
   const refused = (remediation: string): ClientRefreshRefusal => ({
     alignment: "refused",
@@ -654,26 +697,29 @@ export const clientRefreshRefusal = async (
       client,
       providerEnvironment,
       command,
-      undefined,
-      resources,
+      {
+        currentCommandPath,
+        ...(resources === undefined ? {} : { resources }),
+      },
     );
     // An unreadable or malformed layer is a refusal too: setup's preflight
     // reports it the same way.
     if (!refresh.ok) return refused(refresh.error.detail);
-    if (refresh.value.refusal === undefined) return undefined;
-    const discovered = await discoveredInlineOverride(
+    const discovered = await discoveredInlineSettings(
       client,
       providerEnvironment,
       command,
       refresh.value,
       platform,
     );
-    return discovered === undefined
-      ? refused(refresh.value.refusal)
-      : {
-          alignment: "unknown",
-          remediation: `${discovered.origin} sets ${discovered.settings.join(", ")} in REA's ${PRODUCT_IDENTITY.mcpServerKey} registration for ${client.configPath}; setup discovers ${discovered.settings.length === 1 ? "that setting" : "those settings"} from the installed providers and update does not, so REA cannot tell whether this registration is current. Run ${PRODUCT_IDENTITY.cliBinary} setup to check and refresh it.`,
-        };
+    if (discovered !== undefined)
+      return {
+        alignment: "unknown",
+        remediation: `${discovered.origin} sets ${discovered.settings.join(", ")} in REA's ${PRODUCT_IDENTITY.mcpServerKey} registration for ${client.configPath}; setup discovers ${discovered.settings.length === 1 ? "that setting" : "those settings"} from the installed providers and update does not, so REA cannot tell whether this registration is current. Run ${PRODUCT_IDENTITY.cliBinary} setup to check and refresh it.`,
+      };
+    return refresh.value.refusal === undefined
+      ? undefined
+      : refused(refresh.value.refusal);
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof ConfigurationError)
@@ -687,11 +733,15 @@ export const clientRefreshRefusal = async (
 };
 
 /**
- * The inline layer and the discovered settings that alone explain its
- * override: it clears when the refreshed entry takes the inline layer's values
- * for settings setup may discover and the caller did not select.
+ * The read-only inline layer's settings that setup discovers and the caller
+ * did not select, when they decide this client's refresh: setup may write a
+ * different discovered value than the layer holds (the layer would then
+ * override it), so an entry that matches now is not known to stay current, and
+ * an override those values alone explain is not known to remain. Another
+ * refusal (ownership, policy, or an override other settings cause) does not
+ * depend on discovery.
  */
-const discoveredInlineOverride = async (
+const discoveredInlineSettings = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
@@ -704,13 +754,10 @@ const discoveredInlineOverride = async (
     }
   | undefined
 > => {
-  const origin = inlineRegistrationOverride(
-    client,
-    refresh.sources,
-    refresh.desired,
-    platform,
-  );
+  const [origin] = inlineRegistrationOrigins(client);
   if (origin === undefined) return undefined;
+  if (refresh.refusal !== undefined && refresh.overrideOrigin === undefined)
+    return undefined;
   // Setting names are matched by the platform's environment identity, so a
   // Windows layer's `Java_Home` is the discovered `JAVA_HOME`.
   const declared = snapshotEnvironment(
@@ -728,6 +775,7 @@ const discoveredInlineOverride = async (
   );
   const settings = Object.keys(adopted);
   if (settings.length === 0) return undefined;
+  if (refresh.overrideOrigin === undefined) return { origin, settings };
   const desired = await clientConfigurationDesired(
     client,
     { ...providerEnvironment, ...adopted },
@@ -798,18 +846,9 @@ const inspectClientDocument = async (
       remediation: files.error.detail,
     };
   }
-  const existing = files.value.find(
-    ({ sourcePath }) => sourcePath === client.configPath,
-  );
-  const editabilityError =
-    existing?.dialect === "dsh"
-      ? dshDocument(existing.document).editabilityError
-      : undefined;
+  const editabilityError = dshEditabilityBlocker(client, files.value);
   if (editabilityError !== undefined)
-    return {
-      status: "invalid",
-      remediation: editabilityError.message,
-    };
+    return { status: "invalid", remediation: editabilityError };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -825,14 +864,12 @@ const inspectClientDocument = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (isMissing(cause)) {
-      const inherited = effectiveClientConfiguration(files.value, {
+      const ownershipBlocker = writeTargetOwnershipBlocker(
         client,
-        document: undefined,
-      });
-      const ownershipBlocker =
-        inherited === undefined
-          ? undefined
-          : registrationOwnershipBlocker(client, inherited, "", files.value);
+        files.value,
+        undefined,
+        undefined,
+      );
       if (ownershipBlocker !== undefined)
         return { status: "invalid", remediation: ownershipBlocker };
       const desired = await clientConfigurationDesired(
@@ -875,11 +912,11 @@ const inspectClientDocument = async (
       parseClientConfiguration(original, client.format),
       files.value,
     );
-    const ownershipBlocker = registrationOwnershipBlocker(
+    const ownershipBlocker = writeTargetOwnershipBlocker(
       client,
+      files.value,
       parsed,
       original,
-      files.value,
     );
     if (ownershipBlocker !== undefined)
       return { status: "invalid", remediation: ownershipBlocker };
@@ -957,10 +994,69 @@ const inlineOverrideBlocker = (
   sources: readonly ClientConfigurationSource[],
   desired: unknown,
 ): string | undefined => {
-  const origin = inlineRegistrationOverride(client, sources, desired);
+  // Setup writes and its client reads this file on the running host.
+  const origin = inlineRegistrationOverride(
+    client,
+    sources,
+    desired,
+    HOST_PLATFORM.platform,
+  );
   return origin === undefined
     ? undefined
-    : `${origin} overrides REA's ${PRODUCT_IDENTITY.mcpServerKey} registration in ${client.configPath}, and REA does not edit it. Remove the ${PRODUCT_IDENTITY.mcpServerKey} server from ${origin} or make it match, then rerun setup.`;
+    : inlineOverrideRemediation(client, origin);
+};
+
+const inlineOverrideRemediation = (
+  client: SetupClient,
+  origin: ClientInlineConfiguration["origin"],
+): string =>
+  `${origin} overrides REA's ${PRODUCT_IDENTITY.mcpServerKey} registration in ${client.configPath}, and REA does not edit it. Remove the ${PRODUCT_IDENTITY.mcpServerKey} server from ${origin} or make it match, then rerun setup.`;
+
+/** A Cordis document setup cannot edit. */
+const dshEditabilityBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+): string | undefined => {
+  const existing = sources.find(
+    ({ sourcePath }) => sourcePath === client.configPath,
+  );
+  return existing?.dialect === "dsh"
+    ? dshDocument(existing.document).editabilityError?.message
+    : undefined;
+};
+
+/**
+ * Setup's ownership check of the row it would replace: the target file's own
+ * row, or, when the file is absent, the row the lower layers supply.
+ */
+const writeTargetOwnershipBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+  parsed: ClientConfigurationDocument | undefined,
+  original: string | undefined,
+  currentCommandPath?: string,
+): string | undefined => {
+  if (parsed !== undefined)
+    return registrationOwnershipBlocker(
+      client,
+      parsed,
+      original ?? "",
+      sources,
+      currentCommandPath,
+    );
+  const inherited = effectiveClientConfiguration(sources, {
+    client,
+    document: undefined,
+  });
+  return inherited === undefined
+    ? undefined
+    : registrationOwnershipBlocker(
+        client,
+        inherited,
+        "",
+        sources,
+        currentCommandPath,
+      );
 };
 
 /** Admit only absent or proven-owned rows that this setup would replace. */
@@ -969,6 +1065,7 @@ const registrationOwnershipBlocker = (
   parsed: ClientConfigurationDocument,
   original: string,
   sources: readonly ClientConfigurationSource[] = [],
+  currentCommandPath?: string,
 ): string | undefined => {
   // Cordis owns registrations by stable entry ID, including malformed launchers.
   if (parsed.dialect === "dsh") return undefined;
@@ -1011,7 +1108,10 @@ const registrationOwnershipBlocker = (
     );
   }
   for (const entry of entries) {
-    const ownership = clientRegistrationOwnership(entry.value, client);
+    const ownership =
+      currentCommandPath === undefined
+        ? clientRegistrationOwnership(entry.value, client)
+        : clientRegistrationOwnership(entry.value, client, currentCommandPath);
     if (ownership !== "owned")
       return clientRegistrationOwnershipRemediation(ownership, entry.paths);
   }

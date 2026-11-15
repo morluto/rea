@@ -633,6 +633,68 @@ it("reports a Kilo registration whose KILO_CONFIG_CONTENT differs only in a disc
   }
 });
 
+it("reports a Kilo registration whose matching KILO_CONFIG_CONTENT sets a discovered provider path as needing setup", async () => {
+  const home = await createTestTempDirectory(
+    "rea-kilo-update-discovered-match-",
+  );
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const hopper = "/opt/hopper/hopper";
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({
+      mcp: {
+        rea: {
+          type: "local",
+          command,
+          enabled: true,
+          environment: { HOPPER_LAUNCHER_PATH: hopper },
+        },
+      },
+    }),
+  );
+  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { environment: { HOPPER_LAUNCHER_PATH: hopper } } },
+    }),
+  });
+  // The entry matches today, but setup may discover another launcher that
+  // the inline layer would then override.
+  expect(scope.clients).not.toContain("kilo");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({
+      client: "kilo",
+      state: "unknown",
+      remediation: expect.stringContaining(
+        "KILO_CONFIG_CONTENT sets HOPPER_LAUNCHER_PATH",
+      ),
+    }),
+  ]);
+});
+
+it("leaves a Kilo file whose own launcher REA does not own out of update maintenance", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-foreign-file-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({
+      mcp: {
+        rea: { type: "local", command: ["/opt/other/server"], enabled: true },
+      },
+    }),
+  );
+  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
+    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { command } } }),
+  });
+  // The effective entry is REA's, but setup refuses to replace the file's
+  // foreign launcher, so maintenance must not select Kilo.
+  expect(scope.clients).not.toContain("kilo");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({ client: "kilo" }),
+  ]);
+});
+
 it("matches a discovered setting by Windows environment identity in KILO_CONFIG_CONTENT", async () => {
   const home = await createTestTempDirectory("rea-kilo-update-discovered-win-");
   const root = join(home, ".config", "kilo");
@@ -650,11 +712,21 @@ it("matches a discovered setting by Windows environment identity in KILO_CONFIG_
   if (kilo === undefined) throw new Error("Kilo row missing");
   // `Java_Home` is the JAVA_HOME setup discovers on Windows, and a distinct
   // name elsewhere.
-  expect(await clientRefreshRefusal(kilo, {}, command, "win32")).toMatchObject({
+  expect(
+    await clientRefreshRefusal(kilo, {}, command, {
+      platform: "win32",
+      currentCommandPath: command[1] ?? "",
+    }),
+  ).toMatchObject({
     alignment: "unknown",
     remediation: expect.stringContaining("KILO_CONFIG_CONTENT sets JAVA_HOME"),
   });
-  expect(await clientRefreshRefusal(kilo, {}, command, "linux")).toMatchObject({
+  expect(
+    await clientRefreshRefusal(kilo, {}, command, {
+      platform: "linux",
+      currentCommandPath: command[1] ?? "",
+    }),
+  ).toMatchObject({
     alignment: "refused",
   });
 });

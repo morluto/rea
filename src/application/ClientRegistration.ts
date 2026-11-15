@@ -146,6 +146,8 @@ export const parseClientRegistrationLauncher = (
 export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
+  /** The REA entry point that owns registrations; update names the new one. */
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
 ): ClientRegistrationCommandIdentity => {
   const parsed = parseClientRegistrationLauncher(value, {
     dialect: client.format ?? "json",
@@ -154,7 +156,7 @@ export const clientRegistrationOwnership = (
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
-        CURRENT_ENTRYPOINT_PATH,
+        currentCommandPath,
       )
     : "unknown";
 };

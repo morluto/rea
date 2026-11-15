@@ -1010,21 +1010,26 @@ const gooseAdditionalConfigFiles = ({
 /**
  * Goose's layers in increasing precedence (`Config::default`): the system
  * file, each `GOOSE_ADDITIONAL_CONFIG_FILES` entry, then the user file it
- * writes. A relative additional entry follows Goose's working directory, which
- * REA cannot know.
+ * writes. A relative additional entry follows Goose's working directory, and a
+ * Windows drive-less one its current drive, which REA cannot know.
  */
 const gooseLocation = (
   context: ClientPathContext,
 ): Result<ClientLocation, ClientPathFailure> => {
-  const pathApi = context.platform === "win32" ? win32 : posix;
   const configPath = gooseUserConfigPath(context);
-  const additional = gooseAdditionalConfigFiles(context);
-  const relative = additional.find((path) => !pathApi.isAbsolute(path));
-  if (relative !== undefined)
-    return err({
-      path: relative,
-      message: `GOOSE_ADDITIONAL_CONFIG_FILES names the relative path ${relative}, which Goose resolves against its own working directory. Use absolute paths before configuring Goose.`,
-    });
+  for (const path of gooseAdditionalConfigFiles(context)) {
+    const dependence = clientPathDependence(path, context.platform);
+    if (dependence === "relative")
+      return err({
+        path,
+        message: `GOOSE_ADDITIONAL_CONFIG_FILES names the relative path ${path}, which Goose resolves against its own working directory. Use absolute paths before configuring Goose.`,
+      });
+    if (dependence === "driveless")
+      return err({
+        path,
+        message: `GOOSE_ADDITIONAL_CONFIG_FILES names ${path}, which has no drive, so the file Goose reads depends on its current drive. Use a path with a drive letter or a UNC path before configuring Goose.`,
+      });
+  }
   return ok({ configPath, markerPath: configPath });
 };
 
