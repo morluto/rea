@@ -1,0 +1,35 @@
+import { expect, it } from "vitest";
+import { z } from "zod";
+
+import {
+  presentRootDiscriminator,
+  schemaAnnotations,
+} from "./schemaAnnotations.js";
+
+const alternatives = () =>
+  [
+    z.strictObject({ mode: z.literal("a"), a: z.string() }),
+    z.strictObject({ mode: z.literal("b").optional(), b: z.string() }),
+  ] as const;
+
+it("keeps a root discriminator out of the canonical JSON Schema", () => {
+  const schema = presentRootDiscriminator(z.union(alternatives()), "mode");
+  expect(schemaAnnotations(schema)).toEqual({ rootDiscriminator: "mode" });
+  expect(z.toJSONSchema(schema)).toEqual(
+    z.toJSONSchema(z.union(alternatives())),
+  );
+});
+
+it("follows clones of the declaring schema, not other schemas", () => {
+  const schema = presentRootDiscriminator(z.union(alternatives()), "mode");
+  expect(schemaAnnotations(schema.describe("described"))).toEqual({
+    rootDiscriminator: "mode",
+  });
+  expect(schemaAnnotations(schema.optional())).toBeUndefined();
+  expect(schemaAnnotations(z.union(alternatives()))).toBeUndefined();
+});
+
+it("accepts only a property the alternatives declare", () => {
+  // @ts-expect-error The alternatives do not declare this property.
+  presentRootDiscriminator(z.union(alternatives()), "missing");
+});

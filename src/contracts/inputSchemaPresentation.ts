@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { advertisedSchemaPatterns } from "./advertisedDialect.js";
 import { dependencyGuidance } from "./advertisedDialectProjection.js";
 import { projectPortablePattern } from "./portablePattern.js";
+import type { SchemaAnnotations } from "../domain/schemaAnnotations.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -810,13 +811,12 @@ const flattenRootObjectUnion = (
 
 /** Preserve opt-in discriminator relationships without a root union. */
 const presentDiscriminatedRoot = (
-  root: Record<string, unknown>,
+  canonical: Record<string, unknown>,
+  discriminator: string | undefined,
 ): Record<string, unknown> => {
-  const { "x-rea-root-discriminator": discriminator, ...canonical } = root;
   const references = new JsonSchemaReferences(canonical);
   const flattened = flattenRootObjectUnion(canonical, references);
-  if (typeof discriminator !== "string" || flattened === canonical)
-    return flattened;
+  if (discriminator === undefined || flattened === canonical) return flattened;
   const alternatives = canonical.anyOf ?? canonical.oneOf;
   if (!Array.isArray(alternatives) || alternatives.length !== 2)
     throw new TypeError(
@@ -915,8 +915,12 @@ const presentDiscriminatedRoot = (
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
+  annotations: Pick<SchemaAnnotations, "rootDiscriminator"> = {},
 ): Record<string, unknown> => {
-  const flattened = presentDiscriminatedRoot(root);
+  const flattened = presentDiscriminatedRoot(
+    root,
+    annotations.rootDiscriminator,
+  );
   const references = new JsonSchemaReferences(flattened);
   const described = describeSchema(
     flattened,

@@ -18,6 +18,7 @@ import {
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { schemaAnnotations } from "../domain/schemaAnnotations.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -104,6 +105,7 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         const presented = presentInputJsonSchema(
           inline,
           fallbackPropertyDescription,
+          schemaAnnotations(contract.inputSchema),
         );
         const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
           .hasEvidence
