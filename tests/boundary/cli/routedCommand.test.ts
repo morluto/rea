@@ -3,8 +3,8 @@ import pino from "pino";
 import { expect, it } from "vitest";
 
 import {
-  registerTargetRoutedCommand,
-  targetRoute,
+  registerRoutedCommand,
+  commandRoute,
 } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js";
@@ -14,12 +14,12 @@ const harness = () => {
   const calls: { route: string; cliOptions: unknown; input: unknown }[] = [];
   const cli = Cli.create("rea-routed-test", { version: "1", sync: false });
   const command = { command: "probe", description: "Probe" };
-  registerTargetRoutedCommand(
+  registerRoutedCommand(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
     command,
     [
-      targetRoute(
+      commandRoute(
         {
           name: "archive_probe",
           inputSchema: z.object({
@@ -41,11 +41,11 @@ const harness = () => {
           return {};
         },
         {
-          takesTarget: async (target) => target.endsWith(".asar"),
+          takes: async ({ path }) => String(path).endsWith(".asar"),
           requirement: "an archive target",
         },
       ),
-      targetRoute(
+      commandRoute(
         { name: "program_probe", inputSchema: z.object({}) },
         { ...command, sessionTarget: { description: "Target" } },
         async (input, { cliOptions }) => {
@@ -109,7 +109,7 @@ it("refuses an option the chosen route does not own by its CLI key", async () =>
         {
           path: ["report"],
           message:
-            "--report requires an archive target; this target runs program_probe, which does not take it.",
+            "--report requires an archive target; the given input selects a program target, which does not take it.",
         },
       ],
     },
