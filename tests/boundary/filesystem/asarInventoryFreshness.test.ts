@@ -252,7 +252,7 @@ describe("ASAR captured-byte identity", () => {
         ),
       ).rejects.toMatchObject({
         reason: "integrity",
-        message: expect.stringContaining("changed before interpretation"),
+        integrityCheck: "container-identity",
       });
     } finally {
       await resourceScope.close();
