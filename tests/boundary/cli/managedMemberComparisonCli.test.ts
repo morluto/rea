@@ -339,7 +339,12 @@ cliTest(
       expect.objectContaining({
         code: "resource-limit",
         scope: "metadata.representation",
-        offset: null,
+        // The fixture sits within a few hundred bytes of the 64 MiB budget, so
+        // whether a decoding row or the final projection is refused (and so
+        // the offset) follows the recovery envelope's size, not this workflow.
+        limit: expect.objectContaining({
+          parameter: "max_metadata_representation_bytes",
+        }),
       }),
     ]);
 
