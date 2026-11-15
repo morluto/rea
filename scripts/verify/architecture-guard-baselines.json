@@ -460,7 +460,6 @@
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
-    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
-    "src/wasm/WabtArtifactProvider.ts": 1
+    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2
   }
 }
