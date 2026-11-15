@@ -58,6 +58,7 @@ it.each([
   ["list_strings", {}],
   ["procedure_callers", { procedure: "main" }],
   ["xrefs", { address: "0x1000" }],
+  ["procedure_assembly", { procedure: "0x1000" }],
 ] as const)(
   "retries %s after a reset exposes an invalid project deadline",
   async (operation, parameters) => {

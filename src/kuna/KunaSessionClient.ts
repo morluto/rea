@@ -585,8 +585,10 @@ export class KunaSessionClient implements AnalysisClient {
           parameters.analysis !== "independent_fresh") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
-      )
-        await this.#startProject(installation.value);
+      ) {
+        const project = await this.#startProject(installation.value);
+        if (!project.ok) return project;
+      }
       const answer = await this.#answer(
         operation,
         parameters,
@@ -1415,7 +1417,8 @@ export class KunaSessionClient implements AnalysisClient {
             : kunaEntryLimitations(index.layout, placement),
       });
     }
-    await this.#startProject(installation);
+    const project = await this.#startProject(installation);
+    if (!project.ok) return project;
     return this.#withProject(
       "address_name",
       installation,
@@ -1470,7 +1473,8 @@ export class KunaSessionClient implements AnalysisClient {
           if (!isUnavailableProject(cause) || recovered) throw cause;
           recovered = true;
           this.#invalidateProject(reader);
-          await this.#startProject(installation);
+          const project = await this.#startProject(installation);
+          if (!project.ok) return project;
           continue;
         }
       }
@@ -2082,21 +2086,33 @@ export class KunaSessionClient implements AnalysisClient {
     }
   }
 
-  /** Reuse a verified export, or start building one in the background. */
-  #startProject(installation: KunaInstallation): Promise<void> {
-    if (this.#project !== undefined) return Promise.resolve();
+  /**
+   * Reuse a verified export, or start building one in the background. The
+   * export's deadline is read once, in the first requesting operation's
+   * snapshot; a malformed launch seed without an override is returned as that
+   * request's refusal, and the next request reads it again.
+   */
+  async #startProject(
+    installation: KunaInstallation,
+  ): Promise<Result<null, ConfigurationError>> {
+    if (this.#project !== undefined) return ok(null);
+    if (this.#acceptedProjectDeadline === undefined) {
+      const admitted = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!admitted.ok) return admitted;
+      this.#acceptedProjectDeadline = admitted.value;
+    }
     // Concurrent first requests share one lookup, which verifies every
     // export file's digest on a fresh server.
     this.#starting ??= this.#lookupOrBuild(installation).finally(() => {
       this.#starting = undefined;
     });
-    return this.#starting;
+    await this.#starting;
+    return ok(null);
   }
 
   async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
-    this.#acceptedProjectDeadline ??= kunaProjectDeadline(
-      installation.configuration,
-    );
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
       targetBasename: basename(this.#target.path),
@@ -2169,7 +2185,8 @@ export class KunaSessionClient implements AnalysisClient {
       } catch (cause: unknown) {
         if (!isUnavailableProject(cause) || attempt !== 0) throw cause;
         this.#invalidateProject(reader.value);
-        await this.#startProject(installation);
+        const project = await this.#startProject(installation);
+        if (!project.ok) return project;
       }
     }
   }
