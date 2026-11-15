@@ -5,7 +5,7 @@ import {
   assertArtifactReadActive,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { decodeLz4Block } from "./Lz4Block.js";
+import { decodeLz4Block } from "../compression/Lz4Block.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
