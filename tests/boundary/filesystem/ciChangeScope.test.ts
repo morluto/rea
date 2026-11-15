@@ -710,6 +710,16 @@ it.each([
     "src/domain/native/nativeSegments.ts",
     { code: true, runtime: true, package: true },
   ],
+  // Schemas the contracts import transitively.
+  [
+    "src/domain/native/functionBody.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSymbol.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/native/functionBody.test.ts", { code: true, package: false }],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
   ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
   ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],

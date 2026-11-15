@@ -25,31 +25,61 @@ const valueAt = (value: unknown, path: readonly PropertyKey[]): unknown => {
   return current;
 };
 
+interface LocatedIssue {
+  readonly issue: z.core.$ZodIssue;
+  readonly path: readonly PropertyKey[];
+  /** The union option index chosen at each enclosing failed union. */
+  readonly branches: readonly number[];
+}
+
+/**
+ * Replace each failed union with the issues of every option it tried, located
+ * at their full path, so a nested field failure stays named.
+ */
+const locatedIssues = (
+  issues: readonly z.core.$ZodIssue[],
+  prefix: readonly PropertyKey[] = [],
+  branches: readonly number[] = [],
+): LocatedIssue[] =>
+  issues.flatMap((issue) => {
+    const path = [...prefix, ...issue.path];
+    return issue.code === "invalid_union" && issue.errors.length > 0
+      ? issue.errors.flatMap((option, index) =>
+          locatedIssues(option, path, [...branches, index]),
+        )
+      : [{ issue, path, branches }];
+  });
+
 /**
  * Name the fields a provider reply failed its contract on. Each issue carries
  * only its field path, Zod issue code, the expected kind and the observed JSON
  * kind, never reported text, so the diagnostic is safe to return to callers.
+ * Issues inside a failed union carry the option index at each union level.
  */
 export const outputContractDiagnostics = (
   cause: z.ZodError,
   value?: unknown,
-): Readonly<Record<string, JsonValue>> => ({
-  contract_issue_count: cause.issues.length,
-  contract_issues: cause.issues.slice(0, MAX_CONTRACT_ISSUES).map((issue) => ({
-    path: issue.path.map((key) =>
-      typeof key === "number" ? key : String(key),
-    ),
-    code: issue.code,
-    ...(issue.code === "invalid_type"
-      ? {
-          expected: issue.expected,
-          ...(value === undefined
-            ? {}
-            : { received: jsonKind(valueAt(value, issue.path)) }),
-        }
-      : {}),
-  })),
-});
+): Readonly<Record<string, JsonValue>> => {
+  const located = locatedIssues(cause.issues);
+  return {
+    contract_issue_count: located.length,
+    contract_issues: located
+      .slice(0, MAX_CONTRACT_ISSUES)
+      .map(({ issue, path, branches }) => ({
+        path: path.map((key) => (typeof key === "number" ? key : String(key))),
+        code: issue.code,
+        ...(branches.length === 0 ? {} : { union_branches: [...branches] }),
+        ...(issue.code === "invalid_type"
+          ? {
+              expected: issue.expected,
+              ...(value === undefined
+                ? {}
+                : { received: jsonKind(valueAt(value, path)) }),
+            }
+          : {}),
+      })),
+  };
+};
 
 export const invalidNativeOutput = <T>(
   operation: string,

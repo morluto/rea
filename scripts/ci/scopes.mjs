@@ -261,15 +261,9 @@ const PATH_SCOPES = {
     "bridge/hopper_bridge.py",
     "src/hopper/HopperReplyContracts.ts",
     "src/hopper/HopperProvider.ts",
-    "src/domain/native/nativeInventory.ts",
-    "src/domain/native/nativeObservation.ts",
-    "src/domain/native/nativeByteRead.ts",
-    "src/domain/native/nativeCallReference.ts",
-    "src/domain/native/functionDossier.ts",
-    "src/domain/native/nativeReference.ts",
-    "src/domain/native/nativeSegments.ts",
-    "src/domain/native/procedureInfo.ts",
-    "src/domain/native/nativeProviderOutput.ts",
+    // The contracts import native domain schemas transitively; cover them
+    // all rather than a hand list that drifts.
+    "src/domain/native/!(*.test).ts",
     "src/application/Setup*.ts",
     "src/application/Uninstall*.ts",
     "src/application/ClientConfiguration*.ts",
