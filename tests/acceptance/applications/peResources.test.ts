@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/artifacts/pe/PeResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -435,7 +436,7 @@ cliTest(
     const call: PeResourceCall = (arguments_) =>
       client.callTool(
         { name: definition.name, arguments: arguments_ },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
     const sessionDefinition = inventory.tools.find(
       ({ name }) => name === "binary_session",
@@ -444,7 +445,7 @@ cliTest(
       throw new Error("Missing binary_session tool contract");
     const session = await client.callTool(
       { name: sessionDefinition.name, arguments: {} },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     expect(session.isError, JSON.stringify(session)).not.toBe(true);
     const status = toolContract("binary_session").outputSchema.parse(

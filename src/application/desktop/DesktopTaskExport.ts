@@ -1,4 +1,5 @@
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import {
   isPointerCheck,
   parseDesktopTask,
@@ -40,7 +41,7 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCloseRejection } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { err } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -148,7 +149,7 @@ const readTaskFile = async (
   if (closed !== undefined)
     throw primary === undefined
       ? closed
-      : analysisErrorWithCleanupFailure(primary, closed, OPERATION);
+      : analysisErrorWithCloseRejection(primary, closed, OPERATION);
   if (loaded.ok) return loaded.value;
   throw primary ?? typed(loaded.error);
 };
@@ -200,7 +201,7 @@ const readerRead = (
     Array.isArray(view.lines)
       ? view.lines.map((line) => JSON.stringify(line)).join(", ")
       : JSON.stringify(view);
-  const shown = lines.length > 600 ? `${lines.slice(0, 600)}…` : lines;
+  const shown = ellipsisExcerpt(lines, 600);
   return `; reader ${check.reader} printed: ${shown}`;
 };
 

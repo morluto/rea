@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { beforeAll, expect, it as test, vi } from "vitest";
 import { inspectJadxJava } from "../../../src/android/JadxJavaProbe.js";
@@ -348,6 +349,7 @@ setTimeout(() => process.exit(99), 10000);
   const independent = inspectJadxProvider(
     f.environment,
     resources.owner,
+    HOST_PLATFORM,
     doctor.signal,
   ).then(
     (value) => {

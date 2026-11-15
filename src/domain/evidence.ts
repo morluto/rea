@@ -1,3 +1,4 @@
+import { RECREATE_EVIDENCE_GUIDANCE } from "./evidenceFormat.js";
 import { isDeepStrictEqual } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
@@ -104,7 +105,7 @@ const evidenceBaseSchema = z
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
     parameters: jsonObjectSchema,
-    /** Verbatim selected path for a direct request; absent on older records. */
+    /** Verbatim selected path; present only when the request selected one directly. */
     caller_input_path: nulFreeStringSchema
       .exactOptional()
       .describe("Verbatim direct-request path; not part of semantic identity."),
@@ -160,7 +161,7 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
         code: "custom",
         path: ["evidence_id"],
         message: usesPre66NullCoverageIdentity(withoutId, evidenceId)
-          ? "Evidence uses an earlier relationship_coverage identity commitment: explicit null was omitted from that digest. Recreate this observation with the current REA release; re-exporting the old bundle cannot update its identity."
+          ? `Evidence uses an earlier relationship_coverage identity commitment: explicit null was omitted from that digest. ${RECREATE_EVIDENCE_GUIDANCE}`
           : "Evidence semantic identifier does not match its record",
       });
   },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Budget } from "../budget.js";
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   AnalysisResourceConstraintError,
@@ -24,8 +25,11 @@ import {
 /** Shared retained/temporary byte accounting for views that group retained HAR records. */
 export abstract class WebNetworkProjectionAccumulator {
   readonly #limitations = new Set<string>();
-  #retainedBytes = 0;
-  #temporaryBytes = 0;
+  /** Retained state and temporary work share one allowance. */
+  readonly #bytes: Budget;
+  /** The retained and temporary shares of `#bytes`, for their checkpoints. */
+  readonly #retained: Budget;
+  readonly #temporary: Budget;
   /** Per-record scratch reservation handed to the shared record readers. */
   protected readonly scratch: Reserve = (bytes) => this.temporary(bytes);
 
@@ -33,41 +37,53 @@ export abstract class WebNetworkProjectionAccumulator {
     readonly maximumBytes: number,
     private readonly budgetSubject: string,
     private readonly operation = "inspect_analysis_view",
-  ) {}
+  ) {
+    this.#bytes = new Budget(maximumBytes);
+    this.#retained = new Budget(maximumBytes);
+    this.#temporary = new Budget(maximumBytes);
+  }
+
+  #charge(share: Budget, bytes: number): boolean {
+    if (!this.#bytes.tryCharge(bytes)) return false;
+    // A share never exceeds the whole, so it always fits.
+    return share.tryCharge(bytes);
+  }
+
+  #restore(share: Budget, mark: number): void {
+    this.#bytes.refund(share.restore(mark));
+  }
 
   protected retain(bytes: number): boolean {
-    if (this.#retainedBytes + this.#temporaryBytes + bytes > this.maximumBytes)
-      return false;
-    this.#retainedBytes += bytes;
-    return true;
+    return this.#charge(this.#retained, bytes);
   }
 
   protected temporary(bytes: number): boolean {
-    if (this.#retainedBytes + this.#temporaryBytes + bytes > this.maximumBytes)
-      return false;
-    this.#temporaryBytes += bytes;
-    return true;
+    return this.#charge(this.#temporary, bytes);
   }
 
-  /** Restore the enclosing synchronous parse's scratch after a nested body lease. */
+  /**
+   * Release the scratch charged by a nested body lease. Leases end in LIFO
+   * order and `releaseTemporary` never runs inside one, so the enclosing
+   * parse's scratch is still charged when this runs.
+   */
   protected temporaryCheckpoint(): () => void {
-    const held = this.#temporaryBytes;
+    const mark = this.#temporary.used;
     return () => {
-      this.#temporaryBytes = held;
+      this.#restore(this.#temporary, mark);
     };
   }
 
   /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
   protected retainedCheckpoint(): () => void {
-    const mark = this.#retainedBytes;
+    const mark = this.#retained.used;
     return () => {
-      this.#retainedBytes = Math.min(this.#retainedBytes, mark);
+      this.#restore(this.#retained, mark);
     };
   }
 
   /** Per-record strings and descriptors never become cumulative scratch. */
   protected releaseTemporary(): void {
-    this.#temporaryBytes = 0;
+    this.#restore(this.#temporary, 0);
   }
 
   protected overBudget(): Result<never, AnalysisError> {

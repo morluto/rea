@@ -4,7 +4,7 @@ import {
   referenceSourceImportAnalysisError,
   type ReferenceSourceImportError,
 } from "./ReferenceSourceImportTypes.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";

@@ -6,9 +6,9 @@ import { deflateRawSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
 import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
-import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { artifactFixedLimitFailure } from "../../../src/resources/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {
@@ -23,6 +23,7 @@ import {
   DOTNET_BUNDLE_SIGNATURE,
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
 
 it.each(["close", "cancel"] as const)(
   "does not complete a .NET bundle inventory after %s at the last entry",
@@ -787,9 +788,8 @@ it.each(["elf", "mach-o"] as const)(
     const root = await createTestTempDirectory("rea-dotnet-native-");
     const path = join(root, "renamed.data");
     const fixture = dotnetBundleFixture();
-    Buffer.from(format === "elf" ? "7f454c46" : "cffaedfe", "hex").copy(
-      fixture.bytes,
-    );
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+    else Buffer.from("cffaedfe", "hex").copy(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),
@@ -823,7 +823,7 @@ it.each(["pe", "elf"] as const)(
     const path = join(root, "template.bin");
     const fixture = dotnetBundleFixture();
     fixture.bytes.writeBigUInt64LE(0n, 536);
-    if (format === "elf") Buffer.from("7f454c46", "hex").copy(fixture.bytes);
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),

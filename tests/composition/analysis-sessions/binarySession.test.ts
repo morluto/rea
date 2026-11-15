@@ -3,7 +3,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -13,7 +13,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -37,6 +37,7 @@ import {
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -1959,7 +1960,7 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   ).toEqual(err(failure));
   expect(anotherMutation).not.toHaveBeenCalled();
   // Only the resource owner may acknowledge completed cleanup.
-  failure.resolveCleanup();
+  releaseOwnedCleanup(failure);
   expect((await session.open(target)).ok).toBe(true);
   await session.close();
 });

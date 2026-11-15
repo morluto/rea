@@ -2,7 +2,7 @@ import { createDeferred } from "../../../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { readFile, rename, copyFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { PlaywrightTraceService } from "../../../application/playwrightTrace/PlaywrightTraceService.js";

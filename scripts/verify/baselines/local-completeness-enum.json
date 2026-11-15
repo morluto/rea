@@ -1,0 +1,20 @@
+{
+  "src/contracts/cutterToolContracts.ts": 1,
+  "src/contracts/rizinDebugToolContracts.ts": 1,
+  "src/cutter/CutterBridgeClient.ts": 2,
+  "src/domain/analysisView/browserScenarioViewSchemas.ts": 1,
+  "src/domain/analysisView/goBinaryView.ts": 1,
+  "src/domain/analysisView/webNetworkCaptureView.ts": 1,
+  "src/domain/artifactFormatMetadata.ts": 2,
+  "src/domain/commandObservation.ts": 2,
+  "src/domain/evidenceRecordSummary.ts": 1,
+  "src/domain/gpu/gpuCodeObjects.ts": 1,
+  "src/domain/javascript/electronActiveObservation.ts": 1,
+  "src/domain/javascript/javascriptExportShapeComparisonSchemas.ts": 1,
+  "src/domain/javascript/javascriptRouteInventory.ts": 1,
+  "src/domain/javascript/javascriptStaticCoverage.ts": 1,
+  "src/domain/native/nativeInitializers.ts": 1,
+  "src/domain/sqlite/sqliteDatabase.ts": 1,
+  "src/domain/wasm/wasmArtifact.ts": 1,
+  "src/domain/windows/ntfsMftAttributes.ts": 1
+}

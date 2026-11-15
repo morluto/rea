@@ -1,0 +1,19 @@
+# Commits on main that only move files or rewrite import paths.
+# Use with: git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Each entry is the full SHA of the commit as it landed on main (squash and
+# rebase merges give a PR's commits new SHAs), so a move is listed by a later
+# change once it has merged. Add a commit only when it contains nothing but
+# `git mv` renames, import specifier updates and the matching layer baseline.
+
+# refactor(domain): move the source map format parser into src/domain (#11348)
+97112f14a1f21a21a91578b5371fe4dfbfbb7835
+
+# refactor(config): move the MCP startup policy beside its startup budgets in src/config (#11429)
+47c252f5274607a02d750f817caaac7366a33ccb
+
+# refactor(domain): move the Mach-O load command and binary plist readers into src/domain/apple (#11415)
+23eee86bd59e5d399c59280b24a746be8318b111
+
+# refactor(domain): move the native section directory and ELF string readers into domain (#11449)
+c935387f480d2195c2beb3d05f62270b25bad28c

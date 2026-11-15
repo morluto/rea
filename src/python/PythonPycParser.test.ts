@@ -11,10 +11,8 @@ import {
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-import {
-  PythonPycFormatFailure,
-  PythonPycResourceFailure,
-} from "./PythonPyc.errors.js";
+import { PythonPycResourceFailure } from "./PythonPyc.errors.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
@@ -133,9 +131,31 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
 
 it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 });
+
+it.each([
+  { type: 0x67, message: "Marshal stream ended inside a float." },
+  { type: 0x49, message: "Marshal stream ended inside a 64-bit integer." },
+])(
+  "reports a truncated 8-byte marshal value 0x$type as a malformed truncation",
+  ({ type, message }) => {
+    const bytes = Buffer.concat([
+      pythonPycHeader(3571),
+      Buffer.from([type, 0, 0, 0, 0]),
+    ]);
+    expect(() => parse(bytes)).toThrow(
+      expect.objectContaining({
+        message,
+        failure: expect.objectContaining({
+          kind: "malformed",
+          field: "truncated",
+        }),
+      }),
+    );
+  },
+);
 
 it.each([
   { magic: 3571, layout: "py311", version: "3.13" },
@@ -169,8 +189,13 @@ it("keeps CPython 3.16 pre-release magics outside standalone decoder coverage", 
 it("does not qualify a magic outside the pinned identity table", () => {
   expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
-      kind: "unsupported",
-      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        format: "python-pyc",
+        detail: expect.stringMatching(
+          /not a pinned CPython identity.*header/iu,
+        ),
+      }),
     }),
   );
 });
@@ -481,10 +506,10 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   expect(root(report).consts[1]).toMatchObject({ kind: "int", value: null });
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(() => parse(withConsts([marshalLong([1, 0])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
   expect(() => parse(withConsts([marshalLong([0x8000])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -522,10 +547,10 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   });
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xf0, 0x90, 0x80]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xc0, 0x80]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
@@ -533,7 +558,7 @@ it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
   (tag) => {
     expect(() =>
       parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
-    ).toThrow(PythonPycFormatFailure);
+    ).toThrow(ParseFailureError);
   },
 );
 
@@ -589,7 +614,7 @@ it("rejects a code object whose location tables are not bytes", () => {
         marshalCode("py311", { exceptiontableObject: Buffer.from([0x53]) }),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("hashes one shared byte string no matter how many times it is referenced", () => {
@@ -658,7 +683,7 @@ it("rejects constant tables whose copies exceed max_objects", () => {
 
 it("rejects NULL tuple items and mismatched local kinds", () => {
   expect(() => parse(withConsts([Buffer.from([0x30])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
   expect(
     root(parse(withConsts([Buffer.from([0x7b, 0x4e, 0x54, 0x30])]))).consts[0],
@@ -676,7 +701,7 @@ it("rejects NULL tuple items and mismatched local kinds", () => {
         }),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   const matched = parse(
     Buffer.concat([
       pythonPycHeader(3531),
@@ -881,7 +906,7 @@ it("reads marshal version 0 text floats inside a code object", () => {
   ]);
   for (const text of ["1.5x", "", "0x1.8p1", " 1.5"]) {
     expect(() => parse(withConsts([textFloat(text)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
   }
 });
@@ -993,10 +1018,10 @@ it("applies Python container rules before reporting lengths", () => {
         ]),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     parse(withConsts([setOf(Buffer.concat([Buffer.from([0x5b]), u32(0)]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("rejects a shared tuple key before its expansion doubles without bound", () => {
@@ -1164,14 +1189,12 @@ it("rejects code keys and members whose consts are unhashable", () => {
     Buffer.concat([Buffer.from([0x7b]), key, int, Buffer.from([0x30])]);
   for (const key of [code(list), code(tuple(int, list)), code(code(list))]) {
     expect(() => parse(withConsts([setOf(0x3c, key)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
     expect(() => parse(withConsts([setOf(0x3e, key)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
-    expect(() => parse(withConsts([dictKey(key)]))).toThrow(
-      PythonPycFormatFailure,
-    );
+    expect(() => parse(withConsts([dictKey(key)]))).toThrow(ParseFailureError);
   }
   const cyclic = Buffer.concat([
     Buffer.from([0x29 | 0x80, 1]),
@@ -1183,7 +1206,7 @@ it("rejects code keys and members whose consts are unhashable", () => {
     }),
   ]);
   expect(() => parse(withConsts([cyclic, setOf(0x3c, marshalRef(1))]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 
   // A set inside a tuple that reaches the unfinished tuple, directly, inside
@@ -1211,7 +1234,7 @@ it("rejects code keys and members whose consts are unhashable", () => {
           ]),
         ]),
       ),
-    ).toThrow(PythonPycFormatFailure);
+    ).toThrow(ParseFailureError);
 
   const unhashed = parse(withConsts([tuple(code(list))]));
   expect(unhashed.coverage.status).toBe("complete");
@@ -1522,7 +1545,7 @@ it("rejects negative CPython code counts and keeps them out of the schema", () =
     "stacksize",
   ] as const) {
     expect(() => parse(negative("py311", { [field]: 0xffffffff }))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
   }
   expect(() => parse(negative("py37", { nlocals: 0xffffffff }))).toThrow(

@@ -1,3 +1,4 @@
+import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { deflateRawSync, deflateSync } from "node:zlib";
@@ -24,7 +25,8 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
@@ -35,7 +37,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
@@ -53,6 +55,7 @@ import {
 } from "../domain/releaseExposure.js";
 import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 
@@ -61,17 +64,17 @@ const stableRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./readStableArtifact.js").readStableArtifact
+          typeof import("../resources/readStableArtifact.js").readStableArtifact
         >
       ) => ReturnType<
-        typeof import("./readStableArtifact.js").readStableArtifact
+        typeof import("../resources/readStableArtifact.js").readStableArtifact
       >),
 }));
 
-vi.mock("./readStableArtifact.js", async () => {
+vi.mock("../resources/readStableArtifact.js", async () => {
   const actual = await vi.importActual<
-    typeof import("./readStableArtifact.js")
-  >("./readStableArtifact.js");
+    typeof import("../resources/readStableArtifact.js")
+  >("../resources/readStableArtifact.js");
   stableRead.impl = actual.readStableArtifact;
   return {
     ...actual,
@@ -413,7 +416,7 @@ describe("ReleaseExposureReader", () => {
   it("carries the inventoried digest of each native image", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-digest-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app"), elf);
     const sha256 = createHash("sha256").update(elf).digest("hex");
     expect((await inspect(root)).native_images).toEqual([
@@ -427,10 +430,7 @@ describe("ReleaseExposureReader", () => {
   it("registers native images larger than the text budget and parses PE debug records", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-native-");
     const elf = Buffer.alloc(300 * 1024);
-    elf[0] = 0x7f;
-    elf[1] = 0x45;
-    elf[2] = 0x4c;
-    elf[3] = 0x46;
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app.elf"), elf);
     const pe = Buffer.concat([
       windowsNativeArtifactFixture().bytes,
@@ -661,6 +661,10 @@ describe("ReleaseExposureReader limits", () => {
     try {
       const scanned = await inspect(root);
       expect(scanned.limitations).toHaveLength(8);
+      // The reports past the cap are counted, not dropped silently.
+      expect(scanned.omitted).toContainEqual(
+        expect.objectContaining({ subject: "limitations", count: 4 }),
+      );
     } finally {
       stableRead.impl = real;
     }
@@ -723,10 +727,7 @@ describe("ReleaseExposureReader limits", () => {
     const root = await createTestTempDirectory("rea-release-exposure-natives-");
     for (let index = 0; index < 5; index += 1) {
       const elf = Buffer.alloc(64);
-      elf[0] = 0x7f;
-      elf[1] = 0x45;
-      elf[2] = 0x4c;
-      elf[3] = 0x46;
+      writeMinimalElfHeader(elf);
       await writeFile(join(root, `lib${String(index)}.so`), elf);
     }
     const scanned = await inspect(root);
@@ -793,9 +794,11 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       );
       if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect(result.error.message).toContain(
-        "ASAR member changed before interpretation: dist/notes.txt",
-      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: { integrity_check: "member-identity" },
+      });
+      expect(result.error.message).toContain("dist/notes.txt");
     } finally {
       inventoryRead.impl = undefined;
       await reader.close();
@@ -1315,7 +1318,7 @@ describe("ReleaseExposureReader sibling map identity", () => {
   it("does not report a native image beside a selected file as a linker map", async () => {
     const root = await createTestTempDirectory("rea-release-sibling-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "release.map"), elf);
     await writeFile(join(root, "app"), "plain file");
     const scanned = await inspect(join(root, "app"));
@@ -1734,7 +1737,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps coverage complete past a packaged image with no package", async () => {
     const root = await createTestTempDirectory("rea-release-plain-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "addon.node", bytes: elf }]),
@@ -1747,7 +1750,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps a packaged image past the byte allowance unknown", async () => {
     const root = await createTestTempDirectory("rea-release-large-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([
@@ -1801,7 +1804,7 @@ describe("ReleaseExposureReader packaged probe allowance", () => {
   it("keeps probing after a zero-byte unread packaged image", async () => {
     const root = await createTestTempDirectory("rea-release-unread-probe-");
     const broken = Buffer.alloc(8192);
-    broken.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(broken);
     const archive = join(root, "app.asar");
     await writeFile(
       archive,
@@ -1850,7 +1853,7 @@ describe("ReleaseExposureReader packaged probe allowance", () => {
     const root = await createTestTempDirectory("rea-release-partial-probe-");
     const elf = (size: number): Buffer => {
       const bytes = Buffer.alloc(size);
-      bytes.set([0x7f, 0x45, 0x4c, 0x46], 0);
+      writeMinimalElfHeader(bytes);
       return bytes;
     };
     const archive = join(root, "app.asar");
@@ -2818,9 +2821,9 @@ describe("ReleaseExposureReader unexpanded packages", () => {
 describe("ReleaseExposureReader native members named as maps", () => {
   it("keeps a selected or listed native image named release.map out of map routing", async () => {
     const root = await createTestTempDirectory("rea-release-map-selected-");
-    const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
-    elf.write("not a map\n", 16);
+    const elf = Buffer.alloc(80);
+    writeMinimalElfHeader(elf);
+    elf.write("not a map\n", 64);
     const file = join(root, "release.map");
     await writeFile(file, elf);
     for (const scanned of [await inspect(file), await inspect(root)]) {
@@ -3008,7 +3011,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
 
   it("omits a packaged native image from the language readers visibly", async () => {
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     const root = await bundled([{ path: "libnative.so", bytes: elf }]);
     const scanned = await inspect(root);
     expect(scanned.omitted).toContainEqual(
@@ -3025,7 +3028,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
   it("leaves member coverage unknown when a packaged native image cannot be read", async () => {
     const root = await createTestTempDirectory("rea-release-unread-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "native.node", bytes: elf }]),
@@ -3252,7 +3255,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
       selected: "lib.so",
       write: async (root: string) => {
         const elf = Buffer.alloc(64);
-        elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+        writeMinimalElfHeader(elf);
         await writeFile(join(root, "lib.so"), elf);
       },
     },
@@ -5103,5 +5106,47 @@ it.each([
       pageName === "z.html" ? "unknown" : "exposed",
     );
     expect(scanned.debug_companions.paths).toEqual([]);
+  },
+);
+
+it.each(["member", "selected artifact"] as const)(
+  "names which file changed while being read (%s)",
+  async (changed) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-read-changed-",
+    );
+    const archive = join(root, "app.asar");
+    await writeFile(archive, sourceMapArchive());
+    const notes = join(root, "notes.txt");
+    await writeFile(notes, "release notes\n");
+    const real = stableRead.impl;
+    if (changed === "member")
+      stableRead.impl = async (...args) => {
+        if (args[0] === notes) throw new RegularFileChangedError(notes);
+        return real === undefined ? Promise.reject() : real(...args);
+      };
+    else
+      inventoryRead.impl = () =>
+        Promise.reject(new RegularFileChangedError(archive));
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: changed === "member" ? root : archive },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          integrity_check:
+            changed === "member" ? "member-identity" : "container-identity",
+        },
+      });
+    } finally {
+      stableRead.impl = real;
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
   },
 );

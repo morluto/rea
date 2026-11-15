@@ -15,7 +15,7 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
-} from "./OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import type {
   CommandProviderLaunchFailures,
   ReverseEngineeringOperation,
@@ -36,17 +36,20 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
-  toolSessionEffects,
   type ToolEffects,
 } from "../contracts/toolEffects.js";
-import type { ToolKind } from "../contracts/toolContractTypes.js";
+import type { ToolContract, ToolKind } from "../contracts/toolContractTypes.js";
+import type {
+  HostRestrictedFeature,
+  ToolAvailabilityDeclaration,
+} from "../contracts/toolAvailability.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
   ProviderAvailability,
-} from "./AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -77,21 +80,6 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
 type ProviderDescriptor = ReturnType<typeof expandProviderCapabilities>[number];
 type UnavailableDescriptor = Extract<ProviderDescriptor, { available: false }>;
-
-/** Optional integrations whose verified hosts exclude some platforms. */
-export const HOST_RESTRICTED_FEATURES = [
-  "packetCapture",
-  "pcapCapture",
-  "signalRecording",
-  "evmInterface",
-  "binaryLayout",
-  "recordedCrash",
-  "firmwareInspection",
-  "firmwareExtraction",
-  "javascriptRecovery",
-  "persistentDebugger",
-] as const;
-export type HostRestrictedFeature = (typeof HOST_RESTRICTED_FEATURES)[number];
 
 export type AvailabilityPolicy = {
   /** Integrations this host cannot run, whatever their configuration. */
@@ -152,6 +140,7 @@ export const MULTI_MODE_REMEDIATION =
 type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
+  readonly declared: ToolAvailabilityDeclaration | undefined;
   readonly targetOpen: boolean;
   readonly cleanupRetry: AnalysisCleanupRetry | undefined;
   readonly resourceSession: boolean;
@@ -335,84 +324,88 @@ export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
   isToolAdvertised: (name: string) => boolean = () => true,
+  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
-    const availability = availabilityFor({
-      name: contract.name,
-      kind: contract.kind,
-      targetOpen: status.open,
-      cleanupRetry: status.cleanup_retry,
-      resourceSession: status.session_kind === "bundle_resources",
-      requiresActiveTarget:
-        "requiresActiveTarget" in contract &&
-        contract.requiresActiveTarget === true,
-      targetKind: status.kind,
-      targetFormat: status.format,
-      descriptors,
-      policy,
-      isToolAdvertised,
-    });
-    const effects = composedEffects(
-      contract.name,
-      toolSessionEffects(contract.name),
-      status.capabilities,
-    );
-    const annotations = annotationsFromEffects(effects);
-    const facts = {
-      name: contract.name,
-      surface: contract.kind,
-      ...(contract.name === "trace_native_values"
+  return contracts
+    .map((contract): ToolAvailability => {
+      const availability = availabilityFor({
+        name: contract.name,
+        kind: contract.kind,
+        declared:
+          "availability" in contract ? contract.availability : undefined,
+        targetOpen: status.open,
+        cleanupRetry: status.cleanup_retry,
+        resourceSession: status.session_kind === "bundle_resources",
+        requiresActiveTarget:
+          "requiresActiveTarget" in contract &&
+          contract.requiresActiveTarget === true,
+        targetKind: status.kind,
+        targetFormat: status.format,
+        descriptors,
+        policy,
+        isToolAdvertised,
+      });
+      const effects = composedEffects(
+        contract.name,
+        contract.sessionEffects,
+        status.capabilities,
+      );
+      const annotations = annotationsFromEffects(effects);
+      const facts = {
+        name: contract.name,
+        surface: contract.kind,
+        ...(contract.name === "trace_native_values"
+          ? {
+              value_flow_support: (() => {
+                const source = descriptors.get("analyze_function");
+                return source?.native_value_flow === undefined
+                  ? {
+                      status: "unknown" as const,
+                      provider_id: source?.provider.id ?? null,
+                    }
+                  : {
+                      ...source.native_value_flow,
+                      provider_id: source.provider.id,
+                    };
+              })(),
+            }
+          : {}),
+        ...(availability.defaultModeAvailable === undefined
+          ? {}
+          : { default_mode_available: availability.defaultModeAvailable }),
+        ...(availability.modes === undefined
+          ? {}
+          : { modes: [...availability.modes] }),
+        client_requirements: emptyClientRequirements(),
+        effects,
+        annotations: {
+          read_only: annotations.readOnlyHint,
+          destructive: annotations.destructiveHint,
+          idempotent: annotations.idempotentHint,
+          open_world: annotations.openWorldHint,
+        },
+      };
+      return availability.reason === "available"
         ? {
-            value_flow_support: (() => {
-              const source = descriptors.get("analyze_function");
-              return source?.native_value_flow === undefined
-                ? {
-                    status: "unknown" as const,
-                    provider_id: source?.provider.id ?? null,
-                  }
-                : {
-                    ...source.native_value_flow,
-                    provider_id: source.provider.id,
-                  };
-            })(),
+            ...facts,
+            available: true,
+            reason: availability.reason,
+            remediation: null,
           }
-        : {}),
-      ...(availability.defaultModeAvailable === undefined
-        ? {}
-        : { default_mode_available: availability.defaultModeAvailable }),
-      ...(availability.modes === undefined
-        ? {}
-        : { modes: [...availability.modes] }),
-      client_requirements: emptyClientRequirements(),
-      effects,
-      annotations: {
-        read_only: annotations.readOnlyHint,
-        destructive: annotations.destructiveHint,
-        idempotent: annotations.idempotentHint,
-        open_world: annotations.openWorldHint,
-      },
-    };
-    return availability.reason === "available"
-      ? {
-          ...facts,
-          available: true,
-          reason: availability.reason,
-          remediation: null,
-        }
-      : {
-          ...facts,
-          available: false,
-          reason: availability.reason,
-          remediation: availability.remediation,
-          ...(availability.alternatives === undefined
-            ? {}
-            : { alternatives: [...availability.alternatives] }),
-        };
-  })
+        : {
+            ...facts,
+            available: false,
+            reason: availability.reason,
+            remediation: availability.remediation,
+            ...(availability.alternatives === undefined
+              ? {}
+              : { alternatives: [...availability.alternatives] }),
+          };
+    })
     .filter(({ name }) => isToolAdvertised(name))
     .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 };
@@ -508,12 +501,9 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
       remediation:
         "This resource-only session cannot execute this operation. Call open_binary with an executable analysis target.",
     };
-  // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
-  if (
-    context.name === "inspect_byte_entropy" ||
-    context.name === "observe_web_execution" ||
-    context.name === "inspect_web_event_listeners"
-  )
+  // Standalone workflows take caller-selected input; they do not load an
+  // optional provider, so its load failure does not apply to them.
+  if (context.declared === "standalone")
     return { reason: "available", remediation: null };
   if (context.name === "get_navigation_context") {
     const target = targetAvailability(context);
@@ -536,8 +526,6 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
     );
     return modes;
   }
-  const javascriptApplication = javascriptApplicationAvailability(context);
-  if (javascriptApplication !== null) return javascriptApplication;
   const failure = optionalProviderFailureFor(context);
   if (failure !== undefined)
     return {
@@ -570,42 +558,18 @@ const optionalProviderFailureFor = ({
   return undefined;
 };
 
-const javascriptApplicationAvailability = ({
-  name,
-}: AvailabilityContext): Availability | null => {
-  if (name === "analyze_javascript_application")
-    return { reason: "available", remediation: null };
-  return name === "reconcile_javascript_runtime"
-    ? { reason: "available", remediation: null }
-    : null;
-};
-
 const workflowAvailabilityFor = (
   context: AvailabilityContext,
 ): Availability | null => {
-  const { name, kind, policy } = context;
-  if (name === "start_gdb_session" || name === "start_rizin_debug_session")
-    return hostRestrictedAvailability(
-      policy,
-      "persistentDebugger",
-      true,
-      "Run persistent debugger sessions on Linux with /proc descriptor readback.",
-    );
-  if (
-    name === "inspect_apk_signature" ||
-    name === "inspect_desktop_application" ||
-    name === "inspect_go_binary" ||
-    name === "inspect_il2cpp_metadata" ||
-    name === "inspect_model_artifact" ||
-    name === "inspect_gpu_code_objects" ||
-    name === "inspect_rust_binary" ||
-    name === "inspect_python_pyc" ||
-    name === "inspect_apple_ips" ||
-    name === "inspect_erlang_beam" ||
-    name === "inspect_v8_code_cache" ||
-    name === "inspect_electron_fuses"
-  )
+  const { name, kind, policy, declared } = context;
+  if (declared === "standalone")
     return { reason: "available", remediation: null };
+  if (declared !== undefined) {
+    const host = hostFeatureAvailability(policy, declared.host);
+    return declared.host === "evmInterface" && host.reason === "available"
+      ? evmLimiterAvailability(policy)
+      : host;
+  }
   if (name === "inspect_sqlite_database") {
     const capability = sqliteDatabaseCapability(process.versions.node);
     return capability.available
@@ -616,61 +580,7 @@ const workflowAvailabilityFor = (
         };
   }
   if (name === "trace_web_module_imports")
-    return {
-      reason: "available",
-      remediation: null,
-      defaultModeAvailable: policy.webModuleResolutionEnabled === true,
-      modes: [
-        {
-          name: "sources-without-literal-imports",
-          available: true,
-          missing_operations: [],
-          remediation: null,
-        },
-        policy.webModuleResolutionEnabled === true
-          ? {
-              name: "native-literal-resolution",
-              available: true,
-              missing_operations: [],
-              remediation: null,
-            }
-          : {
-              name: "native-literal-resolution",
-              available: false,
-              missing_operations: ["native-module-resolver"],
-              remediation:
-                "Provide an absolute REA_BROWSER_EXECUTABLE supporting import.meta.resolve; no binary target is required.",
-            },
-      ],
-    };
-  if (name === "recover_javascript_sources")
-    return hostRestrictedAvailability(
-      policy,
-      "javascriptRecovery",
-      policy.javascriptRecoveryEnabled,
-      "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/guides/javascript/javascript-recovery.md#install-wakaru. No binary target is required.",
-    );
-  if (name === "inspect_binary_layout")
-    return hostRestrictedAvailability(
-      policy,
-      "binaryLayout",
-      policy.binaryLayoutEnabled,
-      "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
-    );
-  if (name === "inspect_packet_capture" || name === "inspect_packet_fields")
-    return hostRestrictedAvailability(
-      policy,
-      "packetCapture",
-      policy.packetCaptureEnabled,
-      "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit (REA_TSHARK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
-    );
-  if (name === "decode_signal_recording" || name === "inspect_signal_decoders")
-    return hostRestrictedAvailability(
-      policy,
-      "signalRecording",
-      policy.signalRecordingEnabled,
-      "On Linux, supply sigrok-cli 0.7.2 via absolute REA_SIGROK_COMMAND and util-linux prlimit (REA_SIGROK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
-    );
+    return webModuleImportAvailability(policy);
   if (name === "inspect_wasm_artifact")
     return policy.wasmArtifactEnabled === true
       ? { reason: "available", remediation: null }
@@ -679,62 +589,6 @@ const workflowAvailabilityFor = (
           remediation:
             "Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.",
         };
-  if (name === "inspect_pe_resources" || name === "inspect_native_exports")
-    return { reason: "available", remediation: null };
-  if (
-    name === "inspect_pe_certificates" ||
-    name === "inspect_pe_imports" ||
-    name === "inspect_windows_shortcut"
-  )
-    return { reason: "available", remediation: null };
-  if (
-    name === "inspect_elf_notes" ||
-    name === "inspect_native_initializers" ||
-    name === "inspect_elf_unwind_ranges" ||
-    name === "inspect_devicetree" ||
-    name === "inspect_kernel_module" ||
-    name === "inspect_kernel_build_config" ||
-    name === "inspect_pe_load_config" ||
-    name === "audit_release_exposure" ||
-    name === "inspect_binary_hardening"
-  )
-    return { reason: "available", remediation: null };
-  if (name === "inspect_evm_interface") {
-    const profile = hostRestrictedAvailability(
-      policy,
-      "evmInterface",
-      policy.evmInterfaceEnabled,
-      "The bundled offline EVM interface profile is currently real-verified on Linux x64. No active binary target or chain endpoint is required.",
-    );
-    if (profile.reason !== "available") return profile;
-    const limiter = policy.evmLimiterAvailability;
-    if (limiter?.status === "unavailable")
-      return { reason: "provider_missing", remediation: limiter.remediation };
-    return { reason: "available", remediation: null };
-  }
-  if (name === "inspect_recorded_crash")
-    return hostRestrictedAvailability(
-      policy,
-      "recordedCrash",
-      policy.recordedCrashEnabled,
-      "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
-    );
-  if (kind === "firmware-provider") {
-    const inspection = name === "inspect_firmware_regions";
-    const operation = inspection
-      ? "inspect_firmware_regions"
-      : "extract_firmware";
-    const requirement =
-      FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES[operation]];
-    return hostRestrictedAvailability(
-      policy,
-      inspection ? "firmwareInspection" : "firmwareExtraction",
-      inspection
-        ? policy.firmwareInspectionEnabled
-        : policy.firmwareExtractionEnabled,
-      `On Linux, provide an absolute ${requirement.commandEnvironment} (${requirement.requirement}) path, util-linux prlimit and procps ps.${inspection ? "" : " Extraction also requires the selected format’s external extractor."}`,
-    );
-  }
   if (kind === "android-provider")
     return policy.androidAnalysisAvailability?.status === "available"
       ? { reason: "available", remediation: null }
@@ -784,13 +638,6 @@ const workflowAvailabilityFor = (
       remediation: "Run process capture on a supported Linux or macOS host.",
     };
   if (kind === "application") return { reason: "available", remediation: null };
-  if (name === "inspect_pcap_capture")
-    return hostRestrictedAvailability(
-      policy,
-      "pcapCapture",
-      true,
-      PCAP_CAPTURE_UNSUPPORTED_HOST_REASON,
-    );
   if (kind === "pcap-provider" || kind === "flutter-provider")
     return { reason: "available", remediation: null };
   const electron = electronProviderAvailability(name, kind, policy);
@@ -809,6 +656,124 @@ const workflowAvailabilityFor = (
     );
   return null;
 };
+
+const firmwareRemediation = (
+  operation: "inspect_firmware_regions" | "extract_firmware",
+): string => {
+  const requirement =
+    FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES[operation]];
+  return `On Linux, provide an absolute ${requirement.commandEnvironment} (${requirement.requirement}) path, util-linux prlimit and procps ps.${operation === "inspect_firmware_regions" ? "" : " Extraction also requires the selected format’s external extractor."}`;
+};
+
+const PWNTOOLS_REMEDIATION =
+  "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.";
+
+/** Each host-restricted feature's configuration flag and setup remediation. */
+const HOST_FEATURES: Readonly<
+  Record<
+    HostRestrictedFeature,
+    {
+      readonly enabled: (policy: AvailabilityPolicy) => boolean | undefined;
+      readonly remediation: string;
+    }
+  >
+> = {
+  persistentDebugger: {
+    enabled: () => true,
+    remediation:
+      "Run persistent debugger sessions on Linux with /proc descriptor readback.",
+  },
+  javascriptRecovery: {
+    enabled: (policy) => policy.javascriptRecoveryEnabled,
+    remediation:
+      "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/guides/javascript/javascript-recovery.md#install-wakaru. No binary target is required.",
+  },
+  binaryLayout: {
+    enabled: (policy) => policy.binaryLayoutEnabled,
+    remediation: PWNTOOLS_REMEDIATION,
+  },
+  recordedCrash: {
+    enabled: (policy) => policy.recordedCrashEnabled,
+    remediation: PWNTOOLS_REMEDIATION,
+  },
+  packetCapture: {
+    enabled: (policy) => policy.packetCaptureEnabled,
+    remediation:
+      "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit (REA_TSHARK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
+  },
+  signalRecording: {
+    enabled: (policy) => policy.signalRecordingEnabled,
+    remediation:
+      "On Linux, supply sigrok-cli 0.7.2 via absolute REA_SIGROK_COMMAND and util-linux prlimit (REA_SIGROK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
+  },
+  evmInterface: {
+    enabled: (policy) => policy.evmInterfaceEnabled,
+    remediation:
+      "The bundled offline EVM interface profile is currently real-verified on Linux x64. No active binary target or chain endpoint is required.",
+  },
+  pcapCapture: {
+    enabled: () => true,
+    remediation: PCAP_CAPTURE_UNSUPPORTED_HOST_REASON,
+  },
+  firmwareInspection: {
+    enabled: (policy) => policy.firmwareInspectionEnabled,
+    remediation: firmwareRemediation("inspect_firmware_regions"),
+  },
+  firmwareExtraction: {
+    enabled: (policy) => policy.firmwareExtractionEnabled,
+    remediation: firmwareRemediation("extract_firmware"),
+  },
+};
+
+const hostFeatureAvailability = (
+  policy: AvailabilityPolicy,
+  feature: HostRestrictedFeature,
+): Availability =>
+  hostRestrictedAvailability(
+    policy,
+    feature,
+    HOST_FEATURES[feature].enabled(policy),
+    HOST_FEATURES[feature].remediation,
+  );
+
+/** The EVM profile also needs a fresh observation of its required limiter. */
+const evmLimiterAvailability = (policy: AvailabilityPolicy): Availability => {
+  const limiter = policy.evmLimiterAvailability;
+  return limiter?.status === "unavailable"
+    ? { reason: "provider_missing", remediation: limiter.remediation }
+    : { reason: "available", remediation: null };
+};
+
+/** Literal-import resolution is a mode; source tracing alone is always available. */
+const webModuleImportAvailability = (
+  policy: AvailabilityPolicy,
+): Availability => ({
+  reason: "available",
+  remediation: null,
+  defaultModeAvailable: policy.webModuleResolutionEnabled === true,
+  modes: [
+    {
+      name: "sources-without-literal-imports",
+      available: true,
+      missing_operations: [],
+      remediation: null,
+    },
+    policy.webModuleResolutionEnabled === true
+      ? {
+          name: "native-literal-resolution",
+          available: true,
+          missing_operations: [],
+          remediation: null,
+        }
+      : {
+          name: "native-literal-resolution",
+          available: false,
+          missing_operations: ["native-module-resolver"],
+          remediation:
+            "Provide an absolute REA_BROWSER_EXECUTABLE supporting import.meta.resolve; no binary target is required.",
+        },
+  ],
+});
 
 /**
  * An unsupported host takes precedence over configuration: no environment

@@ -6,9 +6,12 @@ import {
   type CapabilityDescriptor,
   type ExecutionOptions,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../ports/AnalysisProvider.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {
@@ -20,9 +23,9 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -119,11 +122,7 @@ class ManagedStaticClient implements AnalysisClient {
           : { maxBytes: input.data.max_snapshot_bytes }),
       };
       if (options?.signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       const snapshot = this.#snapshotBytes;
       const observed =
         snapshot === undefined
@@ -145,7 +144,7 @@ class ManagedStaticClient implements AnalysisClient {
       if (!admitted.ok) return admitted;
       const bytes = snapshot ?? observed.bytes;
       if (bytes === undefined)
-        throw new TypeError("Managed snapshot bytes are unavailable");
+        throw invariantViolation("Managed snapshot bytes are unavailable");
       this.#snapshotBytes = bytes;
       const result = inspectManagedOperation(
         operation,
@@ -166,11 +165,7 @@ class ManagedStaticClient implements AnalysisClient {
         return err(this.#cleanupError(operation, cause));
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       const inputFailure = managedInspectionInputFailure(
         operation,
         this.target.path,

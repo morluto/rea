@@ -11,9 +11,9 @@ import {
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -31,7 +31,7 @@ import {
 } from "../domain/webSourceLocation.js";
 import type { WebTraceObservation } from "../domain/webTraceObservation.js";
 import { resolveWebSourcePosition } from "../domain/webSourcePosition.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,
@@ -39,7 +39,7 @@ import {
 import type {
   WebSourceLocationArtifactPort,
   WebSourceMapPort,
-} from "./WebSourceLocationPorts.js";
+} from "../ports/WebSourceLocationPorts.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
 
@@ -153,9 +153,7 @@ export class WebSourceLocationService {
     if (!generated.ok) return incomplete(generated.error);
     const generatedOffset = generated.value;
     if (options?.signal?.aborted)
-      return incomplete(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return incomplete(cancelledBy(OPERATION, options.signal));
     const traced = await this.decoder.trace(
       {
         text: map.text,

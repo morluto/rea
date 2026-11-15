@@ -18,10 +18,13 @@ import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
 describe("resolvePcapTools", () => {
   it("prefers absolute environment paths for both tools", () => {
     expect(
-      resolvePcapTools({
-        [TSHARK_COMMAND_ENV]: "/usr/bin/tshark",
-        [CAPINFOS_COMMAND_ENV]: "/usr/bin/capinfos",
-      }),
+      resolvePcapTools(
+        {
+          [TSHARK_COMMAND_ENV]: "/usr/bin/tshark",
+          [CAPINFOS_COMMAND_ENV]: "/usr/bin/capinfos",
+        },
+        "linux",
+      ),
     ).toEqual({
       tshark: { command: "/usr/bin/tshark", source: "environment" },
       capinfos: { command: "/usr/bin/capinfos", source: "environment" },
@@ -75,13 +78,13 @@ describe("resolvePcapTools", () => {
 
   it("rejects a relative tshark path explicitly", () => {
     expect(() =>
-      resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }),
+      resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }, "linux"),
     ).toThrow(/must be an absolute path/u);
   });
 
   it("rejects a relative capinfos path explicitly", () => {
     expect(() =>
-      resolvePcapTools({ [CAPINFOS_COMMAND_ENV]: "capinfos" }),
+      resolvePcapTools({ [CAPINFOS_COMMAND_ENV]: "capinfos" }, "linux"),
     ).toThrow(/must be an absolute path/u);
   });
 });
@@ -408,11 +411,11 @@ it.skipIf(process.platform === "win32")(
     for (const directory of [root, intended])
       for (const tool of ["tshark", "capinfos"])
         await writeFile(join(directory, tool), "", { mode: 0o755 });
-    const selected = resolvePcapTools({ PATH: `${root}/alias/..` });
+    const selected = resolvePcapTools({ PATH: `${root}/alias/..` }, "linux");
     for (const tool of ["tshark", "capinfos"] as const)
       expect(await realpath(selected[tool].command)).toBe(join(intended, tool));
-    expect(() => resolvePcapTools({ PATH: `${root}/missing/..` })).toThrow(
-      /tshark was not found/u,
-    );
+    expect(() =>
+      resolvePcapTools({ PATH: `${root}/missing/..` }, "linux"),
+    ).toThrow(/tshark was not found/u);
   },
 );

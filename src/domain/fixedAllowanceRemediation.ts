@@ -39,20 +39,35 @@ export const fixedAllowanceRemediation = (
   }
 };
 
-/** A named deterministic allowance and the recovery family it belongs to. */
+/**
+ * A named deterministic allowance (a fixed ceiling) and the recovery family it
+ * belongs to. The optional facts let a caller act without parsing the name.
+ */
 export interface FixedAllowance {
   /** Display name, such as "The tshark JSON decoding allowance". */
   readonly name: string;
   readonly kind: FixedAllowanceKind;
+  /** The ceiling's value, in `unit`. */
+  readonly limit?: number;
+  readonly unit?: string;
+  /** A request change that stays within the ceiling, as one sentence. */
+  readonly narrowing?: string;
 }
+
+/** Facts a fixed ceiling may carry beyond its name and recovery family. */
+export type FixedCeilingFacts = Pick<
+  FixedAllowance,
+  "limit" | "unit" | "narrowing"
+>;
 
 /** Non-retryable options for a fixed allowance. Occupied capacity stays retryable. */
 export const fixedAllowanceOptions = (
   allowance: string,
   kind: FixedAllowanceKind,
+  facts: FixedCeilingFacts = {},
 ): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } => ({
   retryable: false,
-  fixedAllowance: { name: allowance, kind },
+  fixedAllowance: { name: allowance, kind, ...facts },
 });
 
 /**

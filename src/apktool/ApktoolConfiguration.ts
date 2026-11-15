@@ -10,10 +10,12 @@ import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { classifyLaunchFailure } from "../process/launchFailure.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute, win32 } from "node:path";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -26,7 +28,7 @@ import {
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parse } from "semver";
@@ -69,13 +71,11 @@ export interface ApktoolCommandSelection {
  */
 export const resolveApktoolCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<ApktoolCommandSelection> => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_apktool_client", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_apktool_client", signal);
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[APKTOOL_COMMAND_ENV];
   if (configured !== undefined && configured.trim() !== "") {
@@ -98,9 +98,7 @@ export const resolveApktoolCommand = async (
   const deadline = new ProviderStartupDeadline(VERSION_TIMEOUT_MS, signal);
   const lookupInterruption = () =>
     deadline.interruption === "cancelled"
-      ? new AnalysisCancelledError("inspect_apktool_client", {
-          cause: signal?.reason,
-        })
+      ? cancelledBy("inspect_apktool_client", carriedReason(signal?.reason))
       : new AnalysisTimeoutError("inspect_apktool_client", VERSION_TIMEOUT_MS, {
           diagnostics: { phase: "windows_path_lookup" },
           ...apktoolVersionProbeTimeoutGuidance(),
@@ -197,7 +195,7 @@ export const apktoolInvocation = (
   selection: ApktoolCommandSelection,
   arguments_: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): ApktoolInvocation =>
   platform === "win32" && isWindowsBatchFile(selection.command)
     ? {
@@ -217,7 +215,7 @@ export const apktoolInvocation = (
 /** Read the version from Apktool's single-line `--version` response. */
 export const parseApktoolVersionOutput = (
   stdout: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ):
   | ApktoolClientIdentity
   | { readonly version: null; readonly reportedVersion: string | null } => {
@@ -280,14 +278,10 @@ export const inspectApktoolClient = async (
   options: {
     readonly signal?: AbortSignal;
     readonly environment?: Readonly<Record<string, string | undefined>>;
-    readonly platform?: NodeJS.Platform;
-  } = {},
+    readonly platform: NodeJS.Platform;
+  },
 ): Promise<ApktoolClientIdentity> => {
-  const {
-    signal,
-    environment = process.env,
-    platform = process.platform,
-  } = options;
+  const { signal, environment = process.env, platform } = options;
   const hostEnvironment = snapshotEnvironment(environment, platform);
   let invocation: ApktoolInvocation;
   try {
@@ -481,13 +475,16 @@ const versionProbeFailure = (
   )
     return (
       inspectionCancellation ??
-      new AnalysisCancelledError("inspect_apktool_client", {
-        cause: cause.cancellation.reason,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        ...(observed === undefined
-          ? {}
-          : { diagnostics: { client: { version: observed.version } } }),
-      })
+      cancelledBy(
+        "inspect_apktool_client",
+        carriedReason(cause.cancellation.reason),
+        {
+          ...(output === undefined ? {} : { capturedOutput: output }),
+          ...(observed === undefined
+            ? {}
+            : { diagnostics: { client: { version: observed.version } } }),
+        },
+      )
     );
   if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (
@@ -522,17 +519,9 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
-  // EPERM is the other errno a refused exec can surface (for example a launcher
-  // blocked by an operating-system security policy), so it joins EACCES as a
-  // permission failure, not a missing launcher.
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "ENOENT" ||
-      cause.code === "EACCES" ||
-      cause.code === "EPERM")
-  ) {
-    const execDenied = cause.code === "EACCES" || cause.code === "EPERM";
+  const refusal = classifyLaunchFailure(cause);
+  if (refusal !== undefined) {
+    const execDenied = refusal.kind === "not_executable";
     return new ApktoolConfigurationFailure(
       execDenied ? "command_not_executable" : "command_missing",
       execDenied
@@ -542,7 +531,7 @@ const versionProbeFailure = (
         ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
         : APKTOOL_MISSING_REMEDIATION,
       {
-        filesystem_error: cause.code,
+        filesystem_error: refusal.code,
         selected_command: selection.command,
         command_source: selection.commandSource,
       },

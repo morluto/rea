@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
   readArtifactRange as readExact,
@@ -9,11 +10,11 @@ import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
+import { parsePeResources } from "../pe/PeResourceParser.js";
 import {
   hasPeResourceName,
   readPeResourceLayout,
-} from "../../native/pe/PeResourceLayout.js";
+} from "../pe/PeResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -21,13 +22,15 @@ import {
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
+} from "../../resources/index.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import {
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -52,8 +55,6 @@ import {
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const RT_RCDATA = 10;
@@ -184,6 +185,7 @@ export const scanNodeSeaFuse = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Node SEA carrier shrank during the fuse scan",
+        { integrityCheck: "read-coverage" },
       );
     const window = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
     for (const match of window
@@ -314,8 +316,8 @@ const locateThinMachO = async (
         throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
       return found;
     }
-    if (cmd === LC_SEGMENT || cmd === LC_SEGMENT_64) {
-      const segment64 = cmd === LC_SEGMENT_64;
+    if (cmd === LC.SEGMENT || cmd === LC.SEGMENT_64) {
+      const segment64 = cmd === LC.SEGMENT_64;
       const sectionSize = segment64 ? 80 : 68;
       const parsedSegment = readMachoSegmentHeader(
         commands.subarray(offset, offset + cmdsize),

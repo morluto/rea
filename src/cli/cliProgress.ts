@@ -1,4 +1,4 @@
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
 /** Write one progress update as a stderr line, keeping stdout results parseable. */
 export const writeCliProgressLine = (update: unknown): void => {

@@ -1,8 +1,9 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { basename, dirname, posix, win32 } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { appendCallerPath } from "../../filesystem/callerPath.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
 import type { GoBinaryService } from "../go/GoBinaryService.js";
@@ -14,6 +15,8 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -52,7 +55,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;
@@ -98,11 +101,7 @@ export class ReleaseExposureService {
     );
     if (!input.ok) return input;
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     const markerHits: CredentialMarkerHit[] = [];
     let omittedMarkerHits = 0;
     const interrupted: { scan?: ReleaseExposureScan } = {};
@@ -417,11 +416,7 @@ export class ReleaseExposureService {
     present: (value: Evidence) => MetadataImageFact,
   ): Promise<Result<MetadataImageFact, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     try {
       const result = await run();
       if (!result.ok) {
@@ -557,8 +552,7 @@ const withAuditPartial = (
   report: Evidence,
 ): AnalysisError => {
   if (error.partialObservation !== undefined && !error.cleanupIncomplete)
-    return new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-      cause: error.cause,
+    return cancelledBy(RELEASE_EXPOSURE_OPERATION, carriedReason(error.cause), {
       partialObservation: report,
     });
   error.partialObservation = report;
@@ -852,11 +846,13 @@ const limitNativeSample = (
         (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
     );
   const preferredPaths = new Set(preferred.map((image) => image.path));
-  const kept = [
-    ...preferred,
-    ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
-  ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
-  const omittedNative = scan.native_images.length - kept.length;
+  const { items: kept, omitted: omittedNative } = boundedList(
+    [
+      ...preferred,
+      ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
+    ],
+    MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  );
   const keptPaths = new Set(kept.map((image) => image.path));
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (

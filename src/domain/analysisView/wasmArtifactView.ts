@@ -161,7 +161,6 @@ export const projectWasmArtifactView = (
       },
       coverage: completeWithinViewCoverage(
         report.sections.length + report.imports.length + report.exports.length,
-        report.sections.length + report.imports.length + report.exports.length,
       ),
     });
   if (view.facet === "tool_profile") {
@@ -179,7 +178,7 @@ export const projectWasmArtifactView = (
       kind: "wasm" as const,
       view,
       item: report.tool_profile,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
       ...shared,
     });
   }

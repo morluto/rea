@@ -67,10 +67,10 @@ Ghidra's header-based selection is not reliable for RV32. The 12.1.4
 So an ordinary RV32 image lands on an Andes processor model unless the language
 is stated. REA therefore pins `RISCV:LE:32:default` or `RISCV:LE:64:default`
 with the `gcc` compiler specification per class, records
-`language_selection: provider-pinned-v1`, and refuses a caller-selected
+`language_selection: provider-pinned`, and refuses a caller-selected
 `REA_GHIDRA_LANGUAGE_ID` or `REA_GHIDRA_COMPILER_SPEC_ID` that disagrees with the
 pin without changing the requested override. An override that matches the pin is
-accepted and recorded as `configured-v1`.
+accepted and recorded as `configured`.
 
 The soft-float lane pins the same `RISCV:LE:32:default` language. Every RV32
 language in Ghidra 12.1.4, including the deprecated soft-float `RV32I`, `RV32IC`

@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../domain/coverage.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -100,7 +101,7 @@ import {
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
   evidenceIntegrityErrorProjectionSchema,
-} from "./errorSchemas.js";
+} from "../domain/analysisErrorProjectionSchema.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -279,7 +280,7 @@ const callPathTraceOutput = evidenceResultOf(
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
     search_scope: z.object({
       graph: z.literal("provider_observed_graph"),
-      discovery: z.enum(["complete", "partial", "unknown"]),
+      discovery: coverageStatusSchema,
       observed_goal_status: z.enum([
         "not_requested",
         "reached",

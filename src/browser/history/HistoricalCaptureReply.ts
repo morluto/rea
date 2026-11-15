@@ -4,16 +4,17 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  artifactFileCancellationCause,
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
@@ -96,9 +97,9 @@ export const readHistoricalCaptureReply = async (
       { cause },
     );
     if (finalization?.reason === "cancelled") {
-      const cancellation = new AnalysisCancelledError(
+      const cancellation = cancelledBy(
         "inspect_web_network_capture",
-        { cause: artifactFileCancellationCause(finalization) },
+        carriedReason(artifactFileCancellationCause(finalization)),
       );
       error.retainSecondaryFailure(cancellation, {
         reply_finalization_error: projectAnalysisError(cancellation),

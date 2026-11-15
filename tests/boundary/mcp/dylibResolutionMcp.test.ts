@@ -111,7 +111,12 @@ it("traces dylib resolution for an opened app bundle and rejects a changed targe
       arguments: {},
     });
     expect(changed.isError).toBe(true);
-    expect(JSON.stringify(parseMcpToolError(changed))).toContain("integrity");
+    expect(parseMcpToolError(changed)).toMatchObject({
+      error: {
+        category: "integrity_mismatch",
+        details: { reason: "integrity", integrity_check: "container-identity" },
+      },
+    });
   });
 });
 

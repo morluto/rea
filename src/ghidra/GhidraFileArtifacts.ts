@@ -1,8 +1,8 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
@@ -10,17 +10,18 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   readStableFileBytes,
   RegularFileCapacityError,
 } from "../filesystem/readStableFileBytes.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -137,11 +138,11 @@ export const ghidraFileFailure = (
   }
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-          diagnostics,
-        })
+      ? cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { cleanup, diagnostics },
+        )
       : new ProviderAdapterError("ghidra", operation, {
           cause,
           cleanup,

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
@@ -102,7 +102,9 @@ it.skipIf(process.platform === "win32")(
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
-    const clock = vi.spyOn(Date, "now");
+    // The command deadline is monotonic: it starts on the first reading and
+    // expires on the fourth, while the marker frame is still queued.
+    const clock = vi.spyOn(performance, "now");
     clock
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(100)
@@ -508,14 +510,7 @@ it.skipIf(process.platform === "win32").each([
   async ({ stage, incomplete }) => {
     const controller = new AbortController();
     const reason = { boundary: "final cleanup" };
-    let enterStop!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enterStop = resolve;
-    });
-    let releaseStop!: () => void;
-    const released = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
+    const debuggerFinalCleanup = phaseGate();
     let stopping = true;
     const injected = createInjectedProcess({
       onWrite: (_text, control) => {
@@ -532,8 +527,7 @@ it.skipIf(process.platform === "win32").each([
       {
         stopProcess: async () => {
           if (stopping) {
-            enterStop();
-            await released;
+            await debuggerFinalCleanup.hold();
           }
           return incomplete && stopping
             ? { status: "incomplete", reason: "stop settlement pending" }
@@ -552,9 +546,9 @@ it.skipIf(process.platform === "win32").each([
       controller.signal,
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(entered, pending, "debugger final cleanup");
+      await debuggerFinalCleanup.reached(pending, "debugger final cleanup");
       controller.abort(reason);
-      releaseStop();
+      debuggerFinalCleanup.release();
       const result = await pending;
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -573,7 +567,7 @@ it.skipIf(process.platform === "win32").each([
         expect(result.error.cleanupIncomplete).toBe(false);
       }
     }, [
-      releaseStop,
+      debuggerFinalCleanup.release,
       async () => {
         await pending;
       },

@@ -1,3 +1,4 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
   ntfsFileReferenceSchema,
   ntfsFileNameSchema,
@@ -637,7 +638,7 @@ export const espFlashImageFactsSchema = z.strictObject({
   image: espImageMetadataSchema.nullable(),
   segments: z.array(espImageSegmentMetadataSchema),
   signature_blocks: z.array(espImageSignatureBlockMetadataSchema),
-  coverage: z.enum(["complete", "unknown"]).nullable(),
+  coverage: completeOrUnknownCoverageSchema.nullable(),
   limitations: z.array(z.string()),
 });
 

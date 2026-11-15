@@ -1,3 +1,4 @@
+import { malformedInput } from "../../domain/parseFailure.js";
 import {
   WEB_SOURCE_MAP_LIMITS,
   sourceMapLimitRecovery,
@@ -24,10 +25,11 @@ import {
 import type { WebSourcePosition } from "../../domain/webSourcePosition.js";
 import {
   inspectSourceMap,
-  SourceMapFormatFailure,
+  SOURCE_MAP_FORMAT,
+  sourceMapLimitFailure,
   type SourceMapSourceDeclaration,
-} from "./SourceMapFormat.js";
-import { decodeValidatedSourceMapLeaves } from "./DecodedSourceMap.js";
+} from "../../domain/sourceMapFormat.js";
+import { decodeValidatedSourceMapLeaves } from "../../domain/decodedSourceMap.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */
 export const traceSourceMap = (
@@ -42,8 +44,8 @@ export const traceSourceMap = (
   if (inspected.format === "regular") {
     const decoded = decodedLeaves[0];
     if (decoded === undefined)
-      throw new SourceMapFormatFailure(
-        "format",
+      throw malformedInput(
+        SOURCE_MAP_FORMAT,
         "Regular source map has no validated leaf.",
       );
     map = decoded.map;
@@ -77,9 +79,10 @@ export const traceSourceMap = (
     const match = originalMatch(segment, map, url, inspected.declarations);
     bytes += Buffer.byteLength(JSON.stringify(match)) + 1;
     if (bytes > limits.outputBytes)
-      throw new SourceMapFormatFailure(
-        "limit",
-        `Complete source-map point evidence exceeds output admission; no partial evidence was returned. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`,
+      throw sourceMapLimitFailure(
+        `Complete source-map point evidence exceeds output admission; no partial evidence was returned.`,
+        "output_bytes",
+        limits.outputBytes,
       );
     matches.push(match);
   }
@@ -137,8 +140,8 @@ const validateFlattenedRows = (
         (segment.length !== 1 && segment[1] >= inspected.declarations.length) ||
         (segment.length === 5 && segment[4] >= map.names.length)
       )
-        throw new SourceMapFormatFailure(
-          "format",
+        throw malformedInput(
+          SOURCE_MAP_FORMAT,
           "Decoded mapping has invalid component count, position, source index or name index.",
         );
     }
@@ -170,8 +173,8 @@ const originalMatch = (
   if (segment.length === 1) return { state: "generated-only" };
   const declaration = declarations[segment[1]];
   if (declaration === undefined)
-    throw new SourceMapFormatFailure(
-      "format",
+    throw malformedInput(
+      SOURCE_MAP_FORMAT,
       "Mapping references an absent source declaration.",
     );
   const original = { line: segment[2] + 1, column: segment[3] };

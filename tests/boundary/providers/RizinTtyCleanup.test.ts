@@ -82,6 +82,48 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "does not spawn Rizin when cancellation arrives during TTY validation",
+  async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(isatty).mockReturnValue(true);
+    const controller = new AbortController();
+    const reason = { cancelled: "during TTY validation" };
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      controller.abort(reason);
+      return handle;
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    let spawned = false;
+    const manager = new RizinDebugSessionManager(
+      {},
+      {
+        platform: "linux",
+        spawnProcess: () => {
+          spawned = true;
+          throw new Error("must not spawn after cancellation");
+        },
+      },
+    );
+    const result = await manager.start(
+      { path: "/fixture", inferior_tty: "/dev/null" },
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(spawned).toBe(false);
+    await manager.closeAll();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "preserves cancellation during final TTY close with failed cleanup",
   async () => {
     const actual =

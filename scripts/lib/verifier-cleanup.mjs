@@ -11,26 +11,6 @@ async function collectCleanupFailures(tasks) {
   return failures;
 }
 
-/**
- * A cleanup task that releases one resource only after every cleanup that may
- * still use it has succeeded. When a dependent fails, the resource is retained
- * and reported with that failure instead of being released underneath it.
- */
-export function releaseAfter(dependents, release, retained) {
-  return async () => {
-    const failures = await collectCleanupFailures(dependents);
-    if (failures.length > 0)
-      throw new AggregateError(
-        [
-          ...failures,
-          new Error(`Retained ${retained} because a dependent cleanup failed.`),
-        ],
-        "Verifier cleanup failed",
-      );
-    await release();
-  };
-}
-
 /** Attempt every independent cleanup and preserve each failure. */
 export async function closeVerifierResources(tasks) {
   const failures = await collectCleanupFailures(tasks);
@@ -55,4 +35,16 @@ export async function withVerifierCleanup(operation, cleanupTasks) {
   }
   await closeVerifierResources(cleanupTasks);
   return value;
+}
+
+/**
+ * The leaf reasons of a verifier failure. `withVerifierCleanup` and the
+ * fixtures it releases nest `AggregateError`s (verification failure, cleanup
+ * failure, retained root), so a reporter that unwraps one level shows only
+ * "Verifier cleanup failed" instead of why.
+ */
+export function verifierFailureReasons(cause) {
+  if (cause instanceof AggregateError)
+    return cause.errors.flatMap(verifierFailureReasons);
+  return [cause instanceof Error ? cause.message : String(cause)];
 }

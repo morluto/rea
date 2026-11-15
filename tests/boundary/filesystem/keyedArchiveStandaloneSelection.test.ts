@@ -129,7 +129,7 @@ it.skipIf(process.platform === "win32")(
         ok: false,
         error: {
           reason: "integrity",
-          detail: expect.stringContaining("Active archive digest changed"),
+          integrityCheck: "container-identity",
         },
       });
       await truncate(stored, 64 * 1024 * 1024 + 1);

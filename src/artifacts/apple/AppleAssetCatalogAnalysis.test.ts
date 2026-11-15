@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import * as processOutput from "../../process/ExecFileOutput.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
@@ -16,6 +16,11 @@ import {
   collectInterfaceBuilderResourceKeys,
 } from "./AppleAssetCatalogAnalysis.js";
 import { waitFor } from "../../../tests/support/testWait.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 
 describe("Apple asset catalog traversal coverage", () => {
   it.for([false, true])(
@@ -428,12 +433,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       const ready = join(work, "ready");
       const exited = join(work, "exited");
       const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
-      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
       const realExecFileOutput = processOutput.execFileOutput;
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "darwin",
-      });
       const spy = vi
         .spyOn(processOutput, "execFileOutput")
         .mockImplementation((_command, _args, options) =>
@@ -452,6 +452,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
           targetSha256: "a".repeat(64),
           signal: controller.signal,
           analyzeInterfaceBuilder: async () => emptyGraph,
+          platform: "darwin",
         }).catch((cause: unknown) => cause);
         await waitFor(() => expect(access(ready)).resolves.toBeUndefined());
         controller.abort("stop asset inspection");
@@ -461,10 +462,44 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
         controller.abort("stop asset inspection");
         await settled;
         spy.mockRestore();
-        Object.defineProperty(process, "platform", platform);
       }
     },
   );
+});
+
+it("joins the Interface Builder cleanup failure to a catalog defect", async () => {
+  const bundle = await createTestTempDirectory("rea-asset-catalog-defect-");
+  await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+  await writeFile(
+    join(bundle, "Contents", "Resources", "Assets.car"),
+    "catalog",
+  );
+  const retained = join(bundle, "Contents", "Resources", "Main.nib");
+  const rejected = await analyzeAppleAssetCatalogs({
+    environment: {},
+    bundlePath: bundle,
+    targetSha256: "a".repeat(64),
+    analyzeInterfaceBuilder: ({ signal }) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener("abort", () =>
+          reject(
+            new ArtifactReaderFailure("io", "reader close failed", {
+              cleanup: { reason: "close failed", resources: [retained] },
+            }),
+          ),
+        );
+      }),
+    runAssetUtil: () =>
+      Promise.reject(invariantViolation("Catalog plan is missing")),
+  }).catch((cause: unknown) => cause);
+  expect(rejected).toBeInstanceOf(ProviderAdapterError);
+  if (!(rejected instanceof ProviderAdapterError))
+    throw new Error("expected an adapter failure");
+  // The defect stays the primary failure beside the reader's cleanup.
+  expect(rejected.cleanupPrimary).toBeInstanceOf(ProviderAdapterError);
+  expect(rejected.cleanupPrimary?.cause).toBeInstanceOf(InternalInvariantError);
+  expect(rejected.cleanupIncomplete).toBe(true);
+  expect(rejected.cleanupResources).toContain(retained);
 });
 
 it.each(["not json", "{}", "[null]"])(

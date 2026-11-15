@@ -8,6 +8,7 @@ import type { EvidenceRequestFrameInput } from "../evidenceInputContract.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
+  managedMetadataStatusSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
@@ -106,7 +107,7 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     byte_length: z.int().min(0),
     module_name: z.string().nullable(),
     mvid: cliMetadataGuidSchema.nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+    metadata_status: managedMetadataStatusSchema,
   }),
   decompiler: decompilerSchema.extend({
     options_sha256: digestSchema,

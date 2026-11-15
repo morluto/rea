@@ -1,6 +1,7 @@
 import { crc32 } from "node:zlib";
 
 import { err, ok, type Result } from "./result.js";
+import { strictUtf8Decoder } from "./strictUtf8.js";
 
 /**
  * U-Boot legacy uImage header (U-Boot `include/image.h`, all fields
@@ -191,7 +192,7 @@ const malformed = (message: string): UImageParseError => ({
   _tag: "UImageFormatFailure",
   message,
 });
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** True when the first four bytes are the U-Boot legacy magic. */
 export const hasUImageMagic = (prefix: Buffer): boolean =>

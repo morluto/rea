@@ -373,7 +373,7 @@ export const projectArtifactInventoryView = (
               },
         limitation_count: limitations.length,
       },
-      coverage: completeWithinViewCoverage(examined, examined),
+      coverage: completeWithinViewCoverage(examined),
       ...shared,
     });
   }

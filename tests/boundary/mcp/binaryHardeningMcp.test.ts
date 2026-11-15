@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -39,7 +40,7 @@ mcpTest(
       await writeFile(path, bytes);
       const response = await client.callTool(
         { name: "inspect_binary_hardening", arguments: { path } },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = toolContract(
@@ -57,7 +58,7 @@ mcpTest(
           name: "inspect_binary_hardening",
           arguments: { path: "relative" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(bad.isError).toBe(true);
     } finally {

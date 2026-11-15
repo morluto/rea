@@ -4,6 +4,8 @@ import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import { memberLookup } from "./viewPointer.js";
 import { zipEntryAt, zipLeavesOut } from "./zipView.js";
+import { isRecord } from "../isRecord.js";
+import { boundedList, type BoundedList } from "../boundedList.js";
 
 const MAX_LISTED = 100;
 
@@ -19,11 +21,6 @@ export interface DesktopStateDifference {
   /** False when either view was truncated, so absences may be outside the sample. */
   readonly complete: boolean;
 }
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
 const MAX_LISTED_POINTER = 4096;
@@ -212,6 +209,27 @@ const compareTrees = (
   };
 };
 
+/** Each list bounded to `MAX_LISTED`, with how many it held in all. */
+const listed = (
+  added: readonly string[],
+  removed: readonly string[],
+  changed: readonly string[],
+) => {
+  const total = ({ items, omitted }: BoundedList<string>) =>
+    items.length + omitted;
+  const a = boundedList(added, MAX_LISTED);
+  const r = boundedList(removed, MAX_LISTED);
+  const c = boundedList(changed, MAX_LISTED);
+  return {
+    added: a.items,
+    removed: r.items,
+    changed: c.items,
+    added_count: total(a),
+    removed_count: total(r),
+    changed_count: total(c),
+  };
+};
+
 const compareMaps = (
   kind: DesktopStateDifference["kind"],
   before: ReadonlyMap<string, string>,
@@ -228,12 +246,7 @@ const compareMaps = (
   for (const key of before.keys()) if (!after.has(key)) removed.push(key);
   return {
     kind,
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: changed.slice(0, MAX_LISTED),
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: changed.length,
+    ...listed(added, removed, changed),
     complete: true,
   };
 };
@@ -260,12 +273,7 @@ const lineDifference = (
   }
   return {
     kind: "lines",
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: [],
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: 0,
+    ...listed(added, removed, []),
     complete: true,
   };
 };

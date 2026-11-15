@@ -45,7 +45,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import * as queuedInterrupts from "../../process/queuedInterrupts.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import * as evidenceFileSource from "./evidenceFileSource.js";
@@ -491,6 +491,15 @@ it("never seals a view as more certain than its parent Evidence", async () => {
         { kind: "summary" },
       ),
     ];
+    // The item view returns one selected section, not the whole collection.
+    expect(views[0]).toMatchObject({
+      ok: true,
+      value: {
+        normalized_result: {
+          coverage: { examined: 1, total: 1, exhausted: true },
+        },
+      },
+    });
     for (const view of views) {
       if (!view.ok) throw view.error;
       expect(view.value.confidence).toBe(expected);

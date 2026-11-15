@@ -6,8 +6,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { interfaceBuilderDecodeBudgetFailure } from "./InterfaceBuilderDecodeBudget.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -128,7 +127,6 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
         undefined,
         {
           budget: "the aggregate Interface Builder decode budget",
-          fail: interfaceBuilderDecodeBudgetFailure,
         },
       ),
     ).toThrow(
@@ -151,7 +149,6 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
           undefined,
           {
             budget: "the aggregate Interface Builder decode budget",
-            fail: interfaceBuilderDecodeBudgetFailure,
           },
         ),
       ).not.toThrow();
@@ -349,6 +346,28 @@ describe("binary Interface Builder plist dates", () => {
     expect(JSON.stringify(result)).not.toContain("2001-01-01T00:00:00.100Z");
     expect(result.limitations.join("\n")).toContain(
       "binary plist date marker 0x30 is invalid",
+    );
+  });
+
+  it("reports a reference cycle as an invalid archive, not a budget omission", async () => {
+    // One array (offset 8) whose only reference is itself; 1-byte offsets
+    // and references, offset table at 10.
+    const trailer = Buffer.alloc(32);
+    trailer[6] = 1;
+    trailer[7] = 1;
+    trailer.writeBigUInt64BE(1n, 8);
+    trailer.writeBigUInt64BE(10n, 24);
+    const cycle = Buffer.concat([
+      Buffer.from("bplist00"),
+      Buffer.from([0xa1, 0x00, 0x08]),
+      trailer,
+    ]);
+    const result = await nib(cycle, "cycle");
+    expect(result.limitations.join("\n")).toContain(
+      "Panel.nib: binary plist object references form a cycle",
+    );
+    expect(JSON.stringify(result)).not.toContain(
+      "aggregate_decode_budget_exhausted",
     );
   });
 
