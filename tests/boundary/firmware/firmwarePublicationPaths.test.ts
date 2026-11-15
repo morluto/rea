@@ -26,7 +26,7 @@ import {
 import { publishFirmwareExtraction } from "../../../src/firmware/FirmwarePublication.js";
 import { normalizeUnblobReport } from "../../../src/firmware/FirmwareReports.js";
 import { startFirmwareDeadline } from "../../../src/firmware/FirmwareDeadline.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const validateAdvertisedFirmwareOutput = async (

@@ -1,7 +1,7 @@
 import { Cli, z } from "incur";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,

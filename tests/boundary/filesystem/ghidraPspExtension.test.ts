@@ -3,7 +3,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { createHash } from "node:crypto";
 import type { Dir } from "node:fs";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ok as javaProbeOk } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import {

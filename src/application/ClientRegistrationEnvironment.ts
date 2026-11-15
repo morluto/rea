@@ -1,3 +1,7 @@
+import type {
+  OwnedProviderSetting,
+  RecordedProviderSettings,
+} from "../ports/DesktopBuildHost.js";
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import {
   clientRegistrationSource,
@@ -178,21 +182,6 @@ export const clientRegistrationEnvironmentDetails = (
     expressionSettings(client?.name, environment),
   );
 };
-
-/** Setting names a registration does not carry as the value selected here. */
-export interface RecordedProviderSettings {
-  /** Selected here and absent from the registration's recorded environment. */
-  readonly unrecorded: readonly string[];
-  /** Recorded with text other than the value selected here. */
-  readonly differing: readonly string[];
-  /** Recorded as an expression, or in a map REA could not read. */
-  readonly unresolved: readonly string[];
-  /** Recorded with a value the caller owns, as an archive setup packed for another version. */
-  readonly owned?: readonly string[];
-}
-
-/** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
-export type OwnedProviderSetting = (name: string, value: string) => boolean;
 
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */
 export type ProviderSettingObserver = (name: string, value: string) => void;

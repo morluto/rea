@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import {
   inspectElfDependenciesInputSchema,
   elfDependenciesSchema,
 } from "../../domain/native/elfDependencies.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
 import { parseElfDependencies } from "./ElfDependencyParser.js";
 

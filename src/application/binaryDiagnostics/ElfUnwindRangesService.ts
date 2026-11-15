@@ -1,6 +1,6 @@
 import { insideArtifact } from "./artifactRange.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElfUnwindRangesPort } from "./ElfUnwindRangesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

@@ -1,5 +1,5 @@
 import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
@@ -35,7 +35,7 @@ import {
   BinaryMappingFailure,
   BinaryReader,
   mappedFileOffset,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import type { FileMapping } from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
 import { Budget } from "../../domain/budget.js";

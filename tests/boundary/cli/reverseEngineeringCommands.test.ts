@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -99,7 +99,7 @@ const runObjdump = async (
     undefined,
     () => service as ReverseEngineeringService,
   );
-  const command = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const command = commands.get(cliCommandFor("inspect_with_objdump"));
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
@@ -204,7 +204,7 @@ it("lists objdump architectures without inventing an artifact path", async () =>
     { operation: "architectures" },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
-  const artifactCommand = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const artifactCommand = commands.get(cliCommandFor("inspect_with_objdump"));
   expect(
     artifactCommand?.args?.safeParse({
       path: "/tmp/sample",

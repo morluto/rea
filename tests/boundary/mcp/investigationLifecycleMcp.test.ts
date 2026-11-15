@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
   createEvidenceBundle,

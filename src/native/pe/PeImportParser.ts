@@ -5,7 +5,7 @@ import {
 } from "./PeRvaSpans.js";
 import { createPefileReadCompatibility } from "./PefileReadCompatibility.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -14,7 +14,7 @@ import {
   isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readPeImage } from "../metadata/PeImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,

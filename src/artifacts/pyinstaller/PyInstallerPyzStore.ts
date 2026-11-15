@@ -11,13 +11,13 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,

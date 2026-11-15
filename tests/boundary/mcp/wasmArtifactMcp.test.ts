@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -589,7 +590,7 @@ it("reads an oversized completed WASM result through its reported retained refer
     expect(ajv.validate(input, args), JSON.stringify(ajv.errors)).toBe(true);
     const selected = await harness.client.callTool(
       { name: "inspect_analysis_view", arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(
       selected.isError,

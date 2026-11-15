@@ -5,7 +5,7 @@ import type { Section } from "./AppleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
 import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import type { ObjcProtocolListResult } from "./AppleObjcProtocols.js";
 
 const CLASS_SYMBOL = /^_OBJC_(?:META)?CLASS_\$_(.+)$/u;

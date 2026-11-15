@@ -5,8 +5,10 @@ import {
   keyedBy,
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {

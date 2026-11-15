@@ -168,6 +168,9 @@ function classifyCommit(
         mergeBase: (base) => base,
         isAncestor: () => true,
         changedFiles: () => paths,
+        // No test reaches these synthetic paths; selection falls back to all.
+        listFiles: () => [],
+        readFiles: () => new Map(),
         readFile: (revision, path) => {
           if (path === "package.json" && packageJson !== undefined)
             return revision === PATH_BASE
@@ -190,6 +193,27 @@ const classifyPackage = (before: string, after: string) =>
   classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/readStableArtifact.ts", "sqlite"],
+  ["src/resources/readStableArtifact.ts", "browser"],
+  ["src/resources/readStableArtifact.ts", "binary_layout"],
+  ["src/resources/readStableArtifact.ts", "evm"],
+  ["src/resources/readStableArtifact.ts", "recorded_crash"],
+  ["src/resources/readStableArtifact.ts", "web_network"],
+  ["src/resources/readStableArtifact.ts", "web_source_map"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
+  ["src/resources/ArtifactReader.ts", "sqlite"],
+  ["src/resources/ArtifactReader.ts", "binary_layout"],
+  ["src/resources/ArtifactReader.ts", "evm"],
+  ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
@@ -224,6 +248,19 @@ it.each([
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
@@ -376,21 +413,114 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
-it("emits an observational owner proposal without changing ordinary or full portable execution", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["src/evm/Example.ts"]);
-  expect(await classify(directory, base, head)).toMatchObject({
-    code: true,
-    testSelection: { mode: "candidate", owners: ["evm"] },
+it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
+  const { directory } = await fixture();
+  // The entrypoint's output file is not part of the change.
+  await mkdir(join(directory, ".git", "info"), { recursive: true });
+  await writeFile(join(directory, ".git", "info", "exclude"), "scope-output\n");
+  const write = async (path: string, content: string) => {
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), content);
+  };
+  const imports = (specifier: string) =>
+    `import { value } from "${specifier}";\nvoid value;\n`;
+  await write("src/evm/Example.ts", "export const value = 1;\n");
+  await write("src/evm/Example.test.ts", imports("./Example.js"));
+  await write("src/evm/Other.ts", "export const value = 2;\n");
+  await write(
+    "tests/support/evmHelper.ts",
+    imports("../../src/evm/Example.js"),
+  );
+  // Through a test-only helper, through the leaf owner, and by name.
+  await write(
+    "tests/composition/helped.test.ts",
+    imports("../support/evmHelper.js"),
+  );
+  await write("tests/boundary/evm/cli.test.ts", "// spawns the built CLI\n");
+  await write(
+    "tests/conformance/named.test.ts",
+    'readFileSync("src/evm/Example.ts");\n',
+  );
+  await write(
+    "tests/composition/unrelated.test.ts",
+    imports("../../src/provider.js"),
+  );
+  const base = await commit(directory);
+  const head = await change(
+    directory,
+    ["src/evm/Example.ts"],
+    "export const value = 3;\n",
+  );
+  const selected = [
+    "src/evm/Example.test.ts",
+    "tests/boundary/evm/cli.test.ts",
+    "tests/composition/helped.test.ts",
+    "tests/conformance/named.test.ts",
+  ];
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { version: 2, mode: "selected", groups: [selected] },
+    testShards: ["1/1"],
   });
+  const output = await readFile(join(directory, "scope-output"), "utf8");
+  expect(output).toContain("test_mode=selected\n");
+  expect(output).toContain('test_shards=["1/1"]\n');
+
+  // ci:full, main pushes and shared or untraced inputs run the complete suite.
   expect(
     await runPlanScript(directory, base, head, "pull_request", true),
   ).toMatchObject({
-    code: true,
-    testSelection: { mode: "full", owners: [] },
+    testSelection: { mode: "full", groups: [] },
+    testShards: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"],
   });
-  const output = await readFile(join(directory, "scope-output"), "utf8");
-  expect(output).toContain('test_selection={"version":1,"mode":"full"');
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    testSelection: { mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
+  });
+  let previous = head;
+  for (const path of [
+    "src/process/Shared.ts",
+    "scripts/build-something.mjs",
+    "tests/fixtures/data.bin",
+  ]) {
+    const parent = previous;
+    previous = await change(directory, [path]);
+    expect(await classify(directory, parent, previous)).toMatchObject({
+      testSelection: { mode: "full", reason: expect.stringContaining(path) },
+    });
+  }
+  // A leaf owner's boundary tests cover its other modules.
+  const unreached = await change(
+    directory,
+    ["src/evm/Other.ts"],
+    "export const value = 4;\n",
+  );
+  expect(await classify(directory, previous, unreached)).toMatchObject({
+    testSelection: { mode: "selected" },
+  });
+  const isolated = await change(directory, ["src/unowned/Lonely.ts"]);
+  expect(await classify(directory, unreached, isolated)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "No test imports, names or sits beside a changed path",
+    },
+  });
+  // Above the cap, selection gives way to the complete suite.
+  const many = Array.from(
+    { length: 151 },
+    (_, index) => `tests/composition/many${String(index)}.test.ts`,
+  );
+  const wide = await change(directory, many);
+  expect(await classify(directory, isolated, wide)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "151 affected test files exceed the 150-file selection cap",
+    },
+  });
+  const capped = await change(directory, many.slice(0, 81), "// edited\n");
+  expect(await classify(directory, wide, capped)).toMatchObject({
+    testSelection: { mode: "selected" },
+    testShards: ["1/3", "2/3", "3/3"],
+  });
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
@@ -1293,11 +1423,11 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [
-    "src/cliJsonInput.ts",
+    "src/cli/cliJsonInput.ts",
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
@@ -1468,6 +1598,7 @@ it.each(["evm", "browser"])(
         outputs: {
           ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
           tier: "fast",
+          test_mode: "full",
           [scope]: "true",
         },
       },

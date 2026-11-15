@@ -1,21 +1,17 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -25,7 +21,7 @@ import {
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
   ElfDependencyCountFailure,
   type ElfDependencyCountLimit,
@@ -36,7 +32,7 @@ const OPERATION = "inspect_elf_dependencies";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 /**
- * Satisfies the application's ElfDependenciesPort structurally; composition
+ * Satisfies ElfDependenciesPort structurally; composition
  * checks the fit, so this provider does not import the application layer.
  */
 export class ElfDependenciesProvider {

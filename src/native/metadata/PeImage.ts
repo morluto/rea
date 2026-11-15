@@ -15,7 +15,7 @@ import {
   BinaryReader,
   type BinaryContainer,
   type ImageSection,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {
   const evidence = parseMzHeaderEvidence(reader.bytes);

@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElfDependenciesPort } from "./ElfDependenciesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfDependenciesPort } from "../../ports/binaryDiagnostics/ElfDependenciesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

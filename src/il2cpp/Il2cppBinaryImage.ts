@@ -13,7 +13,7 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,

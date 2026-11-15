@@ -5,9 +5,9 @@ import {
 } from "../../src/application/javascript/JavaScriptApplicationService.js";
 import { reconstructJavaScriptArtifact as reconstructOwned } from "../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import type { ProgressReporter } from "../../src/application/ProgressReporter.js";
+import type { ProgressReporter } from "../../src/ports/ProgressReporter.js";
 import { readJavaScriptArtifactFiles as readOwned } from "../../src/artifacts/javascript/JavaScriptArtifactFiles.js";
-import type { ArtifactReader } from "../../src/artifacts/ArtifactReader.js";
+import type { ArtifactReader } from "../../src/resources/ArtifactReader.js";
 import type { ArtifactInventorySnapshot } from "../../src/domain/artifactInventorySnapshot.js";
 
 /** Read a fixture's nested containers with an awaited cleanup owner. */

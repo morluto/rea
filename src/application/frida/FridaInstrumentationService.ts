@@ -26,8 +26,8 @@ import {
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
 import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
-import { unknownFridaSession } from "./fridaInputErrors.js";
-import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
+import { unknownFridaSession } from "../../frida/fridaInputErrors.js";
+import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
 import type {
   FridaDeviceList,
   FridaProcessList,
@@ -41,7 +41,7 @@ import type {
   FridaSessionObservation,
   FridaSessionStatus,
   StartFridaSessionInput,
-} from "./FridaInstrumentationPort.js";
+} from "../../ports/frida/FridaInstrumentationPort.js";
 
 type FridaSessionCloseResult = Awaited<
   ReturnType<FridaInstrumentationPort["closeSession"]>

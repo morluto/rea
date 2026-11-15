@@ -29,7 +29,7 @@ import { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDepe
 import { ElfDependenciesProvider } from "../native/elf/ElfDependenciesProvider.js";
 import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
 

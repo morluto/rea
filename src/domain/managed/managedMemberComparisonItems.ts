@@ -280,7 +280,7 @@ const sameAssemblyIdentity = (
   left.public_key.token === right.public_key.token;
 
 interface ReferenceTarget {
-  readonly rowResolved: boolean | undefined;
+  readonly rowResolved: boolean;
   readonly offset: number | null;
   readonly opcode: string;
   readonly token: string;

@@ -1,6 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   type ErlangBeam,

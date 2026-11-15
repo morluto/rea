@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -352,7 +355,7 @@ goMcpTest(
     await writeFile(path, fixture.bytes);
     const response = await client.callTool(
       { name: "inspect_go_binary", arguments: { path } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const parsed = evidenceResultOf(goBinarySchema).parse(

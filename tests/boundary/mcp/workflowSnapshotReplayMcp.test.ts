@@ -11,7 +11,7 @@ import {
   createAnalysisExecution,
   type AnalysisProvider,
   type CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import {

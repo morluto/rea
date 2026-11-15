@@ -6,9 +6,9 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import type { UndeliveredSourceClosure } from "../../src/application/AnalysisEvidenceSources.js";
 import * as matchingService from "../../src/application/native/NativeFunctionMatchingService.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { registerNativeFunctionMatchingCommands } from "../../src/cli/nativeFunctionMatchingCommands.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import {
   createEvidenceBundle,

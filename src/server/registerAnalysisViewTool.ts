@@ -5,7 +5,7 @@ import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewReq
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
