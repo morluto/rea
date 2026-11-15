@@ -10,6 +10,7 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 export const NTFS_JOURNAL_TOOL_CONTRACTS = [
   {
     name: NTFS_JOURNAL_OPERATION,
+    cli: true,
     ...toolContractMetadata(NTFS_JOURNAL_OPERATION),
     kind: "application",
     description:

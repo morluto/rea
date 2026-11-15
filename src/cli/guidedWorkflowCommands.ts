@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -17,7 +16,6 @@ export const registerGuidedWorkflowCommands = (
     logger,
     contractNamed(APPLICATION_TOOL_CONTRACTS, "guided_workflows"),
     {
-      command: CLI_COMMANDS.guidedWorkflows,
       description: "List or render REA's existing guided workflows",
       runtimeJson: {
         arguments:

@@ -1,7 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -65,7 +64,6 @@ export const registerAndroidCommands = (
     logger,
     contract("inspect_android_jni_bindings"),
     {
-      command: CLI_COMMANDS.inspectAndroidJniBindings,
       description:
         "Link raw DEX native declarations to static JNI export/table candidates without executing the APK",
       positionals: ["path"],
@@ -99,7 +97,6 @@ export const registerAndroidCommands = (
     logger,
     contract("inspect_android_package"),
     {
-      command: CLI_COMMANDS.inspectAndroidPackage,
       description:
         "Inspect APK declarations and decoded manifest without executing it",
       positionals: ["path"],
@@ -119,7 +116,6 @@ export const registerAndroidCommands = (
     logger,
     contract("search_android_classes"),
     {
-      command: CLI_COMMANDS.searchAndroidClasses,
       description:
         "Search APK class names; empty query inventories all classes",
       positionals: ["path", "query"],
@@ -131,7 +127,6 @@ export const registerAndroidCommands = (
     logger,
     contract("inspect_android_class"),
     {
-      command: CLI_COMMANDS.inspectAndroidClass,
       description: "Inspect one exact APK class's member inventory",
       positionals: ["path", "class_name"],
       evidenceDelivery: true,
@@ -143,7 +138,6 @@ export const registerAndroidCommands = (
     logger,
     contract("inspect_android_method"),
     {
-      command: CLI_COMMANDS.inspectAndroidMethod,
       description: "Decompile one APK method with explicit overload selection",
       positionals: ["path", "class_name", "method_name"],
       fields: {
@@ -162,7 +156,6 @@ export const registerAndroidCommands = (
     logger,
     contract("trace_android_references"),
     {
-      command: CLI_COMMANDS.traceAndroidReferences,
       description:
         "Trace APK using nodes for a defined class/method or an externally invoked DEX method",
       positionals: ["path", "class_name"],

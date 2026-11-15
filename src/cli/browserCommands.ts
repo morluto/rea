@@ -16,8 +16,6 @@ import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
@@ -42,7 +40,6 @@ export const registerBrowserCommands = (
     logger,
     listTargets,
     {
-      command: CLI_COMMANDS.listBrowserTargets,
       description:
         "List page targets from a selected loopback CDP browser, optionally filtered by origin",
       positionals: ["cdp_endpoint"],
@@ -59,7 +56,6 @@ export const registerBrowserCommands = (
     logger,
     inspectPage,
     {
-      command: CLI_COMMANDS.inspectWebPage,
       description:
         "Passively inspect one page through CDP, defaulting to its current origin",
       ...browserTargetProjection,
@@ -101,7 +97,6 @@ export const registerBrowserCommands = (
     logger,
     observeSession,
     {
-      command: CLI_COMMANDS.observeWebSession,
       description: "Observe user-driven page navigation during a chosen window",
       ...browserTargetProjection,
       fields: {
@@ -133,7 +128,6 @@ const registerBundleAnalysis = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.analyzeWebBundle,
       description:
         "Capture and statically analyze a page bundle, defaulting to the selected target origin",
       ...browserTargetProjection,

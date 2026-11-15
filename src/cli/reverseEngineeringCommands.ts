@@ -178,7 +178,6 @@ export const registerReverseEngineeringCommands = (
     logger,
     objdump,
     {
-      command: CLI_COMMANDS.inspectWithObjdump,
       description:
         "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
       inputBranches: {
@@ -219,7 +218,6 @@ export const registerReverseEngineeringCommands = (
     logger,
     contractNamed(REVERSE_ENGINEERING_TOOL_CONTRACTS, "execute_rizin_command"),
     {
-      command: CLI_COMMANDS.executeRizinCommand,
       description: "Execute one Rizin command against a local artifact",
       positionals: ["path", "command"],
       fields: {

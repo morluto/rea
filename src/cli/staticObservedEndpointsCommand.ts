@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 import type { Evidence } from "../domain/evidence.js";
 import type { CliInstance } from "./types.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -24,7 +23,6 @@ export const registerStaticObservedEndpointsCommand = (
       "compare_static_and_observed_endpoints",
     ),
     {
-      command: CLI_COMMANDS.compareStaticAndObservedEndpoints,
       description:
         "Compare static JavaScript endpoints and HAR Evidence JSON offline; --detail summary with --evidence_output saves full facts for selected inspect-analysis-view pages",
       document:

@@ -1,6 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
 import type { Logger } from "pino";
@@ -26,7 +25,6 @@ export const registerWasmCommands = (
     logger,
     COMPARE_WASM_INTERFACES_CONTRACT,
     {
-      command: CLI_COMMANDS.compareWasmInterfaces,
       description:
         "Compare core WASM interfaces from two exact inspection Evidence records",
       document:

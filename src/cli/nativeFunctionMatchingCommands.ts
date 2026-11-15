@@ -5,7 +5,6 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { matchNativeFunctionsInputSchema } from "../contracts/native/functionMatchingContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -31,7 +30,6 @@ export const registerNativeFunctionMatchingCommands = (
     logger,
     contractNamed(SESSION_TOOL_CONTRACTS, "match_native_functions"),
     {
-      command: CLI_COMMANDS.matchNativeFunctions,
       description:
         "Match two observed native function inventories without executing targets",
       document:

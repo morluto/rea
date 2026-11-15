@@ -23,7 +23,7 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -70,7 +70,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "observe_native_ui"),
     {
-      command: CLI_COMMANDS.observeNativeUi,
       description:
         "Observe one already-running native application window by PID and window ID",
       sessionTarget,
@@ -83,7 +82,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "capture_native_ui_scenario"),
     {
-      command: CLI_COMMANDS.captureNativeUiScenario,
       description:
         "Run declarative AX actions or waits in one exact native application window",
       sessionTarget,
@@ -131,7 +129,6 @@ const registerNativeCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_macho"),
     {
-      command: CLI_COMMANDS.inspectMacho,
       description: "Run inspect_macho without launching Hopper",
       sessionTarget: machoTarget,
       evidenceDelivery: true,
@@ -139,8 +136,8 @@ const registerNativeCommands = (
     run,
   );
   for (const [command, tool] of [
-    [CLI_COMMANDS.inspectSignature, "inspect_signature"],
-    [CLI_COMMANDS.listArchitectures, "list_architectures"],
+    [cliCommandFor("inspect_signature"), "inspect_signature"],
+    [cliCommandFor("list_architectures"), "list_architectures"],
   ] as const)
     registerContractCommand(
       cli,
@@ -158,7 +155,6 @@ const registerNativeCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_plist"),
     {
-      command: CLI_COMMANDS.inspectPlist,
       description: "Parse app plist metadata without launching Hopper",
       sessionTarget: { description: "App, Mach-O or plist path" },
       fields: {
@@ -176,7 +172,6 @@ const registerNativeCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "demangle_swift"),
     {
-      command: CLI_COMMANDS.demangleSwift,
       description: "Demangle Swift symbols without Hopper",
       sessionTarget: {
         description: "Artifact path used for evidence identity",

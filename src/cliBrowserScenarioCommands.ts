@@ -43,7 +43,6 @@ export const registerBrowserScenarioCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.captureBrowserScenario,
       description:
         "Run one bounded Playwright browser scenario and return Evidence",
       document,

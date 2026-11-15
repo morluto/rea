@@ -38,6 +38,13 @@ import { examplesFor } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 
+/** The contracts below that the CLI exposes as commands. */
+const SESSION_CLI_CONTRACTS: ReadonlySet<string> = new Set([
+  "compare_process_captures",
+  "compare_artifacts",
+  "match_native_functions",
+]);
+
 const session = <
   Name extends keyof typeof sessionOutputSchemas,
   Schema extends z.ZodObject,
@@ -51,6 +58,7 @@ const session = <
     ...toolContractMetadata(name),
     description,
     kind: "session",
+    ...(SESSION_CLI_CONTRACTS.has(name) ? { cli: true as const } : {}),
     inputSchema,
     outputSchema: requireOutputSchema(sessionOutputSchemas, name),
     examples: examplesFor(name, inputSchema),

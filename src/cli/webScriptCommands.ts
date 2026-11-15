@@ -2,7 +2,6 @@ import type { Logger } from "pino";
 
 import { exportWebScripts } from "../application/WebScriptExportService.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../contracts/webScriptToolContracts.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER } from "../domain/investigationProviders.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -20,7 +19,6 @@ export const registerWebScriptCommands = (
     logger,
     contractNamed(WEB_SCRIPT_TOOL_CONTRACTS, "export_web_scripts"),
     {
-      command: CLI_COMMANDS.exportWebScripts,
       description:
         "Export retained website scripts into an absent directory for static JavaScript analysis",
       positionals: ["capture_path", "output_directory"],

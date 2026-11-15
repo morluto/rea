@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
 import {
   createEvidence,
   parseEvidence,
@@ -84,7 +84,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     kind === "gdb"
       ? CLI_COMMANDS.debugWithGdb
       : kind === "objdump"
-        ? CLI_COMMANDS.inspectWithObjdump
+        ? cliCommandFor("inspect_with_objdump")
         : CLI_COMMANDS.listObjdumpArchitectures;
   const command = Cli.toCommands.get(cli)?.get(commandName);
   if (command === undefined) throw new Error("CLI command was not registered");

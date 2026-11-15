@@ -2,7 +2,6 @@ import type { Logger } from "pino";
 
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createPcapAnalysisProvider } from "../composition/pcap.js";
 import { PCAP_TOOL_CONTRACTS } from "../contracts/pcap/pcapToolContracts.js";
 import type { PcapOperation } from "../domain/pcap/pcapAnalysis.js";
@@ -34,7 +33,6 @@ export const registerPcapCommands = (
     logger,
     contractNamed(PCAP_TOOL_CONTRACTS, "inspect_pcap_client"),
     {
-      command: CLI_COMMANDS.inspectPcapClient,
       description:
         "Inspect the caller-selected tshark and capinfos binaries without reading a capture",
     },
@@ -45,7 +43,6 @@ export const registerPcapCommands = (
     logger,
     contractNamed(PCAP_TOOL_CONTRACTS, "inspect_pcap_capture"),
     {
-      command: CLI_COMMANDS.inspectPcapCapture,
       description:
         "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
       positionals: ["path"],

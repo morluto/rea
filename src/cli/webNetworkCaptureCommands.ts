@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 
 import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { WEB_NETWORK_CAPTURE_TOOL_CONTRACTS } from "../contracts/webNetworkCaptureToolContracts.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -25,7 +24,6 @@ export const registerWebNetworkCaptureCommands = (
       "inspect_web_network_capture",
     ),
     {
-      command: CLI_COMMANDS.inspectWebNetworkCapture,
       description:
         "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
       positionals: ["capture_path", "format"],

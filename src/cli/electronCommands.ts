@@ -21,7 +21,6 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 
@@ -63,7 +62,6 @@ const registerElectronFuseCommand = (
     logger,
     contractNamed(ELECTRON_TOOL_CONTRACTS, "inspect_electron_fuses"),
     {
-      command: CLI_COMMANDS.inspectElectronFuses,
       description:
         "Inspect packaged Electron fuse bytes without launching the application",
       positionals: ["path"],
@@ -96,7 +94,6 @@ const registerElectronActiveCommand = (
     logger,
     contractNamed(ELECTRON_TOOL_CONTRACTS, "capture_electron_scenario"),
     {
-      command: CLI_COMMANDS.captureElectronScenario,
       description: "Run one owned Electron scenario with cancellable actions",
       document: "Inline JSON or a JSON file matching capture_electron_scenario",
       callerPaths: [
@@ -145,7 +142,6 @@ const registerJavaScriptRuntimeReconciliationCommand = (
     logger,
     contractNamed(ELECTRON_TOOL_CONTRACTS, "reconcile_javascript_runtime"),
     {
-      command: CLI_COMMANDS.reconcileJavaScriptRuntime,
       description:
         "Reconcile static application and passive runtime Evidence JSON",
       document:
@@ -198,7 +194,6 @@ const registerElectronTargetList = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.listElectronTargets,
       description:
         "List local file pages exposed by the selected Electron CDP endpoint",
       positionals: ["cdp_endpoint"],
@@ -226,7 +221,6 @@ const registerElectronPageInspection = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.inspectElectronPage,
       description: "Passively inspect one Electron file page",
       positionals: ["cdp_endpoint", "target_id"],
       fields: {
@@ -297,7 +291,6 @@ const registerJavaScriptApplicationCommand = (
     logger,
     contractNamed(ELECTRON_TOOL_CONTRACTS, "analyze_javascript_application"),
     {
-      command: CLI_COMMANDS.analyzeJavaScriptApplication,
       description:
         "Statically reconstruct a local JavaScript/Electron application",
       ...javaScriptApplicationCliProjection(

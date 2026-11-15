@@ -2,7 +2,6 @@ import type { Logger } from "pino";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "../contracts/ntfsJournalToolContracts.js";
 import {
   NTFS_JOURNAL_OPERATION as operation,
@@ -25,7 +24,6 @@ export const registerNtfsJournalCommand = (
     logger,
     contractNamed(NTFS_JOURNAL_TOOL_CONTRACTS, operation),
     {
-      command: CLI_COMMANDS.inspectNtfsJournal,
       description:
         "Inspect paired offline NTFS MFT and USN journal acquisitions",
       positionals: ["mft_path", "journal_path"],

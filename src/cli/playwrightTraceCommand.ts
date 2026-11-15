@@ -2,7 +2,6 @@ import type { Logger } from "pino";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../contracts/playwrightTraceToolContracts.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION as operation,
@@ -26,7 +25,6 @@ export const registerPlaywrightTraceCommand = (
     logger,
     contractNamed(PLAYWRIGHT_TRACE_TOOL_CONTRACTS, operation),
     {
-      command: CLI_COMMANDS.inspectPlaywrightTrace,
       description:
         "Inventory local saved Playwright v10 trace ZIP events offline without launching a browser",
       positionals: ["path"],

@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { WEB_RUNTIME_TOOL_CONTRACTS } from "../contracts/webRuntimeToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -40,7 +39,6 @@ export const registerWebRuntimeCommands = (
     logger,
     contractNamed(WEB_RUNTIME_TOOL_CONTRACTS, "observe_web_execution"),
     {
-      command: CLI_COMMANDS.observeWebExecution,
       description:
         "Observe precise page execution; resets counters and temporarily disables optimization",
       positionals: browserTargetProjection.positionals,
@@ -58,7 +56,6 @@ export const registerWebRuntimeCommands = (
     logger,
     contractNamed(WEB_RUNTIME_TOOL_CONTRACTS, "inspect_web_event_listeners"),
     {
-      command: CLI_COMMANDS.inspectWebEventListeners,
       description:
         "Inspect native listener source locations on the first main-document CSS match",
       positionals: [...browserTargetProjection.positionals, "selector"],

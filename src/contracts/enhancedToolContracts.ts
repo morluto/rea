@@ -9,6 +9,14 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { FUNCTION_WORKFLOW_TOOL_CONTRACTS } from "./functionWorkflowToolContracts.js";
 
+/** The contracts below that the CLI exposes as commands. */
+const ENHANCED_CLI_CONTRACTS: ReadonlySet<string> = new Set([
+  "inspect_native_dispatch_metadata",
+  "decompile_all",
+  "trace_native_ui_action",
+  "trace_native_values",
+]);
+
 const enhanced = <
   Name extends keyof typeof enhancedOutputSchemas,
   Schema extends z.ZodObject,
@@ -22,6 +30,7 @@ const enhanced = <
     ...toolContractMetadata(name),
     description,
     kind: "enhanced",
+    ...(ENHANCED_CLI_CONTRACTS.has(name) ? { cli: true as const } : {}),
     requiresActiveTarget: true,
     inputSchema,
     outputSchema: requireOutputSchema(enhancedOutputSchemas, name),

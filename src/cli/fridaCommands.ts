@@ -4,7 +4,6 @@ import { z } from "incur";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
 import { createFridaInstrumentationProvider } from "../composition/frida.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -103,7 +102,6 @@ export const registerFridaCommands = (
     logger,
     listDevices,
     {
-      command: CLI_COMMANDS.listFridaDevices,
       description: "List local Frida devices and an optional remote endpoint",
       flatten: { remote: remoteMembers },
     },
@@ -116,7 +114,6 @@ export const registerFridaCommands = (
     logger,
     listProcesses,
     {
-      command: CLI_COMMANDS.listFridaProcesses,
       description: "List processes visible through a Frida device",
       fields: { device_id: { description: "Frida device identifier" } },
       flatten: { remote: remoteMembers },
@@ -135,7 +132,6 @@ export const registerFridaCommands = (
     logger,
     instrumentContract,
     {
-      command: CLI_COMMANDS.instrumentWithFrida,
       description: `Run one Frida script against a selected process and detach. ${exactlyOneScriptSource}`,
       positionals: ["mode"],
       cliOptions: {

@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../contracts/webScriptToolContracts.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -19,7 +18,6 @@ export const registerWebSourceLocationCommands = (
     logger,
     contractNamed(WEB_SCRIPT_TOOL_CONTRACTS, "trace_web_source_location"),
     {
-      command: CLI_COMMANDS.traceWebSourceLocation,
       description:
         "Trace one retained script position through an explicitly selected local source map",
       positionals: [

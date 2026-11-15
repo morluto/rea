@@ -711,11 +711,13 @@ export const contractInputBranch = <
 >(
   contract: {
     readonly name: Name;
+    readonly cli?: true;
     readonly inputSchema: z.ZodUnion<Branches>;
   },
   field: Field,
 ): {
   readonly name: Name;
+  readonly cli?: true;
   readonly inputSchema: Extract<
     Branches[number],
     { readonly shape: { readonly [Key in Field]: z.ZodType } }
@@ -728,6 +730,7 @@ export const contractInputBranch = <
     throw new Error(`${contract.name} has no single input shape with ${field}`);
   return {
     name: contract.name,
+    ...(contract.cli === undefined ? {} : { cli: contract.cli }),
     inputSchema: branches[0] as Extract<
       Branches[number],
       { readonly shape: { readonly [Key in Field]: z.ZodType } }
@@ -774,12 +777,15 @@ export const routedCommandDescriptions = (
 export const registerRoutedCommand = (
   cli: CliInstance,
   logger: Logger,
-  command: { readonly command: string; readonly description: string },
+  command: { readonly description: string },
   routes: readonly [...CliCommandRoute[], CliCommandRoute],
 ): void => {
+  // Every route projects the same command, which names itself or is the own
+  // command of one route's contract.
+  const name = routes[0]!.description.command;
   const shapes = routes.map(({ description }) => {
     if (
-      description.command !== command.command ||
+      description.command !== name ||
       description.optionConstraints !== undefined ||
       description.checkOptions !== undefined ||
       description.evidenceTargets !== undefined ||
@@ -788,7 +794,7 @@ export const registerRoutedCommand = (
       )
     )
       throw new Error(
-        `${description.contract.name} cannot be routed by ${command.command}`,
+        `${description.contract.name} cannot be routed by ${name}`,
       );
     return commandShape(description);
   });
@@ -804,14 +810,14 @@ export const registerRoutedCommand = (
           schemaSignature(schema) !== schemaSignature(args[position]![1]),
       )
     )
-      throw new Error(`${command.command} routes take different arguments`);
+      throw new Error(`${name} routes take different arguments`);
     for (const [key, schema] of Object.entries(shape.options)) {
       const shared = options.get(key);
       if (
         shared !== undefined &&
         schemaSignature(shared) !== schemaSignature(schema)
       )
-        throw new Error(`${command.command} routes disagree on --${key}`);
+        throw new Error(`${name} routes disagree on --${key}`);
       options.set(key, schema);
       owners.set(key, routes[index]!);
     }
@@ -820,8 +826,8 @@ export const registerRoutedCommand = (
     args.some(([argument]) => argument === key) ||
     Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
   // Only JSON inputs every route takes alike are decoded before routing.
-  const sharedJson = sharedJsonInputs(command.command, routes);
-  cli.command(command.command, {
+  const sharedJson = sharedJsonInputs(name, routes);
+  cli.command(name, {
     description: command.description,
     args: z.object(Object.fromEntries(args)),
     options: z.object(Object.fromEntries(options)),
@@ -837,7 +843,7 @@ export const registerRoutedCommand = (
         (key) => values[key] !== undefined,
       );
       return withCommandCancellation((signal) =>
-        logCliCommand(logger, command.command, async () => {
+        logCliCommand(logger, name, async () => {
           const shared = await readJsonInputs(
             routes[0]!.description,
             values,
