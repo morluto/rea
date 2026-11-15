@@ -929,6 +929,7 @@ process.stdin.on("data", (chunk) => {
           }
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "owned output writer is still active",
           };
         },

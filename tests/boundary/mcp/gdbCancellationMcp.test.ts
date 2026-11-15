@@ -77,6 +77,7 @@ process.stdin.on("data", (chunk) => {
         if (stopCalls === 1)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated startup stop uncertainty",
           };
         const stopped = await stopOwnedDebuggerProcess(session, name);

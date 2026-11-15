@@ -70,6 +70,8 @@ import {
   debuggerResourceConstraintError,
   fixedDeadlineGuidance,
   readLinuxProcessStartTime,
+  OwnedDebuggerDetachFailure,
+  incompleteStopFacts,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
   type OwnedInferiorIdentity,
@@ -884,17 +886,20 @@ export class GdbSessionManager {
         const cleanupFailure = this.#sessions.retainCleanupFailure(
           session,
           "start_gdb_session",
-          stopped.reason,
+          stopped,
           { cause },
         );
         const retainCleanup = <T extends AnalysisError>(failure: T): T =>
           failure.bindCleanupDependencies([cleanupFailure], {
             cleanupResources: [session.id],
           });
-        const cleanup = { reason: stopped.reason, resources: [session.id] };
+        const { cleanup, diagnostics } = incompleteStopFacts(stopped, [
+          session.id,
+        ]);
         const detailsWithoutCause = {
           capturedOutput,
           cleanup,
+          diagnostics,
           ...(startupEvidence === undefined
             ? {}
             : { partialObservation: startupEvidence }),
@@ -930,7 +935,10 @@ export class GdbSessionManager {
                 ? details
                 : {
                     ...details,
-                    diagnostics: { session_stop: session.protocolError.code },
+                    diagnostics: {
+                      ...diagnostics,
+                      session_stop: session.protocolError.code,
+                    },
                   },
             ),
           ),
@@ -1143,7 +1151,7 @@ export class GdbSessionManager {
                   this.#sessions.retainCleanupFailure(
                     session,
                     "gdb_console",
-                    stopped.reason,
+                    stopped,
                     {
                       cause,
                       partialObservation: evidence,
@@ -1344,7 +1352,7 @@ export class GdbSessionManager {
               this.#sessions.retainCleanupFailure(
                 session,
                 "close_gdb_session",
-                stopped.reason,
+                stopped,
               ),
             );
           this.#sessions.remove(session);
@@ -1369,7 +1377,7 @@ export class GdbSessionManager {
         this.#sessions.retainCleanupFailure(
           session,
           "close_gdb_session",
-          stopped.reason,
+          stopped,
         ),
       );
     this.#sessions.remove(session);
@@ -1721,15 +1729,15 @@ export class GdbSessionManager {
         : stop.reason,
       {
         cause,
-        diagnostics: { session_stop: stop.code },
         ...(stopped.status === "incomplete"
-          ? {
-              cleanup: {
-                reason: stopped.reason,
-                resources: [session.id],
-              },
-            }
+          ? incompleteStopFacts(stopped, [session.id])
           : {}),
+        diagnostics: {
+          session_stop: stop.code,
+          ...(stopped.status === "incomplete"
+            ? incompleteStopFacts(stopped, [session.id]).diagnostics
+            : {}),
+        },
         ...(partialObservation === undefined ? {} : { partialObservation }),
       },
     );
@@ -1746,14 +1754,18 @@ export class GdbSessionManager {
   ): Promise<OwnedDebuggerDetachResult> {
     if (session.noInferiorVerified) return { status: "no-inferior" };
     if (session.exited)
-      throw new Error("GDB exited before inferior state could be verified.");
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
+        "GDB exited before inferior state could be verified.",
+      );
     // A new MI inspection replaces the old snapshot. If this read is
     // incomplete, malformed, or reports multiple inferiors, no earlier PID
     // can stand in for the current unknown inventory.
     session.knownInferiorIdentities.clear();
     // Queue reservations have not sent MI requests and do not affect synchronization.
     if (session.protocolError !== undefined || session.pending.size > 0)
-      throw new Error(
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
         "GDB MI state is not synchronized; inferior state is unknown.",
       );
     const groups = await this.#request(
@@ -1765,7 +1777,10 @@ export class GdbSessionManager {
       groups.output_truncated ||
       !parseGdbMiDoneRecord(groups.mi).ok
     )
-      throw new Error("GDB could not confirm its inferior state.");
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
+        "GDB could not confirm its inferior state.",
+      );
     const inferiorPids = gdbThreadGroupPids(groups.mi);
     if (inferiorPids?.length === 0) {
       session.knownInferiorIdentities.clear();
@@ -1774,13 +1789,18 @@ export class GdbSessionManager {
     }
     session.noInferiorVerified = false;
     if (inferiorPids?.length !== 1)
-      throw new Error(
-        inferiorPids === undefined
-          ? "GDB returned an unknown recursive inferior list."
-          : "GDB reports multiple inferiors; automatic detach cannot be confirmed safely.",
-      );
+      throw inferiorPids === undefined
+        ? new OwnedDebuggerDetachFailure(
+            "inferior-state-unknown",
+            "GDB returned an unknown recursive inferior list.",
+          )
+        : new OwnedDebuggerDetachFailure(
+            "multiple-inferiors",
+            "GDB reports multiple inferiors; automatic detach cannot be confirmed safely.",
+          );
     if (!session.inferiorTtyVerified)
-      throw new Error(
+      throw new OwnedDebuggerDetachFailure(
+        "no-durable-output-sink",
         "GDB cannot detach the live inferior because no durable output sink was verified at session startup.",
       );
     const observedTty = await this.#request(session, "-inferior-tty-show");
@@ -1791,7 +1811,8 @@ export class GdbSessionManager {
       miStringField(observedTty.mi, "inferior_tty_terminal") !==
         session.inferiorTty
     )
-      throw new Error(
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-tty-changed",
         "GDB no longer reports the caller-selected inferior TTY; detachment cannot be confirmed safely.",
       );
     await this.#verifyInferiorOutputSink(
@@ -1809,7 +1830,10 @@ export class GdbSessionManager {
       detached.output_truncated ||
       !parseGdbMiDoneRecord(detached.mi).ok
     )
-      throw new Error("GDB did not confirm inferior detachment.");
+      throw new OwnedDebuggerDetachFailure(
+        "detach-failed",
+        "GDB did not confirm inferior detachment.",
+      );
     session.knownInferiorIdentities.clear();
     // The sole recursively inventoried inferior is now detached. Retain this
     // fact for owned shutdown even if the MI transport becomes unavailable.
@@ -1960,7 +1984,7 @@ export class GdbSessionManager {
             pending.reject(
               new AnalysisTimeoutError(operation, acceptedDeadline.value, {
                 cause: timeout,
-                cleanup: { reason: stopped.reason, resources: [session.id] },
+                ...incompleteStopFacts(stopped, [session.id]),
                 partialObservation: evidence,
                 ...copiedTimeoutGuidance(timeout),
               }),
@@ -1975,10 +1999,10 @@ export class GdbSessionManager {
                   `GDB command output could not be correlated and its owned process could not be confirmed stopped: ${stopped.reason}`,
                   {
                     cause: timeout,
-                    diagnostics: { session_stop: stop.code },
-                    cleanup: {
-                      reason: stopped.reason,
-                      resources: [session.id],
+                    ...incompleteStopFacts(stopped, [session.id]),
+                    diagnostics: {
+                      session_stop: stop.code,
+                      ...incompleteStopFacts(stopped, [session.id]).diagnostics,
                     },
                     partialObservation: evidence,
                   },
@@ -2067,15 +2091,12 @@ export class GdbSessionManager {
           const cleanupFailure = this.#sessions.retainCleanupFailure(
             session,
             "gdb_console",
-            stopped.reason,
+            stopped,
             { cause: cancellation },
           );
           pending.reject(
             cancelledBy("gdb_console", carriedReason(signal?.reason), {
-              cleanup: {
-                reason: stopped.reason,
-                resources: [session.id],
-              },
+              ...incompleteStopFacts(stopped, [session.id]),
               partialObservation: evidence,
             }).bindCleanupDependencies([cleanupFailure], {
               cleanupResources: [session.id],
