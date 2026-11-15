@@ -11,3 +11,6 @@
 
 # refactor(config): move the MCP startup policy beside its startup budgets in src/config (#11429)
 47c252f5274607a02d750f817caaac7366a33ccb
+
+# refactor(domain): move the Mach-O load command and binary plist readers into src/domain/apple (#11415)
+23eee86bd59e5d399c59280b24a746be8318b111
