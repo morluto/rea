@@ -1,8 +1,6 @@
 [
   "environment-build options.name empty",
   "environment-build options.name nul",
-  "export-web-scripts args.capturePath relative",
-  "export-web-scripts args.outputDirectory relative",
   "extract-artifact options.outputRoot relative",
   "inspect-android-class options.mappingPath relative",
   "inspect-android-method options.mappingPath relative",
