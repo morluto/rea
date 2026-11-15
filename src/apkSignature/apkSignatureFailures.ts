@@ -1,6 +1,9 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -13,7 +16,6 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -219,9 +221,7 @@ const artifactReaderFailure = (
 ): AnalysisError => {
   switch (cause.reason) {
     case "integrity":
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
       return cancelledBy(
         OPERATION,

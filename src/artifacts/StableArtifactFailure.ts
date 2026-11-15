@@ -21,6 +21,17 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 
+/** A reader's integrity failure as a selected-artifact change, keeping the check it named. */
+export const readerIntegrityFailure = (
+  operation: string,
+  path: string,
+  cause: ArtifactReaderFailure,
+): AnalysisArtifactChangedError =>
+  new AnalysisArtifactChangedError(operation, path, cause.message, {
+    cause,
+    integrityCheck: cause.integrityCheck,
+  });
+
 /** Preserve ownership classification for stable-file identity and cancellation. */
 export const projectOwnedArtifactIdentityFailure = (
   facts: ArtifactFilePrimaryFacts,
@@ -34,12 +45,7 @@ export const projectOwnedArtifactIdentityFailure = (
   )
     return undefined;
   if (cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(operation, path, cause.message, {
-      cause,
-      ...(cause.integrityCheck === undefined
-        ? {}
-        : { integrityCheck: cause.integrityCheck }),
-    });
+    return readerIntegrityFailure(operation, path, cause);
   if (cause.reason === "cancelled")
     return cancelledBy(
       operation,
