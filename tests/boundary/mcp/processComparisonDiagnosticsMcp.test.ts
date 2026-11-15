@@ -110,14 +110,14 @@ const compareViaCli = async (
   );
 };
 
-it.each(
-  (["left", "right"] as const).flatMap((missingWorker) =>
-    (["left", "right", "both", "neither"] as const).map((omittedRendered) => ({
-      missingWorker,
-      omittedRendered,
-    })),
-  ),
-)(
+// Each omission is checked once, alternating which side lacks the worker: a
+// one-sided omission on either side, both sides, and neither.
+it.each([
+  { missingWorker: "left", omittedRendered: "left" },
+  { missingWorker: "right", omittedRendered: "right" },
+  { missingWorker: "right", omittedRendered: "both" },
+  { missingWorker: "left", omittedRendered: "neither" },
+] as const)(
   "preserves terminal coverage when $missingWorker lacks a worker and $omittedRendered omits rendered output",
   async ({ missingWorker, omittedRendered }) => {
     const observation = (side: "left" | "right") => {

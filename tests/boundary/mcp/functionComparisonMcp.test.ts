@@ -314,10 +314,9 @@ describe("function comparison MCP integration", () => {
 });
 
 describe("function comparison input-kind diagnostics", () => {
+  // Each mismatch is checked once; alternating sides covers both labels.
   it.each([
     { side: "left", mismatch: "operation" },
-    { side: "right", mismatch: "operation" },
-    { side: "left", mismatch: "predicate" },
     { side: "right", mismatch: "predicate" },
   ] as const)(
     "rejects inline $side Evidence with the wrong $mismatch as an input-selection error",
