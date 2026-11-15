@@ -25,122 +25,111 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 
-it(
-  "compares cancellation before dispatch, during retirement, and an uncancelled control",
-  { timeout: 8000 },
-  async () => {
-    for (const mode of [
-      "pre-aborted",
-      "during-retirement",
-      "control",
-    ] as const) {
-      const [target] = await createBinarySessionTargets();
-      const entered = createDeferred<void>();
-      const released = createDeferred<void>();
-      let closes = 0;
-      const session = createTestBinarySession(
-        () =>
-          ({
-            execute: async () => ok({ operation: "health", value: null }),
-            close: async () => {
-              closes++;
-              entered.resolve();
-              await released.promise;
-              return ok(null);
-            },
-          }) as never,
+it("compares cancellation before dispatch, during retirement, and an uncancelled control", async () => {
+  for (const mode of ["pre-aborted", "during-retirement", "control"] as const) {
+    const [target] = await createBinarySessionTargets();
+    const entered = createDeferred<void>();
+    const released = createDeferred<void>();
+    let closes = 0;
+    const session = createTestBinarySession(
+      () =>
+        ({
+          execute: async () => ok({ operation: "health", value: null }),
+          close: async () => {
+            closes++;
+            entered.resolve();
+            await released.promise;
+            return ok(null);
+          },
+        }) as never,
+    );
+    expect((await session.open(target)).ok).toBe(true);
+    const id = "00000000-0000-4000-8000-000000000001";
+    const evidence = createEvidence(
+      undefined,
+      { id: "gdb", name: "GDB", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "gdb_console",
+        parameters: { session_id: id, command: "info files" },
+        result: { command: "info files", completion_status: "complete" },
+        rawResult: { command: "info files" },
+      },
+    );
+    let handler!: (input: unknown, context: unknown) => Promise<CallToolResult>;
+    const server = {
+      registerTool(name: string, _options: unknown, fn: typeof handler) {
+        if (name === "gdb_console") handler = fn;
+      },
+    } as unknown as McpServer;
+    const execute = vi.fn(async () => ok({ evidence }));
+    const manager = {
+      execute,
+      retryCleanupFailures: async () => ok(null),
+    } as unknown as GdbToolManager;
+    const record = vi.fn((value: typeof evidence) =>
+      session.recordEvidence(value),
+    );
+    registerGdbTools(
+      server,
+      manager,
+      silentLogger,
+      createToolResultDelivery(undefined),
+      record,
+      session,
+    );
+    const controller = new AbortController();
+    const reason = { phase: mode };
+    if (mode === "pre-aborted") controller.abort(reason);
+    try {
+      const pending = handler(
+        { session_id: id, command: "info files", detail: "complete" },
+        { mcpReq: { signal: controller.signal } },
       );
-      expect((await session.open(target)).ok).toBe(true);
-      const id = "00000000-0000-4000-8000-000000000001";
-      const evidence = createEvidence(
-        undefined,
-        { id: "gdb", name: "GDB", version: null },
-        {
-          predicateType: "rea.debugger.command-observation",
-          operation: "gdb_console",
-          parameters: { session_id: id, command: "info files" },
-          result: { command: "info files", completion_status: "complete" },
-          rawResult: { command: "info files" },
-        },
-      );
-      let handler!: (
-        input: unknown,
-        context: unknown,
-      ) => Promise<CallToolResult>;
-      const server = {
-        registerTool(name: string, _options: unknown, fn: typeof handler) {
-          if (name === "gdb_console") handler = fn;
-        },
-      } as unknown as McpServer;
-      const execute = vi.fn(async () => ok({ evidence }));
-      const manager = {
-        execute,
-        retryCleanupFailures: async () => ok(null),
-      } as unknown as GdbToolManager;
-      const record = vi.fn((value: typeof evidence) =>
-        session.recordEvidence(value),
-      );
-      registerGdbTools(
-        server,
-        manager,
-        silentLogger,
-        createToolResultDelivery(undefined),
-        record,
-        session,
-      );
-      const controller = new AbortController();
-      const reason = { phase: mode };
-      if (mode === "pre-aborted") controller.abort(reason);
-      try {
-        const pending = handler(
-          { session_id: id, command: "info files", detail: "complete" },
-          { mcpReq: { signal: controller.signal } },
+      if (mode !== "pre-aborted") {
+        await awaitAcknowledgement(
+          entered.promise,
+          pending,
+          "session retirement",
         );
-        if (mode !== "pre-aborted") {
-          await awaitAcknowledgement(
-            entered.promise,
-            pending,
-            "session retirement",
-          );
-          expect(execute).toHaveBeenCalledTimes(1);
-          expect(record).not.toHaveBeenCalled();
-          if (mode === "during-retirement") controller.abort(reason);
-        }
-        released.resolve();
-        const result = await pending;
-        const body = result.structuredContent as any;
-        const observation = {
-          mode,
-          aborted: controller.signal.aborted,
-          executions: execute.mock.calls.length,
-          retirementCloses: closes,
-          recordings: record.mock.calls.length,
-          isError: result.isError === true,
-          code: body.error?.code ?? null,
-          hasEvidence: typeof body.evidence_id === "string",
-          stored: session.hasEvidence(evidence.evidence_id),
-        };
-        expect(observation).toEqual({
-          mode,
-          aborted: mode !== "control",
-          executions: mode === "pre-aborted" ? 0 : 1,
-          retirementCloses: mode === "pre-aborted" ? 0 : 1,
-          recordings: mode === "pre-aborted" ? 0 : 1,
-          isError: mode !== "control",
-          code: mode === "control" ? null : "cancelled",
-          hasEvidence: mode === "control",
-          stored: mode !== "pre-aborted",
-        });
-
-        if (mode === "during-retirement")
-          expect(record.mock.calls[0]?.[0]).toEqual(evidence);
-      } finally {
-        released.resolve();
-        await session.close();
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(record).not.toHaveBeenCalled();
+        if (mode === "during-retirement") controller.abort(reason);
       }
+      released.resolve();
+      const result = await pending;
+      const body = result.structuredContent as any;
+      const observation = {
+        mode,
+        aborted: controller.signal.aborted,
+        executions: execute.mock.calls.length,
+        retirementCloses: closes,
+        recordings: record.mock.calls.length,
+        isError: result.isError === true,
+        code: body.error?.code ?? null,
+        hasEvidence: typeof body.evidence_id === "string",
+        stored: session.hasEvidence(evidence.evidence_id),
+      };
+      expect(observation).toEqual({
+        mode,
+        aborted: mode !== "control",
+        executions: mode === "pre-aborted" ? 0 : 1,
+        retirementCloses: mode === "pre-aborted" ? 0 : 1,
+        recordings: mode === "pre-aborted" ? 0 : 1,
+        isError: mode !== "control",
+        code: mode === "control" ? null : "cancelled",
+        hasEvidence: mode === "control",
+        stored: mode !== "pre-aborted",
+      });
+
+      if (mode === "during-retirement")
+        expect(record.mock.calls[0]?.[0]).toEqual(evidence);
+    } finally {
+      released.resolve();
+      await session.close();
     }
-  },
-);
+  }
+});
 
 it.each(["completed", "failed"] as const)(
   "preserves a %s command and cleanup ownership when cancellation overlaps failed retirement",

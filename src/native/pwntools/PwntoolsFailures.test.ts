@@ -2,10 +2,7 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
-import {
-  pwntoolsHostRequirement,
-  pwntoolsHostSupported,
-} from "./PwntoolsDecoder.js";
+import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
 import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
 import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
 
@@ -224,10 +221,8 @@ it("retains legacy owner causes without guessing cancellation from error text", 
   );
 });
 
-it("names the refused host instead of implying the target was refused", () => {
+it("restricts the verified host profile to Linux x64", () => {
+  expect(pwntoolsHostSupported("linux", "x64")).toBe(true);
   expect(pwntoolsHostSupported("linux", "arm64")).toBe(false);
-  const message = pwntoolsHostRequirement("linux", "arm64");
-  expect(message).toContain("Linux x64 host");
-  expect(message).toContain("this host is linux/arm64");
-  expect(message).toContain("The selected target was not read.");
+  expect(pwntoolsHostSupported("darwin", "x64")).toBe(false);
 });

@@ -13,12 +13,12 @@ import {
   denoElf,
   denoIntelTrailer,
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "../../../src/artifacts/deno/DenoVirtualFs.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 const source = "console.log('deno')\n";
 const asset = "hello-asset\n";
 

@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
-import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "../../domain/analysisView/analysisView.js";
+import { sealAnalysisView } from "../../domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   createEvidence,
   parseEvidence,

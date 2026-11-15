@@ -234,4 +234,4 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
   } finally {
     await client.close();
   }
-}, 120_000);
+});

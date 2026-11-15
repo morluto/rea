@@ -258,7 +258,7 @@ const executableRoots = async (
   };
   try {
     await consumeWithOrderedReads(
-      reader.entries(signal, traversal),
+      traversal.entries(reader, signal),
       MAGIC_READ_CONCURRENCY,
       (entry) => {
         // The ordered-read owner skips consume() when read() returns undefined.
@@ -298,7 +298,7 @@ const executableRoots = async (
   if (outcome.kind === "failed") throw outcome.cause;
   assertArtifactReadActive(signal);
   if (symlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       status: "unknown",
       limitations: [
         `Executable-root discovery did not follow ${symlinks} symlink(s); their root roles and possible descendants are unknown. First path: ${JSON.stringify(firstSymlink)}.`,

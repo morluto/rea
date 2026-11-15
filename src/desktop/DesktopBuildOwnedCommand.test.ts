@@ -65,9 +65,15 @@ it
       expect(stop).toHaveBeenCalledTimes(processRetained ? 1 : 0);
       await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      await chmod(parent, 0o700);
-      await resources.close();
-      command.mockRestore();
+      try {
+        try {
+          await chmod(parent, 0o700);
+        } finally {
+          await resources.close();
+        }
+      } finally {
+        command.mockRestore();
+      }
     }
   },
 );

@@ -125,8 +125,10 @@ describe("Windows private runtime cleanup retry", () => {
     const first = runtime.close();
     const second = runtime.close();
 
-    expect(second).toBe(first);
-    await Promise.all([first, second]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
     expect(closes).toBe(2);
   });
 

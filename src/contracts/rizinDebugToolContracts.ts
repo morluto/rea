@@ -72,7 +72,7 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
     ...toolContractMetadata("rizin_debug_session_status"),
     kind: "native-provider",
     description:
-      "Return observed lifecycle state and bounded recent NUL-framed output and process diagnostics for one Rizin debugger session; truncation fields report discarded data, and output_invalid_utf8 reports whether invalid UTF-8 has been observed in session frame bytes; recent output may contain replacement characters.",
+      "Return observed lifecycle state and bounded recent NUL-framed output and process diagnostics for one Rizin debugger session; closed_reason says why a closed session stopped, truncation fields report discarded data, and output_invalid_utf8 reports whether invalid UTF-8 has been observed in session frame bytes; recent output may contain replacement characters.",
     inputSchema: z.strictObject({ session_id: sessionId }),
     outputSchema: z.strictObject({
       session_id: sessionId,
@@ -82,6 +82,12 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
       recent_output_truncated: z.boolean(),
       diagnostics_truncated: z.boolean(),
       output_invalid_utf8: z.boolean(),
+      closed_reason: z
+        .string()
+        .exactOptional()
+        .describe(
+          "Present when state is closed: why the session stopped accepting commands. Close it and start a new session to continue.",
+        ),
     }),
     examples: [
       {

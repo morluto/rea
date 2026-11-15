@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
-import { resolveAppBundleExecutable } from "./AppBundleExecutable.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 
 const binaryPlistExecutableWithThreeByteUid = (): Buffer => {
   const ascii = (value: string): Buffer => {
@@ -53,7 +53,7 @@ it.each([
     );
     await writeFile(executable, "inert fixture; never executed");
 
-    const result = await resolveAppBundleExecutable(bundle);
+    const result = await resolveAppleBundleExecutable(bundle);
     expect(result).toEqual({
       ok: true,
       value: { executable, infoPlist: plistPath },
@@ -71,7 +71,7 @@ describe("app bundle Info.plist magic", () => {
     await writeFile(plistPath, binaryPlistExecutableWithThreeByteUid());
     await writeFile(executable, "inert fixture; never executed");
 
-    expect(await resolveAppBundleExecutable(bundle)).toEqual({
+    expect(await resolveAppleBundleExecutable(bundle)).toEqual({
       ok: true,
       value: { executable, infoPlist: plistPath },
     });
@@ -86,7 +86,7 @@ describe("app bundle Info.plist magic", () => {
       const plist = Buffer.from("bplist00");
       plist[0] = (plist[0] ?? 0) | 0x80;
       await writeFile(plistPath, plist);
-      const result = await resolveAppBundleExecutable(bundle);
+      const result = await resolveAppleBundleExecutable(bundle);
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -114,7 +114,7 @@ describe("app bundle program directory containment", () => {
       await writeFile(join(bundle, "Contents", "Info.plist"), plist);
       let childResolved = false;
 
-      const result = await resolveAppBundleExecutable(bundle, {
+      const result = await resolveAppleBundleExecutable(bundle, {
         readFile: async () => Buffer.from(plist),
         realpath: async (path) => {
           if (path === bundle) return canonicalBundle;

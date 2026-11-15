@@ -106,7 +106,7 @@ async function classify(
 it.each([
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
-  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
   ["scripts/run-python-tests.py", "python"],
   ["scripts/verify-browser-request.mjs", "browser"],
   ["scripts/lib/browser-request-e2e.mjs", "browser"],
@@ -692,6 +692,34 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  // The darwin package baseline is the CI run of packaged Hopper commands
+  // against the fake bridge and the reply contracts.
+  [
+    "tests/fixtures/fakeHopper.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/fixtures/fakeHopperReplies.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/hopper/HopperReplyContracts.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSegments.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  // Schemas the contracts import transitively.
+  [
+    "src/domain/native/functionBody.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSymbol.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/native/functionBody.test.ts", { code: true, package: false }],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
   ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
   ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
@@ -704,6 +732,10 @@ it.each([
   [
     "website/public/examples/notes-electron/preload.js",
     { code: true, website: true, package: false },
+  ],
+  [
+    "website/public/index.html",
+    { code: false, docs: true, website: true, package: false },
   ],
   [
     "website/locales/zh-CN/messages.po",
@@ -766,6 +798,18 @@ it.each([
   ],
   [
     "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [

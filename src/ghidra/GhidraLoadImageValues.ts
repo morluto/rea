@@ -1,12 +1,11 @@
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import { createHash } from "node:crypto";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
 import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -23,28 +22,6 @@ const limitations = [
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",
 ];
-
-/** Record one attestation's checks, preserving compared values and source locations. */
-const createLoadImageChecks = () => {
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
-  return { checks, check };
-};
 
 export type GhidraDosImage = {
   readonly header: DosMzHeader;

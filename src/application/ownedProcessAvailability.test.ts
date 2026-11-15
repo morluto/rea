@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../process/ExecFileOutput.js";
 
 import {
   AnalysisCancelledError,
@@ -20,15 +21,11 @@ describe("Linux process table prerequisite discovery", () => {
     "reports %s with its own recovery",
     async (code) => {
       const cause = Object.assign(new Error(`ps failed: ${code}`), { code });
-      const host = createSystemProcessOwnershipHost(
-        "linux",
-        {},
-        {
-          execFileOutput: async () => {
-            throw cause;
-          },
-        },
-      );
+      const command = vi
+        .spyOn(processOutput, "execFileOutput")
+        .mockRejectedValue(cause);
+      onTestFinished(() => command.mockRestore());
+      const host = createSystemProcessOwnershipHost("linux", {});
       let failure: unknown;
       try {
         await host.prepare?.();
@@ -58,15 +55,11 @@ describe("Linux process table prerequisite discovery", () => {
 
   it("reports a ps probe failure with no error code without blaming missing procps", async () => {
     const cause = new Error("ps failed without error code");
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async () => {
-          throw cause;
-        },
-      },
-    );
+    const command = vi
+      .spyOn(processOutput, "execFileOutput")
+      .mockRejectedValue(cause);
+    onTestFinished(() => command.mockRestore());
+    const host = createSystemProcessOwnershipHost("linux", {});
     let failure: unknown;
     try {
       await host.prepare?.();
@@ -103,15 +96,11 @@ describe("Linux process table prerequisite discovery", () => {
 
   it("does not convert host spawn capacity exhaustion to unavailability", async () => {
     const cause = Object.assign(new Error("capacity"), { code: "EAGAIN" });
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async () => {
-          throw cause;
-        },
-      },
-    );
+    const command = vi
+      .spyOn(processOutput, "execFileOutput")
+      .mockRejectedValue(cause);
+    onTestFinished(() => command.mockRestore());
+    const host = createSystemProcessOwnershipHost("linux", {});
     await expect(host.prepare?.()).rejects.toBe(cause);
   });
 });

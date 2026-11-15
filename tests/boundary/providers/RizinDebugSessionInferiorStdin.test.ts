@@ -74,9 +74,7 @@ const openTerminal = async (): Promise<Terminal> => {
     if (!exited) pty.kill();
     await ended;
   });
-  await expect
-    .poll(() => rizinTestTtyPathPattern.test(output), { timeout: 2_000 })
-    .toBe(true);
+  await expect.poll(() => rizinTestTtyPathPattern.test(output)).toBe(true);
   return {
     path: rizinTestTtyPathPattern.exec(output)![0],
     output: () => output,
@@ -334,10 +332,7 @@ it.skipIf(process.platform === "win32")(
     // read it from the selected TTY, so the caller's input channel really works.
     current.terminal.write("rea-input-probe\n");
     await expect
-      .poll(
-        () => current.terminal.output().split("rea-input-probe").length - 1,
-        { timeout: 2_000 },
-      )
+      .poll(() => current.terminal.output().split("rea-input-probe").length - 1)
       .toBe(2);
     successValue(await manager.close(sessionId));
     expect(await current.commands()).toEqual(["resume-target", "dr", "olj"]);

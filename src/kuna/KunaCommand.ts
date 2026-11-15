@@ -9,10 +9,11 @@ import {
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -62,7 +63,7 @@ export type KunaProcessLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** One bounded Kuna run inside a private workspace. */
-export interface KunaCommandRequest {
+interface KunaCommandRequest {
   readonly installation: KunaInstallation;
   readonly arguments: readonly string[];
   /** Private directory used as the working and temporary directory. */
@@ -90,7 +91,7 @@ export interface KunaCommandRequest {
  * stopped, so it may still write into the workspace, which therefore stays
  * with the caller's cleanup owner.
  */
-export type KunaCommandOutcome =
+type KunaCommandOutcome =
   | { readonly kind: "ok"; readonly snapshot: ProviderProcessSnapshot }
   | {
       readonly kind: "failed";
@@ -116,8 +117,7 @@ export const kunaFileCleanupError = (
   const diagnostics = kunaInstallationFailureDiagnostics(failure);
   const cancellation = regularFileCancellation(failure);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
+    return cancelledBy(operation, carriedReason(cancellation.reason), {
       diagnostics,
       cleanup: {
         reason: message(failure.cleanupCause),
@@ -246,9 +246,7 @@ export const runKunaCommand = async (
         cause instanceof AnalysisError
           ? cause
           : cancellation !== undefined
-            ? new AnalysisCancelledError(request.operation, {
-                cause: cancellation.reason,
-              })
+            ? cancelledBy(request.operation, carriedReason(cancellation.reason))
             : new ProviderAdapterError(KUNA_PROVIDER_ID, request.operation, {
                 cause,
                 userMessage: `Cannot verify ${installation.executable}: ${message(cause)}`,
@@ -309,7 +307,7 @@ export interface KunaInputPrefix {
 }
 
 /** A copy's SHA-256 and size, and the leading bytes kept from the same stream. */
-export interface KunaCopiedInput {
+interface KunaCopiedInput {
   readonly sha256: string;
   readonly bytes: number;
   /** Empty unless a prefix was requested; the digest covers these exact bytes. */
@@ -488,10 +486,11 @@ const commandFailure = (
   };
   let primary: AnalysisError;
   if (cause.reason === "cancelled")
-    primary = new AnalysisCancelledError(operation, {
-      ...details,
-      cause: cause.cancellation?.reason,
-    });
+    primary = cancelledBy(
+      operation,
+      carriedReason(cause.cancellation?.reason),
+      capturedOutput === undefined ? undefined : { capturedOutput },
+    );
   else if (cause.reason === "timeout") {
     const { setting, ms } = request.deadline;
     const analysisSetting =

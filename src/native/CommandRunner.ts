@@ -17,7 +17,7 @@ import type {
   ProviderProcessSupervisor,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import {
   selectArtifactCommandPath,
@@ -91,7 +91,7 @@ export class NativeCommandFailure extends Error {
 }
 
 /** Named cleanup ownership carried alongside the ordinary error cause. */
-export interface NativeCommandFailureOptions extends ErrorOptions {
+interface NativeCommandFailureOptions extends ErrorOptions {
   /** Exact opaque reason recorded by the cancellation-owning boundary. */
   readonly cancellation?: { readonly reason: unknown };
   /** Typed owner retained when command process cleanup was incomplete. */
@@ -113,7 +113,7 @@ export interface NativeCommandCleanupFailure {
 }
 
 /** Partial output and lifecycle details retained when a native command fails. */
-export interface NativeCommandFailureCapture {
+interface NativeCommandFailureCapture {
   readonly stdout: string;
   readonly stderr: string;
   readonly stdoutBytes: number;
@@ -147,7 +147,7 @@ export type NativeCommandLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** Resolve one native tool's selected invocation and prelaunch file identity. */
-export type NativeToolResolver = (
+type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
@@ -482,11 +482,11 @@ export const failureCapture = (
   capture: ProcessCapture,
   truncated: boolean,
 ): NativeCommandFailureCapture => {
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     capture.stdout,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     capture.stderr,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );

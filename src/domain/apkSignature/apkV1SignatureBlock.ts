@@ -35,13 +35,13 @@ export type ApkV1BlockError =
     };
 
 /** Certificates in one block: a signer leaf plus a short chain is the norm. */
-export const MAX_V1_BLOCK_CERTIFICATES = 32;
+const MAX_V1_BLOCK_CERTIFICATES = 32;
 /** SignerInfos in one block; apksig verifies one, more is pathological. */
-export const MAX_V1_SIGNER_INFOS = 32;
+const MAX_V1_SIGNER_INFOS = 32;
 /** Nesting depth; SignedData → X.509 extensions is under 12 levels deep. */
 const MAX_ASN1_DEPTH = 32;
 /** Elements read while decoding one block; bounds work for any byte length. */
-export const MAX_ASN1_ELEMENTS = 65_536;
+const MAX_ASN1_ELEMENTS = 65_536;
 
 export interface ApkV1SignerInfo {
   readonly identifiedBy: "issuer-and-serial" | "subject-key-identifier";

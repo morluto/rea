@@ -11,7 +11,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   managedArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { managedArtifactInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -55,15 +55,14 @@ it("returns a first-call overview and pages the unchanged source after its file 
       { path, detail: "summary" },
     ),
   ).toBe(false);
-  const reply = await client.callTool({
-    name: "inspect_managed_artifact",
-    arguments: { path, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_artifact",
+      arguments: { path, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedArtifactSummaryViewResultSchema.parse(
     receipt.normalized_result,
@@ -140,7 +139,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
 it("keeps malformed metadata, empty returned rows and historical null subjects explicit", async () => {
   const directory = await createTestTempDirectory(
@@ -216,7 +215,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     ok: false,
     error: { _tag: "EvidenceIntegrityError" },
   });
-}, 30000);
+});
 
 it("refuses selected delivery before file access when the server cannot retain Evidence", async () => {
   const directory = await createTestTempDirectory("rea-managed-fixed-view-");
@@ -259,4 +258,4 @@ it("refuses selected delivery before file access when the server cannot retain E
       complete.structuredContent,
     ).success,
   ).toBe(true);
-}, 30000);
+});

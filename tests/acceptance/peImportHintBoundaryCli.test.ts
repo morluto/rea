@@ -5,7 +5,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { peImportHintBoundaryImage } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 const cases = ([32, 64] as const).flatMap((bits) =>
   (["standard", "delay"] as const).flatMap((kind) =>
@@ -20,7 +20,7 @@ cliTest.for(cases)(
     const path = join(root, "imports.dll");
     const bytes = peImportHintBoundaryImage(bits, kind, gap);
     await writeFile(path, bytes);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: ["inspect-pe-imports", path, "--json"],
     });
     expect(response.exitCode, response.stderr).toBe(0);

@@ -49,13 +49,13 @@ export type HopperRequestFailure = HopperDownloadFailure & {
 export const HOPPER_DOWNLOAD_BYTES = 100_000_000;
 
 /** Longest wait for the response or its next bytes before a download stalls. */
-export const HOPPER_DOWNLOAD_STALL_MS = 30_000;
+const HOPPER_DOWNLOAD_STALL_MS = 30_000;
 
 /**
  * Overall bound for one download. A slow connection that keeps delivering
  * bytes is bounded here rather than by a deadline sized for fast networks.
  */
-export const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 
 /** Small release feed and key requests must not use the package bounds. */
 export const HOPPER_METADATA_TIMEOUT_MS = 10_000;

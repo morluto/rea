@@ -7,10 +7,10 @@ import type { BrowserObservationEndpoint } from "../domain/browserObservation.js
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
+import type { CdpDomainWith } from "./protocol/CdpCommands.js";
 import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
@@ -204,13 +204,13 @@ export const attachCdpTargetSession = async (
   owner?: CdpTargetSessionOwner,
 ): Promise<CdpTargetSession> => {
   try {
-    const attached = await connection.send(
+    const { sessionId } = await connection.send(
       "Target.attachToTarget",
       { targetId: target.id, flatten: true },
       undefined,
       signal,
     );
-    return { connection, sessionId: attachedSessionId(attached, operation) };
+    return { connection, sessionId };
   } catch (cause: unknown) {
     if (owner === undefined)
       return await failCdpOpenAfterCleanup(connection, cause, operation);
@@ -258,7 +258,7 @@ const combineOpenFailure = (
 /** Disable enabled domains, detach browser sessions, and release or close REA's socket. */
 export const closeCdpTargetSession = async (
   targetSession: CdpTargetSession,
-  enabledDomains: readonly string[],
+  enabledDomains: readonly CdpDomainWith<"disable">[],
   signal?: AbortSignal,
   owner?: CdpTargetSessionOwner,
   reuseBrowserSocket = false,
@@ -281,7 +281,7 @@ export const closeCdpTargetSession = async (
 
 const cleanupCdpTargetCommands = async (
   targetSession: CdpTargetSession,
-  enabledDomains: readonly string[],
+  enabledDomains: readonly CdpDomainWith<"disable">[],
   signal?: AbortSignal,
 ): Promise<boolean> => {
   const { connection, sessionId } = targetSession;
@@ -298,7 +298,7 @@ const cleanupCdpTargetCommands = async (
         if (domainSignal.aborted) break;
         try {
           await connection.send(
-            `${domain}.disable`,
+            `${domain}.disable` as const,
             {},
             sessionId,
             domainSignal,
@@ -338,18 +338,3 @@ const isAlreadyDetachedSessionRejection = (cause: unknown): boolean =>
       /no session with given id|session with given id not found/iu.test(
         cause.reportedMessage,
       )));
-
-const attachedSessionId = (
-  value: unknown,
-  operation: BrowserObservationOperation,
-): string => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("sessionId" in value) ||
-    typeof value.sessionId !== "string" ||
-    value.sessionId.length === 0
-  )
-    throw new BrowserObservationError(operation, "protocol_error");
-  return value.sessionId;
-};

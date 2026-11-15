@@ -54,7 +54,7 @@ const pathWithin = (path: string, root: string): boolean => {
  * processes see those files at virtual AppData locations; other processes do
  * not, and Windows removes them with the package.
  */
-export const packagePrivateStorageFamily = (
+const packagePrivateStorageFamily = (
   canonicalPath: string,
   packagesDirectory: string,
 ): string | undefined => {
@@ -141,7 +141,7 @@ const canonicalDestination = (
 export const redirectedWriteBlocker = (
   view: MsixPackageView | undefined,
   targets: readonly string[],
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
   canonicalPath: (path: string) => string = realpathSync.native,
 ): string | undefined => {
   if (view?.processView !== "redirected" || targets.length === 0)

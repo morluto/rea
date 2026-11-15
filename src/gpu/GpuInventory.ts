@@ -289,7 +289,8 @@ export class GpuInventory {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
     if (
       !(cause instanceof BinaryFormatFailure) &&
-      !(cause instanceof BinaryResourceFailure)
+      !(cause instanceof BinaryResourceFailure) &&
+      !(cause instanceof BinaryStringReadLimitFailure)
     )
       throw cause;
     row.inspection =

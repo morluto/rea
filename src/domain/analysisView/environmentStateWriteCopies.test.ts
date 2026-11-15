@@ -85,38 +85,37 @@ describe("members a created field derives from", () => {
   });
 });
 
-it(
-  "finds the echoed members a wide body's constants hold without searching each text for each",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const body = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `e${String(index)}`,
-        `echoed value ${String(index).padStart(6, "0")}`,
-      ]),
-    );
-    const constants = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `k${String(index)}`,
-        `constant text ${String(index)}`,
-      ]),
-    );
-    const result = create(
-      {
-        id: 1,
-        ...body,
-        ...constants,
-        last: `see ${body[`e${String(n - 1)}`]!}`,
-      },
-      body,
-      () => [],
-    );
-    expect(result.fixed).toEqual([
-      { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
-    ]);
-  },
-);
+it("finds the echoed members a wide body's constants hold without searching each text for each", () => {
+  const n = 8_000;
+  const body = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `e${String(index)}`,
+      `echoed value ${String(index).padStart(6, "0")}`,
+    ]),
+  );
+  const constants = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `k${String(index)}`,
+      `constant text ${String(index)}`,
+    ]),
+  );
+  const started = performance.now();
+  const result = create(
+    {
+      id: 1,
+      ...body,
+      ...constants,
+      last: `see ${body[`e${String(n - 1)}`]!}`,
+    },
+    body,
+    () => [],
+  );
+  // Searching every text for every echoed member is quadratic in the body.
+  expect(performance.now() - started).toBeLessThan(5_000);
+  expect(result.fixed).toEqual([
+    { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
+  ]);
+});
 
 describe("coincidences no member derives a created field from", () => {
   it.each([

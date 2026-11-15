@@ -168,6 +168,7 @@ const PATH_SCOPES = {
     "tests/boundary/process/nativeUiVerifierLane.test.ts",
     "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
+    "tests/boundary/cli/nativeMachoImportNamesCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
@@ -252,6 +253,17 @@ const PATH_SCOPES = {
     "scripts/lib/runtime-admission.d.mts",
     "install.sh",
     "src/config/**",
+    // The darwin package baseline runs packaged Hopper commands against the
+    // fake bridge, through the reply contracts and the domain schemas they
+    // are built from. Check a change to either side before merge, not after.
+    "tests/fixtures/fakeLauncher.mjs",
+    "tests/fixtures/fakeHopper*.mjs",
+    "bridge/hopper_bridge.py",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/hopper/HopperProvider.ts",
+    // The contracts import native domain schemas transitively; cover them
+    // all rather than a hand list that drifts.
+    "src/domain/native/!(*.test).ts",
     "src/application/Setup*.ts",
     "src/application/Uninstall*.ts",
     "src/application/ClientConfiguration*.ts",
@@ -264,6 +276,8 @@ const PATH_SCOPES = {
     "src/contracts/sessionPathInputs.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
+    "src/contracts/advertisedDialect*.ts",
+    "tests/boundary/mcp/advertisedDialect.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
@@ -640,6 +654,9 @@ const PATH_SCOPES = {
     "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    "tests/conformance/ghidra/loader-relocation*.c",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [

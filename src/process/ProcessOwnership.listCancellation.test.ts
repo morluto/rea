@@ -1,4 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+
+const processList = vi.hoisted(() => vi.fn());
+vi.mock("./ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("./ExecFileOutput.js")>()),
+  execFileOutput: processList,
+}));
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ExecFileOutputCancelledError } from "./ExecFileOutput.js";
@@ -21,17 +27,8 @@ it.each(
     const controller = new AbortController();
     controller.abort(reason);
     const native = new ExecFileOutputCancelledError(reason);
-    const reads: { command: string; signal: AbortSignal | undefined }[] = [];
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async (command, _arguments, options) => {
-          reads.push({ command, signal: options?.signal });
-          throw native;
-        },
-      },
-    );
+    processList.mockReset().mockRejectedValue(native);
+    const host = createSystemProcessOwnershipHost("linux", {});
     const pending =
       route === "list"
         ? host.listProcesses(controller.signal)
@@ -42,9 +39,9 @@ it.each(
       throw failure;
     expect(failure.reason).toBe(reason);
     expect(failure.cause).toBe(native);
-    expect(reads).toHaveLength(1);
-    expect(reads[0]?.command).toBe("ps");
-    expect(reads[0]?.signal).toBe(controller.signal);
+    expect(processList).toHaveBeenCalledTimes(1);
+    expect(processList.mock.calls[0]?.[0]).toBe("ps");
+    expect(processList.mock.calls[0]?.[2]?.signal).toBe(controller.signal);
   },
 );
 
@@ -60,15 +57,8 @@ it.each(routes)(
       },
     );
     controller.abort(physical);
-    const host = createSystemProcessOwnershipHost(
-      "linux",
-      {},
-      {
-        execFileOutput: async () => {
-          throw physical;
-        },
-      },
-    );
+    processList.mockReset().mockRejectedValue(physical);
+    const host = createSystemProcessOwnershipHost("linux", {});
     const pending =
       route === "list"
         ? host.listProcesses(controller.signal)

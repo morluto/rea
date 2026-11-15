@@ -57,7 +57,7 @@ export const dumpDconfDatabase = async (
       };
     return {
       ok: false,
-      error: failure === undefined ? String(cause) : failure.stderr.trim(),
+      error: failure?.stderr.trim() || String(cause),
     };
   }
 };

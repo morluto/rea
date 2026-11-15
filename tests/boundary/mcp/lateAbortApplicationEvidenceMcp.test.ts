@@ -1,9 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import {
   createTestBinarySession,
   createDeferred,
 } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import type { GoBinary } from "../../../src/domain/go/goBinary.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -13,6 +14,7 @@ import type { JavaScriptRuntimeObservationPort } from "../../../src/application/
 import type { BrowserObservationPort } from "../../../src/application/BrowserObservationPort.js";
 import type { BrowserTargetList } from "../../../src/domain/browserObservationSchemas.js";
 import type { JavaScriptRuntimeTargetList } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { waitFor } from "../../support/testWait.js";
 
 it("retains late-cancelled Go artifact Evidence through MCP and keeps the server usable", async () => {
   const gate = createDeferred<void>();
@@ -60,11 +62,11 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { name: "inspect_go_binary", arguments: { path: report.artifact.path } },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "inspect_go_binary",
@@ -127,11 +129,11 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "list_javascript_runtime_targets",
@@ -214,11 +216,11 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "list_browser_targets",

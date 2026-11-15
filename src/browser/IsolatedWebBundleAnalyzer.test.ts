@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
@@ -6,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalyzeWebBundleInput,
@@ -233,10 +235,19 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
     input,
     controller.signal,
   );
-  await started.promise;
-  controller.abort(exactReason);
-  const result = await pending;
-  analyzer.releaseReservation();
+  let result: Awaited<typeof pending>;
+  try {
+    await awaitAcknowledgement(started.promise, pending, "script analysis");
+    controller.abort(exactReason);
+    result = await pending;
+  } finally {
+    controller.abort(exactReason);
+    try {
+      await pending;
+    } finally {
+      analyzer.releaseReservation();
+    }
+  }
 
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -255,6 +266,26 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
       }),
     ]),
   });
+});
+
+it("refuses work after close with REA's own cancellation reason, not an absent one", async () => {
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script) => ok(analyzeCapturedWebScript(script)),
+    close: async () => {},
+  }));
+  await analyzer.close();
+  const captured = inspection(["fetch('/one');"]);
+
+  const reserved = await analyzer.reserve();
+  const analyzed = await analyzer.analyze(captured, noSourceMaps, input);
+
+  for (const result of [reserved, analyzed]) {
+    if (result.ok) throw new Error("Closed analyzer accepted work");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(OwnerCancellation.ownerClosed);
+  }
+  if (analyzed.ok) throw new Error("Closed analyzer accepted work");
+  expect(analyzed.error.partialObservation).toBe(captured);
 });
 
 it("retains all completed facts when cancellation arrives during worker close", async () => {

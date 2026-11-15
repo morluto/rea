@@ -409,7 +409,7 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
     ok: false,
     error: { _tag: "BrowserObservationError", reason: "protocol_error" },
   });
-}, 15_000);
+});
 
 it("does not join an empty document request identity to a later loading failure", async () => {
   const { observation } = await observeDuringClockSampling(

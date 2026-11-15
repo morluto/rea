@@ -1089,14 +1089,18 @@ it("leaves GNU property rows unknown behind a compressed note section", () => {
   });
 });
 
-it("admits a hostile section table without rescanning every span", () => {
-  const started = performance.now();
-  const image = readElfHardening(
-    elfHardeningFixture({ disjointNoteSections: 65000 }),
-  );
-  expect(performance.now() - started).toBeLessThan(5000);
-  expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-}, 60000);
+it(
+  "admits a hostile section table without rescanning every span",
+  { tags: ["long-running"] },
+  () => {
+    const started = performance.now();
+    const image = readElfHardening(
+      elfHardeningFixture({ disjointNoteSections: 65000 }),
+    );
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
+  },
+);
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";

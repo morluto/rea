@@ -4,7 +4,7 @@ import {
 } from "./protocol.js";
 import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 
-export interface HopperResponseStreamOptions {
+interface HopperResponseStreamOptions {
   readonly accept: (message: HopperBridgeMessage) => boolean;
   readonly hasQueued: (id: number) => boolean;
   readonly nextRequestId: () => number;

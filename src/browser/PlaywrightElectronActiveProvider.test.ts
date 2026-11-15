@@ -8,6 +8,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import * as processOutput from "../process/ExecFileOutput.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -31,6 +32,7 @@ import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -183,15 +185,13 @@ it("preserves an independent AbortError from actual ownership baseline inspectio
     "independent inspector failure",
     "AbortError",
   );
+  vi.spyOn(processOutput, "execFileOutput").mockImplementation(async () => {
+    controller.abort(reason);
+    throw physical;
+  });
   const host = ownershipObservation.createSystemProcessOwnershipHost(
     "linux",
     {},
-    {
-      execFileOutput: async () => {
-        controller.abort(reason);
-        throw physical;
-      },
-    },
   );
   const prepare = vi
     .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
@@ -1052,7 +1052,7 @@ it("reports an expired final state grace period as the caller's cancellation", a
     };
 
     const capture = captureWithController(controller, application, []);
-    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    await waitFor(() => expect(evaluate).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await capture;
 

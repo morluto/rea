@@ -22,11 +22,6 @@ import {
   type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
 
-export {
-  controller,
-  type Answer,
-} from "../../desktop/BuildComputerController.js";
-
 /** The work folder REA keeps under the computer user's home; every capture leaves it out. */
 export const WORK = ".rea-build";
 /** The checkpoint options the draft and the export read the seed and the end with. */

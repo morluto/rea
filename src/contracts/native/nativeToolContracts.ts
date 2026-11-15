@@ -85,12 +85,12 @@ export const swiftSymbolsSchema = z.array(
 export const NATIVE_TOOL_CONTRACTS = [
   native(
     "observe_native_ui",
-    "Observe one already-running native app window by PID/window ID, bound to the active Mach-O target. Returns a bounded accessibility tree and window screenshot; permission denial does not broaden capture or launch the target. native_ui_deadline_ms sets this call's deadline independently of output and wait-step limits. Use capture_native_ui_scenario to interact.",
+    "Observe one already-running native app window by PID/window ID, bound to the active Mach-O target. Returns a bounded accessibility tree and window screenshot; screenshot or accessibility must be enabled. Permission denial does not broaden capture or launch the target. native_ui_deadline_ms sets this call's deadline independently of output and wait-step limits. Use capture_native_ui_scenario to interact.",
     nativeUiObservationInputSchema,
   ),
   native(
     "capture_native_ui_scenario",
-    "Interact with one exact native app window through selected-element press, scroll, AXValue text entry and bounded waits. Returns ordered before/after captures and per-step failures. Actions may change app data, network activity and persistent state; REA leaves that state in place. native_ui_deadline_ms controls the scenario deadline, independently of output allowance and wait-step caps. Use observe_native_ui for observation only.",
+    "Interact with one exact native app window through selected-element press, scroll, AXValue text entry and bounded waits. Returns ordered before/after captures and per-step failures; screenshot or accessibility must be enabled. Actions may change app data, network activity and persistent state; REA leaves that state in place. native_ui_deadline_ms controls the scenario deadline, independently of output allowance and wait-step caps. Use observe_native_ui for observation only.",
     nativeUiScenarioInputSchema,
   ),
   native(
@@ -100,7 +100,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_macho",
-    "Inspect Mach-O slices, load commands, linkage, build metadata, segments/sections and permissions without launching Hopper. Returns command provenance and explicit coverage. detail summary retains complete Evidence for inspect_analysis_view kind macho rather than delivering large symbol lists inline. native_command_timeout_ms bounds each Xcode command, independently of output admission.",
+    "Inspect Mach-O slices, load commands, linkage, build metadata, segments/sections and permissions without launching Hopper. Returns command provenance and explicit coverage; segment and section file offsets are slice-relative, so add selected_architecture.container_file_offset for an input-file offset. detail summary retains complete Evidence for inspect_analysis_view kind macho rather than delivering large symbol lists inline. native_command_timeout_ms bounds each Xcode command, independently of output admission.",
     z.object({
       detail: analysisDetailSchema
         .unwrap()

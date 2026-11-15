@@ -152,7 +152,7 @@ export const captureProcessScenarioFile = async (
         );
         captureOutcome = captured.ok
           ? ok(createProcessCaptureEvidence(parsed.data, captured.value))
-          : err(captured.error);
+          : captured;
       } catch (cause: unknown) {
         captureOutcome = err(cause);
       }
