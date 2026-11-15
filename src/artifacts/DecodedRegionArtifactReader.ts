@@ -18,7 +18,7 @@ import {
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";

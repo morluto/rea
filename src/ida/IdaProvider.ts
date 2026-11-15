@@ -51,7 +51,7 @@ import {
   IDA_WORKSPACE_ROOT_REMEDIATION,
   type IdaAdmission,
 } from "./IdaAdmission.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";

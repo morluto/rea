@@ -29,7 +29,7 @@ import {
   type ByteEntropy,
 } from "../../domain/native/byteEntropy.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,

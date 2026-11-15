@@ -18,7 +18,7 @@ import {
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

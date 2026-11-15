@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";

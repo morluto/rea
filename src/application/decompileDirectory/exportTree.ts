@@ -16,7 +16,7 @@ import {
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,

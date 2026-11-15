@@ -6,7 +6,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactSelectedPathErrno,

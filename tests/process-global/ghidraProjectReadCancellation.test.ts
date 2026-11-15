@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactFileCancelled } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { resolveGhidraProject } from "../../src/ghidra/GhidraProjectSnapshot.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";

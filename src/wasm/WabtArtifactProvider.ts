@@ -21,7 +21,7 @@ import {
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";

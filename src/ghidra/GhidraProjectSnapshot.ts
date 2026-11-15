@@ -14,7 +14,7 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
   withArtifactRegularFile,

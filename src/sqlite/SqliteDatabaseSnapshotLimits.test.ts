@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";

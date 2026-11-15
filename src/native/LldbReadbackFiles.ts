@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,

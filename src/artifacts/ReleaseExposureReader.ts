@@ -22,7 +22,7 @@ import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,

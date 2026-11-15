@@ -2,7 +2,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {

@@ -1,6 +1,6 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertArtifactReadActive,

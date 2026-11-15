@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 
 const bundle = async () => {

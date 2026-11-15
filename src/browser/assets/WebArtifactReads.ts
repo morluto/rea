@@ -9,7 +9,7 @@ import {
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   completedStableArtifact,
   readStableArtifact,

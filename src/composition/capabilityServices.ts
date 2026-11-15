@@ -41,7 +41,7 @@ import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
 import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
 import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
   ReverseEngineeringService,

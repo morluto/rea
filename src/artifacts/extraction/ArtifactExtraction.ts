@@ -26,7 +26,7 @@ import type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";

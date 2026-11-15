@@ -14,7 +14,7 @@ import {
   assertArtifactReadActive,
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

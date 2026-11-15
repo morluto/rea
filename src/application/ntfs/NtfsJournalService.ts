@@ -6,7 +6,7 @@ import {
   type NtfsAcquisition,
 } from "./NtfsJournalCache.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,

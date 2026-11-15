@@ -30,7 +30,7 @@ import {
   type ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,

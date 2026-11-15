@@ -28,7 +28,7 @@ import {
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   withArtifactRegularFile,
   assertArtifactReadActive,

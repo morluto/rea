@@ -6,7 +6,7 @@ import type {
 import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 
 interface RetainedJavaScriptSourceAnalysis {
   readonly worker: JavaScriptAnalysisWorker;

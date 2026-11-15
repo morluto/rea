@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import * as stableArtifact from "../../artifacts/readStableArtifact.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";

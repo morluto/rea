@@ -71,7 +71,7 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
 } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../src/ghidra/GhidraProvider.js";

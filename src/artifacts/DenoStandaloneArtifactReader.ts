@@ -26,7 +26,7 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {

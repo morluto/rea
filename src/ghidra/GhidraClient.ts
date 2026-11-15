@@ -89,7 +89,7 @@ import {
   type NativeLoadImageObservation,
   type NativeLoadImagePartialObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   artifactFileCancellationCause,

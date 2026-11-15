@@ -17,7 +17,7 @@ import {
 import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

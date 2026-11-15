@@ -35,7 +35,7 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import type {
   ProviderProcessSupervisor,

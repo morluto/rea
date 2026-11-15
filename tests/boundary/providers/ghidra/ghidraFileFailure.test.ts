@@ -8,7 +8,7 @@ import {
   mapArtifactFileFailure,
   withArtifactRegularFile,
 } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

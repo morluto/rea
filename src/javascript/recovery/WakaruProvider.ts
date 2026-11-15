@@ -8,7 +8,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";

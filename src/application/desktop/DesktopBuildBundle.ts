@@ -20,7 +20,7 @@ import {
 import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 

@@ -3,7 +3,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { crc32, deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";

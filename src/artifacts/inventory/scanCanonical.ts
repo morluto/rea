@@ -20,7 +20,7 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
 } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+import type { ArtifactResourceOwner } from "../../resources/ArtifactResourceScope.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,

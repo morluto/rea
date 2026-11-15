@@ -20,7 +20,7 @@ import {
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

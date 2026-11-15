@@ -14,7 +14,7 @@ import {
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({

@@ -4,7 +4,7 @@ import {
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,

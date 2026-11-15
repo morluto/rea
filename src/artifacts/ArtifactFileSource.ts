@@ -16,7 +16,7 @@ import {
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { hashReadable } from "./ArtifactHash.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 /** Verify an admitted descriptor against the regular file still named by its path. */
 export const assertArtifactFileSelectedSource = async (

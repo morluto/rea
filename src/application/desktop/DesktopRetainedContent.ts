@@ -7,7 +7,7 @@ import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.j
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";

@@ -29,7 +29,7 @@ import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";

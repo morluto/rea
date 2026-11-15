@@ -5,12 +5,12 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import type { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
-import type { ArtifactReader } from "../resources/ArtifactReader.js";
+import type { ArtifactReader } from "./ArtifactReader.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../resources/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+} from "./ArtifactReader.js";
+import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 
 /**
  * Capabilities the scope needs from an output tree and a private runtime

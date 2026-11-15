@@ -9,7 +9,7 @@ import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
   withArtifactFileHandle,

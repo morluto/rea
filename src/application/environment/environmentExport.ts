@@ -20,7 +20,7 @@ import {
   ArtifactFileCleanupFailure,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {

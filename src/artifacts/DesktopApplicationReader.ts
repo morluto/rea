@@ -11,7 +11,7 @@ import { artifactFileCompletion } from "./ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";

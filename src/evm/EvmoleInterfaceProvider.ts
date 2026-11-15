@@ -25,7 +25,7 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   artifactFileCancellationCause,

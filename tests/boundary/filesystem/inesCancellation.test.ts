@@ -11,7 +11,7 @@ import { inesFixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactFilePrimaryFacts,

@@ -9,7 +9,7 @@ import { getHeapStatistics } from "node:v8";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
 import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {

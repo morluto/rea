@@ -2,7 +2,7 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";

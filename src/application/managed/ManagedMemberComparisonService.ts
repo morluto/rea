@@ -11,7 +11,7 @@ import {
 } from "../../domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../domain/managed/managedMemberComparisonMatch.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,

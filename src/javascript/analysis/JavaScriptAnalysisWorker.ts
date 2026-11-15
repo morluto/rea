@@ -1,6 +1,6 @@
 import { javaScriptSemanticWorkAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";

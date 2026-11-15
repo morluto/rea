@@ -35,7 +35,7 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import {
   isSkippedJavaScriptAnalysis,

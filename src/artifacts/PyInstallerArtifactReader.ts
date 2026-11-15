@@ -25,7 +25,7 @@ import {
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { artifactReadCancelledBy } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,

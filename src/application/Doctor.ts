@@ -15,7 +15,7 @@ import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorCheck,

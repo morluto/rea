@@ -15,7 +15,7 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {

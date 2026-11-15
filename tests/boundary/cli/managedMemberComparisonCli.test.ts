@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import * as comparison from "../../../src/application/managed/ManagedMemberComparisonService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";

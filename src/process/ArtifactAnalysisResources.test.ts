@@ -7,7 +7,7 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";

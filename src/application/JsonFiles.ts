@@ -42,7 +42,7 @@ import {
   bindRegularFileCleanup,
   regularFileCleanupLeases,
 } from "./RegularFileRead.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import {

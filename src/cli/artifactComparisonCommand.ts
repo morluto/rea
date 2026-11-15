@@ -4,7 +4,7 @@ import {
   compareArtifactEvidence,
   resolveArtifactComparisonSources,
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";

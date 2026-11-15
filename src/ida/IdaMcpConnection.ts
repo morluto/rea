@@ -1,7 +1,7 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";

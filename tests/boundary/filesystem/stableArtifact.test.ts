@@ -18,7 +18,7 @@ import {
   ArtifactFileCancelled,
   withArtifactFileHandle,
 } from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("reads exact binary and empty bytes and rejects symlink/size/cancellation boundaries", async () => {

@@ -18,7 +18,7 @@ import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvi
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { readManagedSnapshot } from "../../../../src/dotnet/ManagedSnapshot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";

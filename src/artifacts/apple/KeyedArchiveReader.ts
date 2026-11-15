@@ -53,7 +53,7 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
 } from "../ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";

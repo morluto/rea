@@ -28,7 +28,7 @@ import {
   compareBundles,
   type BundleRecordPair,
 } from "../domain/bundleComparison.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   readEvidenceBundle,
   readImmutableEvidenceBundle,

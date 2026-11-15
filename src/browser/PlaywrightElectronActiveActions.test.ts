@@ -3,7 +3,7 @@ import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 // `npm run verify:electron`.
 import { afterEach, expect, it, vi } from "vitest";
 import type { ElectronApplication } from "playwright-core";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 

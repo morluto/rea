@@ -3,7 +3,7 @@ import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import { withNativeMachoSource } from "./NativeMachoSource.js";
 

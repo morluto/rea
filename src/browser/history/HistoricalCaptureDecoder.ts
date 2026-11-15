@@ -35,7 +35,7 @@ import type { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

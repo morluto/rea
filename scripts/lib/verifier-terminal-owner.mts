@@ -3,7 +3,7 @@ import type { IDisposable, IPty } from "@lydell/node-pty";
 
 import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../src/domain/result.js";
 import {
   cleanupOwnedProcessGroup,

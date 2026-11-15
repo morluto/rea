@@ -30,7 +30,7 @@ import {
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
 import { readJsonFile, writeTextParts } from "./JsonFiles.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 type EvidenceBundleFileFailure =
   | EvidenceFileError

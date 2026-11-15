@@ -8,7 +8,7 @@ import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.j
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ok } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   clampLinuxResourceLimits,
   prlimitArgumentVector,

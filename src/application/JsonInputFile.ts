@@ -24,7 +24,7 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
 import {
   RegularFileReadFailure,

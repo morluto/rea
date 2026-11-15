@@ -2,7 +2,7 @@ import { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 import { loadNativeMatchingBundleSources } from "./NativeMatchingBundleSources.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { matchFunctionInventories } from "../../domain/native/matchFunctionInventories.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { setImmediate } from "node:timers/promises";
 import {
   matchNativeFunctionsInputSchema,

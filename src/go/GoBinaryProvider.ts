@@ -17,7 +17,7 @@ import {
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";

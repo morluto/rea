@@ -24,7 +24,7 @@ import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,

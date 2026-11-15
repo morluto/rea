@@ -4,7 +4,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
 import type {

@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { runDoctorOwned } from "../../../src/application/Doctor.js";

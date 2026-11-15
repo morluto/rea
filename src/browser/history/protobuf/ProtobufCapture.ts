@@ -13,7 +13,7 @@ import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,

@@ -5,7 +5,7 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
-} from "./ArtifactFileOperation.js";
+} from "../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
@@ -18,8 +18,8 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "../resources/ArtifactReader.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+} from "./ArtifactReader.js";
+import { translateArtifactFailure } from "../artifacts/ArtifactOperationFailure.js";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};

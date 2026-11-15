@@ -5,7 +5,7 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";

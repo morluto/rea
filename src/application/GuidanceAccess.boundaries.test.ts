@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { readGuidanceSectionInputSchema } from "../contracts/guidanceContracts.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
 import {

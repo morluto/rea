@@ -18,7 +18,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "../application/ClientRegistrationStatus.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";

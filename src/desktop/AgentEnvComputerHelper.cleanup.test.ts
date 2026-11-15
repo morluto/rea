@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";

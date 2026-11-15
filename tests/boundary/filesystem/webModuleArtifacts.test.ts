@@ -10,7 +10,7 @@ import {
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

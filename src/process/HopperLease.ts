@@ -5,7 +5,7 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import {
   acquireOwnedLease,

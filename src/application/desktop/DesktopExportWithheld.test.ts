@@ -16,7 +16,7 @@ import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
