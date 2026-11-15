@@ -353,14 +353,14 @@ checkCounted(
   /\.bindCleanupDependencies\(/gu,
   ["src/domain/analysisErrorBase.ts"],
 );
-// A POSIX launcher's PATH search order (empty and relative entries, `..`)
-// belongs to src/process/executableSearch; callers choose only how they
-// probe each candidate.
+// A launcher's PATH search order (POSIX empty and relative entries and `..`;
+// Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
+// callers choose only how they probe each candidate.
 checkCounted(
-  "PATH split outside the executable search owner (use posixPathCandidates from src/process/executableSearch)",
+  "PATH or PATHEXT split outside the executable search owner (use posixPathCandidates or windowsPathCandidates from src/process/executableSearch)",
   "path-search-split",
   files,
-  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)/gu,
+  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)|\bPATHEXT\b[^\n]{0,60}\.split\(/gu,
   ["src/process/executableSearch.ts"],
 );
 

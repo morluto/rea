@@ -11,8 +11,12 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { isAbsolute, resolve, win32 } from "node:path";
-import { posixPathCandidates } from "../process/executableSearch.js";
+import { isAbsolute } from "node:path";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+  type PathSearchCandidate,
+} from "../process/executableSearch.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -587,28 +591,21 @@ const resolveJava = async (
   const executable = process.platform === "win32" ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
     const windows = process.platform === "win32";
-    const path = windows
-      ? (Object.entries(environment).find(
-          ([key]) => key.toLowerCase() === "path",
-        )?.[1] ?? "")
-      : (environment.PATH ?? "/usr/bin:/bin");
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
-    // retained session's cache identity. Empty POSIX PATH components select cwd.
-    const candidates: Iterable<{ readonly path: string }> = windows
-      ? path
-          .split(win32.delimiter)
-          .filter((entry) => entry !== "")
-          // Windows PATH commonly quotes individual entries containing spaces.
-          .map((directory) => ({
-            path: resolve(
-              directory.startsWith('"') && directory.endsWith('"')
-                ? directory.slice(1, -1)
-                : directory,
-              executable,
-            ),
-          }))
-      : posixPathCandidates(executable, path, { relativeEntries: "resolve" });
+    // retained session's cache identity. Empty POSIX PATH components select
+    // cwd. `java.exe` names its extension, so PATHEXT never fails the search.
+    const windowsSearch = windows
+      ? windowsPathCandidates(executable, environment)
+      : undefined;
+    const candidates: Iterable<PathSearchCandidate> =
+      windowsSearch === undefined
+        ? posixPathCandidates(executable, environment.PATH ?? "/usr/bin:/bin", {
+            relativeEntries: "resolve",
+          })
+        : windowsSearch.ok
+          ? windowsSearch.value
+          : [];
     for (const { path: candidate } of candidates) {
       throwIfJadxInterrupted(signal);
       try {

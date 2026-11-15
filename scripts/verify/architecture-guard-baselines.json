@@ -548,8 +548,6 @@
     "src/wasm/WabtArtifactProvider.ts": 1
   },
   "path-search-split": {
-    "src/android/JadxConfiguration.ts": 1,
-    "src/ghidra/GhidraInstallation.ts": 1,
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   }
 }
