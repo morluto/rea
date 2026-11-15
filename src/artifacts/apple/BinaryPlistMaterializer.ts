@@ -1,7 +1,12 @@
 import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
+import {
+  createPlistDuplicateKeyCollector,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
+import type { ParsedPropertyList } from "../../domain/propertyListKeys.js";
 import {
   binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
@@ -73,6 +78,34 @@ const scalarOccurrence = (
   }
   return value;
 };
+
+/**
+ * Keys each stored dictionary declares more than once. The decoded value
+ * keeps one property per key, the last, so this reads the planned source keys.
+ */
+export const binaryPlistDuplicateKeys = (
+  plan: PlistDecodePreflight,
+): PlistDuplicateKeys => {
+  const duplicates = createPlistDuplicateKeyCollector();
+  for (const container of plan.binaryValuePlan?.containers ?? [])
+    if (container.kind === "dictionary" && container.keys !== undefined)
+      duplicates.dictionary(container.keys);
+  return duplicates.result();
+};
+
+/**
+ * A binary plist decoded with the source facts an XML or OpenStep decode
+ * carries: number literals and the keys a dictionary repeats.
+ */
+export const decodeBinaryPropertyList = (
+  bytes: Buffer,
+  plan: PlistDecodePreflight,
+  metadata: BinaryPlistScalarMetadata = scanBinaryPlistScalars(bytes, plan),
+): ParsedPropertyList => ({
+  value: decodeBinaryPlistValue(bytes, plan, metadata),
+  numberLiterals: metadata.literals,
+  duplicateKeys: binaryPlistDuplicateKeys(plan),
+});
 
 /** Decode validated source containers without losing dictionary keys or alias occurrence identity. */
 export const decodeBinaryPlistValue = (

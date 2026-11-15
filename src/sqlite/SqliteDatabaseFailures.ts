@@ -29,6 +29,8 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { runtimeExhaustionReport } from "../process/RuntimeExhaustion.js";
 import {
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
@@ -285,16 +287,10 @@ const ownedCommandFailure = (
         cause.cancellation === undefined ? cause : cause.cancellation.reason,
     });
   if (timeout !== undefined) return timeout;
-  if (cause.reason === "output-limit")
-    return new AnalysisOutputError(operation, cause.message, {
-      ...options,
-      userMessage: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
-      remediationAction: `The SQLite diagnostic capture allowance is ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
-    });
-  if (
-    cause.snapshot?.stderr.text.includes("JavaScript heap out of memory") ===
-    true
-  )
+  // The supervisor observed V8's heap report as output streamed, so a
+  // retention budget or a stack trace that overflowed it cannot hide it.
+  const outcome = providerOutcomeOf(cause);
+  if (outcome.kind === "runtime-exhausted")
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
@@ -302,7 +298,21 @@ const ownedCommandFailure = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      { ...options, diagnostics: { selected_path: selectedPath } },
+      {
+        ...options,
+        diagnostics: {
+          selected_path: selectedPath,
+          runtime_exhaustion_report: runtimeExhaustionReport(
+            outcome.exhaustion,
+          ),
+        },
+      },
     );
+  if (cause.reason === "output-limit")
+    return new AnalysisOutputError(operation, cause.message, {
+      ...options,
+      userMessage: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
+      remediationAction: `The SQLite diagnostic capture allowance is ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
+    });
   return undefined;
 };

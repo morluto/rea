@@ -324,6 +324,18 @@ export const registrationPersistenceDetail = (
 };
 
 /**
+ * What a direct registration (no approval step) must tell the caller after it
+ * wrote a client that can rewrite its configuration from memory.
+ */
+export const runningClientRewriteNotice = (
+  client: Pick<SetupClient, "name" | "displayName" | "quitBeforeSetup">,
+): string | undefined => {
+  if (client.quitBeforeSetup !== true) return undefined;
+  const name = client.displayName ?? client.name;
+  return `A running ${name} can rewrite its configuration from memory and drop the registration. If ${name} was running, quit it fully (closing its window is not enough), rerun rea mcp add, then start ${name} again.`;
+};
+
+/**
  * Why this process must not change an MSIX client's configuration. A process
  * the running app started sees its redirected AppData, and the app would
  * overwrite the change from memory; an unknown view cannot rule that out.

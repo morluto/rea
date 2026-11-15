@@ -23,7 +23,11 @@ import {
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
-import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
+import {
+  ProcessOutputTokenScanner,
+  type ProviderProcessOutputToken,
+} from "../process/ProcessOutputTokenScanner.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -5967,6 +5971,14 @@ const output = (text: string) => ({
   bytes: Buffer.byteLength(text),
   retained_bytes: Buffer.byteLength(text),
 });
+/** The memory area the supervisor's JVM runtime parses from a marker. */
+const runtimeExhaustionFacts = (
+  stream: "stdout" | "stderr",
+  marker: ProviderProcessOutputToken,
+) => {
+  const { area } = runtimeExhaustion("jvm", stream, marker);
+  return area === undefined ? {} : { area };
+};
 const failureOutput = (stdout = "", stderr = "") => ({
   stdout: output(stdout),
   stderr: output(stderr),
@@ -5985,6 +5997,7 @@ const failureOutput = (stdout = "", stderr = "") => ({
             offset: observed.offset,
             line: observed.line,
             truncated: observed.truncated,
+            ...runtimeExhaustionFacts(stream, observed),
           },
         ];
   }),
@@ -6223,6 +6236,7 @@ describe("Ghidra OOME beyond the retention budget", () => {
             stream: "stderr",
             offset: 9_000_000,
             line: "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space",
+            area: "heap",
           },
         ],
       },
@@ -6757,6 +6771,7 @@ it.each([false, true])(
                   stream: "stderr",
                   offset: 0,
                   line: "java.lang.OutOfMemoryError: Metaspace",
+                  area: "metaspace",
                 },
               ]
             : []),

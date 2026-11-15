@@ -1,4 +1,5 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
@@ -61,6 +62,11 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /**
+   * Caller choice for a contradiction between a reader's independent witness
+   * and the container's own bytes; universal Mach-O lipo records consume it.
+   */
+  readonly integrity?: ArtifactIntegrityPolicyName | undefined;
 }
 
 export interface FormatDescriptor {
@@ -356,6 +362,7 @@ const NON_ZIP_FORMATS = {
         options.environment,
         undefined,
         sourceOf(options),
+        options.integrity,
       ),
   }),
   "mach-o": described("mach-o", plain),

@@ -161,6 +161,11 @@ import {
   ghidraExtensionLimitations,
 } from "./extensions/GhidraExtensions.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import {
+  JVM_EXHAUSTION_DETAILS,
+  RUNTIME_EXHAUSTION_AREAS,
+  type RuntimeExhaustionArea,
+} from "../process/RuntimeExhaustion.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
@@ -1737,10 +1742,12 @@ const observedJvmFailureSchema = z.object({
   stream: z.enum(["stdout", "stderr"]),
   offset: z.number().int().nonnegative(),
   line: z.string().min(1),
+  area: z.enum(RUNTIME_EXHAUSTION_AREAS).optional(),
 });
 
 interface GhidraFailureOutputView {
-  readonly oomText: string | undefined;
+  /** Memory areas the supervisor parsed from each observed OOME line. */
+  readonly oomAreas: ReadonlySet<RuntimeExhaustionArea | undefined> | undefined;
   readonly complete: boolean | undefined;
   readonly launcherFailures: readonly GhidraLauncherFailure[];
   readonly launcherFailuresTruncated: boolean;
@@ -1809,17 +1816,17 @@ const readGhidraFailureOutput = (
 ): GhidraFailureOutputView | undefined => {
   if (scoped === null || typeof scoped !== "object" || Array.isArray(scoped))
     return undefined;
-  const observedLines = Array.isArray(scoped.observed_oome)
+  const observedAreas = Array.isArray(scoped.observed_oome)
     ? scoped.observed_oome.flatMap((observed) => {
         const parsed = observedJvmFailureSchema.safeParse(observed);
-        return parsed.success ? [parsed.data.line] : [];
+        return parsed.success ? [parsed.data.area] : [];
       })
     : [];
   const launcherFailures = launcherFailuresSchema.safeParse(
     scoped.launcher_failures,
   );
   return {
-    oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
+    oomAreas: observedAreas.length === 0 ? undefined : new Set(observedAreas),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
     launcherFailures: launcherFailures.success
@@ -1845,19 +1852,13 @@ const projectObservedJvmMemoryFailure = (
   },
   scoped: GhidraFailureOutputView | undefined,
 ): AnalysisResourceConstraintError | undefined => {
-  const output = scoped?.oomText;
-  if (output === undefined) return undefined;
-  const threadCapacity = /unable to create native thread/iu.test(output);
-  const heapExhaustion = /Java heap space|GC overhead limit exceeded/iu.test(
-    output,
-  );
-  const detail = [
-    "Java heap space",
-    "GC overhead limit exceeded",
-    "Metaspace",
-    "Requested array size exceeds VM limit",
-    "unable to create native thread",
-  ].find((candidate) => output.includes(candidate));
+  const areas = scoped?.oomAreas;
+  if (areas === undefined) return undefined;
+  const threadCapacity = areas.has("native-thread");
+  const heapExhaustion = areas.has("heap") || areas.has("gc-overhead");
+  const detail = JVM_EXHAUSTION_DETAILS.find(([, area]) =>
+    areas.has(area),
+  )?.[0];
   if (threadCapacity)
     return new AnalysisResourceConstraintError(
       operation,

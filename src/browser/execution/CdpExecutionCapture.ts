@@ -20,7 +20,13 @@ export const captureWebExecution = async (
   const collection = new CdpExecutionCollection(sources);
   const { window, requests } = collection;
   try {
-    for (const domain of ["Page", "Runtime", "Debugger", "Network", "Profiler"])
+    for (const domain of [
+      "Page",
+      "Runtime",
+      "Debugger",
+      "Network",
+      "Profiler",
+    ] as const)
       await session.enable(domain);
     await session.assertDocument();
     sources.check();

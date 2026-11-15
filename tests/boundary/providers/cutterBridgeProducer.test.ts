@@ -111,6 +111,10 @@ it("round-trips authenticated status and command bytes across the Python produce
     const { client, session } = bridge;
     expect(session.document_generation).toBe(4);
     expect(session.current_file).toBe("/tmp/cutter-interop-雪.bin");
+    expect(
+      session.bridge_source,
+      "the real plugin publishes the digest of its packaged bytes",
+    ).toBe("packaged");
 
     for (let index = 0; index <= 64; index += 1) {
       await expect(

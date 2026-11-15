@@ -3,6 +3,7 @@ import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import * as bodyShapes from "./CdpCaptureEventBodyShapes.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
@@ -274,13 +275,17 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     }
   }
 
-  ingestResponseBody(candidate: ResponseBodyCandidate, value: unknown): void {
+  /** `"malformed"` records the body shape as an invalid protocol value. */
+  ingestResponseBody(
+    candidate: ResponseBodyCandidate,
+    reply: CdpCommandResult<"Network.getResponseBody"> | "malformed",
+  ): void {
     if (this.currentResponseBodyRequest(candidate) === undefined) return;
     this.#responseBodyExaminedOccurrences.set(
       candidate.requestId,
       candidate.occurrence,
     );
     if (this.malformedRedirectRequestIds.has(candidate.requestId)) return;
-    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, value);
+    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, reply);
   }
 }

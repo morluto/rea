@@ -31,6 +31,7 @@ describe("upstream IDA tool result decoding", () => {
         { content: [{ type: "text", text: evidence }] },
         undefined,
         redact,
+        "text",
       ),
     ).toBe(evidence);
     expect(
@@ -102,10 +103,34 @@ describe("upstream IDA tool result decoding", () => {
       }),
     ).toEqual([{ address: "0x1000" }]);
     expect(
-      decodeIdaToolResult({
-        content: [{ type: "text", text: "int main(void);" }],
-      }),
+      decodeIdaToolResult(
+        { content: [{ type: "text", text: "int main(void);" }] },
+        undefined,
+        undefined,
+        "text",
+      ),
     ).toBe("int main(void);");
+  });
+  it.each([
+    ["truncated JSON", '{"code": "int main('],
+    ["ordinary text", "int main(void);"],
+  ])("rejects %s from a tool that declares a JSON reply", (_label, text) => {
+    expect(
+      () => decodeIdaToolResult({ content: [{ type: "text", text }] }),
+      "malformed JSON is never decoded as an ordinary string",
+    ).toThrow("IDA MCP returned malformed JSON text.");
+  });
+  it("keeps JSON-shaped text from a tool that declares a text reply", () => {
+    for (const text of ["null", "42", '{"code": "int main('])
+      expect(
+        decodeIdaToolResult(
+          { content: [{ type: "text", text }] },
+          undefined,
+          undefined,
+          "text",
+        ),
+        "plain-text pseudocode is never reinterpreted as JSON",
+      ).toBe(text);
   });
   it("preserves upstream failures and rejects truncated previews that still satisfy item schemas", () => {
     expect(() => decodeIdaToolResult({ content: [] })).toThrow(
@@ -801,9 +826,9 @@ it("selects structured IDA evidence ahead of text while admitting mixed content"
   ).toEqual({ observed: true });
   expect(
     decodeIdaToolResult({
-      content: [image, { type: "text", text: "fallback" }],
+      content: [image, { type: "text", text: '{"fallback":true}' }],
     }),
-  ).toBe("fallback");
+  ).toEqual({ fallback: true });
   for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
     expect(() =>
       decodeIdaToolResult({
