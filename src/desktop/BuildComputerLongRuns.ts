@@ -18,6 +18,7 @@ import {
   type Answer,
   type ControlledComputer,
 } from "./BuildComputerController.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "export_build_environment";
 const POLL_S = 30;
@@ -170,8 +171,7 @@ export class BuildComputerLongRuns {
         : cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, OPERATION, {
-              userMessage:
-                cause instanceof Error ? cause.message : String(cause),
+              userMessage: errorMessage(cause),
               cause,
             });
       if (signal.aborted && cause instanceof AnalysisError && cause !== primary)
@@ -280,7 +280,7 @@ export class BuildComputerLongRuns {
     } catch (cause: unknown) {
       return {
         verified: false,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     }
   }

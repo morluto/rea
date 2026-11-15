@@ -16,6 +16,7 @@ import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ClientSystemPaths } from "./SupportedClients.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * A client maintenance left alone: its registration as inspected, and why REA
@@ -293,9 +294,6 @@ export const planIntegrationMaintenance = async (
     // Without a supplied scope, the typed failure is the caller's cleanup capability.
     if (resources === undefined && cause instanceof RegularFileCleanupFailure)
       throw cause;
-    return unavailableMaintenance(
-      cause instanceof Error ? cause.message : String(cause),
-      scope,
-    );
+    return unavailableMaintenance(errorMessage(cause), scope);
   }
 };

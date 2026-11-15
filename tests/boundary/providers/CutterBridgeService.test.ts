@@ -150,6 +150,13 @@ it("retains uncertain command completion as Evidence without encouraging a retry
           ),
         ]),
         provider: { version: "Cutter fixture version" },
+        // Cutter reports the path it opened, but REA neither opened nor
+        // hashed that file, so the subject does not claim it (#11417).
+        subject: {
+          identity: { kind: "unknown", reason: "not-observed" },
+          name: null,
+          local_path: null,
+        },
       },
     },
   });

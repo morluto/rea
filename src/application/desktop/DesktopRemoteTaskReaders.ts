@@ -27,6 +27,7 @@ import {
   AbortedWait,
   waitForAbortable,
 } from "../../process/AbortablePromise.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 type Exec = (
   argv: readonly string[],
@@ -151,7 +152,7 @@ export class DesktopRemoteTaskReaders {
       if (failure !== undefined)
         throw new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
           cause: failure,
-          userMessage: `The task reader could not complete: ${failure instanceof Error ? failure.message : String(failure)}`,
+          userMessage: `The task reader could not complete: ${errorMessage(failure)}`,
           diagnostics: this.#facts(views, absent),
         });
     }
@@ -189,8 +190,7 @@ export class DesktopRemoteTaskReaders {
               } catch (cause: unknown) {
                 for (const reference of this.#failures)
                   reference.deref()?.retainDiagnostics({
-                    late_reader_failure:
-                      cause instanceof Error ? cause.message : String(cause),
+                    late_reader_failure: errorMessage(cause),
                   });
               }
             } else {
@@ -238,7 +238,7 @@ export class DesktopRemoteTaskReaders {
         }
         this.#pending.delete(pending);
       } catch (cause: unknown) {
-        errors.push(cause instanceof Error ? cause.message : String(cause));
+        errors.push(errorMessage(cause));
       }
     }
     if (errors.length > 0)

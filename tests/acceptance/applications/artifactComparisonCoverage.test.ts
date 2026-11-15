@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -136,7 +140,7 @@ const assertMalformedImportsRejected = async (
   const sha256 = "f".repeat(64);
   const oversized = createEvidence(
     {
-      path: right.subject!.local_path,
+      path: fileSubjectDisplay(right.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: inventory.manifest.root_format,
     },
@@ -203,7 +207,7 @@ const assertMalformedImportsRejected = async (
   ]) {
     const malformed = createEvidence(
       {
-        path: right.subject!.local_path,
+        path: fileSubjectDisplay(right.subject).local_path,
         sha256: inventory.manifest.root_sha256,
         format: inventory.manifest.root_format,
       },
@@ -452,7 +456,9 @@ cliTest.skipIf(process.platform === "win32")(
     const left = inventoryEvidence(result.json);
     const { call, inspect } = await connectArtifactComparisonMcp();
     const right = await inspect(rightPath);
-    expect(right.subject?.digest.sha256).toBe(left.subject?.digest.sha256);
+    expect(fileIdentity(right.subject).sha256).toBe(
+      fileIdentity(left.subject).sha256,
+    );
     const comparison = await call("compare_artifacts", { left, right });
     expect(comparison.isError, JSON.stringify(comparison)).not.toBe(true);
     expect(

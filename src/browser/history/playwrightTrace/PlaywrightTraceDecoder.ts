@@ -9,8 +9,8 @@ import {
   projectStableArtifactFailure,
   hashStableRootArtifactHandle,
   assertArtifactFileSelectedSource,
+  ZipArtifactReader,
 } from "../../../resources/index.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,

@@ -29,6 +29,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { ElectronFusePathFailure } from "./ElectronFusePath.js";
 import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_electron_fuses";
 
@@ -140,7 +141,7 @@ export const electronFuseFailure = (
       cause,
       diagnostics: {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );

@@ -19,6 +19,7 @@ import { SERVER_START_FAILED } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
@@ -245,10 +246,7 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
-    serverLogger.error(
-      { error: cause instanceof Error ? cause.message : String(cause) },
-      SERVER_START_FAILED,
-    );
+    serverLogger.error({ error: errorMessage(cause) }, SERVER_START_FAILED);
     try {
       await close();
     } catch (cleanupCause) {

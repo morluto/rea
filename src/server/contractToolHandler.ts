@@ -34,6 +34,10 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import {
+  deliverApplicationExecution,
+  type ApplicationExecutionRecords,
+} from "./deliverApplicationExecution.js";
 
 /** Application service executing one named contract operation. */
 export interface ContractToolService<TOperation extends string> {
@@ -201,21 +205,38 @@ export const createValueToolHandler =
       contract,
     );
 
+/** What a derivation may read before it runs. */
+export interface DerivedSources {
+  readonly evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"];
+  readonly signal: AbortSignal;
+}
+
 /**
- * Derive Evidence from Evidence the session holds. The session owner admits
- * the call, resolves its session-held inputs, retains the sources the
- * derivation read and records the derived Evidence with its unknowns, so
- * provenance is the same whichever tool derives it.
+ * Read a derivation's inputs, then return the synchronous derivation over
+ * them. A derivation from session-held Evidence alone acquires nothing.
+ */
+export type DerivedAcquisition = (
+  input: unknown,
+  sources: DerivedSources,
+) => Promise<
+  Result<
+    () => Result<InvestigationWorkflowExecution, AnalysisError>,
+    AnalysisError
+  >
+>;
+
+/**
+ * Derive Evidence from Evidence the session holds and the inputs the binding
+ * acquires. The session owner admits the call, resolves its session-held
+ * inputs, retains the sources the derivation read and records the derived
+ * Evidence with its unknowns, so provenance is the same whichever tool
+ * derives it. An acquisition failure is delivered as is.
  */
 export const createDerivedToolHandler =
   (
     server: EvidenceMcpServer,
     session: BinarySessionPort,
-    derive: (
-      input: unknown,
-      evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"],
-      signal: AbortSignal,
-    ) => Result<InvestigationWorkflowExecution, AnalysisError>,
+    acquire: DerivedAcquisition,
     logger: Logger,
   ) =>
   (contract: ToolContract) => {
@@ -230,30 +251,109 @@ export const createDerivedToolHandler =
         admission,
         contract.name,
         context.mcpReq.signal,
-        async () =>
-          deliverInvestigationWorkflow(
-            server,
-            session,
-            contract,
-            await logToolExecution(logger, contract.name, () =>
-              runDerivedOperation(
+        async () => {
+          const outcome = await logToolExecution(
+            logger,
+            contract.name,
+            async () => {
+              const acquired = await acquire(input, {
+                evidenceForAnalysis,
+                signal: context.mcpReq.signal,
+              });
+              if (!acquired.ok)
+                return { ...acquired, stage: "acquire" as const };
+              const derive = acquired.value;
+              const derived = await runDerivedOperation(
                 context,
                 contract.name,
                 () => {
-                  const result = derive(
-                    input,
-                    evidenceForAnalysis,
-                    context.mcpReq.signal,
-                  );
+                  const result = derive();
                   if (!result.ok) throw result.error;
                   return result.value;
                 },
                 (value) => value,
-              ),
-            ),
-          ),
+              );
+              return { ...derived, stage: "derive" as const };
+            },
+          );
+          return outcome.stage === "acquire"
+            ? server.delivery.toCallToolResult(outcome, contract)
+            : deliverInvestigationWorkflow(server, session, contract, outcome);
+        },
       );
   };
+
+/** The request an application workflow runs for. */
+export interface ApplicationWorkflowRequest {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+}
+
+/** What an application workflow binding runs and the view it stages. */
+export interface ApplicationWorkflow {
+  readonly workflow: (
+    input: unknown,
+    request: ApplicationWorkflowRequest,
+  ) => Promise<Result<InvestigationWorkflowExecution, AnalysisError>>;
+  /** The caller-selected view of the completed Evidence, when the request names one. */
+  readonly view?:
+    | ((input: unknown) => AnalysisViewRequest | undefined)
+    | undefined;
+}
+
+/**
+ * Run an application workflow under analysis admission and deliver its
+ * completed Evidence with its sources and residual unknown. A request for a
+ * view (or summary) is refused before the workflow runs when the complete
+ * Evidence cannot be retained; a failure delivers its partial Evidence.
+ */
+export const createApplicationToolHandler =
+  (
+    server: EvidenceMcpServer,
+    { workflow, view }: ApplicationWorkflow,
+    logger: Logger,
+    records: ApplicationExecutionRecords,
+    withAdmittedAnalysis?: WithAdmittedAnalysis,
+  ) =>
+  (contract: ToolContract) =>
+  async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
+    runAdmittedToolOperation(
+      server,
+      withAdmittedAnalysis,
+      contract.name,
+      context.mcpReq.signal,
+      async () => {
+        const selected = view?.(input);
+        if (selected !== undefined) {
+          const retention = requireAnalysisViewRetention(contract.name, {
+            recordEvidence: records.recordEvidence,
+            evidenceById: records.evidenceById,
+          });
+          if (!retention.ok)
+            return server.delivery.toCallToolResult(retention, contract);
+        }
+        const result = await logToolExecution(logger, contract.name, () =>
+          workflow(input, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
+        );
+        if (!result.ok)
+          return server.delivery.toPartialErrorToolResult(
+            result.error,
+            contract.returnsTargetContent,
+            records.recordEvidence,
+          );
+        return deliverApplicationExecution(
+          server.delivery,
+          records,
+          contract,
+          result.value,
+          selected,
+          context.mcpReq.signal,
+        );
+      },
+    );
 
 /** One owner for optional-provider admission, execution, recording and delivery. */
 export const runEvidenceToolOperation = async <Input>(

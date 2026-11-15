@@ -27,6 +27,7 @@ import {
   isRefusedRead,
 } from "./HostFileRead.js";
 import type { QueryRunner } from "./HostQuery.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type PackageFileFacts = Pick<
   DesktopPackage,
@@ -66,7 +67,7 @@ const hashPackageFile = async (
     const read = stableFileHashCause(cause);
     if (!(cause instanceof StableFileHashFailure) || !isRefusedRead(read))
       throw cause;
-    return `${path} could not be read: ${read instanceof Error ? read.message : String(read)}`;
+    return `${path} could not be read: ${errorMessage(read)}`;
   }
 };
 

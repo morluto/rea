@@ -9,12 +9,12 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 
-import { assertArtifactReadActive } from "../../resources/index.js";
 import {
+  assertArtifactReadActive,
   decodeZipEntryText,
   ZIP_READER_OPTIONS,
   zipEntryPath,
-} from "../../artifacts/ZipArtifactReader.js";
+} from "../../resources/index.js";
 import {
   DAMAGED_ZIP_ENTRY,
   UNREADABLE_ZIP,

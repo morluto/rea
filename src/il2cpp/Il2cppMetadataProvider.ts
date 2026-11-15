@@ -59,6 +59,7 @@ import {
   linkIl2cppBinarySteps,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
@@ -163,7 +164,7 @@ const failureForPrimary = (
       cause,
       diagnostics: {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );

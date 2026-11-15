@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -25,13 +26,13 @@ import {
   type BuildComputerAction,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
   planOutputTree,
   writeOutputTree,
   desktopOutputFailure,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 const RECORD = "witness.json";
@@ -113,7 +114,7 @@ const fetchRecording = async (
   try {
     manifest ??= await computer.endRecording(recordingId, signal);
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause) };
+    return { ok: false, error: errorMessage(cause) };
   }
   try {
     const segments = await computer.recordingSegments(manifest, signal);
@@ -133,7 +134,7 @@ const fetchRecording = async (
       },
     };
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause), manifest };
+    return { ok: false, error: errorMessage(cause), manifest };
   }
 };
 
@@ -189,7 +190,7 @@ const writeRecordFolder = async (
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `The witness record could not be written: ${errorText(cause)}`,
+              userMessage: `The witness record could not be written: ${errorMessage(cause)}`,
               cause,
               partialObservation: evidence,
             }),
@@ -318,22 +319,26 @@ export const writeWitnessRecord = async (
   const result = redact(
     recorded as unknown as JsonValue,
   ) as unknown as typeof recorded;
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-build-witness",
-    operation: CHECK,
-    parameters: { task: result.task.name, stages: witness.stages.length },
-    result: result as unknown as JsonValue,
-    confidence: "observed",
-    authority: "controlled-replay",
-    limitations: [
-      howChecked(witness.task),
-      ...("error" in recording
-        ? [`The recording is missing: ${recording.error}`]
-        : []),
-      ...logLimitations(actions, dropped),
-      ...unsettledLimitation(result.stages),
-    ],
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-build-witness",
+      operation: CHECK,
+      parameters: { task: result.task.name, stages: witness.stages.length },
+      result: result as unknown as JsonValue,
+      confidence: "observed",
+      authority: "controlled-replay",
+      limitations: [
+        howChecked(witness.task),
+        ...("error" in recording
+          ? [`The recording is missing: ${recording.error}`]
+          : []),
+        ...logLimitations(actions, dropped),
+        ...unsettledLimitation(result.stages),
+      ],
+    },
+  );
   const files = [
     ...("segments" in recording
       ? recording.segments.flatMap((target, index) => {

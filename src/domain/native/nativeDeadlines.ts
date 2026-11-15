@@ -1,5 +1,6 @@
 import {
   MAX_NODE_TIMER_DELAY_MS,
+  deadlineParameterLimit,
   timerDurationMsSchema,
 } from "../analysisResourceLimits.js";
 
@@ -91,16 +92,11 @@ export const nativeDeadlineRecovery = (input: {
   return {
     userMessage: `This request reached REA's ${input.phase} of ${String(input.timeoutMs)} ms (${input.parameter}). This is a server/provider deadline, not the MCP client deadline.${input.detail ?? ""}`,
     remediationAction: `${adjustment} ${input.unchanged} Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-    limit: {
-      control_kind: "parameter",
-      parameter: input.parameter,
-      effective_value: input.timeoutMs,
-      unit: "ms",
-      minimum: 1,
-      maximum: MAX_NODE_TIMER_DELAY_MS,
-      default_value: input.defaultMs,
-      applies_at: "next_call",
-    },
+    limit: deadlineParameterLimit(
+      input.parameter,
+      input.timeoutMs,
+      input.defaultMs,
+    ),
   };
 };
 

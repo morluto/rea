@@ -16,6 +16,7 @@ import {
   type ProviderProcessLaunch,
 } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PYTHON_PATH = "/usr/bin/python3";
 const UNSHARE_PATH = "/usr/bin/unshare";
@@ -168,7 +169,7 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
       cleanup = {
         status: "pending",
         lease,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     }
     const snapshot = supervisor.snapshot();

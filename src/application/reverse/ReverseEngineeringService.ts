@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import { Budget } from "../../domain/budget.js";
@@ -49,7 +50,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
-  MAX_REVERSE_COMMAND_OUTPUT_BYTES,
+  reverseCommandOutputLimit,
   objdumpInputSchema,
   rizinInputSchema,
   type RizinInput,
@@ -87,6 +88,7 @@ import {
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -116,7 +118,7 @@ const reverseCommandOutputLimitation = (
   bytes: number,
   source: "default" | "request",
 ): string =>
-  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}, default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)}, range 1..${String(MAX_REVERSE_COMMAND_OUTPUT_BYTES)}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or increase max_output_bytes (--max-output-bytes on the CLI) for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
+  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or raise the output_limit control for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
 // Bound simultaneous provider process families independently of output admission.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 const MAX_ACTIVE_CAPTURE_BYTES =
@@ -295,7 +297,7 @@ export class ReverseEngineeringService {
       } catch (cause) {
         stopped = {
           status: "incomplete",
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
       if (stopped.status === "incomplete") {
@@ -1143,6 +1145,9 @@ export class ReverseEngineeringService {
       output_budget_bytes: outputBudgetBytes,
       output_budget_source: outputBudgetSource,
       output_truncated: outputTruncated,
+      ...(outputLimitReached
+        ? { output_limit: reverseCommandOutputLimit(outputBudgetBytes) }
+        : {}),
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
@@ -1213,7 +1218,7 @@ export class ReverseEngineeringService {
     ];
     const evidence = createEvidence(
       absolutePath === undefined || digest === undefined
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: absolutePath, sha256: digest, format: "unknown" },
       profile.identity,
       {

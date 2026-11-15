@@ -8,6 +8,7 @@ import {
   type KunaConfigurationFailure,
 } from "./KunaConfiguration.js";
 import { KUNA_COMMAND_REMEDIATION } from "./KunaRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Why Kuna is not admitted: its settings, or a command REA cannot run. */
 export interface KunaAdmissionRefusal {
@@ -58,7 +59,7 @@ export const admitKunaCommand = (
       return refused(`REA_KUNA_COMMAND is not a regular file: ${command}.`);
   } catch (cause: unknown) {
     return refused(
-      `Cannot execute REA_KUNA_COMMAND ${command}: ${cause instanceof Error ? cause.message : String(cause)}.`,
+      `Cannot execute REA_KUNA_COMMAND ${command}: ${errorMessage(cause)}.`,
     );
   }
   return ok(configuration.value);

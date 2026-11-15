@@ -17,6 +17,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {
@@ -733,9 +734,7 @@ const cleanupError = (
       reason:
         cause instanceof AnalysisError
           ? (cause.userMessage ?? cause.message)
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     },
   });
 

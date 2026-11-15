@@ -69,6 +69,7 @@ import {
   analysisClientFailureContext,
   analysisClientFailureForOperation,
 } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const legacyTools = [
   "get_metadata",
@@ -142,9 +143,7 @@ class IdaCleanupError extends ProviderAdapterError {
         failure_reason:
           cause instanceof AnalysisError
             ? (cause.diagnostics?.reason ?? cause.message)
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         workspace: path,
         ...(sessions === undefined
           ? {}
