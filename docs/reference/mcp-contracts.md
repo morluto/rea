@@ -156,6 +156,11 @@ Each container reader declares its own traversal coverage, including complete
 coverage. A traversal that ends without that declaration, or that stops before
 its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
+ZIP members are listed from the central directory. Coverage is `complete` only
+when its records account for every byte before the directory (a well-formed
+APK signing block is accounted for); otherwise coverage is `unknown` and a
+limitation gives the unaccounted bytes, which may hold local entries the
+directory does not list.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
@@ -532,7 +537,10 @@ to recover the result; do not repeat the committed mutation. A single unknown
 may be too large for a `list_unknowns` page. A delivery failure does not undo
 that revision. If a list response overflows, retry on the same connection with
 the same filters and offset and a smaller limit; export if one head still cannot
-fit.
+fit. When the recovery starts with one MCP operation,
+`details.reported_limits.next_operation` names it: `export_evidence_bundle` for
+a committed unknown or a one-row page, `list_unknowns` for a page that a smaller
+limit can split. It is absent when the recovery is complete CLI JSON output.
 
 To find missing sources before a downstream analysis refuses them, read
 `missing_direct_links` from the summary, or call `get_evidence_bundle` with
@@ -1008,7 +1016,11 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
+(currently `1`). Import, comparison and every other bundle reader refuse a
+bundle without it, or with another revision, as an integrity mismatch whose
+recovery is to recreate the observations with the current release;
+re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint
@@ -1915,6 +1927,16 @@ occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
 listed and extractable as observed-untrusted bytes, and `extract_artifact`
 returns the root record with the extracted files' records.
 
+A universal Mach-O is inventoried from `lipo -detailed_info`, cross-checked
+against REA's own parse of the FAT table. When the two disagree, the default
+policy fails with `integrity`. Under `record-and-continue` the disagreement is
+reported as an integrity limitation and the slices are enumerated from the FAT
+table, whose bytes are authoritative; lipo's ranges are not used, but a matched
+row's retained field evidence stays on its slice. A slice lipo did not match is
+named from its own CPU identity, qualified by its FAT offset when that name
+repeats. When REA cannot parse the FAT table, lipo's rows are inventoried and a
+count disagreement makes coverage `unknown`. A malformed FAT table still fails.
+
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under
 `details.partial_observation.inventory`, with unknown child coverage and the
@@ -2088,63 +2110,64 @@ Kimi-K3 backend, not the WorkBuddy MCP client. Set the profile on REA's
 registration in the actual MCP host; the host's name alone does not identify
 the downstream model or its schema constraints.
 
-The compact profile also protects strict Anthropic-compatible gateways from
-known schema-translation failures reported in [#3800](https://github.com/morluto/rea/issues/3800):
-primitive `enum` properties without a sibling `type`, and `oneOf`/`allOf`
-inside a property listed in `required`. Affected schemas use the same reduced
-first-level projection described below, so the gateway receives a plain object
-shape while REA continues to validate the complete canonical contract locally.
-This is a compatibility projection, not a claim that the gateway reproduces
-the full union semantics.
+The compact profile also projects every advertised input schema into the
+portable advertised dialect declared in `src/contracts/advertisedDialect.ts`:
+the subset of JSON Schema that the clients and gateways REA has met accept,
+with one rule per observed rejection (for example strict gateways in
+[#3800](https://github.com/morluto/rea/issues/3800), Gemini item and literal
+rules in [#5201](https://github.com/morluto/rea/issues/5201) and
+[#4025](https://github.com/morluto/rea/issues/4025), and VS Code's required
+`items`). One projection (`src/contracts/advertisedDialectProjection.ts`)
+owns it, and every rewrite is exact or widening, so a canonical-valid call is
+never refused by the advertisement:
 
-For array items expressed as an untyped `oneOf`/`anyOf`, the compact profile
-adds a type when every branch has the same type. Mixed-type item unions use the
-reduced projection; selecting one branch's type would exclude valid calls.
-This addresses the emitted shape reported through a Gemini-backed gateway in
-[#5201](https://github.com/morluto/rea/issues/5201). Gateway conversion and
-live provider acceptance have not been verified for this projection.
+- Every node carries one type, every array has `items`, and the root is a
+  plain object. A string `const` becomes a one-value `enum`; unions of string
+  literals become one `enum`; other literals keep only their type.
+- `oneOf` becomes `anyOf`, `allOf` members merge into their parent, tuples
+  advertise the union of their positions with their length bounds, and
+  exclusive numeric bounds become inclusive (exact for integers).
+- `$schema`, `format`, `default`, `examples`, `title`, `propertyNames`,
+  `additionalProperties` schemas, property-count bounds, conditionals and
+  length bounds of 1,999 or more are dropped.
+- A nullable value is advertised in the dialect's one nullable form: `anyOf`
+  a typed branch and `{"type": "null"}`, below the root. Type lists such as
+  `["integer", "null"]` are outside the dialect (Gemini's legacy schema
+  rejects them, and clients rewrite them differently), and advertising only
+  the non-null type would refuse a valid call such as `limit: null`.
 
-Gemini function declarations accept `items` only beside the single `array`
-type. Reduced array properties therefore advertise the element types their
-canonical item schemas accept, such as `{"type": "object"}` for a union of
-object actions, instead of an any-value type list with nested `items`. An
-element whose type is unknown, a tuple, or an array alongside other types uses
-the empty item schema, and a property that may be an array or another type
-lists typed `anyOf` branches. A boundary test rejects any compact
-advertisement that places `items` beside another type or uses an untyped item
-union.
+Guidance never stays inside the compact schema. The root description (input
+groups, Evidence-source guidance, the reduced-form notice) and sentences for
+dropped cross-field constraints (`dependentRequired`, `uniqueItems`, excluded
+values) follow the tool description. Codex strips every description inside a
+schema above 5,000 bytes and Zed drops the root description; neither strips
+the tool description.
 
 The compact profile renders the same tool set, output schemas, annotations,
 and canonical server-side validation. It changes only the advertised input
-JSON Schema:
+JSON Schema and appends input guidance to the tool description:
 
 - Annotation prose leaves the advertised form: nested property descriptions,
-  literal examples, defaults, and titles are dropped. The root keeps its
-  description because it states the accepted input groups. A root `detail`
+  literal examples, defaults, and titles are dropped. A root `detail`
   property keeps its description because it selects between complete Evidence
   and a bounded summary.
 - Schema-local references are inlined within the budget. Kimi Code expands
   references before sending provider requests, so sharing definitions cannot
   establish the provider-facing size. Expansion stops at the budget before
-  allocating an oversized presentation. Unconstrained JSON fields advertise
-  all JSON value types explicitly so Kimi cannot infer string for Evidence
-  objects or arrays.
-- The few schemas whose validation structure alone exceeds the budget
-  (`compare_web_captures`, `build_reconstruction_obligation_ledger`,
-  `evaluate_reconstruction_coverage`,
-  `compare_application_versions`, `capture_browser_scenario`) are advertised
-  in a reduced form: property names, reference-resolved types (including union
-  alternatives), first-level guidance, and the root's required-field constraints,
-  with nested validation detail elided. The
-  registered canonical schema still rejects malformed calls before invoking a
-  handler. That rejection can use the MCP SDK's input-validation diagnostic;
-  it does not guarantee the application's typed input error.
-- Schemas deeper than ten nodes use the same reduced projection, with
-  root-property names, types, guidance, and required fields retained. The
-  server continues to enforce the full canonical input contract.
+  allocating an oversized presentation.
+- Schemas whose projected validation structure exceeds the budget or ten
+  levels, or that need a construct the dialect cannot express (an any-value
+  field), are advertised in a reduced form: property names,
+  reference-resolved types (including union alternatives), first-level
+  guidance, and the root's required-field constraints, with nested validation
+  detail elided. The registered canonical schema still rejects malformed calls
+  before invoking a handler. That rejection can use the MCP SDK's
+  input-validation diagnostic; it does not guarantee the application's typed
+  input error.
 
-Boundary tests pin every advertised compact schema to the budget, keep them
-valid JSON Schema that still accepts every canonical example. Client verification
+Boundary tests pin every advertised compact schema to the budget and the
+dialect checker, keep them valid JSON Schema that still accepts every
+canonical example. Client verification
 also checks provider-facing sizes and canonical examples after conversion by
 the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
 The SDK catalog test checks that full-profile schemas retain nested ADB extra,
@@ -2168,14 +2191,14 @@ Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
 follow-up needs retained facts, include it in `discover_tools.names`; if the
 producer and follow-up are known together, load both in one batch. Producers
 that accept `view` can answer a selected first question without loading the
-cross-domain view contract. Complete output schemas and canonical result
-validation are preserved when each tool loads.
+cross-domain view contract. Each loaded tool keeps canonical result validation
+and the selected [output schema profile](#output-schemas).
 An explicit tool-family scope can remove any of those domain tools.
 `discover_tools` searches canonical names and descriptions using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
 and abbreviated descriptions with their configured input schemas, so the next
-call can use the returned arguments contract. Output schemas remain in
-`tools/list`. Search defaults to three results, allows up to
+call can use the returned arguments contract. Output schemas, when the
+selected profile lists them, remain in `tools/list`. Search defaults to three results, allows up to
 20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
 request order and reject unknown or excluded names before loading anything.
 Use fewer keywords when no result matches; search requires every word to match.
@@ -2289,14 +2312,19 @@ profile and the advertised form that profile produces. `full`, `compact`, and
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
-Some clients reject a complete `tools/list` frame or HTTP SSE event before
-they load any tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
-setting bounds every advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
-(the measured pi-web-ui failure and catalog breakdown are in
-[#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
-is unchanged. Both settings keep the same named canonical tool contract for
-server-side result validation, and both still return complete
-`structuredContent` and text results.
+`REA_MCP_OUTPUT_SCHEMA_PROFILE` selects what `tools/list` carries for each
+tool's `outputSchema`. The default, `off`, omits it: no model API surveyed
+reads an output schema, MCP client validators only repeat REA's own result
+validation, and complete output schemas were about 92% of a default
+`tools/list` (4.3 of 4.6 MB). Some clients also reject a large `tools/list`
+frame or HTTP SSE event before they load any tools (the measured pi-web-ui
+failure is in [#2512](https://github.com/morluto/rea/issues/2512)). Select
+`compact` to bound every advertised output schema to 4,096 bytes, or `full`
+for complete output schemas when an MCP client should validate results. Every
+profile keeps the same named canonical tool contract for server-side result
+validation and still returns complete `structuredContent` and text results;
+the MCP specification does not require an output schema for
+`structuredContent`.
 
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the

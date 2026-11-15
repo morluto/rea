@@ -2,6 +2,8 @@ import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js"
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_NATIVE_UI_DEADLINE_MS,
@@ -90,8 +92,7 @@ export class NativeUiInterruptionControl {
               "The 67108864-byte scenario output allowance and the 180000 ms cap on one wait step have no runtime override.",
           }),
         })
-      : new AnalysisCancelledError(operation, {
-          cause: interruption.reason,
+      : cancelledBy(operation, carriedReason(interruption.reason), {
           partialObservation,
         });
   }

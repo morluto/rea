@@ -730,6 +730,7 @@ const createReader = async (
     | "resourceScope"
     | "espFlashSelection"
     | "readerLimits"
+    | "integrityPolicy"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -791,6 +792,7 @@ const createReader = async (
           admission: transferredSource?.admission,
           espFlashSelection: input.espFlashSelection,
           readerLimits: input.readerLimits,
+          integrity: input.integrityPolicy,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??

@@ -3,7 +3,11 @@ import type {
   ObserveWebSessionInput,
   WebObservationSession,
 } from "../domain/browserSession.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -20,7 +24,6 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -32,6 +35,7 @@ import {
   selectCdpFrameIdentity,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
@@ -739,12 +743,12 @@ class TimelineCapture {
   }
 }
 
-const performanceTimestamp = (value: unknown): number => {
-  const metrics = recordsValue(recordValue(value)?.metrics).filter(
-    ({ name }) => name === "Timestamp",
-  );
-  const timestamp = numberValue(metrics[0]?.value);
-  if (metrics.length !== 1 || timestamp === undefined || timestamp < 0)
+const performanceTimestamp = ({
+  metrics,
+}: CdpCommandResult<"Performance.getMetrics">): number => {
+  const timestamps = metrics.filter(({ name }) => name === "Timestamp");
+  const timestamp = timestamps[0]?.value;
+  if (timestamps.length !== 1 || timestamp === undefined || timestamp < 0)
     throw new BrowserObservationError("observe_web_session", "protocol_error", {
       detail:
         "Performance.getMetrics returned no valid monotonic Timestamp metric.",
@@ -766,7 +770,7 @@ const waitForWindow = async (
     const settle = (complete: () => void): void => {
       if (settled) return;
       settled = true;
-      timerController.abort();
+      timerController.abort(OwnerCancellation.noLongerNeeded);
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
       removeProtocolFailure();
@@ -776,9 +780,7 @@ const waitForWindow = async (
     const onAbort = (): void =>
       settle(() => {
         reject(
-          new AnalysisCancelledError("observe_web_session", {
-            cause: signal?.reason,
-          }),
+          cancelledBy("observe_web_session", carriedReason(signal?.reason)),
         );
       });
     signal?.addEventListener("abort", onAbort, { once: true });

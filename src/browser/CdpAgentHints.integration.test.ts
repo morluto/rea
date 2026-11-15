@@ -245,16 +245,18 @@ it.each(
                 observation_ms: 0,
               }),
             );
-      if (
-        change === "unchanged" ||
-        change === "unknown-loader" ||
-        change === "unknown-initial-loader"
-      ) {
+      // A missing loader leaves the document unproven: coverage is limited
+      // and the initial document stays the subject, never a protocol error.
+      if (change !== "frame" && change !== "loader") {
         if (!result.ok) throw result.error;
         const unknown = change !== "unchanged";
+        const finalOnly =
+          change === "missing-final-loader" || change === "empty-final-loader";
         expect(
           result.value.limitations.some((value) =>
-            value.includes("initial document loader identity was unavailable"),
+            value.includes(
+              `${finalOnly ? "final" : "initial"} document loader identity was unavailable`,
+            ),
           ),
         ).toBe(unknown);
         expect(result.value.completeness.attach_limited_sections).toEqual(
@@ -269,13 +271,7 @@ it.each(
       } else
         expect(result).toMatchObject({
           ok: false,
-          error: {
-            reason:
-              change === "missing-final-loader" ||
-              change === "empty-final-loader"
-                ? "protocol_error"
-                : "target_changed",
-          },
+          error: { reason: "target_changed" },
         });
     } finally {
       await provider.close?.();

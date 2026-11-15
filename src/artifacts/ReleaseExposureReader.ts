@@ -60,6 +60,8 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   ArtifactInventoryResult,
@@ -248,9 +250,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     try {
       return await this.#resources.run(async () => {
         if (options?.signal?.aborted)
-          throw new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          });
+          throw cancelledBy(OPERATION, options.signal);
         const info = await lstat(input.path);
         if (info.isSymbolicLink())
           throw new AnalysisInputError(OPERATION, undefined, [
@@ -553,10 +553,7 @@ const scanOccurrences = async (
   if (input.snapshot !== null)
     await examineSelectedFile(state, input, rootFormat, input.snapshot);
   for (const occurrence of occurrences) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     if (
       !input.directory &&
       occurrence.parent_occurrence_id === null &&
@@ -2780,10 +2777,7 @@ const scanUnexpandedContainer = async (
     return;
   }
   for (const entry of entries) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
     noteUnfollowedMapLink(state, entry.kind, entry.path, location);
@@ -2949,8 +2943,7 @@ const openContainer = async (
     );
     return null;
   }
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
   const reader = createArtifactReader(filePath, format, {
     environment: process.env,
     unreadableDirectories: "omit",
@@ -3040,8 +3033,7 @@ const readStreamBounded = async (
   let failure: unknown;
   try {
     for await (const chunk of stream) {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(piece);
       total += piece.length;
@@ -3120,10 +3112,7 @@ const readSpan = async (
           (bytesRead) => {
             state.memberBytesRead += bytesRead - charged;
             charged = bytesRead;
-            if (signal?.aborted)
-              throw new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
-              });
+            if (signal?.aborted) throw cancelledBy(OPERATION, signal);
           },
         );
         const after = await handle.stat();
@@ -3224,8 +3213,7 @@ const listSiblings = async (
   try {
     let truncated = false;
     for (;;) {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const entry = await owner.handle.read();
       if (entry === null) break;
       if (entries.length >= SIBLING_LIST_LIMIT) {
@@ -3270,10 +3258,7 @@ const scanSiblings = async (
   const directory = dirname(input.path);
   const own = basename(input.path);
   for (const entry of await listSiblings(directory, state, input)) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     if (entry.name === own) continue;
     const sibling = appendCallerPath(directory, entry.name);
     if (hasCompanionName(entry.name)) {
@@ -3642,9 +3627,10 @@ const releaseExposureFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

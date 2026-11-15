@@ -7,8 +7,8 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createGpuCodeObjectsEvidence } from "../../domain/gpu/gpuCodeObjectsEvidence.js";
@@ -44,11 +44,7 @@ export class GpuCodeObjectsService {
         ),
       );
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("inspect_gpu_code_objects", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("inspect_gpu_code_objects", options.signal));
     const { detail, view, ...parameters } = input.data;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
@@ -81,8 +77,7 @@ export class GpuCodeObjectsService {
     );
     if (options?.signal?.aborted)
       return err(
-        new AnalysisCancelledError("inspect_gpu_code_objects", {
-          cause: options.signal.reason,
+        cancelledBy("inspect_gpu_code_objects", options.signal, {
           partialObservation: evidence,
         }),
       );
