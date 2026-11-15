@@ -365,7 +365,15 @@ export const ENTRY_FILES = Object.freeze(
         "PcapProviderIdentity.ts",
       ],
       python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
-      reference: [],
+      reference: [
+        // The reference-source import workflow (src/application/ReferenceSource*)
+        // runs the reader, consumes its result and failure types, and reports
+        // its own root and VCS reads with the reader's failure builders, so
+        // both kinds of failure share one shape and wording.
+        "ReferenceSourceReader.ts",
+        "ReferenceSourceReaderErrors.ts",
+        "ReferenceSourceReaderTypes.ts",
+      ],
       rizin: [
         "RizinCommand.ts",
         "RizinDebugSessionManager.ts",
