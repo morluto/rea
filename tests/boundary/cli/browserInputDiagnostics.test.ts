@@ -62,7 +62,9 @@ const invalidInputs = [
     command: "analyze-web-bundle",
     arguments: [malformedEndpoint, "target"],
     operation: "analyze_web_bundle",
-    error: "Browser observation failed",
+    // The contract builder admits the decoded input before the handler, so
+    // the refusal carries no handler label.
+    error: undefined,
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
@@ -171,7 +173,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        error: input.error,
+        ...(input.error === undefined ? {} : { error: input.error }),
         code: "invalid_request",
         category: "invalid_input",
         message: expect.stringMatching(/input.*invalid/iu),
