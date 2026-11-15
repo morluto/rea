@@ -83,9 +83,7 @@ export class ArtifactFileCleanupFailure<
         cleanup: projected.cleanup,
         partialObservation: projected.partialObservation,
         cancellation: projected.cancellation,
-        ...(projected.boundary === undefined
-          ? {}
-          : { boundary: projected.boundary }),
+        ...projected.primaryFacts(),
       },
       projected.details,
     );

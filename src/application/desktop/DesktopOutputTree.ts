@@ -1,4 +1,6 @@
-import { lstat, mkdir, readdir } from "node:fs/promises";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { constants } from "node:fs";
+import { access, lstat, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute } from "node:path";
 
 import {
@@ -14,7 +16,10 @@ import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCre
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -37,6 +42,22 @@ export interface DesktopOutputPlan {
   readonly requested: string;
   readonly physical: string;
 }
+
+/** The closest existing directory above a canonical path whose leaf is absent. */
+const nearestExisting = async (physical: string): Promise<string> => {
+  let current = dirname(physical);
+  for (;;) {
+    const found = await lstat(current).then(
+      () => true,
+      (cause: unknown) => {
+        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw cause;
+      },
+    );
+    if (found || dirname(current) === current) return current;
+    current = dirname(current);
+  }
+};
 
 /** Establish destination identity before either output tree is created. */
 export const planOutputTree = async (
@@ -74,6 +95,30 @@ export const planOutputTree = async (
       throw new SafeOutputTreeDestinationRefusal(
         "Output directory is not empty",
       );
+    // Publication writes into the folder, or creates it (and any missing
+    // parents) under its nearest existing ancestor, then opens the folder's
+    // parent to sync it. Check those accesses now rather than only when the
+    // tree is written; parents publication creates itself are owner-only.
+    const parent = dirname(physical);
+    const writable =
+      existing === undefined ? await nearestExisting(physical) : physical;
+    await access(writable, constants.W_OK | constants.X_OK).catch(
+      (cause: unknown) => {
+        throw new SafeOutputTreeDestinationRefusal(
+          existing === undefined
+            ? "Output parent is not writable"
+            : "Output directory is not writable",
+          { cause },
+        );
+      },
+    );
+    if (existing !== undefined || writable === parent)
+      await access(parent, constants.R_OK).catch((cause: unknown) => {
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is not readable",
+          { cause },
+        );
+      });
     return Object.freeze({ requested, physical });
   } catch (cause: unknown) {
     const error =
@@ -95,10 +140,7 @@ export const planOutputTree = async (
 const outputCancellation = (
   operation: string,
   signal: AbortSignal | undefined,
-) =>
-  signal?.aborted === true
-    ? new AnalysisCancelledError(operation, { cause: signal.reason })
-    : undefined;
+) => (signal?.aborted === true ? cancelledBy(operation, signal) : undefined);
 
 /**
  * Write a new or empty folder through the safe output tree, rolling an
@@ -114,7 +156,6 @@ export const writeOutputTree = async (
 ): Promise<DesktopOutputCompletion> => {
   const cancelled = outputCancellation(refusal.operation, signal);
   if (cancelled !== undefined) throw cancelled;
-  await mkdir(dirname(plan.physical), { recursive: true, mode: 0o700 });
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
   let outcome:
@@ -122,9 +163,11 @@ export const writeOutputTree = async (
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
     try {
-      tree = await SafeOutputTree.create(plan.physical, process.platform, {
-        acceptExistingEmpty: true,
-      });
+      tree = await SafeOutputTree.create(
+        plan.physical,
+        HOST_PLATFORM.platform,
+        { acceptExistingEmpty: true, createParents: true },
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;

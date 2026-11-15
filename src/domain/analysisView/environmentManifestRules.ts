@@ -5,6 +5,7 @@ import {
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { appendAll } from "../appendAll.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -300,7 +301,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergeSiblings(bucket, position));
+      appendAll(output, mergeSiblings(bucket, position));
     current = output;
   }
   return current;
@@ -394,7 +395,7 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergePairBucket(bucket, position));
+      appendAll(output, mergePairBucket(bucket, position));
     current = output;
   }
   return current;

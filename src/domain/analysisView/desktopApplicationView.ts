@@ -293,10 +293,7 @@ export const projectDesktopApplicationView = (
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
       },
-      coverage: completeWithinViewCoverage(
-        report.files.length,
-        report.files.length,
-      ),
+      coverage: completeWithinViewCoverage(report.files.length),
     });
   }
   let rows: readonly DesktopViewRow[] = report[view.collection];

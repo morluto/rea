@@ -7,8 +7,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { apiContractSchema } from "../../../src/domain/apiContract/apiContract.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaMetadata.js";
 
 it("loads retained analysis views only when needed, preserving complete schemas, source facts and Evidence", async () => {
   const root = await createTestTempDirectory("rea-progressive-api-");
@@ -60,11 +58,9 @@ it("loads retained analysis views only when needed, preserving complete schemas,
   const loaded = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  expect(loaded?.outputSchema).toEqual(
-    toolOutputSchemaWithMetadata(toolContract("inspect_analysis_view"))[
-      "~standard"
-    ].jsonSchema.output({ target: "draft-2020-12" }),
-  );
+  expect(loaded).toBeDefined();
+  // The default output profile omits output schemas from every listing.
+  expect(loaded?.outputSchema).toBeUndefined();
   expect(changed).toHaveBeenCalledTimes(2);
   const source = {
     kind: "retained-evidence",

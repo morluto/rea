@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { gpuPtxArtifactSchema } from "./gpuCodeObjects.js";
+import { gpuObjectSchema, gpuPtxArtifactSchema } from "./gpuCodeObjects.js";
 it("binds retained PTX identity to its actual UTF-8 bytes and source extent", () => {
   const text = "\uFEFF// 雪🧪\n.version 8.8\n",
     size = Buffer.byteLength(text);
@@ -31,4 +31,10 @@ it("binds retained PTX identity to its actual UTF-8 bytes and source extent", ()
     expect(
       gpuPtxArtifactSchema.safeParse({ ...artifact, ...patch }).success,
     ).toBe(false);
+});
+
+it("requires the AMD target metadata fact that every inventory row records", () => {
+  const field = gpuObjectSchema.shape.amd_target_metadata;
+  expect(field.safeParse(null).success).toBe(true);
+  expect(field.safeParse(undefined).success).toBe(false);
 });

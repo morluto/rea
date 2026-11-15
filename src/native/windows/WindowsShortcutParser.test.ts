@@ -18,10 +18,8 @@ import {
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const input = inspectWindowsShortcutInputSchema.parse({
   path: "/artifacts/shortcut.lnk",
@@ -311,7 +309,7 @@ it("lists an unknown ExtraData signature instead of dropping it", async () => {
 
 it("rejects a Shell Link whose CLSID is not the documented value", async () => {
   await expect(parse(wrongClsidShortcut())).rejects.toBeInstanceOf(
-    WindowsShortcutFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -319,8 +317,12 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   await expect(
     parse(windowsShortcutBytes({ headerSize: 0x50, extraData: [] })),
   ).rejects.toMatchObject({
-    name: "WindowsShortcutFormatFailure",
-    kind: "malformed",
+    failure: {
+      kind: "malformed",
+      format: "windows-shortcut",
+      offset: 0,
+      field: "HeaderSize",
+    },
   });
 });
 

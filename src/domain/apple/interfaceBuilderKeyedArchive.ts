@@ -2,6 +2,7 @@ import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { malformedInput } from "../parseFailure.js";
 
 const objectNode = z.strictObject({
   id: z.string().min(1),
@@ -92,7 +93,8 @@ export const requireInterfaceBuilderArchive = (value: unknown): void => {
     )
   )
     return;
-  throw new TypeError(
+  throw malformedInput(
+    "interface-builder-archive",
     "Property list is not a recognized Interface Builder archive",
   );
 };

@@ -14,6 +14,7 @@ import {
 export const WEB_RUNTIME_TOOL_CONTRACTS = [
   {
     name: "observe_web_execution",
+    availability: "standalone",
     ...toolContractMetadata("observe_web_execution"),
     description:
       "Instrument one selected CDP page for a finite, externally driven precise coverage window. Resets execution counters and prevents optimized execution until stopped. Returns complete nested UTF-16 ranges/counts, independently hashed script text and request initiator associations by session script ID. Does not navigate, click, evaluate selected code or close the externally owned page. Navigation ends document-scoped collection; workers and UI causality remain outside this claim. Emits an actual armed progress notification before external actions.",
@@ -33,6 +34,7 @@ export const WEB_RUNTIME_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_web_event_listeners",
+    availability: "standalone",
     ...toolContractMetadata("inspect_web_event_listeners"),
     description:
       "Inspect listeners registered directly on the first main-document CSS match in one selected CDP page. Returns event flags, native callback locations, source ownership and exact script text/digests inline. Does not dispatch events, evaluate JavaScript or invoke handlers. Delegated ancestor/framework listeners and execution history remain unknown. Releases REA's object group and transport, preserving the external page.",

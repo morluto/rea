@@ -51,18 +51,56 @@ const expectRootInputError = async (
     environment: ENVIRONMENT,
   });
   expect(rejected.exitCode).toBe(1);
+  // The contract's root syntax is checked at argv parsing; facts about the
+  // selected file are checked by the analysis. Both name the CLI option.
+  if (reason === "invalid_format") {
+    expect(rejected.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        { path: "root.0", message: expect.stringContaining(message) },
+      ],
+    });
+    return;
+  }
   expect(rejected.json).toMatchObject({
     error: "Analysis failed",
     code: "invalid_request",
     details: {
       issues: [
         {
-          path: ["roots", 0],
+          path: ["root", 0],
           reason,
           message: expect.stringContaining(message),
         },
       ],
     },
+  });
+};
+
+/** The CLI option shares the contract's root format, so it refuses an escaping root itself and names the option. */
+const expectEscapingRootRefusedByCli = async (
+  cli: TestCli,
+  app: string,
+): Promise<void> => {
+  const escaping = await cli.run({
+    arguments: [
+      "trace-dylib-resolution",
+      app,
+      "--root",
+      "../outside",
+      "--json",
+    ],
+    environment: ENVIRONMENT,
+  });
+  expect(escaping.exitCode).toBe(1);
+  expect(escaping.json).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({
+        path: expect.stringMatching(/^root/u),
+        message: expect.stringContaining("Use a normalized path"),
+      }),
+    ],
   });
 };
 
@@ -534,8 +572,8 @@ describe("trace-dylib-resolution CLI", () => {
       const outside = await createTestTempDirectory("rea-dylib-outside-");
       await writeFiles(outside, { Tool: machoImage({}) });
       await symlink(outside, join(app, "Contents/Linked"), "dir");
+      await expectEscapingRootRefusedByCli(cli, app);
       for (const [root, reason, message] of [
-        ["../outside", "invalid_format", "Use a normalized path"],
         ["Contents/Info.plist", "invalid_value", "is not a Mach-O image"],
         [
           "Contents/Linked/Tool",

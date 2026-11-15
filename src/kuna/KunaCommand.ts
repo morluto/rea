@@ -9,10 +9,11 @@ import {
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -116,8 +117,7 @@ export const kunaFileCleanupError = (
   const diagnostics = kunaInstallationFailureDiagnostics(failure);
   const cancellation = regularFileCancellation(failure);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
+    return cancelledBy(operation, carriedReason(cancellation.reason), {
       diagnostics,
       cleanup: {
         reason: message(failure.cleanupCause),
@@ -246,9 +246,7 @@ export const runKunaCommand = async (
         cause instanceof AnalysisError
           ? cause
           : cancellation !== undefined
-            ? new AnalysisCancelledError(request.operation, {
-                cause: cancellation.reason,
-              })
+            ? cancelledBy(request.operation, carriedReason(cancellation.reason))
             : new ProviderAdapterError(KUNA_PROVIDER_ID, request.operation, {
                 cause,
                 userMessage: `Cannot verify ${installation.executable}: ${message(cause)}`,
@@ -488,10 +486,11 @@ const commandFailure = (
   };
   let primary: AnalysisError;
   if (cause.reason === "cancelled")
-    primary = new AnalysisCancelledError(operation, {
-      ...details,
-      cause: cause.cancellation?.reason,
-    });
+    primary = cancelledBy(
+      operation,
+      carriedReason(cause.cancellation?.reason),
+      capturedOutput === undefined ? undefined : { capturedOutput },
+    );
   else if (cause.reason === "timeout") {
     const { setting, ms } = request.deadline;
     const analysisSetting =

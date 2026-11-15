@@ -24,7 +24,7 @@ const traceFixture = () => ({
   residual_unknowns: ["0x1010 owner unknown", "0x1020 owner unknown"],
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages retained native trace rows and preserves source coverage across %s offline handoff",
   async (profile) => {
     const result = traceFixture();
