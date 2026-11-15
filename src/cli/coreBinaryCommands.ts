@@ -8,7 +8,6 @@ import {
   addressOrProcedureGuidance,
   equalSelectorGuidance,
   requiredSelectorGuidance,
-  resolveCliAnalysisSelector,
 } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -61,7 +60,7 @@ export const registerCoreBinaryCommands = (
   registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
   registerDecompileCommand(cli, logger, run);
   registerDecompileDirectoryCommand(cli, logger, runDirectAnalysis);
-  registerSearchCommand(cli, logger, runDirectAnalysis);
+  registerSearchCommand(cli, logger, run);
   registerContractBinaryCommands(cli, logger, run);
 };
 
@@ -377,60 +376,50 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
 const registerSearchCommand = (
   cli: CliInstance,
   logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  run: ReturnType<typeof runDirectOnTarget>,
 ): void => {
-  cli.command(CLI_COMMANDS.search, {
-    description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      pattern: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Literal text or regex pattern. ${patternSelectorGuidance}`),
-    }),
-    options: z.object({
-      pattern: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Complete literal text or regex pattern; use --pattern=<value> for leading dashes. ${patternSelectorGuidance}`,
-        ),
-      kind: z
-        .enum(["strings", "procedures"])
-        .default("strings")
-        .describe("Analyzed item kind to search"),
-      mode: z
-        .enum(["literal", "regex"])
-        .default("literal")
-        .describe("Interpret the pattern as literal text or a regex"),
-      caseSensitive: z
-        .boolean()
-        .default(false)
-        .describe("Match the pattern with exact letter case"),
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "search", () =>
-        runDirectAnalysis(
-          args.path,
-          options.kind === "strings" ? "search_strings" : "search_procedures",
-          {
-            pattern: resolveCliAnalysisSelector(
-              args.pattern,
-              options.pattern,
-              "pattern",
-              options.kind === "strings"
-                ? "search_strings"
-                : "search_procedures",
-            ),
-            mode: options.mode,
-            case_sensitive: options.caseSensitive,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    toolContract("search_strings"),
+    {
+      command: CLI_COMMANDS.search,
+      description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      positionals: ["pattern"],
+      selectorOptions: {
+        pattern: {
+          name: "pattern",
+          description: `Complete literal text or regex pattern; use --pattern=<value> for leading dashes. ${patternSelectorGuidance}`,
+        },
+      },
+      cliOptions: {
+        kind: z
+          .enum(["strings", "procedures"])
+          .default("strings")
+          .describe("Analyzed item kind to search"),
+      },
+      operationBy: {
+        option: "kind",
+        contracts: { procedures: toolContract("search_procedures") },
+      },
+      omit: {
+        ...noDocument,
+        detail: "The CLI returns the complete inventory matches",
+      },
+      fields: {
+        pattern: {
+          description: `Literal text or regex pattern. ${patternSelectorGuidance}`,
+        },
+        mode: {
+          description: "Interpret the pattern as literal text or a regex",
+        },
+        case_sensitive: {
+          name: "caseSensitive",
+          description: "Match the pattern with exact letter case",
+        },
+      },
+    },
+    run,
+  );
 };
