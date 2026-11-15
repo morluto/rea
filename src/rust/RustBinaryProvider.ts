@@ -284,8 +284,11 @@ const rustcLimitation = (
 /**
  * Optional inferred paths never displace independently observed dependency
  * facts. The compiler guidance describes the retained result: the reader's
- * guidance when every retained path fits, otherwise the trimming guidance,
- * which names its control directly because no compiler record may survive.
+ * guidance when it fits; the reader's record and control without that
+ * guidance (which restates rustc_commit.coverage) when only the guidance
+ * does not fit; otherwise the trimming guidance, which names its control
+ * directly because no compiler record may survive. Byte trimming is reported
+ * only when it removes a path.
  */
 const retainCompilerPathsWithinReport = (
   report: RustBinary,
@@ -326,6 +329,12 @@ const retainCompilerPathsWithinReport = (
     if (bytes > available - retainedBytes) break;
     retainedBytes += bytes;
     count++;
+  }
+  if (count === commit.hashes.length) {
+    if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
+    // Keeping every path needs the shorter trimming record; drop one so the
+    // byte coverage it records is true.
+    count -= 1;
   }
   if (count === 0) {
     // The control stays recorded although no compiler record survives.
