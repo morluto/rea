@@ -175,7 +175,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       },
     });
   } catch (cause) {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
     }
@@ -201,7 +201,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   if (
     !exiting &&
     dispatchFailure !== undefined &&
-    !(stdoutClosed && dispatchFailure?.code === "EPIPE")
+    !(stdoutClosed && isClosedReaderFailure(dispatchFailure))
   )
     throw dispatchFailure;
 }
@@ -219,7 +219,7 @@ function cleanupFailureText(cleanup) {
 
 function guardClosedStdout() {
   process.stdout.on("error", (cause) => {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
       return;
@@ -227,6 +227,14 @@ function guardClosedStdout() {
     // Other failures stay unhandled unless a pending JSON write reports them.
     if (process.stdout.listenerCount("error") === 1) throw cause;
   });
+}
+
+/**
+ * A write failure that means the stdout reader has gone. A pipe reports EPIPE;
+ * macOS can report ENOTCONN when the reader closes a socket-pair stdout.
+ */
+function isClosedReaderFailure(cause) {
+  return cause?.code === "EPIPE" || cause?.code === "ENOTCONN";
 }
 
 function writeStdout(output) {

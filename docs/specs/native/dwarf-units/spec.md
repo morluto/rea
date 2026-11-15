@@ -39,9 +39,9 @@ executes the target.
   aggregate work allowances. Form reads and `DW_FORM_indirect` hops share a
   `1,048,576`-step allowance per walk; exhaustion is a `decode_budget` unit
   issue with `partial` coverage.
-- Report `coverage.status` as `complete`, `partial` with a reason, or
-  `no_debug_info`. `no_debug_info` does not establish that a separate debug
-  file is absent; ELF and PE limitations name whether `.gnu_debuglink` was
+- Report `coverage.status` from the shared coverage vocabulary (`complete`,
+  or `partial` with a reason) and `debug_info` as `present` or `absent`.
+  `absent` does not establish that a separate debug file is absent; ELF and PE limitations name whether `.gnu_debuglink` was
   observed. A `.dwo` object is `partial` because `.debug_info.dwo` is not read.
 - A universal Mach-O requires `architecture`; the value is rejected for every
   other image. MCP requires an absolute path.

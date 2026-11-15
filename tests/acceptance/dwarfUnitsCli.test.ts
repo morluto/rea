@@ -51,7 +51,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = dwarfUnitsContract.outputSchema.parse(result.json);
-    expect(evidence.normalized_result.coverage.status).toBe("no_debug_info");
+    expect(evidence.normalized_result.debug_info).toBe("absent");
     expect(evidence.subject?.local_path).toBe(join(root, "plain"));
   },
 );

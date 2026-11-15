@@ -54,9 +54,10 @@ walk cap was reached, a declared `.debug_info` could not be decoded, a further
 `.debug_info` section was not read, or attribute decoding used up its shared
 work allowance. Each form read and each `DW_FORM_indirect` hop costs one step
 of that allowance; units read after it runs out report `decode_budget`. A `.dwo` object is `partial` because its
-`.debug_info.dwo` is not read. `no_debug_info` means this file declares no
-`.debug_info`, or declares one that stores no bytes. That does not establish
-that a separate debug file is absent. For ELF and PE, the limitations then name
+`.debug_info.dwo` is not read. `debug_info` is `absent` when this file declares
+no `.debug_info`, or declares one that stores no bytes; coverage is then
+`complete` with no units. That does not establish that a separate debug file
+is absent. For ELF and PE, the limitations then name
 whether `.gnu_debuglink` was observed. `.gnu_debuglink` contents and GNU build-id
 notes are not decoded here.
 

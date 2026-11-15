@@ -1,5 +1,6 @@
 import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import {
   machoSelectionContainsRange,
@@ -277,6 +278,11 @@ export const dwarfUnitsSchema = z
     architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
     selected_slice: machoTargetSelectionSchema.exactOptional(),
     sections: z.array(sectionSchema),
+    debug_info: z
+      .enum(["present", "absent"])
+      .describe(
+        "absent when this file declares no file-backed .debug_info; a separate debug file may still exist",
+      ),
     omissions: z.array(
       z.strictObject({
         name: z.string().min(1),
@@ -290,7 +296,7 @@ export const dwarfUnitsSchema = z
       limit: z.number().int().min(1).max(MAX_INSPECT_DWARF_UNITS_LIMIT),
     }),
     coverage: z.strictObject({
-      status: z.enum(["complete", "partial", "no_debug_info"]),
+      status: coverageStatusSchema,
       reason: z.string().nullable(),
     }),
     limitations: z.array(z.string().min(1)).min(1),
@@ -318,11 +324,14 @@ export const dwarfUnitsSchema = z
         message:
           "Unit page length does not match offset, limit, and total_units",
       });
-    if (report.coverage.status === "partial" && report.coverage.reason === null)
+    if (
+      report.coverage.status !== "complete" &&
+      report.coverage.reason === null
+    )
       context.addIssue({
         code: "custom",
         path: ["coverage"],
-        message: "Partial coverage requires a reason",
+        message: "Incomplete coverage requires a reason",
       });
     if (
       report.coverage.status === "complete" &&
@@ -333,17 +342,18 @@ export const dwarfUnitsSchema = z
         path: ["coverage"],
         message: "Complete coverage has no stop reason",
       });
-    if (report.coverage.status === "no_debug_info") {
+    if (report.debug_info === "absent") {
       if (
-        report.coverage.reason === null ||
+        report.coverage.status !== "complete" ||
         report.total_units !== 0 ||
         report.units.length !== 0 ||
         info !== undefined
       )
         context.addIssue({
           code: "custom",
-          path: ["coverage"],
-          message: "Absent debug info has no .debug_info section and no units",
+          path: ["debug_info"],
+          message:
+            "Absent debug info is complete, with no .debug_info section and no units",
         });
     }
     const slice = report.selected_slice;

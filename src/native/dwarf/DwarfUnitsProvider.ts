@@ -126,6 +126,7 @@ const buildReport = (
     located.infoFileOffset === null
       ? null
       : located.infoFileOffset + fileOffset;
+  const absence = debugInfoAbsence(located.debugInfo);
   const walked =
     located.info === null
       ? {
@@ -162,29 +163,36 @@ const buildReport = (
       ? {}
       : { selected_slice: selection }),
     sections,
+    debug_info: absence === null ? "present" : "absent",
     omissions: located.omissions,
     units: walked.units,
     total_units: walked.total_units,
     page: { offset: input.offset, limit: input.limit },
     coverage,
-    limitations: limitationsFor(located, coverage),
+    limitations: limitationsFor(located, coverage, absence),
   };
 };
 
-/** A declared section whose bytes went undecoded is unknown, never absent. */
+/**
+ * Why this file holds no file-backed .debug_info, or null when it declares
+ * one. A declared section whose bytes went undecoded is unknown, never absent.
+ */
+const debugInfoAbsence = (
+  availability: DebugInfoAvailability,
+): string | null =>
+  availability.state === "no_contents"
+    ? NO_FILE_BACKED_DEBUG_INFO
+    : availability.state === "absent"
+      ? NO_DEBUG_INFO
+      : null;
+
+/** Examining a file without .debug_info is complete; an unreadable one is not. */
 const missingInfoCoverage = (
   availability: DebugInfoAvailability,
-): DwarfUnitsReport["coverage"] => {
-  if (availability.state === "unreadable")
-    return { status: "partial", reason: availability.reason };
-  return {
-    status: "no_debug_info",
-    reason:
-      availability.state === "no_contents"
-        ? NO_FILE_BACKED_DEBUG_INFO
-        : NO_DEBUG_INFO,
-  };
-};
+): DwarfUnitsReport["coverage"] =>
+  availability.state === "unreadable"
+    ? { status: "partial", reason: availability.reason }
+    : { status: "complete", reason: null };
 
 const withUnreadCopies = (
   coverage: DwarfUnitsReport["coverage"],
@@ -202,6 +210,7 @@ const withUnreadCopies = (
 const limitationsFor = (
   located: LocatedDwarfImage,
   coverage: DwarfUnitsReport["coverage"],
+  absence: string | null,
 ): string[] => {
   const limitations = [CHILD_DIES];
   if (located.format === "macho")
@@ -213,7 +222,8 @@ const limitationsFor = (
       "Unit offsets are within decompressed .debug_info and file_offset is null.",
     );
   if (coverage.reason !== null) limitations.push(coverage.reason);
-  if (coverage.status === "no_debug_info" && located.format !== "macho")
+  if (absence !== null) limitations.push(absence);
+  if (absence !== null && located.format !== "macho")
     limitations.push(
       located.gnuDebugLink
         ? "A .gnu_debuglink section is present and its contents were not decoded. A GNU build-id note was not read."

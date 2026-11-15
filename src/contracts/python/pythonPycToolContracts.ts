@@ -29,6 +29,7 @@ export const inspectPythonPycRequestSchema = presentRootDiscriminator(
 export const PYTHON_PYC_TOOL_CONTRACTS = [
   {
     name: "inspect_python_pyc",
+    availability: "standalone",
     ...toolContractMetadata("inspect_python_pyc"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

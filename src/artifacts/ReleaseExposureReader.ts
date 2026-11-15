@@ -14,6 +14,11 @@ import type {
 } from "../application/releaseExposure/ReleaseExposurePort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import {
+  BoundedListCollector,
+  boundedList,
+  type BoundedList,
+} from "../domain/boundedList.js";
+import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
@@ -157,6 +162,47 @@ const OPEN_CONTAINER_LIMIT = 8;
 const EMBEDDED_PROBE_LIMIT = 8;
 const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
+const LIMITATIONS_SUBJECT = "limitations";
+
+/**
+ * Bound limitations to LIMITATION_CAP; the count of reports past it is a
+ * coverage omission, so the report says how many more there were.
+ */
+const boundedLimitations = (
+  scan: Pick<ReleaseExposureScan, "omitted">,
+  limitations: BoundedList<string>,
+): Pick<ReleaseExposureScan, "limitations" | "omitted"> => ({
+  limitations: limitations.items,
+  omitted: [
+    ...scan.omitted.filter(({ subject }) => subject !== LIMITATIONS_SUBJECT),
+    ...(limitations.omitted > 0
+      ? [
+          {
+            subject: LIMITATIONS_SUBJECT,
+            count: limitations.omitted,
+            reason: `Only the first ${String(LIMITATION_CAP)} scan limitations are retained; the count includes repeated reports.`,
+          },
+        ]
+      : []),
+  ],
+});
+
+/** Put `leading` limitations first, counting any this pushes past the cap. */
+const prependLimitations = (
+  scan: ReleaseExposureScan,
+  leading: readonly string[],
+): ReleaseExposureScan => ({
+  ...scan,
+  ...boundedLimitations(
+    scan,
+    boundedList(
+      [...leading, ...scan.limitations],
+      LIMITATION_CAP,
+      scan.omitted.find(({ subject }) => subject === LIMITATIONS_SUBJECT)
+        ?.count ?? 0,
+    ),
+  ),
+});
 const SCAN_INTERRUPTED =
   "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
 const SCAN_CANCELLED =
@@ -355,12 +401,8 @@ const scanFile = async (
     inventory,
   });
   return {
-    ...scanned,
+    ...prependLimitations(scanned, limitations),
     coverage: inventory === undefined ? "unknown" : scanned.coverage,
-    limitations: [...limitations, ...scanned.limitations].slice(
-      0,
-      LIMITATION_CAP,
-    ),
   };
 };
 
@@ -475,9 +517,8 @@ const reportInterruptedScan = (
 ): void => {
   if (scan === undefined) return;
   input.visitInterruptedScan?.({
-    ...scan,
+    ...prependLimitations(scan, [reason]),
     coverage: "unknown",
-    limitations: [reason, ...scan.limitations].slice(0, LIMITATION_CAP),
   });
 };
 
@@ -673,7 +714,7 @@ const assembleScan = (
     const sha256 = state.nativeDigests.get(path);
     return { path, format, ...(sha256 === undefined ? {} : { sha256 }) };
   });
-  return {
+  const scan = {
     target: {
       selected_path: input.path,
       kind,
@@ -786,10 +827,18 @@ const assembleScan = (
           ]
         : []),
     ],
-    limitations: [
-      ...(input.inventory?.limitations ?? []),
-      ...state.limitations,
-    ].slice(0, LIMITATION_CAP),
+  } satisfies Omit<ReleaseExposureScan, "limitations">;
+  const collected = state.limitations.toList();
+  return {
+    ...scan,
+    ...boundedLimitations(
+      scan,
+      boundedList(
+        [...(input.inventory?.limitations ?? []), ...collected.items],
+        LIMITATION_CAP,
+        collected.omitted,
+      ),
+    ),
   };
 };
 
@@ -833,7 +882,7 @@ interface ScanState {
   unprobedImages: number;
   native: Map<string, NativeFormat>;
   nativeDigests: Map<string, string>;
-  limitations: string[];
+  limitations: BoundedListCollector<string>;
   mapsRead: number;
   /**
    * Local targets of source-map declarations, whatever their file name, by
@@ -908,7 +957,7 @@ const createState = (
   unprobedImages: 0,
   native: new Map(),
   nativeDigests: new Map(),
-  limitations: [],
+  limitations: new BoundedListCollector(LIMITATION_CAP),
   mapsRead: 0,
   mapTargets: new Map(),
   claimedMapTargets: new Set(),
@@ -3565,12 +3614,7 @@ const pushSample = (samples: string[], value: string): void => {
 };
 
 const pushLimitation = (state: ScanState, message: string): void => {
-  if (
-    state.limitations.length >= LIMITATION_CAP ||
-    state.limitations.includes(message)
-  )
-    return;
-  state.limitations.push(message);
+  if (!state.limitations.retains(message)) state.limitations.push(message);
 };
 
 const fileSizeRecovery = (maxFileBytes: number) =>

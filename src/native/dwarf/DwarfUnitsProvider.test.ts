@@ -103,8 +103,9 @@ it("reads a big-endian ELF unit", async () => {
 it("reports absent debug info for this file and names a present .gnu_debuglink", async () => {
   const plain = await inspect(elfImage());
   if (!plain.ok) throw plain.error;
-  expect(plain.value.coverage.status).toBe("no_debug_info");
-  expect(plain.value.coverage.reason).toContain("does not establish");
+  expect(plain.value.debug_info).toBe("absent");
+  expect(plain.value.coverage).toEqual({ status: "complete", reason: null });
+  expect(plain.value.limitations.join("\n")).toContain("does not establish");
   expect(plain.value.limitations.join("\n")).toContain(
     ".gnu_debuglink was not observed",
   );
@@ -116,7 +117,7 @@ it("reports absent debug info for this file and names a present .gnu_debuglink",
     }),
   );
   if (!linked.ok) throw linked.error;
-  expect(linked.value.coverage.status).toBe("no_debug_info");
+  expect(linked.value.debug_info).toBe("absent");
   expect(linked.value.limitations.join("\n")).toContain(
     "A .gnu_debuglink section is present",
   );
@@ -240,7 +241,7 @@ it("decodes a shared PE long name once, including at the per-name allowance", as
   try {
     const read = await inspect(image);
     if (!read.ok) throw read.error;
-    expect(read.value.coverage.status).toBe("no_debug_info");
+    expect(read.value.debug_info).toBe("absent");
     expect(
       decode.mock.calls.filter(
         ([encoding, start, end]) =>
@@ -328,7 +329,7 @@ it("selects one universal Mach-O slice", async () => {
   expect(selected.value.units[0]?.name.value).toBe("arm.c");
   const other = await inspect(fat, { architecture: "x86_64" });
   if (!other.ok) throw other.error;
-  expect(other.value.coverage.status).toBe("no_debug_info");
+  expect(other.value.debug_info).toBe("absent");
   expect(other.value.units).toEqual([]);
 });
 
@@ -613,27 +614,28 @@ it("reports a declared .debug_info that was not decoded as partial, never absent
   );
 });
 
-it("keeps a section that stores no bytes as no_debug_info for this file", async () => {
+it("reports a section that stores no bytes as absent debug info for this file", async () => {
   const read = await inspect(
     elfImage({
       sections: [{ name: ".debug_info", body: Buffer.alloc(0), type: 8 }],
     }),
   );
   if (!read.ok) throw read.error;
-  expect(read.value.coverage).toMatchObject({
-    status: "no_debug_info",
-    reason: expect.stringContaining("no file-backed .debug_info"),
-  });
+  expect(read.value.debug_info).toBe("absent");
+  expect(read.value.coverage).toEqual({ status: "complete", reason: null });
+  expect(read.value.limitations).toContainEqual(
+    expect.stringContaining("no file-backed .debug_info"),
+  );
 });
 
-it("keeps an empty PROGBITS .debug_info as no_debug_info", async () => {
+it("reports an empty PROGBITS .debug_info as absent debug info", async () => {
   const read = await inspect(
     elfImage({
       sections: [{ name: ".debug_info", body: Buffer.alloc(0), type: 1 }],
     }),
   );
   if (!read.ok) throw read.error;
-  expect(read.value.coverage.status).toBe("no_debug_info");
+  expect(read.value.debug_info).toBe("absent");
   expect(read.value.sections).toEqual([]);
   expect(read.value.omissions).toContainEqual({
     name: ".debug_info",
@@ -726,7 +728,7 @@ it("reads Mach-O compressed line strings under the 16-byte name and only from __
     }),
   );
   if (!foreign.ok) throw foreign.error;
-  expect(foreign.value.coverage.status).toBe("no_debug_info");
+  expect(foreign.value.debug_info).toBe("absent");
   expect(foreign.value.limitations.join("\n")).not.toContain(".gnu_debuglink");
 });
 
@@ -736,7 +738,7 @@ it("does not read .debug_* spellings across container formats", async () => {
     elfImage({ sections: [{ name: "__debug_info", body: named.info }] }),
   );
   if (!elf.ok) throw elf.error;
-  expect(elf.value.coverage.status).toBe("no_debug_info");
+  expect(elf.value.debug_info).toBe("absent");
   const macho = await inspect(
     macho64({
       cpuType: CPU_ARM64,
@@ -744,7 +746,7 @@ it("does not read .debug_* spellings across container formats", async () => {
     }),
   );
   if (!macho.ok) throw macho.error;
-  expect(macho.value.coverage.status).toBe("no_debug_info");
+  expect(macho.value.debug_info).toBe("absent");
 });
 
 it("names a .gnu_debuglink section in a PE image", async () => {
@@ -752,7 +754,7 @@ it("names a .gnu_debuglink section in a PE image", async () => {
     peImage([{ name: ".gnu_debuglink", body: Buffer.from("other.debug\0") }]),
   );
   if (!read.ok) throw read.error;
-  expect(read.value.coverage.status).toBe("no_debug_info");
+  expect(read.value.debug_info).toBe("absent");
   expect(read.value.limitations.join("\n")).toContain(
     "A .gnu_debuglink section is present",
   );
@@ -955,7 +957,7 @@ it("decompresses GNU zdebug sections in PE and Mach-O", async () => {
     }),
   );
   if (!macho.ok) throw macho.error;
-  expect(macho.value.coverage.status).not.toBe("no_debug_info");
+  expect(macho.value.debug_info).not.toBe("absent");
   expect(macho.value.sections).toContainEqual(
     expect.objectContaining({
       name: "__zdebug_info",

@@ -22,6 +22,7 @@ const report: DwarfUnitsReport = {
   machine: 62,
   architecture: "x86_64",
   sections: [],
+  debug_info: "absent",
   omissions: [
     {
       name: ".debug_info",
@@ -31,13 +32,10 @@ const report: DwarfUnitsReport = {
   units: [],
   total_units: 0,
   page: { offset: 0, limit: 32 },
-  coverage: {
-    status: "no_debug_info",
-    reason:
-      "This file has no .debug_info section. That does not establish that a separate debug file is absent.",
-  },
+  coverage: { status: "complete", reason: null },
   limitations: [
     "Child DIEs, types, line tables, and location expressions are not read.",
+    "This file has no .debug_info section. That does not establish that a separate debug file is absent.",
   ],
 };
 

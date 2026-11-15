@@ -3,6 +3,7 @@ import {
   MAX_DWARF_ABBREV_ENTRIES,
 } from "../../domain/native/dwarfUnits.js";
 import { DwarfCursor } from "./DwarfReader.js";
+import { Budget } from "../../domain/budget.js";
 
 const DW_FORM_IMPLICIT_CONST = 0x21;
 // Admit one maximally sized table, including attribute terminators and its
@@ -53,7 +54,7 @@ const safeCode = (value: bigint): number | null =>
 export class DwarfAbbrevCache {
   readonly #cache = new Map<number, DwarfAbbrevTable>();
   readonly #work: AbbrevWorkBudget = { remaining: MAX_ABBREV_PARSE_STEPS };
-  #retained = 0;
+  #retained = new Budget(MAX_DWARF_ABBREV_ENTRIES);
 
   constructor(
     readonly bytes: Buffer,
@@ -70,11 +71,11 @@ export class DwarfAbbrevCache {
       this.#work,
     );
     const entries = parsed.kind === "ok" ? parsed.entries.size : 0;
-    if (this.#retained + entries > MAX_DWARF_ABBREV_ENTRIES) {
+    if (!this.#retained.tryCharge(entries)) {
       this.#cache.clear();
-      this.#retained = 0;
+      this.#retained = new Budget(MAX_DWARF_ABBREV_ENTRIES);
+      if (!this.#retained.tryCharge(entries)) return parsed;
     }
-    this.#retained += entries;
     this.#cache.set(offset, parsed);
     return parsed;
   }

@@ -22,6 +22,7 @@ const report = {
   machine: 62,
   architecture: "x86_64" as const,
   sections: [],
+  debug_info: "absent" as const,
   omissions: [
     {
       name: ".debug_info",
@@ -31,11 +32,7 @@ const report = {
   units: [],
   total_units: 0,
   page: { offset: 0, limit: 32 },
-  coverage: {
-    status: "no_debug_info" as const,
-    reason:
-      "This file has no .debug_info section. That does not establish that a separate debug file is absent.",
-  },
+  coverage: { status: "complete" as const, reason: null },
   limitations,
 };
 
@@ -49,7 +46,8 @@ describe("DWARF compile-unit schema", () => {
 
   it("accepts an absent-info report and applies paging defaults", () => {
     expect(dwarfUnitsSchema.parse(report)).toMatchObject({
-      coverage: { status: "no_debug_info" },
+      debug_info: "absent",
+      coverage: { status: "complete" },
       total_units: 0,
     });
     expect(
@@ -130,6 +128,7 @@ describe("DWARF compile-unit schema", () => {
       dwarfUnitsSchema.safeParse({
         ...report,
         sections: [info],
+        debug_info: "present",
         omissions: [],
         units: [unit],
         total_units: 1,
@@ -140,6 +139,7 @@ describe("DWARF compile-unit schema", () => {
       dwarfUnitsSchema.safeParse({
         ...report,
         sections: [info],
+        debug_info: "present",
         omissions: [],
         units: [{ ...unit, file_offset: null }],
         total_units: 1,

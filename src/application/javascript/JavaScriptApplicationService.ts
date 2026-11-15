@@ -5,6 +5,7 @@ import {
   parseAsarHeaderAdmission,
 } from "../../config/asarHeaderAdmission.js";
 import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js";
+import { resolveJavaScriptMemberMutationAllowance } from "../../config/javascriptMemberMutationAllowance.js";
 import { z } from "zod";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -76,6 +77,11 @@ export const analyzeJavaScriptApplicationValidated = async (
   );
   if (!listingAdmission.ok) return listingAdmission;
   const overrides = options.settings?.().overrides;
+  const memberMutationAllowance = resolveJavaScriptMemberMutationAllowance(
+    options.environment,
+    overrides,
+  );
+  if (!memberMutationAllowance.ok) return memberMutationAllowance;
   const header = overrides?.["asar.max_header_bytes"];
   const listing = overrides?.["asar.max_listing_bytes"];
   const acceptedAdmission = {
@@ -106,6 +112,7 @@ export const analyzeJavaScriptApplicationValidated = async (
       options.progress,
       acceptedAdmission,
       overrides,
+      memberMutationAllowance.value,
     );
     const { electron_summary: summary, ...application } = reconstructed;
     await options.progress?.report({

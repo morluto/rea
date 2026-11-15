@@ -10,6 +10,7 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 export const RELEASE_EXPOSURE_TOOL_CONTRACTS = [
   {
     name: "audit_release_exposure",
+    availability: "standalone",
     ...toolContractMetadata("audit_release_exposure"),
     kind: "artifact-provider",
     description:
