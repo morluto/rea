@@ -67,8 +67,11 @@ inside the module import each other directly.
 
 ### TypeScript project references
 
-Project references would make the compiler enforce the entry rule and allow
-incremental type checks per module. They are not adopted now:
+Project references split the program into separately built projects and allow
+incremental type checks per module. They do not enforce the entry rule: a
+project that references another may import any of its files, not only
+`index.ts`. The entry rule therefore stays in the boundary check whether or not
+references are adopted. They are not adopted now:
 
 - **Cost.** Each module needs its own `tsconfig` with `composite: true` and
   declaration emit; `tsconfig.json`, `tsconfig.build.json` and the two
@@ -78,9 +81,10 @@ incremental type checks per module. They are not adopted now:
   and view modules cannot be referenced projects until that cycle is gone.
   Test files that import module internals would need their own project per
   module.
-- **Benefit.** Compiler-checked boundaries and possibly faster warm type checks.
-  The entry rule in the boundary check already enforces the boundary; the
-  type-check time benefit is unmeasured.
+- **Benefit.** The compiler refuses an import from a project that is not
+  referenced, which checks dependency direction between modules (the layer
+  check already does this), and warm type checks may be faster. The type-check
+  time benefit is unmeasured.
 - **Revisit** when `contracts <-> domain` has no mutual imports, starting with
   `javascriptEngine` (the largest and most self-contained module), and measure
   cold and warm `npm run typecheck` before and after.
