@@ -53,6 +53,9 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
+import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -564,6 +567,20 @@ const SERVICE_TOOL_BINDINGS = {
         }),
     },
   })) satisfies Bind<AnalysisViewToolOptions>,
+  sessionDerived: ((session) => ({
+    compare_functions: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareFunctionEvidence(input, evidenceForAnalysis, signal),
+    },
+    compare_process_captures: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareProcessEvidence(input, evidenceForAnalysis, { signal }),
+    },
+  })) satisfies Bind<BinarySessionPort>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
