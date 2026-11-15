@@ -10,6 +10,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const RPM_PACKAGE_TOOL_CONTRACTS = [
   {
     name: "inspect_rpm_package",
+    availability: "standalone",
     ...toolContractMetadata("inspect_rpm_package"),
     kind: "artifact-provider",
     description:

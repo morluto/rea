@@ -1,7 +1,10 @@
 import { z } from "zod";
 
+import type { AdvertisedToolPresentation } from "../contracts/advertisedTool.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "./mcpInputSchemaProfile.js";
 
 /**
  * Per-schema budget for compact output advertisements. Output contracts are
@@ -41,6 +44,18 @@ export const resolveMcpOutputSchemaProfile = (
 export const COMPACT_OUTPUT_SCHEMA_PRESENTATION: {
   readonly budgetBytes: number;
 } = Object.freeze({ budgetBytes: COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES });
+
+/** How REA's MCP catalog advertises its tools for a selected output profile. */
+export const advertisedToolPresentation = (
+  outputSchemaProfile: McpOutputSchemaProfile,
+  input: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+): AdvertisedToolPresentation => ({
+  input: { budgetBytes: input.budgetBytes },
+  output:
+    outputSchemaProfile === "compact"
+      ? COMPACT_OUTPUT_SCHEMA_PRESENTATION
+      : undefined,
+});
 
 /** Parse the output schema advertisement selection at server composition. */
 export const parseMcpOutputSchemaProfile = (

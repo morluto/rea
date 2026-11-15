@@ -26,6 +26,7 @@ import {
 import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import type { OwnedMcpTransportFailure } from "../process/OwnedMcpStdioTransport.js";
 import { jadxHeapExhausted } from "./JadxProtocol.js";
 import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
 
@@ -46,6 +47,13 @@ type DiagnosticFailure = {
   | { readonly kind: "startup"; readonly command: string }
   | { readonly kind: "execution" }
   | { readonly kind: "output"; readonly reason: string }
+  | {
+      readonly kind: "output_limit";
+      readonly limit: Extract<
+        OwnedMcpTransportFailure,
+        { readonly kind: "output_limit" }
+      >;
+    }
   | { readonly kind: "cancelled" }
   | { readonly kind: "timeout"; readonly timeoutMs: number }
 );
@@ -239,6 +247,13 @@ const observeJadxFailure = (
       kind: "output",
       reason: "JADX response violated the pinned upstream protocol",
     };
+  if (observed?.kind === "output_limit")
+    return {
+      ...diagnostic,
+      cause: observed.cause,
+      kind: "output_limit",
+      limit: observed,
+    };
   if (observed?.kind === "protocol")
     return {
       ...diagnostic,
@@ -330,6 +345,24 @@ const presentDiagnosticFailure = (
     });
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
+  if (failure.kind === "output_limit") {
+    const { scope, ceiling } = failure.limit;
+    return new AnalysisResourceConstraintError(
+      failure.operation,
+      "transport",
+      `${failure.limit.cause.message}; no partial Evidence was returned.`,
+      {
+        [scope === "frame" ? "max_response_bytes" : "max_operation_bytes"]:
+          ceiling.limit,
+      },
+      {
+        ...options,
+        // REA bounds JADX stdio output at fixed sizes with no runtime override.
+        retryable: false,
+        fixedAllowance: ceiling,
+      },
+    );
+  }
   if (failure.kind === "startup") {
     // Before the handshake the retained stderr is the only evidence of why the
     // launcher stopped; a heap shortage there is a resource limit, not setup.
