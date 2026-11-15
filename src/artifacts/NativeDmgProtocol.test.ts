@@ -6,12 +6,14 @@ import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "./NativeDmgArtifactReader.js";
-import { translateArtifactFailure } from "../resources/index.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../resources/index.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 
 it.skipIf(process.platform === "win32").each([false, true])(
   "preserves mounted-directory coverage alongside readable DMG entries (unknown coverage: %s)",

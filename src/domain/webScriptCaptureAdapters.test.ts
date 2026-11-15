@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   scriptCaptureEvidenceFixture,
   scriptScenarioFixture,
-} from "../../../tests/fixtures/webScriptCapture.js";
-import { createWebTextArtifact } from "../../domain/webContentArtifact.js";
-import { pageScripts } from "./PageScriptCapture.js";
-import { selectScriptCapture } from "./ScriptCaptureAdapters.js";
+} from "../../tests/fixtures/webScriptCapture.js";
+import { createWebTextArtifact } from "./webContentArtifact.js";
+import { pageScripts } from "./pageScriptCapture.js";
+import { selectScriptCapture } from "./webScriptCaptureAdapters.js";
 
 describe("passive script projection", () => {
   it("preserves passive source bytes, declarations, and unavailable languages", () => {

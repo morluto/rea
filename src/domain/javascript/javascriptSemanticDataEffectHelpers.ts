@@ -712,8 +712,12 @@ const affectsBuiltinPath = (
     semanticPropertyPathKeyMatches(key, selected[index]!),
   );
 
-const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
-  {
+// A Map, so a specifier named like an Object.prototype key finds nothing.
+const BUILTIN_RECEIVER_METHODS: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map(
+  Object.entries({
     path: new Set(["resolve", "join", "dirname"]),
     "path/posix": new Set(["resolve", "join", "dirname"]),
     url: new Set(["fileURLToPath"]),
@@ -747,7 +751,8 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
       "clearInterval",
       "clearImmediate",
     ]),
-  };
+  }),
+);
 
 interface BuiltinEffectIndex {
   readonly writesByModule: Map<
@@ -966,9 +971,9 @@ const computeOriginalBuiltinReceiver = (
         }));
   if (
     method === null ||
-    !BUILTIN_RECEIVER_METHODS[
-      posixReceiver ? "path/posix" : origin.specifier
-    ]?.has(method) ||
+    !BUILTIN_RECEIVER_METHODS.get(
+      posixReceiver ? "path/posix" : origin.specifier,
+    )?.has(method) ||
     (receiver !== undefined &&
       bindingMemberEffectMayPrecedeReads(
         state,

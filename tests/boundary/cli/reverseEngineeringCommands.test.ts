@@ -602,6 +602,12 @@ it.each([false, true])(
   },
 );
 
+/** The one-shot command reports the retained debugger and why its stop is unconfirmed. */
+const retainedRizinCleanup = {
+  retained_debugger_pids: [4242],
+  debugger_cleanup_codes: ["stop-failed"],
+};
+
 it.each(["incomplete", "interrupt", "control"] as const)(
   "reports final Rizin cleanup %s as a typed outcome",
   async (mode) => {
@@ -696,7 +702,11 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         abortedAtCleanupEnd = signal?.aborted === true;
         await closeOwnedDebuggerSessions(
           sessions,
-          async () => ({ status: "incomplete", reason: "stop unconfirmed" }),
+          async () => ({
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "stop unconfirmed",
+          }),
           "Rizin",
         );
       });
@@ -733,7 +743,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
           details: {
             cleanup: "incomplete",
             resources: ["fixture-session"],
-            diagnostics: { retained_debugger_pids: [4242] },
+            diagnostics: retainedRizinCleanup,
             partial_observation: {
               operation: "rizin_debug_command",
               parameters: { session_id: "fixture-session" },

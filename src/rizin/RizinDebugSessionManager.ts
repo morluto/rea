@@ -66,6 +66,7 @@ import {
   debuggerAdmissionRecovery,
   debuggerResourceConstraintError,
   fixedDeadlineGuidance,
+  incompleteStopFacts,
   stopOwnedDebuggerProcess,
   readLinuxProcessStartTime,
   verifyOwnedInferiorsEnded,
@@ -1219,7 +1220,7 @@ export class RizinDebugSessionManager {
         this.#sessions.retainCleanupFailure(
           session,
           "close_rizin_debug_session",
-          stopped.reason,
+          stopped,
         ),
       );
     this.#sessions.remove(session);
@@ -1699,7 +1700,7 @@ export class RizinDebugSessionManager {
       this.#sessions.retainCleanupFailure(
         session,
         "rizin_debug_command",
-        stopped.reason,
+        stopped,
         {
           partialObservation: observation.evidence,
           ...(stop === undefined
@@ -1723,24 +1724,20 @@ export class RizinDebugSessionManager {
       });
     if (stopped.status !== "incomplete") return primary;
     if (primary instanceof AnalysisCancelledError)
-      return this.#sessions.retainCleanupFailure(
-        session,
-        operation,
-        stopped.reason,
-        {
-          cause: primary,
-        },
-      );
+      return this.#sessions.retainCleanupFailure(session, operation, stopped, {
+        cause: primary,
+      });
     const cleanup = this.#sessions.retainCleanupFailure(
       session,
       operation,
-      stopped.reason,
+      stopped,
     );
+    // The composed failure names why cleanup is incomplete at its own top level.
     const composed = analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       operation,
-    );
+    ).retainDiagnostics(incompleteStopFacts(stopped, [session.id]).diagnostics);
     return this.#sessions.retain(session, composed);
   }
 

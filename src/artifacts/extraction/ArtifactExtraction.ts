@@ -1,10 +1,6 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
-import {
-  assertArtifactSelectedSource,
-  resolveArtifactSourcePath,
-} from "../ArtifactSelectedSource.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
@@ -24,6 +20,8 @@ import {
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
   assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
   resolveAsarHeaderAdmission,
 } from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";

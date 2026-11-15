@@ -25,9 +25,9 @@ vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => {
 
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../src/artifacts/DirectoryArtifactReader.js";
 import { analyzeAppleAssetCatalogs } from "../../src/artifacts/apple/AppleAssetCatalogAnalysis.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../src/resources/index.js";
 
 const createBundle = async (): Promise<string> => {
   const bundle = await createTestTempDirectory(
