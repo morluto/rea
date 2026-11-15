@@ -135,18 +135,12 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode).toBe(1);
-    expect(analysisErrorProjectionSchema.parse(result.json)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "execute_rizin_command",
-        issues: [
-          {
-            path: ["command"],
-            reason: "invalid_value",
-            message: "A single command line is required",
-          },
-        ],
-      },
+    // The argument takes the contract's own field, so argv parsing refuses it.
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        { path: "command", message: "A single command line is required" },
+      ],
     });
   },
 );

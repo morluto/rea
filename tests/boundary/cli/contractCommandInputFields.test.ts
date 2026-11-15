@@ -89,3 +89,47 @@ it("names a delivered provider failure's input field by its CLI key", async () =
   });
   expect(process.exitCode).toBe(exitCode);
 });
+
+it("keeps a branch-only default out of the branch the caller selects", async () => {
+  const cli = Cli.create("rea-branch-default-test", {
+    version: "1",
+    sync: false,
+  });
+  const received: unknown[] = [];
+  registerContractCommand(
+    cli as unknown as CliInstance,
+    pino({ enabled: false }),
+    {
+      name: "branch_probe",
+      inputSchema: z.discriminatedUnion("action", [
+        z.strictObject({ action: z.literal("list") }),
+        z.strictObject({
+          action: z.literal("render"),
+          limit: z.number().int().default(10),
+        }),
+      ]),
+    },
+    {
+      command: "branch-probe",
+      description: "Branch probe",
+      fields: { action: { default: "list" } },
+    },
+    async (input) => {
+      received.push(input);
+      return {};
+    },
+  );
+  const registered = Cli.toCommands.get(cli)?.get("branch-probe");
+  if (registered === undefined) throw new Error("branch-probe is missing");
+  const parse = (value: unknown) =>
+    (
+      Reflect.get(registered, "options") as { parse(v: unknown): unknown }
+    ).parse(value);
+  const execute = Reflect.get(registered, "run") as (
+    value: unknown,
+  ) => Promise<unknown>;
+  for (const options of [{}, { action: "render" }])
+    await execute({ args: {}, options: parse(options) });
+  // The selected branch applies its own default when it parses the input.
+  expect(received).toEqual([{ action: "list" }, { action: "render" }]);
+});
