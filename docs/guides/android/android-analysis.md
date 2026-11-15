@@ -10,7 +10,7 @@ This family is present on repository main and in npm 4.1.0. Check the
 connected server's tool list before selecting it.
 
 On Linux, JADX launches an REA-owned process and requires a procps-compatible
-`ps` on REA's `PATH`; see the shared
+system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
 ## Optional package delivery

@@ -21,11 +21,12 @@ import {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -121,9 +122,10 @@ export class ArtifactAnalysisResources {
     if (this.#closed || signal?.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(operation, {
-            cause: signal?.aborted ? signal.reason : undefined,
-          }),
+          cancelledBy(
+            operation,
+            carriedReason(signal?.aborted ? signal.reason : undefined),
+          ),
         ),
       );
     if (this.#busy)
@@ -146,11 +148,7 @@ export class ArtifactAnalysisResources {
           // this scope has drained it and admits acquisition for the new request.
           this.#artifacts.operation = operation;
           if (signal?.aborted)
-            return Promise.resolve(
-              err(
-                new AnalysisCancelledError(operation, { cause: signal.reason }),
-              ),
-            );
+            return Promise.resolve(err(cancelledBy(operation, signal)));
           return work();
         }),
       )
@@ -203,15 +201,18 @@ export class ArtifactAnalysisResources {
         operation,
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-        ...(cause.partialObservation === undefined
-          ? {}
-          : { partialObservation: cause.partialObservation }),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+        {
+          ...(observedOutput === undefined
+            ? {}
+            : { capturedOutput: observedOutput }),
+          ...(cause.partialObservation === undefined
+            ? {}
+            : { partialObservation: cause.partialObservation }),
+        },
+      );
     const reason = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
       return new AnalysisResourceConstraintError(
@@ -298,15 +299,15 @@ export class ArtifactAnalysisResources {
         capturedOutput,
         operation,
       );
-    const detail = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    };
+    const detailWithoutCause =
+      capturedOutput === undefined ? {} : { capturedOutput };
+    const detail = { cause, ...detailWithoutCause };
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        ...detail,
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+        detailWithoutCause,
+      );
     const reason = cause instanceof Error ? cause.message : String(cause);
     if (
       cause instanceof ArtifactReaderFailure &&
@@ -462,17 +463,23 @@ export class ArtifactAnalysisResources {
       if (physical.outcome.kind === "failed")
         primary = classifyPrimary(physical.outcome.cause);
       else if (physical.completionCancellation !== undefined)
-        primary = new AnalysisCancelledError(operation, {
-          cause: physical.completionCancellation.reason,
+        primary = cancelledBy(
+          operation,
+          carriedReason(physical.completionCancellation.reason),
+          {
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+            partialObservation: cause.partialObservation,
+          },
+        );
+    } else if (cause.reason === "cancelled") {
+      primary = cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+        {
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
           partialObservation: cause.partialObservation,
-        });
-    } else if (cause.reason === "cancelled") {
-      primary = new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(capturedOutput === undefined ? {} : { capturedOutput }),
-        partialObservation: cause.partialObservation,
-      });
+        },
+      );
     }
     return this.readCleanupFailure(
       cause as CleanupFailedRead,
@@ -611,8 +618,7 @@ export class ArtifactAnalysisResources {
       await this.release();
       if (result.ok && signal?.aborted)
         return err(
-          new AnalysisCancelledError(operation, {
-            cause: signal.reason,
+          cancelledBy(operation, signal, {
             partialObservation: observation(result.value),
           }),
         );
@@ -624,10 +630,7 @@ export class ArtifactAnalysisResources {
       const primary = !result.ok
         ? result.error
         : signal?.aborted
-          ? new AnalysisCancelledError(operation, {
-              cause: signal.reason,
-              partialObservation,
-            })
+          ? cancelledBy(operation, signal, { partialObservation })
           : undefined;
       const cleanup =
         cause instanceof AnalysisError
@@ -693,9 +696,10 @@ export class ArtifactAnalysisResources {
         operation,
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     return new ProviderAdapterError(this.providerId, operation, {
       cause,
       diagnostics: { stage: "artifact-resources", reason: String(cause) },

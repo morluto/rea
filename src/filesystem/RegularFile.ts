@@ -107,10 +107,6 @@ const UNRESOLVED_PATH_ERROR_CODES: ReadonlySet<string> = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Whether an errno establishes that nothing resolves at the selected path. */
-export const isUnresolvedPathErrorCode = (code: unknown): boolean =>
-  typeof code === "string" && UNRESOLVED_PATH_ERROR_CODES.has(code);
-
 const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
   ...UNRESOLVED_PATH_ERROR_CODES,
   "EISDIR",

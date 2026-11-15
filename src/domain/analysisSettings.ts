@@ -13,6 +13,7 @@ export interface AnalysisSettingValues {
   readonly "regex.matching_deadline_ms": number;
   readonly "regex.worker_heap_request_mib": number;
   readonly "capture.decoder_old_generation_mib": number;
+  readonly "capture.packet_json_expansion_bytes": number;
   readonly "javascript.analysis_timeout_ms": number;
   readonly "javascript.max_heap_mb": number;
   readonly "wasm.command_timeout_ms": number;

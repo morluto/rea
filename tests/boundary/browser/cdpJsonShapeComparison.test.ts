@@ -429,7 +429,7 @@ const captureBody = (
     }),
     new Set([ORIGIN]),
   );
-  events.beginAuthorizedFrame("main");
+  events.beginAuthorizedFrame({ frameId: "main" });
   events.ingest({
     method: "Network.requestWillBeSent",
     params: {
