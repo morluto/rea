@@ -1,5 +1,4 @@
 /** Public SDK/stdio JNI investigation, checked against independent NDK/DEX facts. */
-import { withCanonicalOutputSchema } from "../../../scripts/lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -721,6 +720,10 @@ const { StdioClientTransport } = await import(
 );
 const { Ajv2020 } = await import(
   pathToFileURL(require.resolve("ajv/dist/2020.js"))
+);
+// Validate replies against the selected revision's contracts, not the harness checkout's.
+const { withCanonicalOutputSchema } = await import(
+  pathToFileURL(join(repo, "scripts/lib/canonical-output-schema.mjs")).href
 );
 const environment = {
   PATH: process.env.PATH,
