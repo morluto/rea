@@ -32,6 +32,7 @@ export {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   artifactOperationCause,
+  artifactParseFailure,
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
