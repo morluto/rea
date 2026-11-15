@@ -1,7 +1,10 @@
 import { processComparisonInputSchema } from "../../contracts/processComparisonContracts.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
+import {
+  describeValidationFailure,
+  firstValidationIssuePath,
+} from "../../domain/validationFailure.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
   PROCESS_COMPARISON_DIMENSIONS,
@@ -110,6 +113,8 @@ export const readProcessComparisonSource = (
       return err(
         new EvidenceIntegrityError(`${side} Evidence failed validation`, {
           cause: failure.cause,
+          side,
+          ...issuePathFact(failure.cause),
           userMessage: `The ${side} Evidence failed validation (${describeValidationFailure(failure.cause)}). Supply unmodified capture Evidence from capture_process_scenario.`,
         }),
       );
@@ -131,11 +136,24 @@ export const readProcessComparisonSource = (
           `${side} process capture failed validation`,
           {
             cause: failure.cause,
+            side,
+            ...issuePathFact(failure.cause, ["normalized_result"]),
             userMessage: `The ${side} Evidence has an invalid process capture result (${describeValidationFailure(failure.cause)}). Recreate the capture with capture_process_scenario.`,
           },
         ),
       );
   }
+};
+
+/** Issue paths are relative to the Evidence record, as for `readEvidence`. */
+const issuePathFact = (
+  cause: unknown,
+  within: readonly (string | number)[] = [],
+) => {
+  const issuePath = firstValidationIssuePath(cause);
+  return issuePath === undefined
+    ? {}
+    : { issuePath: [...within, ...issuePath] };
 };
 
 /** Report the same provider admission failure at both public adapters. */

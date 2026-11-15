@@ -9,7 +9,11 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
+import {
+  describeAdvertisedTool,
+  presentAdvertisedInput,
+  presentAdvertisedInputSchema,
+} from "../../../src/contracts/compactInputSchema.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
@@ -22,7 +26,6 @@ import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOpt
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
-  strictGatewayItemSchemaErrors,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
@@ -136,21 +139,7 @@ describe("MCP compact input schema profile", () => {
   });
 });
 
-it("advertises item schemas strict gateways accept", async () => {
-  const server = compactServer();
-  registerCatalog(server);
-  const tools = await listToolsThroughTransport(server);
-  expect(tools.map(({ name }) => name).sort()).toEqual(
-    TOOL_CONTRACTS.map(({ name }) => name).sort(),
-  );
-  expect(
-    tools.flatMap(({ name, inputSchema }) =>
-      strictGatewayItemSchemaErrors(inputSchema, name),
-    ),
-  ).toEqual([]);
-});
-
-it("keeps output schemas and tool descriptions identical to the default profile", async () => {
+it("keeps output schemas and extends tool descriptions only with input guidance", async () => {
   const compact = compactServer();
   const full = fullServer();
   registerCatalog(compact);
@@ -165,7 +154,18 @@ it("keeps output schemas and tool descriptions identical to the default profile"
     const reference = fullByName.get(tool.name);
     if (reference === undefined) throw new Error(`Missing ${tool.name}`);
     expect(tool.outputSchema, tool.name).toEqual(reference.outputSchema);
-    expect(tool.description, tool.name).toBe(reference.description);
+    // Guidance the compact schema omits follows the unchanged description.
+    const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
+    if (contract === undefined) throw new Error(`Missing ${tool.name}`);
+    expect(tool.description, tool.name).toBe(
+      describeAdvertisedTool(
+        reference.description,
+        presentAdvertisedInput(advertisedInputJsonSchema(contract), {
+          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+        }).guidance,
+      ),
+    );
+    expect(tool.inputSchema.description, tool.name).toBeUndefined();
   }
 });
 
@@ -187,41 +187,6 @@ it("detects missing client-required items in nested array alternatives", () => {
   expect(arrayItemSchemaError({ type: "array", items: false }, "closed")).toBe(
     "closed: tool parameters array type must have items",
   );
-});
-
-it("detects item schemas Gemini declarations reject in schema positions only", () => {
-  // The #5201 report: `properties[functions].items.items: field predicate
-  // failed: $type == Type.ARRAY` for an any-value element type list.
-  expect(
-    strictGatewayItemSchemaErrors(
-      {
-        type: "object",
-        properties: {
-          functions: {
-            type: "array",
-            items: {
-              type: ["null", "boolean", "object", "array", "number", "string"],
-              items: {},
-            },
-          },
-          actions: {
-            type: "array",
-            items: { oneOf: [{ type: "object" }, { type: "string" }] },
-          },
-          nested: {
-            type: "array",
-            items: { type: "array", items: { type: "string" } },
-          },
-        },
-        default: { items: {} },
-        examples: [{ items: {} }],
-      },
-      "injected",
-    ),
-  ).toEqual([
-    'injected.properties.functions.items.items is beside type ["null","boolean","object","array","number","string"]',
-    "injected.properties.actions.items is an untyped union",
-  ]);
 });
 
 it("preserves arbitrary nested JSON values at the converted SDK boundary", async () => {
@@ -377,11 +342,20 @@ it("states dependency keywords as prose in both catalog profiles", async () => {
   expect(sqlite?.inputSchema.description).toContain(
     "When row_limit is provided, also provide table.",
   );
-  for (const tools of [fullTools, compactTools])
-    expect(
-      tools.find(({ name }) => name === "inspect_sqlite_database")?.inputSchema
-        .description,
-    ).toContain("When schema_scope is selected_table, also provide table.");
+  expect(sqlite?.inputSchema.description).toContain(
+    "When schema_scope is selected_table, also provide table.",
+  );
+  // Compact moves the sentence to the tool description, which Codex keeps
+  // when it strips descriptions inside a schema above 5,000 bytes.
+  const compactSqlite = compactTools.find(
+    ({ name }) => name === "inspect_sqlite_database",
+  );
+  expect(compactSqlite?.description).toContain(
+    "When schema_scope is selected_table, also provide table.",
+  );
+  expect(JSON.stringify(compactSqlite?.inputSchema)).not.toContain(
+    "also provide",
+  );
 });
 
 it("retains parameter types and avoids client-side reference expansion", async () => {

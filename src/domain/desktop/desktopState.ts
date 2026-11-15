@@ -106,14 +106,8 @@ export const versionAt = (
 
 /** The normalized result of `inspect_desktop_application_state`. */
 export const desktopApplicationStateSchema = z.strictObject({
-  /** Policy actually used to produce these views; older Evidence may omit it. */
-  effective_view_policy: desktopViewPolicyInputSchema
-    .required()
-    // Historical policy records predate the additive table-view byte control.
-    .extend({
-      sqlite_view_bytes: desktopViewPolicyInputSchema.shape.sqlite_view_bytes,
-    })
-    .optional(),
+  /** Policy actually used to produce these views. */
+  effective_view_policy: desktopViewPolicyInputSchema.required(),
   capture: z.strictObject({
     evidence_id: z.string().min(1),
     home: z.string().min(1),

@@ -1,4 +1,5 @@
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
+import { resolveSystemPs } from "../systemPs.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import {
@@ -35,6 +36,7 @@ import {
 
 interface SampleProcessContext {
   readonly rootPid: number;
+  readonly platform: NodeJS.Platform;
   readonly elapsedMs: number;
   readonly limit: number;
   readonly identities: Map<number, string>;
@@ -134,10 +136,11 @@ const sampleLinux = async (
 };
 
 const readPsRowsRaw = async (
+  platform: NodeJS.Platform,
   signal: AbortSignal,
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileOutput(
-    "ps",
+    (await resolveSystemPs(platform)).command,
     ["-axo", "pid=,ppid=,pgid=,sess=,command="],
     { signal, stopSignal: "SIGTERM" },
   );
@@ -165,11 +168,12 @@ const readPsRowsRaw = async (
 };
 
 const readPsRows = async (
+  platform: NodeJS.Platform,
   signal: AbortSignal,
 ): Promise<SamplingObservation<readonly ProcessRow[] | undefined>> =>
   samplingReadObservation(
     await readSamplingSource("process table (ps)", signal, () =>
-      readPsRowsRaw(signal),
+      readPsRowsRaw(platform, signal),
     ),
   );
 
@@ -178,7 +182,7 @@ const sampleLinuxFallback = async (
   context: SampleProcessContext,
   root: ProcessRow,
 ): Promise<SamplingObservation<readonly ProcessRow[]>> => {
-  const observed = await readPsRows(context.signal);
+  const observed = await readPsRows(context.platform, context.signal);
   if (observed.value === undefined)
     return samplingObservation([root], observed.diagnostics);
   const childrenByParent = new Map<number, number[]>();
@@ -241,12 +245,12 @@ const sampleLinuxFallback = async (
 };
 
 const readRootIdentity = async (
+  platform: NodeJS.Platform,
   rootPid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<ProcessRow | undefined>> => {
-  if (process.platform === "linux")
-    return readLinuxProcessStat(rootPid, signal);
-  const rows = await readPsRows(signal);
+  if (platform === "linux") return readLinuxProcessStat(rootPid, signal);
+  const rows = await readPsRows(platform, signal);
   return samplingObservation(
     rows.value?.find(({ pid }) => pid === rootPid),
     rows.diagnostics,
@@ -254,13 +258,14 @@ const readRootIdentity = async (
 };
 
 const inspectInitializedPtyRoot = async (
+  platform: NodeJS.Platform,
   rootPid: number,
   runId: string,
   signal: AbortSignal,
 ): Promise<
   SamplingObservation<{ readonly startTime: string | undefined } | undefined>
 > => {
-  const before = await readRootIdentity(rootPid, signal);
+  const before = await readRootIdentity(platform, rootPid, signal);
   if (
     before.value === undefined ||
     before.value.process_group_id !== rootPid ||
@@ -268,7 +273,7 @@ const inspectInitializedPtyRoot = async (
   )
     return samplingObservation(undefined, before.diagnostics);
   const observedRunId =
-    process.platform === "linux"
+    platform === "linux"
       ? await readProcSamplingSource(
           `/proc/${String(rootPid)}/environ`,
           signal,
@@ -281,7 +286,7 @@ const inspectInitializedPtyRoot = async (
             () => readProcessRunId(rootPid, undefined, signal),
           ),
         );
-  const after = await readRootIdentity(rootPid, signal);
+  const after = await readRootIdentity(platform, rootPid, signal);
   const diagnostics = mergeSamplingDiagnostics(
     before.diagnostics,
     observedRunId.diagnostics,
@@ -307,7 +312,7 @@ const samplePs = async (
   const { rootPid, limit, signal } = context;
   if (limit <= 0) return samplingObservation([]);
 
-  const observed = await readPsRows(signal);
+  const observed = await readPsRows(context.platform, signal);
   const rows = observed.value ?? [];
   const rowByPid = new Map(rows.map((row) => [row.pid, row]));
   const childrenByParent = new Map<number, ProcessRow[]>();
@@ -344,11 +349,11 @@ const samplePs = async (
 const sampleProcesses = async (
   context: SampleProcessContext,
 ): Promise<SamplingObservation<readonly ProcessSample[]>> => {
-  if (process.platform === "win32" || context.limit <= 0)
+  if (context.platform === "win32" || context.limit <= 0)
     return samplingObservation([]);
 
   const rows =
-    process.platform === "linux"
+    context.platform === "linux"
       ? await sampleLinux(context)
       : await samplePs(context);
 
@@ -395,6 +400,8 @@ const isOwnedSamplingShutdown = (cause: unknown, reason: unknown): boolean => {
 export const startProcessSampler = (options: {
   readonly rootPid: number;
   readonly runId: string;
+  /** The host whose process table is sampled: procfs on Linux, ps elsewhere. */
+  readonly platform: NodeJS.Platform;
   readonly resourceScope: ProcessCaptureResourceScope;
   readonly started: number;
   readonly limit: number;
@@ -404,7 +411,7 @@ export const startProcessSampler = (options: {
   readonly partial: boolean;
   readonly coverage: ProcessSamplingCoverage;
 }>) => {
-  const { rootPid, runId, started, limit, samples } = options;
+  const { rootPid, runId, platform, started, limit, samples } = options;
   const identities = new Map<number, string>();
   const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
@@ -428,6 +435,7 @@ export const startProcessSampler = (options: {
       let diagnostics = mergeSamplingDiagnostics();
       if (!rootInitialized) {
         const identity = await inspectInitializedPtyRoot(
+          platform,
           rootPid,
           runId,
           controller.signal,
@@ -441,6 +449,7 @@ export const startProcessSampler = (options: {
       }
       const observation = await sampleProcesses({
         rootPid,
+        platform,
         elapsedMs: monotonicProcessCaptureClock() - started,
         limit: limit + 1,
         identities,

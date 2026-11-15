@@ -15,19 +15,13 @@ export const DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS = 10_000;
 /** Smallest accepted dialog watch. Zero is not a deadline. */
 export const MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS = 1;
 
-/**
- * Largest accepted dialog watch. Delays above this signed 32-bit bound are
- * the same ceiling REA uses for its other millisecond settings.
- */
-export const MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS = MAX_NODE_TIMER_DELAY_MS;
-
 /** Rejected dialog-timeout setting retained with the adapter diagnostic. */
 export type DialogTimeoutRejection = {
   readonly setting: typeof HOPPER_DEMO_DIALOG_TIMEOUT_SETTING;
   readonly value: string;
   readonly source: "setting";
   readonly minimum_ms: typeof MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
-  readonly maximum_ms: typeof MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
+  readonly maximum_ms: typeof MAX_NODE_TIMER_DELAY_MS;
   readonly default_ms: typeof DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
 };
 
@@ -40,7 +34,7 @@ export const invalidDialogTimeoutMessage = (
       ? "was rejected"
       : `is ${JSON.stringify(setting.value)} ms`;
   const floor = String(MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS);
-  const maximum = String(MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS);
+  const maximum = String(MAX_NODE_TIMER_DELAY_MS);
   const source = setting?.source ?? "setting";
   return [
     `The effective ${HOPPER_DEMO_DIALOG_TIMEOUT_SETTING} value ${current} (source ${source}; default ${String(DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS)} ms, floor ${floor} ms, maximum ${maximum} ms).`,
@@ -183,8 +177,7 @@ const isDialogTimeoutRejection = (
     source === "setting" &&
     Reflect.get(value, "minimum_ms") ===
       MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS &&
-    Reflect.get(value, "maximum_ms") ===
-      MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS &&
+    Reflect.get(value, "maximum_ms") === MAX_NODE_TIMER_DELAY_MS &&
     Reflect.get(value, "default_ms") === DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS
   );
 };

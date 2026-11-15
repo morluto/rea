@@ -186,7 +186,8 @@ REA_MCP_TOOL_CATALOG_PROFILE=full
 
 This advertises all tools without requiring catalog refresh. Compact output
 schemas widen client-side validation; REA still validates complete results
-against the canonical contracts. See [output schemas](../reference/mcp-contracts.md#output-schemas).
+against the canonical contracts. The default output profile, `off`, omits
+output schemas and is smaller still. See [output schemas](../reference/mcp-contracts.md#output-schemas).
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
@@ -370,11 +371,12 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
-For a client whose stdio reader rejects the complete catalog frame, set
-`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
-schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
-Both keep canonical result validation and complete structured results; `compact`
-keeps a widened root shape and `off` advertises nothing. On catalogs large
+Output schemas are omitted by default (`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"`).
+If you selected `"full"` and a client's stdio reader rejects the complete
+catalog frame, return to the default or select `"compact"`, which bounds every
+advertised output schema, in REA's `env` object, then restart the client.
+Every profile keeps canonical result validation and complete structured
+results; `compact` keeps a widened root shape and `off` advertises nothing. On catalogs large
 enough that full input schemas alone approach the frame limit, also keep the
 input profile at its `compact` default. See [MCP output schema
 profiles](../reference/mcp-contracts.md#output-schemas).
@@ -791,6 +793,9 @@ For Cline's CLI, setup writes `mcpServers.rea` into
 `~/.cline/data/settings/cline_mcp_settings.json`; set `CLINE_MCP_SETTINGS_PATH`
 to select another file. Otherwise `CLINE_DATA_DIR` selects the data directory,
 then `CLINE_DIR` selects the root containing `data`; blank overrides are ignored.
+Cline resolves a relative override against its own working directory, so REA
+refuses one until it is made absolute; on Windows it must also name a drive or
+UNC share, because a path such as `\cline` follows Cline's current drive.
 Setup and `mcp add --agent cline-cli` share this native path selection. Entries carry
 `command`, `args`, and `env`; stdio is the default transport. Setup preserves
 every other server and top-level key when it upserts `rea`, and refuses a
@@ -823,6 +828,103 @@ MCP settings for long native investigations.
 
 Setup, doctor's alignment report, foreign-registration refusal, and uninstall
 removal are covered by `tests/acceptance/setup/clineClientSetup.test.ts`.
+
+## Cline VS Code extension, Kiro, Mastra Code, Zed and Amp
+
+Setup, doctor, update, uninstall and `rea mcp add` share one definition for each
+of these clients. Setup offers a client when its directory exists.
+
+| Client                  | `--client`     | User configuration                                                                                                              | Server table      |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Cline VS Code extension | `cline_vscode` | `<VS Code user directory>/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`                                | `mcpServers`      |
+| Kiro                    | `kiro`         | `~/.kiro/settings/mcp.json`, shared by the IDE and CLI                                                                          | `mcpServers`      |
+| Mastra Code             | `mastracode`   | `~/.mastracode/mcp.json`                                                                                                        | `mcpServers`      |
+| Zed                     | `zed`          | `~/.config/zed/settings.json` on macOS, `%APPDATA%\Zed\settings.json` on Windows, `$XDG_CONFIG_HOME/zed/settings.json` on Linux | `context_servers` |
+| Amp                     | `amp`          | `~/.config/amp/settings.json`, or `settings.jsonc` when that is the only one                                                    | `amp.mcpServers`  |
+
+The Cline extension keeps a separate settings file in each editor that runs
+it. `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor` and
+`cline_windsurf` manage the same file under that editor's user directory
+(`Code - Insiders`, `VSCodium`, `Cursor` or `Windsurf` in place of `Code`), and
+setup offers each where that editor's Cline settings folder exists.
+`VSCODE_APPDATA` applies to all of them; `VSCODE_PORTABLE` only to VS Code.
+`rea mcp add --agent cline` keeps add-mcp's meaning, VS Code. A same-named server in a Kiro,
+Mastra Code, Zed or Amp project file overrides the user registration; doctor
+reports the user file. Mastra Code keeps enabled state outside `mcp.json`, and
+Amp's managed settings and `amp.mcpPermissions` can block a server; doctor
+cannot observe either. When both Amp settings files exist, Amp does not
+document which it reads, so REA refuses to choose; merge them into one file.
+On Linux, `FLATPAK_XDG_CONFIG_HOME` selects Zed's folder as Zed itself does,
+and a Flathub Zed's `~/.var/app/dev.zed.Zed/config/zed` is used when only that
+folder exists; with both it and the native folder present, REA cannot tell which
+Zed you use and refuses. Zed's comments and formatting are preserved. These
+locations follow each client's documentation and source; no installed client
+was run to verify loading.
+
+## MCPorter
+
+`rea setup --client mcporter` and `rea mcp add --agent mcporter` write
+`mcpServers.rea` into MCPorter's home file: the file `MCPORTER_CONFIG` names,
+otherwise the first existing of `$XDG_CONFIG_HOME/mcporter/mcporter.json[c]`
+(an absolute `XDG_CONFIG_HOME` only) and `~/.mcporter/mcporter.json[c]`. A new
+file goes to the XDG path when `XDG_CONFIG_HOME` is set, as
+`mcporter config add --scope home` does. A relative `MCPORTER_CONFIG` depends on
+the directory each MCPorter command runs from, so REA refuses writes to
+MCPorter and doctor and update report its registration as `unknown` while
+still covering every other client. Uninstall stops until it is repaired,
+because it cannot tell whether that file holds REA's row.
+
+MCPorter imports Claude Code, Claude Desktop, Codex, Cursor, Windsurf, OpenCode
+and VS Code registrations by default, so setup never selects it from detection,
+and doctor reports it only when its file holds a `rea` row or you select it.
+Update and uninstall refresh and remove the row REA wrote. A project
+`config/mcporter.json` entry with the same name overrides the home file.
+
+## fx
+
+Setup and `rea mcp add` write `mcpServers.rea` into fx's profile,
+`~/.fx/mcp.json`, or `$FX_HOME/mcp.json` when `FX_HOME` is set. fx accepts only
+an absolute `FX_HOME` other than the root and home folders, so REA refuses other
+values before writing. An existing profile that still uses fx's older `mcp`
+table keeps it; a profile with both tables is refused. Both commands publish the
+profile privately: the folder is 0700 and the file 0600 on POSIX systems, and
+setup repairs those modes even when the registration is otherwise current.
+Windows ACLs cannot be verified through mode bits. fx reloads its MCP servers
+with `/mcp reload`; its project `.mcp.json` files need fx's own approval and are
+not written by REA.
+
+## Junie
+
+Setup and `rea mcp add` write `mcpServers.rea` into `~/.junie/mcp/mcp.json`, or
+`$JUNIE_HOME/mcp/mcp.json` when `JUNIE_HOME` is set (Junie CLI honors it; the
+JetBrains plugin reads `~/.junie`). A relative `JUNIE_HOME` depends on Junie's
+working directory, so REA refuses it until it is made absolute (on Windows,
+with a drive letter or UNC share). Junie loads that
+file only while its default MCP locations are enabled. Setup, `rea mcp add` and doctor all refuse or report
+a registration Junie would not load: `JUNIE_MCP_DEFAULT_LOCATIONS=false`, or
+`mcp-default-locations: false` in `~/.junie/config.json` unless
+`JUNIE_CONFIG_DEFAULT_LOCATIONS=false` skips that file. While
+`JUNIE_CONFIG_LOCATION` names extra configuration, REA cannot tell and refuses.
+A `--mcp-default-locations=false` command-line option is not visible to REA.
+Project registration writes `.junie/mcp/mcp.json`.
+
+## Goose
+
+Setup and `rea mcp add` write `extensions.rea` into Goose's user file:
+`~/.config/goose/config.yaml` (an absolute `XDG_CONFIG_HOME` replaces
+`~/.config`), `%APPDATA%\Block\goose\config\config.yaml` on Windows, or
+`$GOOSE_PATH_ROOT/config/config.yaml` when that root is absolute. Goose also
+loads `/etc/goose/config.yaml` (`%PROGRAMDATA%\goose\config.yaml` on Windows)
+and each `GOOSE_ADDITIONAL_CONFIG_FILES` entry beneath the user file, merging
+each extension one field deep. Doctor reports the effective registration across
+those layers, for example `enabled: false` from a lower layer. Setup, update and
+uninstall change only the user file; a `timeout`, `enabled`, `name`,
+`description` or environment map only a lower layer sets is left to that layer
+rather than overridden with setup's default. Lower layers are read where Goose
+reads them, even when another user, such as an administrator, owns them. A
+relative additional entry depends on
+Goose's working directory, so REA refuses it. Goose reads its configuration at
+startup; restart it after setup.
 
 ## WorkBuddy
 
@@ -867,7 +969,10 @@ fallback server, uninstall refuses before changing either file; review the
 fallback configuration before retrying. Other fallback servers, settings and a
 foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
-as stale, and rerunning setup removes the flag to repair it. Native configuration
+as stale, and rerunning setup removes the flag to repair it. In shared storage
+that setup preserves (the fallback file), the flag binds every reader, so doctor
+reports the stale row with `manual_conflict: "shared_disabled_activation"`:
+re-enable it in the product that disabled it rather than rerunning setup. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
 writing a registration ZCode cannot load.
 

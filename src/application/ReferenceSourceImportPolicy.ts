@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -65,8 +66,6 @@ const ignorePolicyCause = (cause: unknown): unknown =>
     : cause instanceof RegularFileReadFailure
       ? cause.operationCause
       : cause;
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const addMarkedPatterns = (
   matcher: ReturnType<typeof ignore>,

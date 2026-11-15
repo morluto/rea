@@ -1,3 +1,6 @@
+/** loader.h `LC_REQ_DYLD`: dyld must understand a command carrying this bit. */
+export const LC_REQ_DYLD = 0x80000000;
+
 /**
  * Mach-O load-command codes from `<mach-o/loader.h>`, keyed by their header
  * names. This is the one table of these values; parsers and projections import

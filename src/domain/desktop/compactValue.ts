@@ -1,10 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isXmlElement } from "./viewPointer.js";
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "../isRecord.js";
 
 export const cut = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}…` : text;

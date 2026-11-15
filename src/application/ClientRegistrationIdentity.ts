@@ -10,7 +10,7 @@ import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
@@ -166,9 +166,11 @@ const sameFileExecutableAlias = (
   environment: Readonly<NodeJS.ProcessEnv>,
   identify: typeof entrypointIdentity,
 ): string => {
-  for (const directory of (environment.PATH ?? "").split(":")) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = absoluteCallerPath(`${directory}/${name}`);
+  for (const { path: candidate } of posixPathCandidates(
+    name,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     if (identify(candidate, selected) !== "owned") continue;
     try {
       accessSync(candidate, constants.X_OK);
