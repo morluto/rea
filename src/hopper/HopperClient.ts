@@ -14,9 +14,10 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
-  hopperReplySchemas,
+  hopperBridgeReplyContracts,
   parseHopperReply,
   type HopperBridgeReplyContracts,
+  type ValueKeepingContracts,
   type HopperContractReply,
   type HopperReplyContracts,
 } from "./HopperReplyContracts.js";
@@ -125,7 +126,7 @@ export interface HopperClientOptions<
    * Reply contract for each callable method. Production uses the bridge's
    * `hopperReplySchemas`; transport tests supply their own methods.
    */
-  readonly replyContracts?: Contracts;
+  readonly replyContracts?: Contracts & ValueKeepingContracts<Contracts>;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
@@ -173,7 +174,7 @@ export class HopperClient<
     Pick<HopperClientOptions, "startupTimeoutMs" | "bridgeMaxRequestBytes">
   > &
     HopperClientOptions<Contracts>;
-  readonly #contracts: Contracts;
+  readonly #contracts: Contracts & ValueKeepingContracts<Contracts>;
   readonly #requests: HopperRequestQueue;
   readonly #responses: JsonLineBridgeReader<
     HopperBridgeMessage,
@@ -252,8 +253,13 @@ export class HopperClient<
   constructor(options: HopperClientOptions<Contracts>) {
     this.#logger = options.logger ?? silentLogger;
     // The default type argument is the production table this default supplies.
+    // Without a table the type argument is its default, the production table.
+    // A caller that names another type argument but omits its table gets a
+    // typed refusal per method (see #typedReply), never a throw.
     this.#contracts =
-      options.replyContracts ?? (hopperReplySchemas as unknown as Contracts);
+      options.replyContracts ??
+      (hopperBridgeReplyContracts as unknown as Contracts &
+        ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
       startupTimeoutMs:
@@ -762,9 +768,21 @@ export class HopperClient<
     result: Result<JsonValue, AnalysisError>,
   ): Result<HopperContractReply<Contracts, M>, AnalysisError> {
     const normalized = this.#normalizeToolResult(method, result);
-    return normalized.ok
-      ? parseHopperReply(this.#contracts, method, normalized.value, operation)
-      : normalized;
+    if (!normalized.ok) return normalized;
+    if (this.#contracts[method] === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          operation,
+          `No reply contract is installed for the Hopper bridge method ${method}; its reply was not read.`,
+        ),
+      );
+    return parseHopperReply<Contracts, M>(
+      this.#contracts,
+      method,
+      normalized.value,
+      operation,
+    );
   }
 
   #normalizeToolResult(

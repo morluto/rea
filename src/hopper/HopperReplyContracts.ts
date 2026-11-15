@@ -180,6 +180,24 @@ export const hopperReplyJson = (
 /** A method-keyed reply contract table, such as `hopperReplySchemas`. */
 export type HopperReplyContracts = Readonly<Record<string, z.ZodType>>;
 
+/**
+ * A table whose contracts validate a reply without changing it: each
+ * schema's input type is its output type. `parseHopperReply` returns the raw
+ * reply, so a coercion, default or transform would promise a type the reply
+ * does not have; such a schema fails to type-check here.
+ */
+export type ValueKeepingContracts<Contracts extends HopperReplyContracts> = {
+  readonly [M in keyof Contracts]: [z.input<Contracts[M]>] extends [
+    z.output<Contracts[M]>,
+  ]
+    ? Contracts[M]
+    : never;
+};
+
+/** The production table, checked to keep every reply value unchanged. */
+export const hopperBridgeReplyContracts: ValueKeepingContracts<HopperBridgeReplyContracts> =
+  hopperReplySchemas;
+
 /** The validated reply a contract table assigns to one method. */
 export type HopperContractReply<
   Contracts extends HopperReplyContracts,
@@ -218,7 +236,7 @@ export const parseHopperReply = <
   Contracts extends HopperReplyContracts,
   M extends keyof Contracts & string,
 >(
-  contracts: Contracts,
+  contracts: Contracts & ValueKeepingContracts<Contracts>,
   method: M,
   value: JsonValue,
   operation: string,

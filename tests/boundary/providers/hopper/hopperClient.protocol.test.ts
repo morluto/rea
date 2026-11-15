@@ -1,5 +1,6 @@
 import {
   transportReplyContracts,
+  type TransportReplyContracts,
   HopperFixtureLauncher as FixtureLauncher,
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
@@ -22,6 +23,26 @@ import { waitFor } from "../../../support/testWait.js";
 const MIB = 1024 * 1024;
 
 describe("HopperClient protocol", () => {
+  it("refuses a method its installed table has no contract for instead of throwing", async () => {
+    const launcher = new FixtureLauncher();
+    // The type argument names the transport table, but none is installed.
+    const client = new HopperClient<TransportReplyContracts>({
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    expect(await client.callTool("echo", { label: "unread" })).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "echo",
+      },
+    });
+  });
+
   it("validates each reply against its method contract and keeps a rejected reply", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({

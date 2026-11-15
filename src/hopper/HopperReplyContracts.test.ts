@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
@@ -241,4 +242,17 @@ describe("provider entry paths apply the reply contract", () => {
       }
     },
   );
+});
+
+it("refuses, at compile time, a contract that would change the reply", () => {
+  const coercing = { count: z.object({ count: z.coerce.number() }) };
+  const defaulted = { label: z.object({ label: z.string().default("x") }) };
+  // @ts-expect-error A coercion promises a number the raw reply does not hold.
+  const coerced = parseHopperReplyWith(coercing, "count", { count: "1" }, "op");
+  // @ts-expect-error A default promises a field the raw reply may lack.
+  const filled = parseHopperReplyWith(defaulted, "label", {}, "op");
+
+  // The raw reply is returned, which is why such contracts are refused.
+  expect(coerced).toEqual({ ok: true, value: { count: "1" } });
+  expect(filled).toEqual({ ok: true, value: {} });
 });

@@ -130,7 +130,7 @@ export class HopperFixtureLauncher implements BridgeLauncher {
  * covered by the provider and reply-contract suites.
  */
 export type TransportReplyContracts = Readonly<
-  Record<string, z.ZodType<JsonValue>>
+  Record<string, z.ZodType<JsonValue, JsonValue>>
 >;
 export const transportReplyContracts: TransportReplyContracts = new Proxy(
   {},
