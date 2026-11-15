@@ -1,3 +1,7 @@
+import {
+  isJavaScriptMemberMutationRefusal,
+  type JavaScriptMemberMutationAllowance,
+} from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
@@ -280,12 +284,35 @@ const parseWithBabel = (
   }
 };
 
+/**
+ * CommonJS require calls need the member-mutation index to prove the loader.
+ * When that phase is refused, the file keeps its declaration-level imports and
+ * records which requests were not examined instead of failing the import.
+ */
+const requireCallsOrRefusal = (
+  ast: File,
+  path: string,
+  limitations: string[],
+  memberMutationAllowance: JavaScriptMemberMutationAllowance | undefined,
+): ReturnType<typeof referenceSourceRequireCalls> => {
+  try {
+    return referenceSourceRequireCalls(ast, path, memberMutationAllowance);
+  } catch (cause: unknown) {
+    if (!isJavaScriptMemberMutationRefusal(cause)) throw cause;
+    limitations.push(
+      `CommonJS require calls in ${path} were not examined because the member-mutation phase was refused (${cause.reason}). ${cause.remediationAction ?? ""}`.trimEnd(),
+    );
+    return new Map();
+  }
+};
+
 /** Parse ESM/CommonJS imports and dynamic imports from source bytes. */
 export const parseReferenceSourceImports = (
   path: string,
   bytes: Uint8Array,
   language: string | null,
   packageType?: JavaScriptPackageType,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ReferenceSourceImportParseResult => {
   if (language !== null && !PARSEABLE_REFERENCE_SOURCE_LANGUAGES.has(language))
     return { relationships: [], parse_failures: [], limitations: [] };
@@ -338,7 +365,7 @@ export const parseReferenceSourceImports = (
     path,
     relationships,
     limitations,
-    referenceSourceRequireCalls(ast, path),
+    requireCallsOrRefusal(ast, path, limitations, memberMutationAllowance),
   );
 
   return {

@@ -1,4 +1,9 @@
-import { javaScriptSemanticWorkAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  javaScriptMemberMutationAllowanceField,
+  javaScriptMemberMutationRefusal,
+  reportsJavaScriptMemberMutationRefusal,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -376,6 +381,10 @@ export class JavaScriptAnalysisWorker {
         ...(this.limits.semanticPrecision === undefined
           ? {}
           : { semantic_precision: this.limits.semanticPrecision }),
+        member_mutation_allowance: javaScriptMemberMutationAllowanceField(
+          this.limits.memberMutationAllowance ??
+            DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+        ),
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
         package_type: packageType,
@@ -1324,16 +1333,21 @@ export class JavaScriptAnalysisWorker {
         (parentBudget
           ? JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION
           : undefined);
-      // A fixed work allowance refuses the same source again; worker limits
-      // and other remediation do not raise it.
-      const fixed = javaScriptSemanticWorkAllowance(reported);
+      // The member-mutation allowance names its own setting; worker heap
+      // and other remediation do not admit the same source.
+      if (reportsJavaScriptMemberMutationRefusal(reported))
+        return javaScriptMemberMutationRefusal(
+          OPERATION,
+          this.limits.memberMutationAllowance ??
+            DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+          limits,
+        );
       return new AnalysisResourceConstraintError(
         OPERATION,
         response.resource ?? "memory",
         response.message,
         limits,
-        fixed ??
-          (remediationAction === undefined ? undefined : { remediationAction }),
+        remediationAction === undefined ? undefined : { remediationAction },
       );
     }
     return new AnalysisOutputError(

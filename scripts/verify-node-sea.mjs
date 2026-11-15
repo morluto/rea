@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // Requires a running Docker daemon, network access for the pinned fixture
 // producer, and `npm run build:cached`. Never executes the injected application.
-const root = await mkdtemp(join(tmpdir(), "rea-node-sea-real-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-node-sea-real-",
+  private: false,
+});
+const root = rootFixture.path;
 const image = "node:24.10.0-bookworm";
 const script =
   'throw new Error("SEA verification must not execute this application");\n';
-try {
+await withVerifierFixture(rootFixture, async () => {
   await writeFile(join(root, "main.js"), script);
   await writeFile(join(root, "asset.txt"), "real SEA asset\n");
   await writeFile(
@@ -76,6 +83,4 @@ try {
   process.stdout.write(
     `${JSON.stringify({ producer: image, metadata, verified: ["ELF inventory", "code cache", "fuse", "script extraction", "asset extraction"] }, null, 2)}\n`,
   );
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
