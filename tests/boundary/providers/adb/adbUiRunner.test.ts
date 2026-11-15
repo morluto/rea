@@ -587,6 +587,103 @@ it.each(
   },
 );
 
+it.each(
+  ["status", "cancel"].flatMap((phase) =>
+    ["inspect_adb_ui", "perform_adb_ui_action"].flatMap((operation) =>
+      [false, true].map((cancelled) => ({ phase, operation, cancelled })),
+    ),
+  ),
+)(
+  "retains completed $operation from $phase before denied host cleanup (cancelled: $cancelled)",
+  async ({ phase, operation, cancelled }) => {
+    const { binary, environment, workspace, setMode } = await fixture(
+      phase === "cancel" ? { status_offline: true } : {},
+    );
+    const controller = new AbortController();
+    let denied = true;
+    let terminalCleanup = false;
+    const transport = new AdbUiRunner(environment, async (input) => {
+      const acquired = await spawnOwnedProviderProcess(input);
+      if (input.arguments[3] === "-T") return acquired;
+      const payload = JSON.parse(
+        Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+      );
+      if (payload.operation !== phase) return acquired;
+      return {
+        ...acquired,
+        cleanup: async () => {
+          if (denied) {
+            terminalCleanup = true;
+            await setMode({ status_offline: true, cancel_offline: true });
+            if (cancelled)
+              controller.abort(
+                new Error("cancel during terminal host cleanup"),
+              );
+            return {
+              cleaned: false,
+              reason: "controlled terminal cleanup denial",
+            };
+          }
+          return (
+            acquired.cleanup?.() ?? cleanupOwnedProcessGroup(acquired.ownership)
+          );
+        },
+      };
+    });
+    onTestFinished(async () => {
+      denied = false;
+      await setMode({});
+      await transport.close();
+    });
+    const request =
+      operation === "inspect_adb_ui"
+        ? {
+            operation: "inspect_adb_ui" as const,
+            input: adbUiInputSchemas.inspect_adb_ui.parse(scope),
+          }
+        : {
+            operation: "perform_adb_ui_action" as const,
+            input: adbUiInputSchemas.perform_adb_ui_action.parse(actionInput),
+          };
+    const result = await transport.execute(
+      request,
+      binary,
+      {
+        binary_path: binary,
+        path_source: "environment",
+        version: "fixture",
+        installed_path: binary,
+      },
+      { id: "adb", name: "ADB fixture", version: "fixture" },
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected retained terminal host cleanup");
+    expect(terminalCleanup).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.operation).toBe(operation);
+    expect(evidence.authority).toBe("controlled-replay");
+    expect(evidence.normalized_result).toMatchObject(
+      operation === "inspect_adb_ui"
+        ? { snapshot: { id: snapshotId } }
+        : { dispatch_attempted: true, action_completed: true },
+    );
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      '"action_outcome":"unknown"',
+    );
+    const terminalCalls = (await readFile(workspace.path("calls"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).operation);
+    expect(terminalCalls.filter((value) => value === phase)).toHaveLength(1);
+    denied = false;
+    await setMode({});
+    await transport.close();
+    expect(transport.pendingResources).toEqual([]);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);
+
 const completionRecoveryCases = [
   { name: "status", mode: {}, cleanupIncomplete: false },
   { name: "cleanup", mode: { status_offline: true }, cleanupIncomplete: false },

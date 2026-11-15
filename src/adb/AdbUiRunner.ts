@@ -213,6 +213,20 @@ export const parseAdbUiReply = (
   }
 };
 
+const progressSchemas = {
+  status: z.strictObject({
+    state: z.enum(["running", "settled", "missing"]),
+    response: envelope.nullable(),
+  }),
+  cancel: z.strictObject({
+    state: z.enum(["cancelling", "settled", "missing"]),
+    response: envelope.nullable(),
+  }),
+};
+type UiProgress = z.infer<
+  (typeof progressSchemas)[keyof typeof progressSchemas]
+>;
+
 /**
  * Own host commands and remote requests, borrowing AdbProvider's serialized
  * admission. The instrumentation process belongs to the operator.
@@ -641,6 +655,7 @@ export class AdbUiRunner {
         const signal = AbortSignal.timeout(CLEANUP_MS);
         for (;;) {
           signal.throwIfAborted();
+          let progress: Result<UiProgress, AnalysisError> | undefined;
           const reply = await this.#send(
             request.binary,
             request.serial,
@@ -655,6 +670,11 @@ export class AdbUiRunner {
             },
             CLEANUP_MS,
             signal,
+            undefined,
+            undefined,
+            (reply) => {
+              progress = this.#observeProgress(request, reply, "cancel");
+            },
           );
           if (reply.instance_id !== request.runner.instance_id)
             throw new Error("Runner identity changed during cancellation");
@@ -682,21 +702,18 @@ export class AdbUiRunner {
             await this.#forget(request, signal);
             break;
           }
-          const result = z
-            .strictObject({
-              state: z.enum(["cancelling", "settled", "missing"]),
-              response: envelope.nullable(),
-            })
-            .parse(reply.result);
+          if (progress === undefined)
+            throw new AnalysisProtocolError(
+              "UI cancellation has no observed progress",
+            );
+          if (!progress.ok) throw progress.error;
+          const result = progress.value;
           if (result.state === "missing" && !request.settled)
             throw new AnalysisProtocolError(
               "Runner has not observed the request; a delayed submission may still arrive",
             );
           if (result.state === "settled" || result.state === "missing") {
             request.settled = true;
-            if (result.response !== null) {
-              this.#rememberCompletion(request, result.response);
-            }
             const completion = request.completion;
             // The originating outcome may already have been returned; it still
             // owns this request's recovery until the request is forgotten.
@@ -782,6 +799,42 @@ export class AdbUiRunner {
     request.completion = completion;
     request.settled = true;
     return completion;
+  }
+
+  /** Own terminal validation before host cleanup can fail or cancel delivery. */
+  #observeProgress(
+    request: RemoteRequest,
+    reply: Reply,
+    phase: keyof typeof progressSchemas,
+  ): Result<UiProgress, AnalysisError> {
+    if (reply.instance_id !== request.runner.instance_id || !reply.ok)
+      return err(
+        new AnalysisProtocolError(
+          reply.error?.reason ?? "UI runner changed while awaiting completion",
+        ),
+      );
+    const parsed = progressSchemas[phase].safeParse(reply.result);
+    if (!parsed.success)
+      return err(
+        new AnalysisProtocolError("Invalid UI runner progress response", {
+          cause: parsed.error,
+        }),
+      );
+    if (
+      (parsed.data.state === "settled" ||
+        (phase === "cancel" &&
+          parsed.data.state === "missing" &&
+          request.settled)) &&
+      parsed.data.response !== null
+    ) {
+      try {
+        this.#rememberCompletion(request, parsed.data.response);
+      } catch (cause) {
+        if (cause instanceof AnalysisError) return err(cause);
+        throw cause;
+      }
+    }
+    return ok(parsed.data);
   }
 
   async #forget(request: RemoteRequest, signal?: AbortSignal): Promise<void> {
@@ -997,6 +1050,8 @@ export class AdbUiRunner {
           signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
         try {
           for (;;) {
+            const polling = owned;
+            let progressResult: Result<UiProgress, AnalysisError> | undefined;
             const status = await this.#send(
               launch,
               serial,
@@ -1011,6 +1066,15 @@ export class AdbUiRunner {
               },
               10000,
               pollSignal,
+              undefined,
+              undefined,
+              (reply) => {
+                progressResult = this.#observeProgress(
+                  polling,
+                  reply,
+                  "status",
+                );
+              },
             );
             if (
               status.instance_id === owned.runner.instance_id &&
@@ -1028,12 +1092,12 @@ export class AdbUiRunner {
                 status.error?.reason ??
                   "UI runner changed while awaiting completion",
               );
-            const progress = z
-              .strictObject({
-                state: z.enum(["running", "settled", "missing"]),
-                response: envelope.nullable(),
-              })
-              .parse(status.result);
+            if (progressResult === undefined)
+              throw new AnalysisProtocolError(
+                "UI status has no observed progress",
+              );
+            if (!progressResult.ok) throw progressResult.error;
+            const progress = progressResult.value;
             if (progress.state === "missing")
               throw new AnalysisProtocolError(
                 "UI runner lost an unacknowledged request",
@@ -1043,10 +1107,11 @@ export class AdbUiRunner {
                 throw new AnalysisProtocolError(
                   "Completed UI request has no result",
                 );
-              const completion = this.#rememberCompletion(
-                owned,
-                progress.response,
-              );
+              const completion = owned.completion;
+              if (completion === undefined)
+                throw new AnalysisProtocolError(
+                  "UI terminal progress has no validated completion",
+                );
               reply = progress.response;
               // Validate the report before acknowledgement/finalization can be
               // interrupted, and retain the parsed facts through that phase.
@@ -1191,6 +1256,16 @@ export class AdbUiRunner {
             recovered_refusal: projectAnalysisError(cause),
           });
         return undefined;
+      }
+      // A validated report replaces only the provisional unknown-outcome
+      // inference. The physical transport failure and cleanup still apply.
+      if (
+        !delivered &&
+        kind === "report" &&
+        failureBeforeUnknownOutcome !== undefined
+      ) {
+        primary = failureBeforeUnknownOutcome;
+        failureBeforeUnknownOutcome = undefined;
       }
       // Recovered UI facts become the same Evidence a successful call returns, so an
       // exported session records the action and its after-state even when
