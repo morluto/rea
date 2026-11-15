@@ -635,6 +635,24 @@ it.skipIf(platform === "win32" || existsSync("/etc/goose/config.yaml"))(
     expect(await userEntry()).toMatchObject({
       envs: { KEEP: "1", REA_ANALYSIS_PROVIDER: "ghidra" },
     });
+
+    // A requested setting over an inherited map keeps the inherited values.
+    await writeFile(
+      team,
+      'extensions:\n  rea:\n    envs:\n      TEAM_SETTING: "1"\n',
+    );
+    await writeFile(row.configPath, `extensions:\n  rea:\n${launcher}`);
+    await expect(
+      configureClientConfiguration(
+        row,
+        { REA_ANALYSIS_PROVIDER: "ghidra" },
+        command,
+      ),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect((await userEntry())?.envs).toEqual({
+      TEAM_SETTING: "1",
+      REA_ANALYSIS_PROVIDER: "ghidra",
+    });
   },
 );
 
