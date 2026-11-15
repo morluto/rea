@@ -19,15 +19,12 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { DebPackagePort } from "../application/deb/DebPackagePort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   DEB_PACKAGE_LIMIT_MAXIMA,
   type InspectDebPackageInput,
 } from "../domain/deb/debPackage.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import {
@@ -97,25 +94,13 @@ const failureForPrimary = (
         ...partialDiagnostics(cause),
       },
     );
-  if (cause instanceof DebPackageFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause, undecodedContent: true, ...partialDiagnostics(cause) },
-        )
-      : new AnalysisInputError(
-          OPERATION,
-          { cause, ...partialDiagnostics(cause) },
-          [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: `Selected Debian package ${input.path}: ${cause.message}`,
-            },
-          ],
-        );
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    input.path,
+    cause,
+    partialDiagnostics(cause),
+  );
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

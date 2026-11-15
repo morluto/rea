@@ -1,3 +1,4 @@
+import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
@@ -9,12 +10,14 @@ import { ParseFailureError } from "./parseFailure.js";
  *
  * Malformed and truncated bytes are an invalid `path`; unsupported bytes are
  * an unsupported target. A `limit` and any other cause return `undefined`:
- * a limit's recovery names a budget only its producer knows.
+ * a limit's recovery names a budget only its producer knows. A producer that
+ * retains a partial observation passes it as `diagnostics`.
  */
 export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
+  extra: Pick<AnalysisErrorOptions, "diagnostics"> = {},
 ): AnalysisInputError | AnalysisUnsupportedTargetError | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
@@ -26,11 +29,11 @@ export const parseFailureAnalysisError = (
         operation,
         path,
         failure.detail,
-        { cause, undecodedContent: failure.undecodedContent },
+        { cause, undecodedContent: failure.undecodedContent, ...extra },
       );
     case "malformed":
     case "truncated":
-      return new AnalysisInputError(operation, { cause }, [
+      return new AnalysisInputError(operation, { cause, ...extra }, [
         {
           path: ["path"],
           reason: "invalid_format",

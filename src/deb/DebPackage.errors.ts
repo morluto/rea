@@ -1,4 +1,3 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import type {
   DEB_PACKAGE_LIMIT_MAXIMA,
@@ -26,15 +25,18 @@ export class DebPackageFormatFailure extends ParseFailureError<
 }
 
 /** Resource boundary exceeded while inventorying members or expanding a tar. */
-export class DebPackageCapacityFailure extends ArtifactReaderFailure {
+export class DebPackageCapacityFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly resource: keyof typeof DEB_PACKAGE_LIMIT_MAXIMA,
     readonly maximum: number,
     message: string,
     readonly partial?: DebPackage,
   ) {
-    super("limit", message, {
-      boundary: resource === "max_file_bytes" ? "file-size" : "capacity",
+    super({
+      kind: "limit",
+      format: "deb",
+      detail: message,
+      limit: { name: resource, maximum },
     });
     this.name = "DebPackageCapacityFailure";
   }
