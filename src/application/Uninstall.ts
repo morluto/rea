@@ -520,6 +520,65 @@ export const systemUninstallHost = (
   const configurationOperations = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
   const preflightOwnedClients = new WeakSet<UninstallClient>();
+  // REA's registration that only read-only lower layers define: uninstall
+  // cannot remove it, so it is reported instead of being treated as absent.
+  const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
+  /** The effective REA entry across the read-only lower layers alone. */
+  const lowerLayerRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+  ): Promise<
+    | { readonly kind: "item"; readonly item: UninstallItem }
+    | { readonly kind: "entry"; readonly entry: unknown }
+  > => {
+    const lowerLayers: ClientConfigurationSource[] = [];
+    for (const configPath of client.configPaths ?? []) {
+      if (configPath === client.configPath) continue;
+      const layer = await readClientConfiguration(
+        { ...client, configPath },
+        fileSystem,
+        resources,
+        ownershipEstablished,
+        "read_only",
+      );
+      if (layer.kind === "item") {
+        if (layer.item.status !== "skipped") return layer;
+        continue;
+      }
+      lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
+    }
+    return {
+      kind: "entry",
+      entry:
+        effectiveClientConfiguration(lowerLayers)?.servers[
+          PRODUCT_IDENTITY.mcpServerKey
+        ],
+    };
+  };
+  /** Record an enabled REA entry the user layer does not override. */
+  const retainLowerOnlyRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+  ): Promise<void> => {
+    if (client.readOnlyLowerLayers !== true) return;
+    const lower = await lowerLayerRegistration(client, ownershipEstablished);
+    if (lower.kind === "item") {
+      retainedLowerOnly.set(client, lower.item);
+      return;
+    }
+    if (
+      enabledRegistration(lower.entry) &&
+      clientRegistrationOwnership(lower.entry, client) === "owned"
+    )
+      retainedLowerOnly.set(
+        client,
+        item(
+          client.name,
+          "failed",
+          "REA's enabled registration is defined only in a read-only configuration layer REA does not change, so it stays in effect after uninstall. Remove it with that layer's owner.",
+        ),
+      );
+  };
   // Set with the client list: the package view that redirects this
   // process's AppData writes, if any.
   let redirection: MsixPackageView | undefined;
@@ -608,8 +667,12 @@ export const systemUninstallHost = (
           resources,
           ownershipEstablished,
         );
-        if (read.kind === "item")
-          return read.item.status === "failed" ? read.item : undefined;
+        if (read.kind === "item") {
+          if (read.item.status === "failed") return read.item;
+          if (read.item.status === "skipped")
+            await retainLowerOnlyRegistration(client, ownershipEstablished);
+          return undefined;
+        }
         const removal = clientRegistrationRemoval(
           read.parsed,
           read.original,
@@ -617,6 +680,8 @@ export const systemUninstallHost = (
         );
         if (!removal.ok)
           return item(client.name, "failed", removal.error.detail);
+        if (!Object.hasOwn(read.parsed.servers, PRODUCT_IDENTITY.mcpServerKey))
+          await retainLowerOnlyRegistration(client, ownershipEstablished);
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
         // not just the REA row: unrelated servers may otherwise become active.
@@ -725,35 +790,12 @@ export const systemUninstallHost = (
         // still define an entry that is not disabled, removal would leave it
         // (or expose it) in effect, so nothing changes.
         if (client.readOnlyLowerLayers === true && removal.value.removeNative) {
-          const lowerLayers: ClientConfigurationSource[] = [];
-          for (const configPath of client.configPaths ?? []) {
-            if (configPath === client.configPath) continue;
-            const layer = await readClientConfiguration(
-              { ...client, configPath },
-              fileSystem,
-              resources,
-              ownershipEstablished,
-              "read_only",
-            );
-            if (layer.kind === "item") {
-              if (layer.item.status !== "skipped") return layer.item;
-              continue;
-            }
-            lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
-          }
-          const remaining =
-            effectiveClientConfiguration(lowerLayers)?.servers[
-              PRODUCT_IDENTITY.mcpServerKey
-            ];
-          if (
-            remaining !== undefined &&
-            !(
-              typeof remaining === "object" &&
-              remaining !== null &&
-              "enabled" in remaining &&
-              remaining.enabled === false
-            )
-          )
+          const lower = await lowerLayerRegistration(
+            client,
+            ownershipEstablished,
+          );
+          if (lower.kind === "item") return lower.item;
+          if (enabledRegistration(lower.entry))
             return item(
               client.name,
               "failed",
@@ -774,14 +816,16 @@ export const systemUninstallHost = (
           : item(client.name, "failed", blocker);
       }),
     removeClient: (client) =>
-      configurationOperations.run(() =>
-        removeClient(
-          client,
-          fileSystem,
-          resources,
-          () => clientWriteBlocker(client),
-          preflightOwnedClients.has(client),
-        ),
+      configurationOperations.run(
+        async () =>
+          retainedLowerOnly.get(client) ??
+          removeClient(
+            client,
+            fileSystem,
+            resources,
+            () => clientWriteBlocker(client),
+            preflightOwnedClients.has(client),
+          ),
       ),
     inspectSkill: async () => {
       const selection = skillDestinationSelection(
@@ -850,6 +894,16 @@ const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
         ]),
   ]),
 ];
+
+/** Whether a client loads this entry: present and not disabled. */
+const enabledRegistration = (entry: unknown): boolean =>
+  entry !== undefined &&
+  !(
+    typeof entry === "object" &&
+    entry !== null &&
+    "enabled" in entry &&
+    entry.enabled === false
+  );
 
 /** Whether removal would change this configuration. */
 const registrationPresent = (parsed: ClientConfigurationDocument): boolean => {
