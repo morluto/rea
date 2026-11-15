@@ -15,8 +15,10 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
+  readArtifactFileChunks,
+  abortIfNeeded,
+  artifactFileAdmissionFailure,
 } from "../../resources/index.js";
-import { readArtifactFileChunks } from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
@@ -26,13 +28,11 @@ import {
   type CArchiveEntry,
 } from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
-import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
   reconstructedPycHeader,
   isHeaderlessPythonCode,
   type CArchiveBytecodeHeader,
 } from "./PythonBytecode.js";
-import { abortIfNeeded } from "../../resources/index.js";
 
 // Each outer-compressed image retains one inode and its identity until close.
 // This is a per-reader filesystem capacity budget, independent of byte budgets.

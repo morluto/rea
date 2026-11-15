@@ -1,7 +1,6 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
-import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
 import {
   assertArtifactSelectedSource,
   resolveArtifactSourcePath,
@@ -11,6 +10,20 @@ import {
   openRootArtifact,
   hashStableRootArtifactHandle,
   abortIfNeeded,
+  withArtifactRegularFile,
+  type ArtifactCleanupAttempt,
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  SafeOutputTreeDestinationRefusal,
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+  assertArtifactFileSelectedSource,
 } from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
@@ -22,26 +35,9 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import {
-  withArtifactRegularFile,
-  type ArtifactCleanupAttempt,
-  type ArtifactResourceOwner,
-  type ArtifactResourceScope,
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-} from "../../resources/index.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";
-import {
-  SafeOutputTreeDestinationRefusal,
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-  SafeOutputTree,
-  SafeOutputTreeCreationFailure,
-} from "../../resources/index.js";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";

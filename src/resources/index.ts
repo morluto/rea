@@ -8,6 +8,11 @@ export {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
+export { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
+export {
+  ArtifactFileSource,
+  assertArtifactFileSelectedSource,
+} from "./ArtifactFileSource.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
