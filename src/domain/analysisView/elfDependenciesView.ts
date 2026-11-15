@@ -231,10 +231,7 @@ export const projectElfDependenciesView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(
-        report.needed.length,
-        report.needed.length,
-      ),
+      coverage: completeWithinViewCoverage(report.needed.length),
     });
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
