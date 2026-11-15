@@ -241,7 +241,13 @@ export const classifyProviderOutcome = (
             providerId,
             operation,
             examinedOutcome(outcome),
-            { ...details, ...options },
+            {
+              ...details,
+              ...options,
+              // Provider facts join the context's diagnostics; neither
+              // replaces the other.
+              diagnostics: { ...details.diagnostics, ...options?.diagnostics },
+            },
           ),
       );
   }

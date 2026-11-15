@@ -137,6 +137,31 @@ describe("an outcome the provider dialect does not recognise", () => {
     expect(failure.diagnostics).toMatchObject({ stop_requested: true });
   });
 
+  it("adds the provider's diagnostics to the context's diagnostics", () => {
+    const failure = classifyProviderOutcome(
+      {
+        kind: "exited",
+        cause: new Error("exited with 3"),
+        message: "exited with 3",
+        output: { snapshot, truncated: false },
+        exitCode: 3,
+        signal: null,
+        stopRequested: false,
+      },
+      {
+        ...context((_outcome, _details, unclassified) =>
+          unclassified("example", { diagnostics: { phase: "worker" } }),
+        ),
+        details: { diagnostics: { receipt: "finalization failed" } },
+      },
+    );
+    expect(failure.diagnostics).toMatchObject({
+      receipt: "finalization failed",
+      phase: "worker",
+      failure_kind: "exited",
+    });
+  });
+
   it("does not report an outcome the dialect classified", () => {
     const failure = classifyProviderOutcome(
       {
