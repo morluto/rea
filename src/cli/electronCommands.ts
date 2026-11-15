@@ -6,30 +6,28 @@ import { Cli, z } from "incur";
 import { nulFreeStringSchema } from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
-import {
-  inspectElectronPageInputSchema,
-  listElectronTargetsInputSchema,
-} from "../domain/javascript/electronObservation.js";
+
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   registerContractCommand,
   registerContractDocumentCommand,
+  type ContractCommandContext,
 } from "./contractCommand.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { Result } from "../domain/result.js";
 import type { CliInstance } from "./types.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { cliDomainInput } from "./domainInput.js";
+
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
-import {
-  electronPageInspectionOptions,
-  selectedCommandTimeout,
-} from "../cliObservationOptions.js";
+
 import {
   javaScriptApplicationCliProjection,
   runJavaScriptApplicationCommand,
@@ -211,45 +209,27 @@ const registerElectronTargetList = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.listElectronTargets, {
-    description:
-      "List local file pages exposed by the selected Electron CDP endpoint",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listElectronTargetsInputSchema.shape.cdp_endpoint,
-      ).describe("Literal-loopback Electron CDP endpoint"),
+  const contract = contractNamed(
+    ELECTRON_TOOL_CONTRACTS,
+    "list_electron_targets",
+  );
+  registerContractCommand(
+    cli as CliInstance,
+    logger,
+    contract,
+    {
+      command: CLI_COMMANDS.listElectronTargets,
+      description:
+        "List local file pages exposed by the selected Electron CDP endpoint",
+      positionals: ["cdp_endpoint"],
+      fields: { cdp_endpoint: electronEndpoint },
+    },
+    observeElectron(environment, contract, async (provider, input, signal) => {
+      const { listElectronTargets } =
+        await import("../application/javascript/ElectronObservationService.js");
+      return listElectronTargets(provider, input, { signal });
     }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "list-electron-targets", async () => {
-          const provider =
-            await createCliElectronObservationProvider(environment);
-          const input = {
-            cdp_endpoint: args.endpoint,
-          };
-          const parsed = listElectronTargetsInputSchema.safeParse(input);
-          if (!parsed.success)
-            return inputError(
-              "list_electron_targets",
-              parsed.error.issues,
-              input,
-            );
-          const { listElectronTargets } =
-            await import("../application/javascript/ElectronObservationService.js");
-          return await finishAnalysisCommand(
-            () => listElectronTargets(provider, parsed.data, { signal }),
-            {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            provider.identity().id,
-            "list_electron_targets",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+  );
 };
 
 const registerElectronPageInspection = (
@@ -257,54 +237,75 @@ const registerElectronPageInspection = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectElectronPage, {
-    description: "Passively inspect one Electron file page",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listElectronTargetsInputSchema.shape.cdp_endpoint,
-      ).describe("Literal-loopback Electron CDP endpoint"),
-      targetId: z
-        .string()
-        .min(1)
-        .describe("Target ID from list-electron-targets"),
+  const contract = contractNamed(
+    ELECTRON_TOOL_CONTRACTS,
+    "inspect_electron_page",
+  );
+  registerContractCommand(
+    cli as CliInstance,
+    logger,
+    contract,
+    {
+      command: CLI_COMMANDS.inspectElectronPage,
+      description: "Passively inspect one Electron file page",
+      positionals: ["cdp_endpoint", "target_id"],
+      fields: {
+        cdp_endpoint: electronEndpoint,
+        target_id: { description: "Target ID from list-electron-targets" },
+        observation_ms: {
+          description: "Observation duration in milliseconds",
+        },
+        include_script_sources: {
+          description: "Include JavaScript source text",
+        },
+      },
+    },
+    observeElectron(environment, contract, async (provider, input, signal) => {
+      const { inspectElectronPage } =
+        await import("../application/javascript/ElectronObservationService.js");
+      return inspectElectronPage(provider, input, { signal });
     }),
-    options: electronPageInspectionOptions,
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "inspect-electron-page", async () => {
-          const provider =
-            await createCliElectronObservationProvider(environment);
-          const input = {
-            cdp_endpoint: args.endpoint,
-            target_id: args.targetId,
-            observation_ms: options.observationMs,
-            include_script_sources: options.includeScriptSources,
-            ...selectedCommandTimeout(options.commandTimeoutMs),
-          };
-          const parsed = inspectElectronPageInputSchema.safeParse(input);
-          if (!parsed.success)
-            return inputError(
-              "inspect_electron_page",
-              parsed.error.issues,
-              input,
-            );
-          const { inspectElectronPage } =
-            await import("../application/javascript/ElectronObservationService.js");
-          return await finishAnalysisCommand(
-            () => inspectElectronPage(provider, parsed.data, { signal }),
-            {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            provider.identity().id,
-            "inspect_electron_page",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+  );
 };
+
+const electronEndpoint = {
+  name: "endpoint",
+  description: "Literal-loopback Electron CDP endpoint",
+};
+
+/**
+ * Admit the contract input, then observe through a disposable Electron
+ * provider whose close the command awaits.
+ */
+const observeElectron =
+  <Schema extends z.ZodType>(
+    environment: Readonly<Record<string, string | undefined>>,
+    contract: { readonly name: string; readonly inputSchema: Schema },
+    run: (
+      provider: Awaited<
+        ReturnType<typeof createCliElectronObservationProvider>
+      >,
+      input: z.output<Schema>,
+      signal: AbortSignal,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ) =>
+  async (input: unknown, { signal }: ContractCommandContext) => {
+    const parsed = contract.inputSchema.safeParse(input);
+    if (!parsed.success)
+      return inputError(contract.name, parsed.error.issues, input);
+    const provider = await createCliElectronObservationProvider(environment);
+    return finishAnalysisCommand(
+      () => run(provider, parsed.data, signal),
+      {
+        close: async () => {
+          await provider.close?.();
+        },
+      },
+      provider.identity().id,
+      contract.name,
+      signal,
+    ).then(projectCliAnalysisResult);
+  };
 
 const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
