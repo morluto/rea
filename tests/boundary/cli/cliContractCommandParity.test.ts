@@ -305,7 +305,7 @@ const scenarioExample = captureDiff.examples[0]!.input as {
 const ROUTE_ARGV: ReadonlyMap<
   unknown,
   Readonly<Record<string, unknown>>
-> = new Map([
+> = new Map<unknown, Readonly<Record<string, unknown>>>([
   [
     contractInputBranch(captureDiff, "before").inputSchema,
     {

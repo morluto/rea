@@ -12,6 +12,7 @@ import {
   contractInputBranch,
   registerContractCommand,
   registerRoutedCommand,
+  type ContractCommandContext,
 } from "./contractCommand.js";
 import type { CliInstance } from "./types.js";
 import {
@@ -124,7 +125,7 @@ const registerCaptureDiff = (
           },
         },
       },
-      compareCaptures(scenarios),
+      compareCaptures,
       {
         takes: async (values) =>
           isScenarioCaptureDocument(values.beforeJson) ||
@@ -140,29 +141,34 @@ const registerCaptureDiff = (
         jsonInputs: { before: beforeJson, after: afterJson },
         fields: { before, after },
       },
-      compareCaptures(passive),
+      compareCaptures,
       { requirement: "passive page captures" },
     ),
   ]);
 };
 
-/** Compare the captures that one input shape of the contract admits. */
-const compareCaptures =
-  (branch: { readonly name: string; readonly inputSchema: z.ZodType }) =>
-  async (input: unknown): Promise<unknown> => {
-    const parsed = branch.inputSchema.safeParse(input);
-    if (!parsed.success)
-      return browserCliError(
-        analysisInputErrorFromIssues(branch.name, parsed.error.issues, input, {
-          cause: parsed.error,
-        }),
-      );
-    const result = await compareWebCaptureEvidence(
-      new CdpBrowserProvider(),
-      parsed.data as BrowserCaptureComparisonInput,
-    );
-    return result.ok ? result.value : browserCliError(result.error);
-  };
+/**
+ * Compare the captures one input shape admits. Admission parsed the decoded
+ * captures with that shape, so the handler reuses its parse.
+ */
+const compareCaptures = async (
+  _input: unknown,
+  {
+    operation,
+    parsed,
+  }: ContractCommandContext<
+    Readonly<Record<string, unknown>>,
+    BrowserCaptureComparisonInput
+  >,
+): Promise<unknown> => {
+  if (parsed === undefined)
+    throw new Error(`${operation} admits its decoded captures`);
+  const result = await compareWebCaptureEvidence(
+    new CdpBrowserProvider(),
+    parsed,
+  );
+  return result.ok ? result.value : browserCliError(result.error);
+};
 
 const registerScreenshotDiff = (
   cli: ReturnType<typeof Cli.create>,
