@@ -380,7 +380,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "inspect-api-contract",
   "inspect-web-network-capture",
   "inspect-with-objdump",
-  "recover-javascript-sources",
   "trace-web-source-location",
 ];
 
