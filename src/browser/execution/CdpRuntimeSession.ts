@@ -13,7 +13,11 @@ import {
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
 import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
 import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
-import type { CdpSendParams, CdpSendResult } from "../protocol/CdpCommands.js";
+import type {
+  CdpDomainWith,
+  CdpSendParams,
+  CdpSendResult,
+} from "../protocol/CdpCommands.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -31,6 +35,10 @@ import {
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
 
+/** A domain this session can both enable and, on cleanup, disable. */
+export type CdpRuntimeDomain = CdpDomainWith<"enable"> &
+  CdpDomainWith<"disable">;
+
 type Scope = {
   readonly cdp_endpoint: string;
   readonly target_id: string;
@@ -40,7 +48,7 @@ type Scope = {
 
 /** Owned transport and instrumentation; the selected browser/page remain externally owned. */
 export class CdpRuntimeSession {
-  readonly enabledDomains: string[] = [];
+  readonly enabledDomains: CdpRuntimeDomain[] = [];
   preciseCoverageMayBeActive = false;
   #completion: AbortController | undefined;
   #completionTimer: NodeJS.Timeout | undefined;
@@ -194,9 +202,9 @@ export class CdpRuntimeSession {
   }
 
   /** Register cleanup before sending: cancellation can occur after producer acceptance. */
-  async enable(domain: string): Promise<void> {
+  async enable(domain: CdpRuntimeDomain): Promise<void> {
     this.enabledDomains.push(domain);
-    await this.command(`${domain}.enable`);
+    await this.command(`${domain}.enable` as const);
   }
 
   /** Check document identity before joining any live node or final coverage evidence. */
