@@ -93,7 +93,7 @@ describe("browser comparison JSON file inputs", () => {
           operation: "compare_web_screenshots",
           issues: [
             {
-              path: ["before"],
+              path: ["beforeJson"],
               message: "Screenshot artifact digest or size mismatch",
             },
           ],

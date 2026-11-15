@@ -69,6 +69,8 @@ const invalidInputs = [
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Builder admission names the field by its CLI key.
+    cliPath: ["endpoint"],
     schema: analyzeWebBundleInputSchema,
   },
   {
@@ -308,11 +310,11 @@ describe("browser correction facts", () => {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
             expect.objectContaining({
-              path: ["before", "inspection"],
+              path: ["beforeJson", "inspection"],
               reason: "missing_argument",
             }),
             expect.objectContaining({
-              path: ["after", "inspection"],
+              path: ["afterJson", "inspection"],
               reason: "missing_argument",
             }),
           ]),
@@ -340,7 +342,7 @@ describe("browser correction facts", () => {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
             expect.objectContaining({
-              path: ["before_scenario", "browser"],
+              path: ["beforeJson", "browser"],
               reason: "missing_argument",
             }),
           ]),
