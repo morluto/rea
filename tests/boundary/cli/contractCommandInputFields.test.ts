@@ -143,45 +143,69 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
     sync: false,
   });
   const received: unknown[] = [];
+  // Counts evaluations of the whole contract schema; argv option parsing
+  // checks field schemas only.
+  let wholeParses = 0;
+  const inputSchema = z
+    .object({
+      name: z.string(),
+      limit: z.number().int().default(5),
+    })
+    .refine(
+      ({ name }) => {
+        wholeParses += 1;
+        return name !== "blocked";
+      },
+      { message: "This name is reserved", path: ["name"] },
+    );
   registerContractCommand(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
-    {
-      name: "admitted_probe",
-      inputSchema: z
-        .object({
-          name: z.string(),
-          limit: z.number().int().default(5),
-        })
-        .refine(({ name }) => name !== "blocked", {
-          message: "This name is reserved",
-          path: ["name"],
-        }),
-    },
+    { name: "admitted_probe", inputSchema },
     { command: "admitted-probe", description: "Admitted probe" },
     async (_input, context) => {
       const admitted = admittedContractInput(context);
+      // A second read reuses the first parse.
+      expect(admittedContractInput(context)).toBe(admitted);
       received.push(admitted.ok ? admitted.value : "refused");
       return admitted.ok ? {} : { refused: admitted.error.issues.length };
     },
   );
-  const registered = Cli.toCommands.get(cli)?.get("admitted-probe");
-  if (registered === undefined) throw new Error("admitted-probe is missing");
-  const options = (value: unknown) =>
-    (
-      Reflect.get(registered, "options") as { parse(v: unknown): unknown }
-    ).parse(value);
-  const execute = Reflect.get(registered, "run") as (
-    value: unknown,
-  ) => Promise<unknown>;
+  registerContractCommand(
+    cli as unknown as CliInstance,
+    pino({ enabled: false }),
+    { name: "unread_probe", inputSchema },
+    { command: "unread-probe", description: "Unread probe" },
+    // Like inspectWithService, this handler leaves parsing to its service.
+    async () => ({}),
+  );
+  const command = (name: string) => {
+    const registered = Cli.toCommands.get(cli)?.get(name);
+    if (registered === undefined) throw new Error(`${name} is missing`);
+    const options = (value: unknown) =>
+      (
+        Reflect.get(registered, "options") as { parse(v: unknown): unknown }
+      ).parse(value);
+    const run = Reflect.get(registered, "run") as (
+      value: unknown,
+    ) => Promise<unknown>;
+    return (value: unknown) => run({ args: {}, options: options(value) });
+  };
+  const admittedProbe = command("admitted-probe");
+  const unreadProbe = command("unread-probe");
   const exitCode = process.exitCode;
   try {
-    await execute({ args: {}, options: options({ name: "ok" }) });
+    await admittedProbe({ name: "ok" });
+    expect(wholeParses).toBe(1);
     // A contract rule over the whole input, checked after argv parsing,
     // reaches the handler as a refusal it reports in its own shape.
-    await expect(
-      execute({ args: {}, options: options({ name: "blocked" }) }),
-    ).resolves.toEqual({ refused: 1 });
+    await expect(admittedProbe({ name: "blocked" })).resolves.toEqual({
+      refused: 1,
+    });
+    expect(wholeParses).toBe(2);
+    // Admission does not parse for a handler that never reads the parse.
+    await unreadProbe({ name: "ok" });
+    expect(wholeParses).toBe(2);
   } finally {
     process.exitCode = exitCode;
   }

@@ -102,11 +102,14 @@ export interface ContractCommandContext<
    */
   readonly parsed: Parsed | undefined;
   /**
-   * The contract's refusal of an argv-supplied whole input, which the
-   * handler reports in its own workflow's shape; undefined when the input
-   * conforms or was not parsed whole.
+   * The contract's parse of an argv-supplied whole input, or its refusal,
+   * which the handler reports in its own workflow's shape. It parses on
+   * first call and reuses the result; undefined when argv does not supply
+   * the whole input. Read it through `admittedContractInput`.
    */
-  readonly refusal: AnalysisInputError | undefined;
+  readonly parseWholeInput:
+    | (() => Result<Parsed, AnalysisInputError>)
+    | undefined;
   /** What each `jsonInputChecks` check admitted, by contract field. */
   readonly checked: Checked;
   /** The projection's CLI-only options, whose effect the handler owns. */
@@ -121,14 +124,16 @@ export interface ContractCommandContext<
 export const admittedContractInput = <Parsed>(context: {
   readonly operation: string;
   readonly parsed: Parsed | undefined;
-  readonly refusal: AnalysisInputError | undefined;
+  readonly parseWholeInput:
+    | (() => Result<Parsed, AnalysisInputError>)
+    | undefined;
 }): Result<Parsed, AnalysisInputError> => {
-  if (context.refusal !== undefined) return err(context.refusal);
-  if (context.parsed === undefined)
+  if (context.parsed !== undefined) return ok(context.parsed);
+  if (context.parseWholeInput === undefined)
     throw invariantViolation(
       `${context.operation} does not admit its whole contract input on the CLI`,
     );
-  return ok(context.parsed);
+  return context.parseWholeInput();
 };
 
 /** The Evidence targets one invocation selected. */
@@ -655,7 +660,12 @@ export const registerContractCommand = <
                 parsed: admitted.value.parsed as
                   | z.output<Contract["inputSchema"]>
                   | undefined,
-                refusal: admitted.value.refusal,
+                parseWholeInput: admitted.value.parseWholeInput as
+                  | (() => Result<
+                      z.output<Contract["inputSchema"]>,
+                      AnalysisInputError
+                    >)
+                  | undefined,
                 checked: read.checked as CliCheckedJsonInputs<Checks>,
                 cliOptions: selected.cliOptionValues(
                   values,
@@ -933,7 +943,7 @@ export const registerRoutedCommand = (
               opening: opening.value,
               delivery: admitted.value.delivery,
               parsed: admitted.value.parsed,
-              refusal: admitted.value.refusal,
+              parseWholeInput: admitted.value.parseWholeInput,
               checked: { ...shared.checked, ...read.checked },
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),

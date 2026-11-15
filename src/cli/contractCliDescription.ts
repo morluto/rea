@@ -607,11 +607,14 @@ export interface ContractCliAdmission {
    */
   readonly parsed: unknown;
   /**
-   * The contract's refusal of an argv-supplied whole input. Admission leaves
-   * it to the handler, whose workflow owns how a nonconforming input is
-   * reported; undefined when the input conforms or was not parsed whole.
+   * The contract's parse of an argv-supplied whole input, or its refusal,
+   * computed on first call and then reused. Admission leaves a refusal to
+   * the handler, whose workflow owns how a nonconforming input is reported;
+   * undefined when argv does not supply the whole input.
    */
-  readonly refusal: AnalysisInputError | undefined;
+  readonly parseWholeInput:
+    | (() => Result<unknown, AnalysisInputError>)
+    | undefined;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
@@ -2619,36 +2622,48 @@ const admitInvocation = (
     : undefined;
   let view: object | undefined;
   let parsed: unknown;
-  let refusal: AnalysisInputError | undefined;
+  let parseWholeInput: ContractCliAdmission["parseWholeInput"];
   const runtimeJson = parameters.some(
     ({ runtimeJson }) => runtimeJson !== undefined,
   );
-  if (wholeInput || runtimeJson) {
-    const selected =
-      viewDelivery === undefined ? undefined : decoded[rename("view")];
-    const candidate = {
-      ...input,
-      ...(detail === undefined || !Object.hasOwn(shape, "detail")
-        ? {}
-        : { detail }),
-      ...(selected === undefined ? {} : { view: selected }),
-    };
+  const selected =
+    viewDelivery === undefined ? undefined : decoded[rename("view")];
+  const candidate = {
+    ...input,
+    ...(detail === undefined || !Object.hasOwn(shape, "detail")
+      ? {}
+      : { detail }),
+    ...(selected === undefined ? {} : { view: selected }),
+  };
+  const parseCandidate = (): Result<unknown, AnalysisInputError> => {
     const admitted = contract.inputSchema.safeParse(candidate);
-    if (admitted.success) {
-      parsed = admitted.data;
+    return admitted.success
+      ? ok(admitted.data)
+      : err(
+          analysisInputErrorFromIssues(
+            contract.name,
+            admitted.error.issues,
+            candidate,
+          ),
+        );
+  };
+  if (runtimeJson || (wholeInput && viewDelivery !== undefined)) {
+    // The delivery needs the admitted view, and run-time JSON is refused
+    // here, so these parse now.
+    const admitted = parseCandidate();
+    if (admitted.ok) {
+      parsed = admitted.value;
       if (viewDelivery !== undefined)
-        ({ view } = admitted.data as { readonly view?: object });
-    } else {
-      refusal = analysisInputErrorFromIssues(
-        contract.name,
-        admitted.error.issues,
-        candidate,
-      );
-      if (runtimeJson) return err(refusal);
-    }
+        ({ view } = admitted.value as { readonly view?: object });
+    } else if (runtimeJson) return admitted;
+    else parseWholeInput = () => admitted;
+  } else if (wholeInput) {
+    // Only a handler that reads the parse pays for it, once.
+    let memo: Result<unknown, AnalysisInputError> | undefined;
+    parseWholeInput = () => (memo ??= parseCandidate());
   }
   if (!evidenceDelivery)
-    return ok({ input, parsed, refusal, delivery: undefined });
+    return ok({ input, parsed, parseWholeInput, delivery: undefined });
   const delivery: CliEvidenceDeliveryChoice = {
     detail: detail ?? (view === undefined ? "complete" : "summary"),
     evidenceOutput: decoded.evidence_output as string | undefined,
@@ -2665,7 +2680,7 @@ const admitInvocation = (
     operation: contract.name,
   });
   return refused === undefined
-    ? ok({ input, parsed, refusal, delivery })
+    ? ok({ input, parsed, parseWholeInput, delivery })
     : err(refused);
 };
 
