@@ -40,6 +40,20 @@ it("honours an exemption marker that gives a reason", () => {
   expect(
     optionalFactDefaultCount("// e.g. report.count ?? 0 hides unknown"),
   ).toBe(0);
+  // A leading block comment does not hide live code after it.
+  expect(
+    optionalFactDefaultCount("/* paging note */ const n = report.count ?? 0;"),
+  ).toBe(1);
+  // A default inside a block comment without leading stars is not code.
+  expect(
+    optionalFactDefaultCount(
+      "/*\n  report.count ?? 0 would hide unknown\n*/\nconst url = 'https://x';",
+    ),
+  ).toBe(0);
+  // `//` inside a string is not a comment.
+  expect(
+    optionalFactDefaultCount("const u = 'https://x'; const n = r.count ?? 0;"),
+  ).toBe(1);
   // A bare marker, or one two lines above, does not exempt the default.
   expect(
     optionalFactDefaultCount(
