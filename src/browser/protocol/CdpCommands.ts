@@ -2,6 +2,7 @@ import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
+import { cdpResourceColumnSchema } from "../../domain/cdpObservationSchemas.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -21,6 +22,22 @@ export type CdpProtocolMethod = Parameters<CDPSession["send"]>[0];
 const acknowledgement = z.object({});
 
 const coverageOffset = z.int().min(0);
+const nodeId = z.int().min(1);
+
+/** Native listener descriptors; live remote handles are not read. */
+const eventListenersReply = z.object({
+  listeners: z.array(
+    z.object({
+      type: z.string(),
+      useCapture: z.boolean(),
+      passive: z.boolean(),
+      once: z.boolean(),
+      scriptId: z.string(),
+      lineNumber: z.int().min(0),
+      columnNumber: cdpResourceColumnSchema,
+    }),
+  ),
+});
 
 /** Precise coverage keeps every nested producer range; counts are not flattened. */
 const preciseCoverageReply = z.object({
@@ -51,6 +68,22 @@ const preciseCoverageReply = z.object({
  * that command's raw reply; consumers receive its parsed output.
  */
 const CDP_COMMAND_REPLIES = {
+  "DOM.describeNode": z.object({
+    node: z.object({
+      backendNodeId: nodeId,
+      nodeName: z.string(),
+      nodeType: z.int(),
+      // CDP omits isSVG for non-SVG nodes.
+      isSVG: z.boolean().optional(),
+    }),
+  }),
+  "DOM.getDocument": z.object({ root: z.object({ nodeId }) }),
+  // Zero is the protocol's "no match".
+  "DOM.querySelector": z.object({ nodeId: z.int().min(0) }),
+  "DOM.resolveNode": z.object({
+    object: z.object({ objectId: z.string().min(1) }),
+  }),
+  "DOMDebugger.getEventListeners": eventListenersReply,
   "Debugger.enable": acknowledgement,
   "Debugger.evaluateOnCallFrame": z.object({
     result: z.looseObject({}),
@@ -59,6 +92,12 @@ const CDP_COMMAND_REPLIES = {
   "Debugger.getScriptSource": z.object({ scriptSource: z.string() }),
   "Debugger.resume": acknowledgement,
   "Debugger.setBreakpointByUrl": z.object({ breakpointId: z.string() }),
+  "Emulation.clearDeviceMetricsOverride": acknowledgement,
+  "Emulation.setDeviceMetricsOverride": acknowledgement,
+  "Emulation.setEmulatedMedia": acknowledgement,
+  "Emulation.setFocusEmulationEnabled": acknowledgement,
+  "Emulation.setLocaleOverride": acknowledgement,
+  "Emulation.setTimezoneOverride": acknowledgement,
   "Network.enable": acknowledgement,
   "Page.addScriptToEvaluateOnNewDocument": z.object({
     identifier: z.string(),
@@ -70,6 +109,9 @@ const CDP_COMMAND_REPLIES = {
   "Page.setLifecycleEventsEnabled": acknowledgement,
   "Page.stopLoading": acknowledgement,
   "Performance.enable": acknowledgement,
+  "Performance.getMetrics": z.object({
+    metrics: z.array(z.object({ name: z.string(), value: z.number() })),
+  }),
   "Profiler.startPreciseCoverage": z.object({ timestamp: z.number().min(0) }),
   "Profiler.stopPreciseCoverage": acknowledgement,
   "Profiler.takePreciseCoverage": preciseCoverageReply,
