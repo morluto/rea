@@ -58,6 +58,21 @@ export class VerifierFixture {
     );
   }
 
+  /**
+   * Allocate a directory a verifier keeps for the artifacts a reviewer reads
+   * after the run: receipts, transcripts, client profiles and Evidence. It is
+   * never removed. Allocation names it on stderr, so a run that fails before
+   * writing its receipt still reports where its artifacts are.
+   */
+  static async keepArtifacts({ prefix, parent } = {}) {
+    const { path } = await createCanonicalTemporaryDirectory(
+      prefix ?? "rea-verifier-artifacts-",
+      ...(parent === undefined ? [] : [parent]),
+    );
+    process.stderr.write(`Keeping verifier artifacts at ${path}\n`);
+    return Object.freeze({ path, kept: true });
+  }
+
   get path() {
     return this.#root.path;
   }
