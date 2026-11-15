@@ -881,6 +881,26 @@ describe("execFileOutput cancellation provenance", () => {
       expect(failure.cause).toBe(reason);
     },
   );
+  it.each([null, "caller stopped", new Error("caller stopped")] as const)(
+    "reports execFile's own abort with exact %s reason",
+    async (reason) => {
+      const controller = new AbortController();
+      const execution = execFileOutput(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"],
+        { signal: controller.signal },
+      ).catch((cause: unknown) => cause);
+      controller.abort(reason);
+      const failure: unknown = await execution;
+      expect(failure).toMatchObject({
+        _tag: "ExecFileOutputCancelledError",
+        code: "ABORT_ERR",
+      });
+      if (!(failure instanceof Error))
+        throw new Error("Expected owned cancellation");
+      expect(failure.cause).toBe(reason);
+    },
+  );
   it("keeps a completed command failure when its consumer later aborts", async () => {
     const controller = new AbortController();
     const failure: unknown = await execFileOutput(
