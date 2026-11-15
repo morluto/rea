@@ -101,6 +101,10 @@ const commentEnd = (source, at) => {
 const isMemberAccess = (token) =>
   token?.kind === "punct" && (token.text === "." || token.text === "?.");
 
+const whitespace = /\s+/uy;
+const isWhitespace = (char) =>
+  char === " " || char === "\n" || char === "\t" || /\s/u.test(char);
+
 const wordPatterns = [
   ["id", identifier],
   ["number", number],
@@ -122,10 +126,10 @@ const wordToken = (source, at) => {
 };
 
 /**
- * Splits TypeScript source into code tokens and comments. Template literals
- * are tracked through nested `${…}` substitutions with a brace stack.
+ * Scans source into code tokens and comments. The scanner reads only the last
+ * two tokens, so a caller that needs only comments keeps no more than those.
  */
-export const tokenize = (source) => {
+const scan = (source, keepTokens) => {
   /** @type {import("./source-tokens.d.mts").SourceToken[]} */
   const tokens = [];
   // One entry per open `(`: whether it opens a control head.
@@ -138,8 +142,11 @@ export const tokenize = (source) => {
     const char = source[at];
     const start = at;
     const comment = commentEnd(source, at);
-    if (/\s/u.test(char)) at += 1;
-    else if (comment !== undefined) {
+    if (isWhitespace(char)) {
+      whitespace.lastIndex = at;
+      whitespace.test(source);
+      at = whitespace.lastIndex;
+    } else if (comment !== undefined) {
       at = comment;
       comments.push({ text: source.slice(start, at), end: at });
     } else if (char === "'" || char === '"') {
@@ -183,9 +190,39 @@ export const tokenize = (source) => {
       )
         token.keyword = true;
       tokens.push(token);
+      if (!keepTokens && tokens.length > 64) tokens.splice(0, 62);
       if (token.text === "{") braces.push("block");
       else if (token.text === "}") braces.pop();
     }
   }
   return { tokens, comments };
+};
+
+/**
+ * Splits TypeScript source into code tokens and comments. Template literals
+ * are tracked through nested `${…}` substitutions with a brace stack.
+ */
+export const tokenize = (source) => scan(source, true);
+
+/**
+ * The source with every comment replaced by spaces, keeping newlines, so
+ * offsets and line numbers still match the source. Strings, templates and
+ * regular expressions are kept, so `/*` or `//` inside them is not a comment.
+ * @param {string} source
+ * @param {readonly { text: string, end: number }[]} [comments] the source's
+ *   comments, when the caller has already tokenized it
+ */
+export const blankComments = (
+  source,
+  comments = scan(source, false).comments,
+) => {
+  const parts = [];
+  let last = 0;
+  for (const { text, end } of comments) {
+    parts.push(source.slice(last, end - text.length));
+    parts.push(text.replace(/[^\n]/gu, " "));
+    last = end;
+  }
+  parts.push(source.slice(last));
+  return parts.join("");
 };

@@ -16,6 +16,7 @@ import {
   optionalFactDefaultCount,
 } from "./optional-fact-default-guard.mjs";
 import { unmarkedMatchCount } from "./reason-marker.mjs";
+import { blankComments } from "./source-tokens.mjs";
 import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
@@ -47,20 +48,13 @@ const listFiles = async (dir) => {
   return output;
 };
 
-const stripComments = (content) =>
-  content
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n")
-    .replace(/\/\*[\s\S]*?\*\//gu, "");
-
 const sources = await listFiles(join(root, "src"));
 const files = await Promise.all(
   sources.map(async (path) => {
     const source = await readFile(path, "utf8");
     return {
       path: relative(root, path).split(sep).join("/"),
-      content: stripComments(source),
+      content: blankComments(source),
       source,
     };
   }),
@@ -875,7 +869,7 @@ const verifierScripts = await Promise.all(
     )
     .map(async (path) => ({
       path: `scripts/${path}`,
-      content: stripComments(
+      content: blankComments(
         await readFile(join(root, "scripts", path), "utf8"),
       ),
     })),

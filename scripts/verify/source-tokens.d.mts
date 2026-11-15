@@ -13,6 +13,10 @@ export interface SourceComment {
   readonly text: string;
   readonly end: number;
 }
+export function blankComments(
+  source: string,
+  comments?: readonly SourceComment[],
+): string;
 export function tokenize(source: string): {
   tokens: SourceToken[];
   comments: SourceComment[];
