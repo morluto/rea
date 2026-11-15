@@ -30,13 +30,6 @@
   "src/browser/CdpPageCaptureWorkers.ts": {
     "Target.getTargets": 1
   },
-  "src/browser/CdpScreenshot.ts": {
-    "Page.getLayoutMetrics": 1,
-    "Page.captureScreenshot": 1
-  },
-  "src/browser/CdpWebMcpDiscovery.ts": {
-    "WebMCP.enable": 1
-  },
   "src/browser/PlaywrightScenarioServiceWorkers.ts": {
     "Runtime.evaluate": 1
   },
