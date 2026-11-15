@@ -10,6 +10,7 @@ import {
   withArtifactFileHandle,
 } from "../resources/index.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Remediation for a host that denies writes under the session temporary root.
@@ -60,9 +61,6 @@ const errorCode = (cause: unknown): string | undefined =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
     ? cause.code
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Create and delete one file under the Ghidra session root from the REA

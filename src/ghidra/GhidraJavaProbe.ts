@@ -28,6 +28,7 @@ import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Bound the Java version probe so a chatty or hostile JVM cannot force an
@@ -303,7 +304,7 @@ const observeGhidraJava = async (
           classifyLaunchFailureCode(code)?.kind === "missing"
             ? "runtime_missing"
             : "runtime_unavailable",
-        detail: `${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        detail: `${command}: ${errorMessage(cause)}`,
         ...(code === undefined ? {} : { processErrorCode: code }),
         ...(output === undefined ? {} : { output }),
       };

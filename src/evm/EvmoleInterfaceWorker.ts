@@ -14,6 +14,7 @@ import {
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import { readStableArtifact } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -84,7 +85,7 @@ const main = async (): Promise<void> => {
           : cause instanceof UnsupportedContainer
             ? "unsupported"
             : "decoder",
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: errorMessage(cause),
     };
   }
   let encoded = JSON.stringify(reply);
@@ -105,7 +106,7 @@ const main = async (): Promise<void> => {
         });
       } catch (markerFailure: unknown) {
         process.stderr.write(
-          `File-size failure marker unavailable: ${markerFailure instanceof Error ? markerFailure.message : String(markerFailure)}\n`,
+          `File-size failure marker unavailable: ${errorMessage(markerFailure)}\n`,
         );
       }
       process.exitCode = EVM_FILE_SIZE_FAILURE_EXIT;

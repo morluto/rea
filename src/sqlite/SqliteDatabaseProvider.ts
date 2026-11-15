@@ -56,6 +56,7 @@ import {
   sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 type SqliteOutcome = Result<AnalysisExecution, AnalysisError>;
@@ -505,7 +506,7 @@ const cleanupSqliteRoot = async (
     return err(
       sqliteCleanupFailure(
         [root.path],
-        cause instanceof Error ? cause.message : String(cause),
+        errorMessage(cause),
         result,
         input,
         output,
