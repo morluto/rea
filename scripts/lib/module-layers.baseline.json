@@ -1,10 +1,8 @@
 {
   "upward": {
-    "artifacts -> application": 1,
     "dotnet -> application": 1
   },
   "cycles": [
-    "application <-> artifacts",
     "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
