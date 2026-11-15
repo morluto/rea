@@ -2,7 +2,6 @@ import {
   capturedProviderOutput,
   providerResultDiagnostics,
 } from "../../process/capturedProviderOutput.js";
-import { producerLimitControl } from "../../domain/producerResourceLimits.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   HOST_PLATFORM,
@@ -25,6 +24,7 @@ import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
   pwntoolsBudgetRecovery,
+  pwntoolsReplyOutputLimit,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
 import { access, stat, writeFile } from "node:fs/promises";
@@ -550,14 +550,7 @@ export class PwntoolsDecoder<
             capturedOutput,
             ...(cause instanceof ArtifactReaderFailure &&
             cause.reason === "limit"
-              ? {
-                  remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call; no restart is required. File, worker memory and transport limits remain independent.`,
-                  limit: producerLimitControl(
-                    "output_bytes",
-                    producerLimits.output_bytes,
-                    PWNTOOLS_LIMITS.output_bytes,
-                  ),
-                }
+              ? pwntoolsReplyOutputLimit(producerLimits)
               : {}),
             ...(cause instanceof ArtifactReaderFailure
               ? { cleanup: cause.cleanup }
@@ -612,12 +605,7 @@ export class PwntoolsDecoder<
         if (reply.reason === "output-limit")
           throw new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput,
-            remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call; no restart is required. File output follows the selected output allowance unless file_bytes is explicit. Tighter inherited limits and transport remain independent.`,
-            limit: producerLimitControl(
-              "output_bytes",
-              producerLimits.output_bytes,
-              PWNTOOLS_LIMITS.output_bytes,
-            ),
+            ...pwntoolsReplyOutputLimit(producerLimits),
           });
         throw new ProviderAdapterError(this.identity.id, OPERATION, {
           diagnostics: {

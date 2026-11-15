@@ -7,6 +7,7 @@ import {
   type PwntoolsProducerLimits,
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
+import type { AnalysisControlLimit } from "../../domain/analysisSettings.js";
 import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import {
   AnalysisInputError,
@@ -76,6 +77,24 @@ export const pwntoolsBudgetRecovery = (
   limits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
 ): string =>
   `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call; no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
+
+/**
+ * Recovery for a bridge reply larger than `producer_limits.output_bytes`: the
+ * reply file's own budget, shared by the decoder and the core-only debugger.
+ */
+export const pwntoolsReplyOutputLimit = (
+  limits: PwntoolsProducerLimits,
+): {
+  readonly remediationAction: string;
+  readonly limit: AnalysisControlLimit;
+} => ({
+  remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. File output follows the selected output allowance unless file_bytes is explicit. Diagnostic output, worker memory, tighter inherited limits and transport remain independent.`,
+  limit: producerLimitControl(
+    "output_bytes",
+    limits.output_bytes,
+    PWNTOOLS_LIMITS.output_bytes,
+  ),
+});
 
 /** Name the file-size cap and any reported effective limit, not address space. */
 const fileSizeAllowance = (
