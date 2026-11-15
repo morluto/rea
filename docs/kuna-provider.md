@@ -36,6 +36,15 @@ export REA_KUNA_COMMAND=/absolute/path/to/kuna
 rea doctor --provider kuna
 ```
 
+Doctor and runtime share one readiness decision: valid Kuna settings and a
+`REA_KUNA_COMMAND` that is an executable regular file. Doctor reports it as the
+`installation` check, and the provider is available when it passes. Doctor also
+reports two health checks beside it that do not decide availability: `version`
+runs `kuna --version` and fingerprints the executable, and `cache` inspects the
+cache root without creating it. Runtime does not run these probes when it
+reports availability; opening a target runs the version probe. `rea setup`
+lists Kuna as a ready provider only when every Kuna check passes.
+
 Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "kuna"`, or `REA_ANALYSIS_PROVIDER=kuna`. With Kuna and another provider configured for the same target, `auto` reports `ambiguous` instead of choosing one.
 
 Ordinary readiness cancellation returns `cancelled` (CLI SIGINT/SIGTERM exits

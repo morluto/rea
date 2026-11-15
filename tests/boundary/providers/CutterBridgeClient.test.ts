@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { packagedCutterPluginPath } from "../../../src/cutter/CutterBridgeSource.js";
 
 const listen = async (
   server: ReturnType<typeof createServer>,
@@ -348,6 +349,11 @@ describe("CutterBridgeClient: plugin source identity", () => {
       }).listSessions();
 
       expect(result.sessions).toMatchObject([{ bridge_source: source }]);
+      const recovery = result.sessions[0]?.bridge_source_recovery;
+      if (source === "packaged") expect(recovery).toBeUndefined();
+      else
+        expect(recovery).toContain(`${packagedCutterPluginPath()} into Cutter`);
+      if (source === "unknown") expect(recovery).toContain("source is unknown");
     },
   );
 

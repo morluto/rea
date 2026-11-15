@@ -268,10 +268,21 @@ refusal, cancellation, deadline, output or memory limit, resource signal, exit
 status with the owner's stop state, or stream failure) together with the
 retained output and whether it was truncated. `classifyProviderOutcome` maps
 that outcome to a typed error once; a provider supplies only its settings,
-recovery text and a dialect for what an exit or launch refusal means. The
-`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
-AnalysisError` functions out of `src/`; existing ones are counted in a baseline
-that may only shrink.
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. A phase that armed its own deadline throws that deadline's
+timeout where it observes the abort; for a read its signal cancelled, it
+supplies the timeout as the dialect's `interruption`, so classification never
+rereads a cancellation's reason as a timeout. A provider whose cleanup report
+has its own shape supplies `readCleanup` or `commandCleanup`; otherwise the
+unresolved cleanup is attached to the reported failure. The
+`rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
 
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
@@ -471,7 +482,7 @@ failed request's physical, cancellation and cleanup facts.
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling. It projects
-  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
   which owns this precedence for owned work: a recorded failure stays primary,
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed

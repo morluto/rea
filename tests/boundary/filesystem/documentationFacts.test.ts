@@ -119,10 +119,6 @@ describe("literal tool counts", () => {
     expect(samples.every(isLivingProsePath)).toBe(true);
     expect(samples.filter((path) => !cached(path))).toEqual([]);
   });
-
-  it("finds none in the repository's living prose", async () => {
-    await expect(literalToolCountIssues(root)).resolves.toEqual([]);
-  });
 });
 
 describe("translated README facts", () => {

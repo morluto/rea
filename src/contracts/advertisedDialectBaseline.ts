@@ -3,11 +3,14 @@
 // definition the server can list (all catalog and output profiles). Counts may
 // only shrink: the catalog test requires an exact match, so removing a
 // construct lowers its count here, and any key not listed is enforced at zero.
-// The one exception is a fix that restores a contract declaration the
-// presentation had lost (for example a borrowed Evidence union advertised as an
-// unconstrained value): its constructs count again, and the PR names the
-// restored declaration. A new contract or presentation construct never raises
-// a count.
+// Two exceptions grow them. Each runtime analysis setting adds a branch to
+// update_analysis_settings with two `const` members (`setting`, `action`), and
+// the full profile also counts the Evidence bundle's required `evidence_format`
+// literal (src/domain/evidenceFormat.ts) in the inputs that carry a whole
+// bundle. A fix that restores a contract declaration the presentation had lost
+// (for example a borrowed Evidence union advertised as an unconstrained value)
+// counts its constructs again, and the PR names the restored declaration. A
+// new contract or presentation construct never raises a count.
 
 // Every advertised pattern, input and output, is enforced at zero: the
 // presentation re-emits each one in the portable grammar.
@@ -31,7 +34,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input input-depth": 33,
     "input keyword $schema": 256,
     "input keyword allOf": 99,
-    "input keyword const": 1911,
+    "input keyword const": 1915,
     "input keyword default": 803,
     "input keyword else": 6,
     "input keyword examples": 253,

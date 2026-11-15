@@ -1,8 +1,8 @@
 import { nativeCallCaptureLimits } from "../domain/native/nativeCallCaptureLimits.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -70,10 +70,7 @@ export const observeNativeCalls = async (
     return await resources.run(async () => {
       const selected = await verifyNativeCallTarget(target, resources, signal);
       if (!selected.ok) return selected;
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy(OPERATION, signal));
       try {
         const traced = await tracer.trace(
           {
@@ -87,8 +84,7 @@ export const observeNativeCalls = async (
         if (!traced.ok) return traced;
         return signal?.aborted
           ? err(
-              new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
+              cancelledBy(OPERATION, signal, {
                 partialObservation: projectPartialNativeCalls(
                   target,
                   parsed.data,

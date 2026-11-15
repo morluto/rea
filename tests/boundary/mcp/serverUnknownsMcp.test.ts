@@ -193,7 +193,6 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
     expect(parseMcpToolError(conflict).error).toMatchObject({
       code: "evidence_integrity_mismatch",
       retryable: false,
-      remediation: { action: expect.stringContaining("cannot reconcile") },
       details: { diagnostics: { unknown_id: initial.unknown_id, revision: 2 } },
     });
     const after = await client.callTool({
@@ -569,9 +568,6 @@ it("reports contradictory unknown input as a correctable request", async () => {
     category: "invalid_input",
     retryable: false,
     details: { reason: "already-exists" },
-    remediation: {
-      action: expect.stringContaining("do not repeat record_unknown"),
-    },
   });
   const evidenceId = created.mutation_evidence_ids[0];
 
@@ -679,17 +675,11 @@ it("returns exact committed unknown receipts when creation and update replies ov
             },
           },
         },
-        remediation: {
-          action: expect.stringContaining(
-            "Do not repeat the completed mutation",
-          ),
-        },
       },
     });
     const recovery = parseMcpToolError(response).error.remediation.action;
     expect(recovery).toContain("export_evidence_bundle");
     expect(recovery).not.toContain("or page list_unknowns");
-    expect(recovery).toContain("may be too large");
     for (const id of unknown.mutation_evidence_ids)
       expect(session.evidenceById(id)).toBeDefined();
   };

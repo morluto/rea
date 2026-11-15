@@ -296,6 +296,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Generate the complete obligation ledger",
         input: {
           evidence_bundle: {
+            evidence_format: 1,
             artifacts: [],
             providers: [],
             environments: [],
@@ -327,6 +328,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         input: {
           coverage: {
             evidence_bundle: {
+              evidence_format: 1,
               artifacts: [],
               providers: [],
               environments: [],

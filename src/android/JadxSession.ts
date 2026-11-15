@@ -52,6 +52,9 @@ import {
   JADX_HEAP_REMEDIATION,
 } from "./JadxRelease.js";
 
+const JADX_REPORTED_FAILURE_REMEDIATION =
+  "jadx is running and reported this failure for the selected input, so provider readiness checks cannot repair it. Review details.diagnostics.reason and adjust the input or request if applicable. Repeating the unchanged request is not expected to succeed.";
+
 type JadxCall = {
   readonly operation: string;
   readonly input: Readonly<Record<string, JsonValue>>;
@@ -431,7 +434,11 @@ export class JadxSession {
               },
             ]);
         }
+        // jadx answered, so its own reply, not provider readiness, explains
+        // the failure; doctor cannot repair a reported per-request error.
         throw new ProviderAdapterError("jadx", request.operation, {
+          userMessage: `jadx reported an error for ${name} that REA did not classify; its reason is in details.diagnostics.reason.`,
+          remediationAction: JADX_REPORTED_FAILURE_REMEDIATION,
           diagnostics: {
             upstream_operation: name,
             reason: text,
