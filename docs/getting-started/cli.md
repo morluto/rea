@@ -242,8 +242,11 @@ rea compare-managed-members /absolute/path/v1/Assembly.dll /absolute/path/v2/Ass
 
 The comparison Evidence records both selected paths and those options. Two
 identical spellings of one path select the same Evidence and are refused. When
-the candidate fails, the error names its argument and keeps the baseline's
-complete member Evidence as its partial observation.
+the candidate fails, the error names its argument. Every failure keeps each
+completed side's member Evidence in `details.argument_observations` as
+`{argument: "left" | "right", observation}`, beside any
+`details.partial_observation` the failing step retained itself, such as the
+completed comparison when cancellation arrives as it settles.
 
 Choose the workflow from the artifact's contents rather than its `.exe` or
 `.dll` extension. The managed parser requires PE/CLI metadata; it does not
