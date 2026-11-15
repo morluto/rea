@@ -79,10 +79,12 @@ export class PlaywrightScenarioServiceWorkers {
   #stopPromise: Promise<void> | undefined;
   #removeListener: (() => void) | undefined;
   #removeProtocolFailure: (() => void) | undefined;
+  #removeDisconnect: (() => void) | undefined;
   /**
-   * A protocol failure on the policy connection, including a malformed target
-   * event the listener rejected. Later targets would not be protected, so
-   * every later policy check reports it.
+   * The first loss of the policy connection: a protocol failure (including a
+   * malformed target event the listener rejected), the socket closing, or the
+   * policy session detaching before REA released it. Later documents would
+   * not be protected, so the next policy check and the next step report it.
    */
   #failure: BrowserObservationError | undefined;
   #setup = new AbortController();
@@ -174,6 +176,9 @@ export class PlaywrightScenarioServiceWorkers {
     this.#removeProtocolFailure = connection.onProtocolFailure((error) => {
       this.#failure ??= error;
     });
+    this.#removeDisconnect = connection.onDisconnect((error) => {
+      if (!this.#closed) this.#failure ??= error;
+    });
     this.#removeListener = connection.onEvent((event) => {
       const registered = event.registered;
       if (
@@ -190,7 +195,14 @@ export class PlaywrightScenarioServiceWorkers {
           throw new BrowserObservationError(OPERATION, "protocol_error");
         this.#targets.get(id)?.markDetached();
         this.#targets.delete(id);
-        if (id === this.#session?.sessionId) this.#detached = true;
+        if (id === this.#session?.sessionId) {
+          this.#detached = true;
+          if (!this.#closed)
+            this.#failure ??= new BrowserObservationError(
+              OPERATION,
+              "target_session_detached",
+            );
+        }
       }
     });
     const id = this.#session.sessionId;
@@ -365,6 +377,11 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
+  /** Report a policy connection lost since installation, without page reads. */
+  assertConnected(): void {
+    if (this.#failure !== undefined) throw this.#failure;
+  }
+
   async assertBlocked(): Promise<void> {
     if (this.#failure !== undefined) throw this.#failure;
     if (this.#session !== undefined) await this.settle();
@@ -525,6 +542,7 @@ export class PlaywrightScenarioServiceWorkers {
     }
     this.#removeListener?.();
     this.#removeProtocolFailure?.();
+    this.#removeDisconnect?.();
     await this.#transportOwner.finish(session.connection);
     await this.#transportOwner.close();
     this.#released = true;
