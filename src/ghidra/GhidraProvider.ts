@@ -1,4 +1,5 @@
 import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   checkpointCapabilities,
   CAPABILITIES,
@@ -154,7 +155,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   ) {
     this.environment = snapshotEnvironment(
       environment,
-      installationHost?.platform,
+      installationHost?.platform ?? HOST_PLATFORM.platform,
     );
   }
 

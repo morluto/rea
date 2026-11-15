@@ -1,4 +1,5 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipInspectionCancelled,
@@ -465,7 +466,10 @@ export const createDarwinProcessRunTokenReader = (
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const environment = snapshotEnvironment(
+    options.environment ?? process.env,
+    HOST_PLATFORM.platform,
+  );
   const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
     ...options,
     environment,
