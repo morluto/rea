@@ -102,6 +102,11 @@ it.each([
     keys: [],
     why: "an instance field runs on construction, after the loop",
   },
+  {
+    source: `process = class { value = process.env.wrong; }; new process();`,
+    keys: [],
+    why: "a field of the replacement class runs on construction, after the replacement",
+  },
 ])(
   "orders process replacement by activation: $source ($why)",
   ({ source, keys }) => {

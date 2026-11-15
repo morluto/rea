@@ -325,6 +325,11 @@ const unboundRequireCases = [
     precedes: true,
     why: "an instance field runs on construction, after the loop",
   },
+  {
+    source: 'require = class { fs = require("fs"); }; new require();',
+    precedes: true,
+    why: "a field of the replacement class runs on construction, after the replacement",
+  },
 ] as const;
 
 const unboundRequireCall = (

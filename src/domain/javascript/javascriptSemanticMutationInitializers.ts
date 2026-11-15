@@ -292,7 +292,10 @@ export const semanticEffectFollowsReference = (
   let current: t.Node | undefined = reference;
   let child: t.Node | undefined;
   while (current !== undefined && current !== effect) {
-    if (t.isFunction(current)) break;
+    // A function body or instance field value runs later, on its own
+    // activation, even when it is written inside the effect.
+    if (t.isFunction(current) || delayedInstanceFieldValue(current, child))
+      break;
     child = current;
     current = parents.get(current);
   }
