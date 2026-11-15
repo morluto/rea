@@ -1,7 +1,7 @@
 import {
   linuxHopperLauncherCandidates,
   REA_MANAGED_LINUX_HOPPER_LAUNCHER,
-} from "../application/LinuxHopper.js";
+} from "./LinuxHopperPaths.js";
 import {
   MAC_HOPPER_SYSTEM_LAUNCHER,
   macHopperCanonicalLauncherCandidates,

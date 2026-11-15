@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, posix, relative } from "node:path";
 import { installMacHopperBundle } from "../application/MacHopper.js";
-import { linuxHopperLauncherCandidates } from "../application/LinuxHopper.js";
+import { linuxHopperLauncherCandidates } from "./LinuxHopperPaths.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { describe, expect, it } from "vitest";
 
