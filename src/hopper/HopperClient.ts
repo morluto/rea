@@ -853,6 +853,17 @@ export class HopperClient<
     }
   }
 
+  /**
+   * The ceilings this session admitted at start, for its cleanup requests
+   * (reauthentication and shutdown): a setting refused after startup must not
+   * block the cleanup that releases Hopper's document and files.
+   */
+  #cleanupLimits(): { readonly limits?: HopperSessionLimits } {
+    return this.#sessionLimits === undefined
+      ? {}
+      : { limits: this.#sessionLimits };
+  }
+
   /** Reauthenticate this run after late readiness or a lost transport. */
   async #reconnectForCleanup(): Promise<void> {
     if (this.#socket?.destroyed === true) this.#releaseTransport();
@@ -905,6 +916,7 @@ export class HopperClient<
         {
           signal: controller.signal,
           timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+          ...this.#cleanupLimits(),
         },
       );
       if (
@@ -937,9 +949,7 @@ export class HopperClient<
             {},
             {
               timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
-              ...(this.#sessionLimits === undefined
-                ? {}
-                : { limits: this.#sessionLimits }),
+              ...this.#cleanupLimits(),
             },
           ),
         retainDocument: options.retainDocument === true,

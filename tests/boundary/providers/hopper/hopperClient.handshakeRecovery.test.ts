@@ -11,6 +11,8 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import type {
   BridgeLauncher,
   BridgeSession,
@@ -69,6 +71,7 @@ const setup = (
   identity?: "matching" | "wrong-run" | "wrong-token",
   healthMode?: "ready" | "gated",
   shutdownMode?: "acknowledge" | "exit-without-ack",
+  bridgeMaxReplyBytes?: BridgeMaxReplyBytes,
 ) => {
   const launcher = new ExternalBridgeLauncher(
     identity,
@@ -79,6 +82,7 @@ const setup = (
     replyContracts: transportReplyContracts,
     launcher,
     startupTimeoutMs: 2_000,
+    ...(bridgeMaxReplyBytes === undefined ? {} : { bridgeMaxReplyBytes }),
   });
   onTestFinished(async () => {
     await client.close();
@@ -194,30 +198,46 @@ it.each(["wrong-run", "wrong-token"] as const)(
   },
 );
 
-it("reconnects for authenticated cleanup after a previously valid bridge transport fails", async () => {
-  const { client, launcher } = setup();
-  const started = await client.start();
-  if (!started.ok) throw started.error;
-  const malformed = await client.callTool("malformed");
-  expect(malformed).toMatchObject({
-    ok: false,
-    error: { _tag: "HopperProtocolError" },
-  });
-  const closed = await client.close();
-  if (!closed.ok) throw closed.error;
-  expect(launcher.fixture.requests.map(({ method }) => method)).toEqual([
-    "health",
-    "malformed",
-    "health",
-    "shutdown_document",
-  ]);
-  await waitFor(() => expect(launcher.fixture.processes[0]?.exitCode).toBe(0));
-  const session = launcher.sessions[0];
-  if (session === undefined) throw new Error("Fixture did not launch");
-  await expect(access(session.directory)).rejects.toMatchObject({
-    code: "ENOENT",
-  });
-});
+it.each([false, true])(
+  "reconnects for authenticated cleanup after a previously valid bridge transport fails (seed refused after start: %s)",
+  async (refuseSeed) => {
+    // Cleanup uses the ceilings admitted at start, so a seed the runtime view
+    // refuses once its override is reset cannot block reauthentication.
+    let seedRefused = false;
+    const { client, launcher } = setup(undefined, undefined, undefined, {
+      get maximumBytes(): number {
+        if (seedRefused)
+          throw new ConfigurationError("invalid reply ceiling seed");
+        return 4 * 1024 * 1024;
+      },
+      source: "runtime",
+    });
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    const malformed = await client.callTool("malformed");
+    expect(malformed).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperProtocolError" },
+    });
+    seedRefused = refuseSeed;
+    const closed = await client.close();
+    if (!closed.ok) throw closed.error;
+    expect(launcher.fixture.requests.map(({ method }) => method)).toEqual([
+      "health",
+      "malformed",
+      "health",
+      "shutdown_document",
+    ]);
+    await waitFor(() =>
+      expect(launcher.fixture.processes[0]?.exitCode).toBe(0),
+    );
+    const session = launcher.sessions[0];
+    if (session === undefined) throw new Error("Fixture did not launch");
+    await expect(access(session.directory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 it("preserves launcher diagnostics after a health deadline and reauthenticates for cleanup", async () => {
   const { client, launcher } = setup("matching", "gated");
