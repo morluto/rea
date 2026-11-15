@@ -15,6 +15,12 @@ it.each([
   ["NEW(a, { jsonSchemaValidator }); NEW(b)", 1],
   ["NEW(make(a), options(b))", 1],
   ["NEW(a); NEW(b);", 2],
+  // Parentheses inside literals do not end the call.
+  ['NEW({ name: "fixture )" }, { jsonSchemaValidator })', 0],
+  ["NEW({ name: 'a)' }, { jsonSchemaValidator })", 0],
+  ["NEW({ name: `a)` }, { jsonSchemaValidator })", 0],
+  ['NEW({ name: "\\")" }, { jsonSchemaValidator })', 0],
+  ['NEW({ name: "(" })', 1],
 ] as const)("counts default-validation clients in %j", (text, expected) => {
   expect(countDefaultValidationClients(source(text))).toBe(expected);
 });
