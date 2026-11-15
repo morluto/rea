@@ -19,6 +19,19 @@ export interface SchemaAnnotations {
    * parses the complete canonical observation.
    */
   readonly completeObservation?: true;
+  /**
+   * How a pattern-only JSON Schema declaration relates to the runtime
+   * predicate it stands for: `exact` accepts the same strings, `wider` also
+   * admits strings the predicate rejects. Declaration checks compare the
+   * accepted sets accordingly.
+   */
+  readonly patternDeclaration?: "exact" | "wider";
+  /**
+   * Every alternative of this union is an object, so its advertised output
+   * root also declares `type: "object"` for MCP codecs that read only the
+   * root type.
+   */
+  readonly objectRoot?: true;
 }
 
 const annotations = z.registry<SchemaAnnotations>();
@@ -59,4 +72,31 @@ export const presentCompleteObservation = <Schema extends z.ZodType>(
   const annotated = schema.clone();
   annotations.add(annotated, { completeObservation: true });
   return annotated;
+};
+
+/**
+ * Record how `schema`'s pattern-only declaration relates to its runtime
+ * predicate. `schemaConstraints.ts` owns the declaration itself.
+ */
+export const annotatePatternDeclaration = <Schema extends z.ZodType>(
+  schema: Schema,
+  relation: "exact" | "wider",
+): Schema => {
+  annotations.add(schema, {
+    ...annotations.get(schema),
+    patternDeclaration: relation,
+  });
+  return schema;
+};
+
+type ObjectUnion =
+  | z.ZodUnion<readonly z.core.$ZodObject[]>
+  | z.ZodDiscriminatedUnion<readonly z.core.$ZodObject[]>;
+
+/** Advertise an output union of objects with an object root type. */
+export const presentObjectRoot = <Schema extends ObjectUnion>(
+  schema: Schema,
+): Schema => {
+  annotations.add(schema, { ...annotations.get(schema), objectRoot: true });
+  return schema;
 };

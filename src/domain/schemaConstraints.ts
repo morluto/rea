@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { annotatePatternDeclaration } from "./schemaAnnotations.js";
+
 // Constraints Zod has no native check for. Each helper adds the runtime check
 // and the JSON Schema keyword that declares it in one place, so every JSON
 // Schema projection states exactly what parsing enforces.
@@ -121,3 +123,52 @@ export const requirePresence = <
       }
     })
     .meta(declarePresence(rules));
+
+/** Patterns that declare a string predicate JSON Schema cannot state directly. */
+export interface PatternDeclaration {
+  /** Patterns every accepted string matches. */
+  readonly matches?: readonly RegExp[];
+  /** Patterns no accepted string matches. */
+  readonly excludes?: readonly RegExp[];
+  /**
+   * `exact` when the patterns accept exactly what `predicate` does; `wider`
+   * when `predicate` also rejects strings the patterns admit.
+   */
+  readonly relation: "exact" | "wider";
+}
+
+/** A pattern JSON Schema states with the same meaning: no flag but `u`. */
+const declaredPattern = (expression: RegExp): string => {
+  if (expression.flags !== "" && expression.flags !== "u")
+    throw new TypeError(
+      `Pattern /${expression.source}/${expression.flags} has flags JSON Schema cannot declare`,
+    );
+  return expression.source;
+};
+
+/**
+ * Check `predicate` and declare it as an `allOf` of patterns built from the
+ * same expressions, annotated with how the declaration relates to it.
+ */
+export const declaredByPatterns = <Schema extends z.ZodString>(
+  schema: Schema,
+  predicate: (value: string) => boolean,
+  declaration: PatternDeclaration,
+  check: { readonly message: string; readonly abort?: boolean },
+): Schema => {
+  const allOf = [
+    ...(declaration.matches ?? []).map((expression) => ({
+      pattern: declaredPattern(expression),
+    })),
+    ...(declaration.excludes ?? []).map((expression) => ({
+      not: { pattern: declaredPattern(expression) },
+    })),
+  ];
+  // An empty `allOf` is invalid JSON Schema and declares nothing.
+  if (allOf.length === 0)
+    throw new TypeError("A pattern declaration needs at least one pattern");
+  return annotatePatternDeclaration(
+    schema.refine(predicate, check).meta({ allOf }) as Schema,
+    declaration.relation,
+  );
+};
