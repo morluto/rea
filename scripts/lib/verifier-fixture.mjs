@@ -58,6 +58,21 @@ export class VerifierFixture {
     );
   }
 
+  /**
+   * Allocate a directory a verifier keeps for the artifacts a reviewer reads
+   * after the run: receipts, transcripts, client profiles and Evidence. It is
+   * never removed. Allocation names it on stderr, so a run that fails before
+   * writing its receipt still reports where its artifacts are.
+   */
+  static async keepArtifacts({ prefix, parent } = {}) {
+    const { path } = await createCanonicalTemporaryDirectory(
+      prefix ?? "rea-verifier-artifacts-",
+      ...(parent === undefined ? [] : [parent]),
+    );
+    process.stderr.write(`Keeping verifier artifacts at ${path}\n`);
+    return Object.freeze({ path, kept: true });
+  }
+
   get path() {
     return this.#root.path;
   }
@@ -77,17 +92,44 @@ export class VerifierFixture {
     return cleanup;
   }
 
+  /**
+   * Keep the root for good: something that may still use its files cannot be
+   * confirmed stopped and has no cleanup this fixture could retry (an owned
+   * command whose cleanup is incomplete). Every release then fails, naming
+   * `reason` and the root.
+   */
+  retain(reason) {
+    this.releaseAfter(() => {
+      throw new Error(reason);
+    });
+  }
+
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
+    return this.#settle(true);
+  }
+
+  /**
+   * Run every registered cleanup as `release` does, then keep the root for a
+   * reviewer instead of removing it, and name it and `reason` on stderr. A
+   * run keeps its fixture this way only on request; a cleanup that fails
+   * retains the root as `release` would, and a later `keep` retries it.
+   */
+  async keep(reason) {
+    await this.#settle(false);
+    process.stderr.write(`Keeping verifier fixture ${this.path}: ${reason}\n`);
+  }
+
+  #settle(removeRoot) {
     if (this.#released) return Promise.resolve();
     this.#registrationClosed = true;
-    this.#releasing ??= this.#attemptRelease().finally(() => {
+    this.#releasing ??= this.#attemptRelease(removeRoot).finally(() => {
       this.#releasing = undefined;
     });
     return this.#releasing;
   }
 
-  async #attemptRelease() {
+  async #attemptRelease(removeRoot) {
     const failures = [];
     const unconfirmed = [];
     for (const cleanup of this.#pending) {
@@ -106,6 +148,8 @@ export class VerifierFixture {
           `Retained verifier fixture ${this.path} because a cleanup that may still use it did not confirm.`,
         ),
       ]);
+    // A kept root stays allocated; it is not released.
+    if (!removeRoot) return;
     try {
       await this.#root.close();
     } catch (cause) {

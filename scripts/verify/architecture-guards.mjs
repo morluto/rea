@@ -61,6 +61,14 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
+
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
   "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
@@ -330,6 +338,19 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
+);
+
 // Turning a completed result into a cancellation after cleanup is the
 // finalization precedence that runOwned owns (src/providers/runOwned.ts).
 checkCounted(
@@ -362,6 +383,17 @@ checkCounted(
   files,
   /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
   ["src/gdb/GdbMiRecord.ts"],
+);
+
+// A runtime setting view throws the ConfigurationError of a malformed launch
+// seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
+// as a Result. Catching it by hand mixes it into each site's own failures.
+checkCounted(
+  "hand-caught ConfigurationError (read runtime settings with readRuntimeSetting from src/config/runtimeAnalysisSettings)",
+  "hand-caught-configuration-error",
+  files,
+  /\bcause instanceof ConfigurationError\b/gu,
+  ["src/config/runtimeAnalysisSettings.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -425,11 +457,28 @@ checkCounted(
 // An input fault is a ParseFailureError; a broken internal assumption is a
 // defect, not an input fault, and throws invariantViolation from
 // src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 
@@ -485,23 +534,17 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
+// Cleanup completion is recorded by the owner and read by errors when asked;
+// AnalysisError has no push API. Composing dependency sets with
+// bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
-  files,
-  /\.resolveCleanup\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
-);
-checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/domain/analysisErrorCleanup.ts"],
 );
+
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
 // callers choose only how they probe each candidate.
@@ -530,6 +573,39 @@ checkCounted(
   files,
   /\bprocess\.arch\b/gu,
   ["src/platform/HostPlatform.ts"],
+);
+
+// Tests select a platform or architecture by injecting it (a parameter, a
+// `host` option, or a mock of src/platform/HostPlatform). Redefining
+// process.platform or process.arch stops exercising its branch once the module
+// under test takes the host from HostPlatform, and still passes. Each module
+// migration switches its tests to injection and lowers this baseline.
+const listTestFiles = async (dir) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) output.push(...(await listTestFiles(path)));
+    else if (/\.(?:test|spec|fixture)\.ts$/u.test(entry.name))
+      output.push(path);
+  }
+  return output;
+};
+const testFiles = await Promise.all(
+  [
+    ...(await listTestFiles(join(root, "src"))),
+    ...(await listFiles(join(root, "tests"))),
+    ...(await listTestFiles(join(root, "tests"))),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+checkCounted(
+  "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
+  "test-host-platform-stub",
+  testFiles,
+  /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
 );
 
 // `find` on a parsed section, program-header or load-command table silently

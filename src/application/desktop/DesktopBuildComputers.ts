@@ -23,6 +23,7 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
@@ -108,7 +109,8 @@ interface HeldComputer {
   readonly turns: DesktopBuildTurns;
   readonly cleanup: {
     resources: readonly string[];
-    errors: Set<WeakRef<AnalysisError>>;
+    /** Confirmed by a verified teardown; every bound teardown failure reads it. */
+    readonly release: AnalysisCleanupRelease;
   };
   closing: boolean;
 }
@@ -120,9 +122,7 @@ const bindCleanupFailure = (held: HeldComputer, error: AnalysisError): void => {
       return held.cleanup.resources;
     },
   });
-  for (const reference of held.cleanup.errors)
-    if (reference.deref() === undefined) held.cleanup.errors.delete(reference);
-  held.cleanup.errors.add(new WeakRef(error));
+  held.cleanup.release.bind(error);
 };
 
 /** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
@@ -283,7 +283,10 @@ const liveComputer = (
         attempt(() => witness.readers.release()),
         attempt(() => judge.close()),
       ]);
-      if (!commands.verified || !readers.verified) {
+      // Reader cleanup can be retried against the live computer. An unsettled
+      // long run cannot: its stop already ended, and the computer teardown is
+      // what removes a descendant the supervisor does not own.
+      if (!readers.verified) {
         const failed = [commands, readers, judgeResult].filter(
           (result) => !result.verified,
         );
@@ -297,10 +300,16 @@ const liveComputer = (
         closedComputer === undefined
           ? await attempt(() => computer.close())
           : closedComputer;
-      if (computerResult.verified) closedComputer = computerResult;
-      const failed = [judgeResult, computerResult].filter(
-        (result) => !result.verified,
-      );
+      if (computerResult.verified) {
+        closedComputer = computerResult;
+        if (!commands.verified)
+          capture.longRuns.resolveAfterVerifiedComputerTeardown();
+      }
+      const failed = [
+        judgeResult,
+        computerResult,
+        ...(!computerResult.verified && !commands.verified ? [commands] : []),
+      ].filter((result) => !result.verified);
       if (failed.length === 0 && computerResult.verified) return computerResult;
       return {
         verified: false,
@@ -317,7 +326,7 @@ const liveComputer = (
       turns,
     },
     turns,
-    cleanup: { resources: [], errors: new Set() },
+    cleanup: { resources: [], release: new AnalysisCleanupRelease() },
     closing: false,
   };
 };
@@ -562,7 +571,7 @@ export class DesktopBuildComputers {
         actions: new BuildComputerActionLog(this.#secrets.redact),
         steps: undefined,
         turns: new DesktopBuildTurns(),
-        cleanup: { resources: [], errors: new Set() },
+        cleanup: { resources: [], release: new AnalysisCleanupRelease() },
         closing: true,
       });
       const release = await this.#retire(id);
@@ -719,9 +728,7 @@ export class DesktopBuildComputers {
     const release = await held.turns.close(() => this.#retire(id));
     held.cleanup.resources = release.verified ? [] : release.resources;
     if (release.verified) {
-      for (const reference of held.cleanup.errors)
-        reference.deref()?.resolveCleanup();
-      held.cleanup.errors.clear();
+      held.cleanup.release.confirm();
       return ok({ computer_id: id, teardown: release.teardown });
     }
     const failure = new ProviderCleanupError(

@@ -4,6 +4,7 @@ import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { sqliteDatabaseFailure } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each([null, "owned stop unconfirmed"])(
   "preserves a selected worker deadline with cleanup=%s",
@@ -61,7 +62,7 @@ it.each([null, "owned stop unconfirmed"])(
         _tag: "AnalysisTimeoutError",
         timeoutMs: 1234,
       });
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
       const resolved = projectAnalysisError(failure);
       expect(resolved).toMatchObject({
         code: "provider_timeout",

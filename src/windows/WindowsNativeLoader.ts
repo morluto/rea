@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -216,13 +217,13 @@ export const loadWindowsNativeAuthority = (
 
 let cached: WindowsNativeLoadResult | undefined;
 
-/** Cache stable admission; let a later query retry failed owned inspection. */
-export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
-  if (cached?.available === false && cached.retryable === true)
-    cached = undefined;
-  cached ??= loadWindowsNativeAuthority({
-    platform: process.platform,
-    architecture: process.arch,
+const loadPackagedWindowsNativeAuthority = ({
+  platform,
+  architecture,
+}: HostPlatform): WindowsNativeLoadResult =>
+  loadWindowsNativeAuthority({
+    platform,
+    architecture,
     nodeApiVersion: process.versions.napi,
     packageVersion: PACKAGE_METADATA.version,
     readManifest: () => {
@@ -252,6 +253,19 @@ export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
       return value;
     },
   });
+
+/**
+ * Cache stable admission; let a later query retry failed owned inspection.
+ * Only this host's result is cached: another host's admission rules are a
+ * test seam and load the packaged artifact uncached.
+ */
+export const systemWindowsNativeAuthority = (
+  host: HostPlatform = HOST_PLATFORM,
+): WindowsNativeLoadResult => {
+  if (host !== HOST_PLATFORM) return loadPackagedWindowsNativeAuthority(host);
+  if (cached?.available === false && cached.retryable === true)
+    cached = undefined;
+  cached ??= loadPackagedWindowsNativeAuthority(host);
   return cached;
 };
 

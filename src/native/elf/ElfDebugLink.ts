@@ -19,7 +19,10 @@ import {
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
-import type { ImageSection } from "../metadata/BinaryContainer.js";
+import {
+  BinaryReader,
+  type ImageSection,
+} from "../metadata/BinaryContainer.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -205,9 +208,7 @@ const parseDebuglink = (
       "debuglink_truncated",
       located.location,
     );
-  const crc = little
-    ? body.readUInt32LE(crcOffset)
-    : body.readUInt32BE(crcOffset);
+  const crc = new BinaryReader(body, little, "elf").u32(crcOffset);
   const crcHex = crc32Hex(crc);
   if (nul === 0)
     return {

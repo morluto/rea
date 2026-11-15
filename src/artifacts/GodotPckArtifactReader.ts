@@ -23,13 +23,14 @@ import {
   type PositionalArtifactEntries,
   type PositionalArtifactEntry,
 } from "./PositionalArtifactReader.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 const PACK_DIR_ENCRYPTED = 1;
 const PACK_REL_FILEBASE = 2;
 const PACK_SPARSE_BUNDLE = 4;
 const PACK_FILE_ENCRYPTED = 1;
 const DIRECTORY_CHUNK_BYTES = 64 * 1024;
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** One descriptor, one validated directory, and bounded positional member reads. */
 export class GodotPckArtifactReader extends PositionalArtifactReader {

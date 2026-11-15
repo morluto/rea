@@ -17,6 +17,7 @@ import {
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
 import { parseAsarListingAdmission } from "../config/asarListingAdmission.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -435,9 +436,7 @@ export const readAsarHeader = async (
     throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
   let json: string;
   try {
-    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    json = strictUtf8Decoder("preserve").decode(bytes);
   } catch (cause: unknown) {
     throw new ArtifactReaderFailure(
       "format",

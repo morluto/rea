@@ -1,5 +1,7 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
@@ -21,6 +23,7 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
+  type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type {
@@ -84,9 +87,7 @@ const LLDB_REQUIREMENT =
 const DEADLINE_GRACE_MS = 60_000;
 const DIAGNOSTIC_BYTES = 16 * 1024;
 
-const lldbGraceRecovery = (
-  durationMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => {
+const lldbGraceRecovery = (durationMs: number): AnalysisTimeoutRecovery => {
   const total = durationMs + DEADLINE_GRACE_MS;
   return {
     userMessage: `observe_native_calls reached its ${String(total)} ms server/provider deadline: duration_ms ${String(durationMs)} plus a fixed ${String(DEADLINE_GRACE_MS)} ms LLDB startup, symbol loading, and teardown grace. This is not the MCP client deadline.`,
@@ -512,6 +513,7 @@ export class LldbCallTracer implements NativeCallTracer {
           { reason: entry.reason },
           { operation: OPERATION, cause: failure },
         );
+      marker.bindCleanupReleaseClaim(entry.owner.cleanupRelease);
       this.#resolverCleanup.set(entry.owner, marker);
     }
   }
@@ -578,7 +580,7 @@ export class LldbCallTracer implements NativeCallTracer {
         unresolved.push(marker);
         continue;
       }
-      marker.resolveCleanup();
+      // The marker reads the supervisor's release of this stop.
       this.#resolverCleanup.delete(owner);
     }
     if (unresolved.length === 0) return undefined;
@@ -948,7 +950,7 @@ export class LldbCallTracer implements NativeCallTracer {
       stderr: stderr.value,
       terminated,
     };
-    if (exited.lateTimeout === true)
+    if (exited.overran === true)
       return err(
         new AnalysisTimeoutError(
           OPERATION,
@@ -1197,9 +1199,7 @@ const readTracerOutput = async (
   if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value.value,
-    );
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
   } catch (cause: unknown) {
     return err(cause);
   }
@@ -1334,7 +1334,9 @@ const releaseLldbRuntime = async (
   owner: RetainedLldbResources,
 ): Promise<void> => {
   if (!owner.processStopped || !owner.targetStopped || owner.files.hasPending)
-    throw new Error("LLDB runtime still owns unresolved child resources");
+    throw invariantViolation(
+      "LLDB runtime still owns unresolved child resources",
+    );
   await owner.rootLease.release();
 };
 
@@ -1384,8 +1386,8 @@ type LldbExit =
       readonly targetLaunched: boolean;
       readonly targetIdentity: string | undefined;
       readonly cleanupFailure: string | undefined;
-      /** Internal deadline elapsed during cleanup after a physical LLDB exit. */
-      readonly lateTimeout?: true;
+      /** The work budget elapsed before this physical LLDB exit was selected. */
+      readonly overran?: true;
       readonly cleanupOwner?: ProviderProcessSupervisor;
     })
   | {
@@ -1447,19 +1449,23 @@ const runLldb = async (
       processFailureBeforeInterruption !== undefined
         ? { kind: "exited" as const, ...processFailureBeforeInterruption }
         : outcome;
-    const stopped = await supervisor?.stop();
-    retained = stopped?.status === "incomplete";
-    const lateTimeout =
+    // The work budget is read when the exit is selected, before cleanup: an
+    // exit selected after it elapsed overran the budget, while a budget that
+    // elapses during cleanup keeps the exit. Unconfirmed cleanup is reported
+    // by `cleanupFailure`, never as a timeout.
+    const overran =
       selectedOutcome.kind === "exited" && deadline.interruption === "timeout"
         ? true
         : undefined;
+    const stopped = await supervisor?.stop();
+    retained = stopped?.status === "incomplete";
     return {
       ...selectedOutcome,
       targetLaunched: supervisor !== undefined,
       targetIdentity,
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
-      ...(lateTimeout === undefined ? {} : { lateTimeout }),
+      ...(overran === undefined ? {} : { overran }),
       ...(retained && supervisor !== undefined
         ? { cleanupOwner: supervisor }
         : {}),
