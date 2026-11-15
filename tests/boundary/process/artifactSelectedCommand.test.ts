@@ -34,6 +34,7 @@ import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import type { LinuxResourceLimits } from "../../../src/process/LinuxResourceLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Real children and filesystem, with simulated Linux admission/limits. These
 // scripts do not establish native TShark, sigrok or prlimit behavior.
@@ -550,6 +551,6 @@ it.skipIf(process.platform === "win32")(
     await expect(retained?.stop()).resolves.toMatchObject({
       status: "verified-cleanup",
     });
-    expect(failed.resolveCleanup().cleanupIncomplete).toBe(false);
+    expect(releaseOwnedCleanup(failed).cleanupIncomplete).toBe(false);
   },
 );

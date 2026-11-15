@@ -33,6 +33,7 @@ import {
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
 import { waitFor } from "../../tests/support/testWait.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -236,7 +237,7 @@ it("retains failed ownership-helper cleanup until provider close retries it", as
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
