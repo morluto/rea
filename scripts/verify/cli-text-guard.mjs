@@ -46,13 +46,32 @@ export const cliTextGuardSelects = (path) =>
   !/^src\/cli[^/]*\.ts$/u.test(path) &&
   !CLI_ONLY_FILES.has(path);
 
+// One `rea <command>` with the arguments written after it, up to the closing
+// backtick or parenthesis.
+const reaCommand = /\brea ([a-z][a-z-]*)[^`)\n]*/gu;
+const remainingCliText = /--[a-z]|\brea [a-z]|\bon the CLI\b/u;
+
+/**
+ * Whether a matched phrase still names CLI text once each host-only command
+ * and its own arguments are removed. A phrase that names only those commands
+ * is an operator instruction; one that also names another option or command
+ * still counts.
+ * @param {string} text
+ */
+const namesCliText = (text) => {
+  let hostOnly = false;
+  const rest = text.replace(reaCommand, (command, name) => {
+    if (!HOST_ONLY_COMMANDS.has(name)) return command;
+    hostOnly = true;
+    return "";
+  });
+  return !hostOnly || remainingCliText.test(rest);
+};
+
 /** @param {string} content */
 export const cliTextOutsideCliCount = (content) => {
   let count = 0;
-  for (const [text] of content.matchAll(cliText)) {
-    const command = /\brea ([a-z][a-z-]*)$/u.exec(text)?.[1];
-    if (command !== undefined && HOST_ONLY_COMMANDS.has(command)) continue;
-    count += 1;
-  }
+  for (const [text] of content.matchAll(cliText))
+    if (namesCliText(text)) count += 1;
   return count;
 };

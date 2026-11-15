@@ -36,6 +36,29 @@ it.each([...HOST_ONLY_COMMANDS.keys()])(
   },
 );
 
+it.each([
+  ["a parenthesized host-only command", '"Retry (CLI: `rea setup --json`)."'],
+  [
+    "a parenthesized host-only command with an option",
+    '"(CLI: rea doctor --provider ghidra)"',
+  ],
+])("keeps %s", (_name, content) => {
+  expect(cliTextOutsideCliCount(content)).toBe(0);
+});
+
+it.each([
+  [
+    "another option beside a host-only command",
+    '"(CLI: --max-heap-mb, or `rea doctor`)"',
+  ],
+  [
+    "another command beside a host-only command",
+    '"(CLI: `rea doctor`, then `rea function`)"',
+  ],
+])("still counts %s", (_name, content) => {
+  expect(cliTextOutsideCliCount(content)).toBeGreaterThan(0);
+});
+
 it("counts a CLI command that only shares a host-only prefix", () => {
   expect(cliTextOutsideCliCount('"Run `rea doctoral`."')).toBe(1);
 });
