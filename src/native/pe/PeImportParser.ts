@@ -145,7 +145,7 @@ export const parsePeImports = async (
   const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,

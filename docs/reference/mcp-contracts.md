@@ -152,6 +152,10 @@ Exhausted traversals with deliberately omitted filesystem entries retain
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+Each container reader declares its own traversal coverage, including complete
+coverage. A traversal that ends without that declaration, or that stops before
+its reader finishes, is `unknown` with a limitation naming the reader format;
+a complete traversal of one container never covers another.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses

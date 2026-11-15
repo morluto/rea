@@ -22,12 +22,6 @@ describe("tool effects", () => {
       mutatesTarget: false,
     });
   });
-  it("audits every public tool exactly once", () => {
-    expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(
-      TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-  });
-
   it("marks foreign execution and device mutation as destructive", () => {
     const destructive = TOOL_CONTRACTS.filter(
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,

@@ -52,7 +52,11 @@ export const goBuildInfoSearch = (
   bytes: Buffer,
   container: BinaryContainer,
 ): readonly GoBuildInfoSearchRange[] => {
-  const reader = new BinaryReader(bytes, container.byte_order === "little");
+  const reader = new BinaryReader(
+    bytes,
+    container.byte_order === "little",
+    container.format,
+  );
   const named: GoBuildInfoSearchRange[] = [];
   for (const section of container.sections) {
     if (section.format === "elf" && section.name === ".go.buildinfo") {
@@ -70,7 +74,7 @@ export const goBuildInfoSearch = (
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF build-info sections are unsupported",
-          true,
+          { undecodedContent: true },
         );
       const search = {
         ...reader.fileRange(

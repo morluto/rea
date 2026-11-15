@@ -89,6 +89,7 @@ const threadShape = (
             "symbolLocation",
             "inline",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.frames,
       },
@@ -109,6 +110,7 @@ const threadShape = (
         beforeRest: take.registers,
       },
     },
+    beforeUnlisted: unlistedKeys,
   };
 };
 
@@ -192,6 +194,7 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
             "name",
             "path",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.images,
       },
