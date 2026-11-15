@@ -1,4 +1,3 @@
-import { KunaDocumentError } from "./KunaDocumentError.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import { accessSync, constants, statSync } from "node:fs";
 
@@ -133,19 +132,21 @@ export class KunaProvider implements AnalysisProviderCandidate {
         },
       };
     const { command } = configuration.value;
+    let unusable: string | undefined;
     try {
       accessSync(command, constants.X_OK);
-      if (!statSync(command).isFile())
-        throw new KunaDocumentError("command_not_file");
+      if (!statSync(command).isFile()) unusable = "command_not_file";
     } catch (cause: unknown) {
+      unusable = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (unusable !== undefined)
       return {
         status: "unavailable",
         code: "executable_missing",
-        reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${cause instanceof Error ? cause.message : String(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+        reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${unusable}. ${KUNA_COMMAND_REMEDIATION}`,
         remediation: KUNA_COMMAND_REMEDIATION,
         diagnostics: { configured: true, command, version_probed: false },
       };
-    }
     return {
       status: "available",
       code: null,

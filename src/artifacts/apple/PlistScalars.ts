@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
@@ -55,16 +56,18 @@ export interface BinaryPlistScalarDecodePlan {
 }
 
 /** A binary-plist UID cannot be projected to plist@5's numeric UID value exactly. */
-export class UnsupportedBinaryPlistUidError extends TypeError {
-  readonly _tag = "UnsupportedBinaryPlistUidError";
-
+export class UnsupportedBinaryPlistUidError extends ParseFailureError<"unsupported"> {
   constructor(
     readonly decimalValue: string,
     readonly sourceWidth: number,
   ) {
-    super(
-      `binary plist UID value ${decimalValue} in ${sourceWidth}-byte encoding exceeds the exact supported range`,
-    );
+    super({
+      kind: "unsupported",
+      format: "binary-plist",
+      detail: `binary plist UID value ${decimalValue} in ${sourceWidth}-byte encoding exceeds the exact supported range`,
+      field: "uid",
+      undecodedContent: true,
+    });
     this.name = "UnsupportedBinaryPlistUidError";
   }
 }

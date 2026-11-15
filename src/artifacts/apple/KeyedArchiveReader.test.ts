@@ -421,9 +421,13 @@ describe("binary plist reference preflight", () => {
     expect(() =>
       decodeKeyedArchiveBytes(keyedRoot([plistArray([8])]), selection),
     ).toThrow(
-      new TypeError(
-        "binary plist object references form a cycle, which a property list cannot represent",
-      ),
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail:
+            "binary plist object references form a cycle, which a property list cannot represent",
+        }),
+      }),
     );
   });
 
@@ -437,7 +441,14 @@ describe("binary plist reference preflight", () => {
         keyedRoot([...levels, plistString("x")]),
         selection,
       ),
-    ).toThrow(RangeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "plist-decode-bytes", maximum: 512 * 1024 * 1024 },
+        }),
+      }),
+    );
   });
 
   it("decodes shared leaf references", () => {
