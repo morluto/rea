@@ -175,18 +175,55 @@ const isPropertyRead = (tokens, end) =>
   tokens[end]?.kind === "id" &&
   (kind(tokens[end - 1]) === "." || kind(tokens[end - 1]) === "?.");
 
-/** First token of the `??` chain whose last operand ends at `end`. */
-const chainStart = (tokens, end) => {
+const closers = { ")": "(", "]": "[", "}": "{" };
+
+/** Index of the bracket that opens the group closed at `close`. */
+const matchingOpen = (tokens, close) => {
+  let depth = 0;
+  for (let at = close; at >= 0; at -= 1) {
+    const text = kind(tokens[at]);
+    if (text !== undefined && text in closers) depth += 1;
+    else if (text === "(" || text === "[" || text === "{") {
+      depth -= 1;
+      if (depth === 0) return at;
+    }
+  }
+  return undefined;
+};
+
+/** Ends a callee or object, so a following `(` or `[` is a call or element read. */
+const endsOperand = (token) =>
+  (token?.kind === "id" && !expressionKeywords.has(token.text)) ||
+  kind(token) === ")" ||
+  kind(token) === "]";
+
+/** First token of the member, call and element chain ending at `end`. */
+const operandStart = (tokens, end) => {
   let at = end;
   for (;;) {
-    while (
-      (kind(tokens[at - 1]) === "." || kind(tokens[at - 1]) === "?.") &&
-      at >= 2
+    const text = kind(tokens[at]);
+    if (text === ")" || text === "]") {
+      const open = matchingOpen(tokens, at);
+      if (open === undefined) return at;
+      at = open;
+    }
+    const previous = tokens[at - 1];
+    if ((kind(previous) === "." || kind(previous) === "?.") && at >= 2) at -= 2;
+    else if (
+      (kind(tokens[at]) === "(" || kind(tokens[at]) === "[") &&
+      endsOperand(previous)
     )
-      at -= 2;
-    if (kind(tokens[at - 1]) !== "??" || at < 2) return at;
-    at -= 2;
+      at -= 1;
+    else return at;
   }
+};
+
+/** First token of the `??` chain whose last operand ends at `end`. */
+const chainStart = (tokens, end) => {
+  let at = operandStart(tokens, end);
+  while (kind(tokens[at - 1]) === "??" && at >= 2)
+    at = operandStart(tokens, at - 2);
+  return at;
 };
 
 const isObservedDefault = (tokens, at) => {
@@ -197,8 +234,21 @@ const isObservedDefault = (tokens, at) => {
   return undefined;
 };
 
-// A default followed by one of these is part of a larger operand.
-const continuesOperand = new Set([".", "?.", "[", "(", "+", "-", "*", "/"]);
+// Tokens that end the `??` expression, so the literal is the whole right
+// operand. Any other operator binds tighter (`?? 0 | mask`, `?? 0 + 1`) and
+// makes the default a computed value.
+const endsDefault = new Set([")", "]", "}", ",", ";", ":", "?", "??"]);
+
+const isWholeDefault = (tokens, last, lineOf) => {
+  const next = tokens[last + 1];
+  if (next === undefined || endsDefault.has(kind(next))) return true;
+  // A statement that ends without a semicolon continues on a later line.
+  return (
+    next.kind !== "punct" &&
+    !["as", "satisfies", "in", "instanceof"].includes(next.text) &&
+    lineOf(next.start) > lineOf(tokens[last].start)
+  );
+};
 
 /** @param {string} source unstripped source, comments included */
 export const optionalFactDefaultCount = (source) => {
@@ -230,7 +280,7 @@ export const optionalFactDefaultCount = (source) => {
     if (kind(token) !== "??" || !isPropertyRead(tokens, at - 1)) return;
     const last = isObservedDefault(tokens, at + 1);
     if (last === undefined) return;
-    if (continuesOperand.has(kind(tokens[last + 1]))) return;
+    if (!isWholeDefault(tokens, last, lineOf)) return;
     const start = lineOf(tokens[chainStart(tokens, at - 1)].start);
     const end = lineOf(tokens[last].start);
     for (let line = start - 1; line <= end; line += 1)

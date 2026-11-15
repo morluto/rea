@@ -117,6 +117,35 @@ it("tracks template substitutions and division", () => {
     1,
   );
   expect(optionalFactDefaultCount("const n = report.count ?? 0 + 1;")).toBe(0);
+  // A tighter operator makes the right operand a computed value.
+  expect(
+    optionalFactDefaultCount("const m = report.mask ?? 0 | fallbackMask;"),
+  ).toBe(0);
+  expect(
+    optionalFactDefaultCount("f(report.count ?? 0, other.items ?? [])"),
+  ).toBe(2);
+  expect(
+    optionalFactDefaultCount("const n = cond ? report.count ?? 0 : 1;"),
+  ).toBe(1);
+});
+
+it("exempts a default whose operand starts on an earlier line", () => {
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request default, not an observation\nconst offset = getOptions(\n  request,\n).offset ?? 0;",
+    ),
+  ).toBe(0);
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request default, not an observation\nconst offset = pages[\n  index\n]?.options.offset ?? 0;",
+    ),
+  ).toBe(0);
+  // Without a marker the same defaults count.
+  expect(
+    optionalFactDefaultCount(
+      "const offset = getOptions(\n  request,\n).offset ?? 0;",
+    ),
+  ).toBe(1);
 });
 
 it("loads without installed dependencies, as CI runs it before npm ci", async () => {
