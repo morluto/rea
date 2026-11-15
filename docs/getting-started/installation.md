@@ -720,8 +720,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Mastra Code               | `mastracode`            |
 | Zed                       | `zed`                   |
 | Amp                       | `amp`                   |
-| ----------------------- | ---------------- |
-| MCPorter                | `mcporter`       |
+| MCPorter                  | `mcporter`              |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -736,7 +735,10 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 and Amp only through `rea mcp add`, and could not register Cline in VS Code
 Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
 not see those registrations. Current releases inspect, refresh and remove them
-like any other setup client. `mcporter`, `--client mcporter`,
+like any other setup client. `mcporter` also requires a release after 6.9.0;
+setup never selects it from detection, because MCPorter already imports the
+registrations setup writes for other clients. Select it with
+`--client mcporter`.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
