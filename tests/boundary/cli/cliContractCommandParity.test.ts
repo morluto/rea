@@ -108,12 +108,9 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
-  // The named option may supply a selector in place of the positional, and
-  // a selector names one object, so it is never empty.
-  if (parameter.selectorOption !== undefined) {
-    if (value === undefined) return true;
-    if (value === "") return false;
-  }
+  // The named option may supply a selector in place of the positional.
+  if (parameter.selectorOption !== undefined && value === undefined)
+    return true;
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
