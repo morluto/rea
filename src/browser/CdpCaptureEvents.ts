@@ -116,17 +116,6 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     return started;
   }
 
-  /**
-   * Compare the document read for final capture with the selected one. A
-   * change observed during the observation window stays recorded: the page
-   * never settled, so pre-navigation evidence would mix into the new document.
-   */
-  beginFinalCapture(document: CdpDocumentIdentity): void {
-    if (this.document === undefined)
-      throw new Error("Final capture began before an authorized frame");
-    this.document.observe(document);
-  }
-
   /** Record final script metadata omissions after all scriptParsed replacements. */
   recordScriptMetadataBudgetExclusions(): void {
     if (this.#scriptMetadataBudgetExclusionsRecorded) return;
