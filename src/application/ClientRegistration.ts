@@ -237,6 +237,7 @@ export const parseClientRegistrationPolicy = (
 // defaults and preservation rules are applied below.
 const managedPolicyKeys = new Set([
   "env",
+  "envs",
   "environment",
   "enabled",
   "disabled",
