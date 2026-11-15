@@ -25,6 +25,7 @@ import {
   type PythonPycCodeObject,
   type PythonPycConst,
 } from "../domain/python/pythonPyc.js";
+import { Budget } from "../domain/budget.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import {
@@ -342,8 +343,9 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
    * bound. Absent while a container is still on the explicit walk stack.
    */
   readonly #nestedCache = new WeakMap<MarshalValue, readonly CodeNode[]>();
-  #nestedSteps = 0;
-  #nestedRetained = 0;
+  /** Walk steps and retained code references share max_objects * max_depth. */
+  readonly #nestedSteps: Budget;
+  readonly #nestedRetained: Budget;
 
   constructor(
     bytes: Buffer,
@@ -364,6 +366,8 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
       previewLimit: PYTHON_PYC_CONST_PREVIEW_LIMIT,
       publishContainers: "before-items",
     });
+    this.#nestedSteps = new Budget(input.max_objects * input.max_depth);
+    this.#nestedRetained = new Budget(input.max_objects * input.max_depth);
   }
 
   protected wrap(value: MarshalCoreValue<MarshalValue>): MarshalValue {
@@ -756,7 +760,7 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
     if (this.#memoizeNested(value, added)) {
       for (const entry of added) {
         this.#nestedCache.delete(entry.value);
-        this.#nestedRetained -= entry.retained;
+        this.#nestedRetained.refund(entry.retained);
       }
       const walked = this.#walkNested(value);
       this.#nestedCache.set(value, walked);
@@ -801,12 +805,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
         });
         continue;
       }
-      const retainedBefore = this.#nestedRetained;
+      const retainedBefore = this.#nestedRetained.used;
       const codes = this.#combineNested(frame.children);
       this.#nestedCache.set(frame.value, codes);
       added.push({
         value: frame.value,
-        retained: this.#nestedRetained - retainedBefore,
+        retained: this.#nestedRetained.used - retainedBefore,
       });
       gray.delete(frame.value);
       frames.pop();
@@ -882,31 +886,33 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
   }
 
   #takeNestedStep(): void {
-    this.#nestedSteps += 1;
-    const limit = this.input.max_objects * this.input.max_depth;
-    if (this.#nestedSteps > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        {
-          max_objects: this.input.max_objects,
-          max_depth: this.input.max_depth,
-        },
-        `Nested code walk exceeds ${limit} steps (max_objects * max_depth).`,
-      );
+    this.#nestedSteps.charge(
+      1,
+      () =>
+        new PythonPycResourceFailure(
+          "objects",
+          {
+            max_objects: this.input.max_objects,
+            max_depth: this.input.max_depth,
+          },
+          `Nested code walk exceeds ${String(this.#nestedSteps.maximum)} steps (max_objects * max_depth).`,
+        ),
+    );
   }
 
   #retainNested(codes: readonly CodeNode[]): void {
-    this.#nestedRetained += codes.length;
-    const limit = this.input.max_objects * this.input.max_depth;
-    if (this.#nestedRetained > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        {
-          max_objects: this.input.max_objects,
-          max_depth: this.input.max_depth,
-        },
-        `Nested code walk retains more than ${limit} code references.`,
-      );
+    this.#nestedRetained.charge(
+      codes.length,
+      () =>
+        new PythonPycResourceFailure(
+          "objects",
+          {
+            max_objects: this.input.max_objects,
+            max_depth: this.input.max_depth,
+          },
+          `Nested code walk retains more than ${String(this.#nestedRetained.maximum)} code references.`,
+        ),
+    );
   }
 
   /**

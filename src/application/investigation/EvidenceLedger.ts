@@ -1,5 +1,7 @@
 import { InvalidResidualUnknownGraphError } from "../../domain/residualUnknownGraphError.js";
 import { z } from "zod";
+import { Budget } from "../../domain/budget.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 
 import {
   createEvidenceBundle,
@@ -76,14 +78,14 @@ export class EvidenceLedger {
   #records = new Map<string, Evidence>();
   #unknownRevisions = new Map<string, ResidualUnknown>();
   #unknownHeads = new Map<string, ResidualUnknown>();
-  #retainedBytes = 0;
   #recordBytes = new Map<string, number>();
-  readonly #maximumBytes: number;
+  readonly #retained: Budget;
   constructor(
     private readonly retentionPolicy: InvestigationRetentionPolicy = {},
   ) {
-    this.#maximumBytes =
-      investigationMaximumRepresentationBytes(retentionPolicy);
+    this.#retained = new Budget(
+      investigationMaximumRepresentationBytes(retentionPolicy),
+    );
   }
 
   /** Read committed counts without constructing or hashing a bundle. */
@@ -92,8 +94,8 @@ export class EvidenceLedger {
       evidenceRecords: this.#records.size,
       unknownRevisions: this.#unknownRevisions.size,
       unknownHeads: this.#unknownHeads.size,
-      retainedRepresentationBytes: this.#retainedBytes,
-      maximumRepresentationBytes: this.#maximumBytes,
+      retainedRepresentationBytes: this.#retained.used,
+      maximumRepresentationBytes: this.#retained.maximum,
     };
   }
 
@@ -512,7 +514,7 @@ export class EvidenceLedger {
     this.#records.clear();
     this.#unknownRevisions.clear();
     this.#unknownHeads.clear();
-    this.#retainedBytes = 0;
+    this.#retained.restore(0);
     this.#recordBytes.clear();
   }
 
@@ -658,7 +660,7 @@ export class EvidenceLedger {
         delta -= LEDGER_ENTRY_BYTES + previousBytes;
     }
     for (const record of records.values()) {
-      const remaining = this.#maximumBytes - this.#retainedBytes - delta;
+      const remaining = this.#retained.remaining - delta;
       const bytes = investigationValueBytes(
         record,
         remaining - LEDGER_ENTRY_BYTES,
@@ -666,9 +668,9 @@ export class EvidenceLedger {
       delta += LEDGER_ENTRY_BYTES + bytes;
       const admitted = admitInvestigationRetention(
         operation,
-        this.#retainedBytes,
+        this.#retained.used,
         delta,
-        this.#maximumBytes,
+        this.#retained.maximum,
       );
       if (!admitted.ok) return admitted;
       recordBytes.set(record.evidence_id, bytes);
@@ -683,16 +685,16 @@ export class EvidenceLedger {
           ? 0
           : LEDGER_ENTRY_BYTES;
       newHeads.add(unknown.unknown_id);
-      const remaining = this.#maximumBytes - this.#retainedBytes - delta;
+      const remaining = this.#retained.remaining - delta;
       delta +=
         indexBytes +
         headBytes +
         investigationValueBytes(unknown, remaining - indexBytes - headBytes);
       const admitted = admitInvestigationRetention(
         operation,
-        this.#retainedBytes,
+        this.#retained.used,
         delta,
-        this.#maximumBytes,
+        this.#retained.maximum,
       );
       if (!admitted.ok) return admitted;
     }
@@ -702,7 +704,12 @@ export class EvidenceLedger {
   #commitAccounting(changes: RetentionChanges): void {
     for (const [id, bytes] of changes.recordBytes)
       this.#recordBytes.set(id, bytes);
-    this.#retainedBytes += changes.deltaBytes;
+    // #admitChanges admitted the delta against the same, unchanged allowance.
+    if (changes.deltaBytes < 0) this.#retained.refund(-changes.deltaBytes);
+    else
+      this.#retained.charge(changes.deltaBytes, () =>
+        invariantViolation("Admitted investigation retention no longer fits"),
+      );
   }
 }
 
