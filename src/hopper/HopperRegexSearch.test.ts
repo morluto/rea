@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply,
+} from "./HopperReplyContracts.js";
 import { err, ok } from "../domain/result.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -15,6 +19,7 @@ import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const regexMatch = vi.hoisted(() => ({
   afterSettle: undefined as (() => void) | undefined,
@@ -103,17 +108,23 @@ it.each(["search_strings", "search_procedures"] as const)(
 it.each(["search_strings", "search_procedures"] as const)(
   "rejects malformed canonical metadata in the %s inventory",
   async (operation) => {
+    // The client validates each reply against its method contract.
     const search = new HopperRegexSearch({
-      callTool: async () =>
-        ok([
-          {
-            address: "0x1",
-            value: "matched",
-            ...(operation === "search_strings"
-              ? { string: { encoding: false } }
-              : { procedure: { external: "unknown" } }),
-          },
-        ]),
+      callTool: async (method, _arguments, options) =>
+        parseHopperReply(
+          hopperReplySchemas,
+          method,
+          [
+            {
+              address: "0x1",
+              value: "matched",
+              ...(operation === "search_strings"
+                ? { string: { encoding: false } }
+                : { procedure: { external: "unknown" } }),
+            },
+          ],
+          options?.operation ?? method,
+        ),
     });
     try {
       expect(
@@ -242,7 +253,7 @@ it.each(
           stage: "analysis",
         });
       expect(original.operation).toBe(inventory);
-      original.resolveCleanup();
+      releaseOwnedCleanup(original);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
       await search.close();

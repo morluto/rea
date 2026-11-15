@@ -5,6 +5,7 @@ import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
   projectProcessCliInputCleanupError,
+  PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
 } from "../../../src/application/process/ProcessCli.js";
 import * as scenarioPreparation from "../../../src/application/process/ProcessScenarioPreparation.js";
 import * as captureCapability from "../../../src/process/capture/ProcessCaptureCapability.js";
@@ -93,6 +94,8 @@ describe("process CLI error projection", () => {
           analysisErrorProjectionSchema.parse(projection).remediation.action;
         expect(action).not.toContain("SECRET");
         expect(action).not.toMatch(/\bretry\b/iu);
+        // The caller receives the process boundary's own recovery.
+        expect(action).toBe(PROCESS_UNEXPECTED_FAILURE_REMEDIATION);
         expect(
           await readFile("docs/user-visible-errors.csv", "utf8"),
         ).toContain(action);

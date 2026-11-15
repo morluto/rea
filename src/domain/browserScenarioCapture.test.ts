@@ -49,6 +49,12 @@ it("requires transaction IDs and explicit unknown redirect predecessors", () => 
       redirected_from_transaction_state: "unknown",
     }).success,
   ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...request,
+      redirected_from_transaction_state: undefined,
+    }).success,
+  ).toBe(false);
 });
 
 it("parses each network outcome without contradictory status or failure data", () => {

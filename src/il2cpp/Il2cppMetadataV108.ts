@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { IL2CPP_METADATA_SECTION_NAMES } from "../domain/il2cpp/il2cppMetadata.js";
 import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
@@ -23,7 +24,7 @@ const HEADER_BYTES = 8 + SECTION_NAMES.length * 12;
 const SAMPLE_STRINGS = 16;
 const SAMPLE_BYTES = 128;
 const SCAN_BATCH_BYTES = 64 * 1024;
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 
 /** A bounded, header-only observation; never a decoded metadata report. */
 export const inspectIl2cppMetadataV108 = async (

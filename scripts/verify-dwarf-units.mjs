@@ -1,18 +1,10 @@
 /** Compile a two-file C fixture and compare compile-unit facts with a DWARF dumper. */
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
@@ -495,11 +487,13 @@ const invokedDirectly = () => {
 const main = async () => {
   const commands = await createVerifierCommands();
   let root;
+  let fixture;
   const checked = [];
   const skipped = [];
   const boundaries = [];
   await withVerifierCleanup(async () => {
-    root = await mkdtemp(join(tmpdir(), "rea-dwarf-units-"));
+    fixture = await VerifierFixture.open({ prefix: "rea-dwarf-units-" });
+    root = fixture.path;
     if (compiler === undefined || dumper === undefined) {
       skipped.push({
         id: "all",
@@ -590,7 +584,7 @@ const main = async () => {
     // The directory stays when a command tree could not be stopped.
     async () => {
       await commands.close();
-      if (root !== undefined) await rm(root, { recursive: true, force: true });
+      await fixture?.release();
     },
   ]);
 };

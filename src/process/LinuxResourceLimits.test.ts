@@ -1,4 +1,5 @@
 import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
+import { createArtifactAnalysisResources } from "../providers/artifactResourceFailure.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -203,7 +204,7 @@ it("readmits analysis and resolves the original cleanup error after kernel descr
   const directory = await createTestTempDirectory("rea-kernel-admission-");
   kernel.path = join(directory, "limits");
   kernel.denied = true;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "kernel-test",
     "read-limits",
     readStableArtifact,

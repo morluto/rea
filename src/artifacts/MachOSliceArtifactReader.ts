@@ -157,6 +157,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O structural slice index is malformed: ${structural.reason}`,
+        { integrityCheck: "layout-consistency" },
       );
     // A valid universal binary can hold slices REA cannot index, such as
     // big-endian PowerPC. lipo's own ranges still inventory every slice.
@@ -176,7 +177,9 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const disagreements: string[] = [];
     const disagree = (message: string): void => {
       if (this.integrity === "fail")
-        throw new ArtifactReaderFailure("integrity", message);
+        throw new ArtifactReaderFailure("integrity", message, {
+          integrityCheck: "layout-consistency",
+        });
       disagreements.push(message);
     };
     const hiddenArchitectures = architectures.filter(({ hidden }) => hidden);
@@ -298,6 +301,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "lipo omitted a universal slice byte range",
+          { integrityCheck: "layout-consistency" },
         );
       yield this.#sliceEntry(architecture.name, offset, sliceSize, fileSize, [
         ...architecture.limitations,
@@ -342,6 +346,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${name}`,
+        { integrityCheck: "layout-consistency" },
       );
     const entry: ArtifactEntry = {
       path: `slices/${name}`,
@@ -380,6 +385,10 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "Mach-O slice entry metadata does not match this reader's inventory",
+        {
+          integrityCheck:
+            produced === undefined ? "foreign-entry" : "entry-metadata",
+        },
       );
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
@@ -394,6 +403,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "Invalid Mach-O slice byte range",
+        { integrityCheck: "layout-consistency" },
       );
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
@@ -409,6 +419,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${entry.path}`,
+        { integrityCheck: "layout-consistency" },
       );
     const sourceStream = readArtifactFileChunks(source.handle, {
       start: offset,
@@ -423,11 +434,13 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice read coverage is incomplete: ${entry.path}`,
+          { integrityCheck: "read-coverage" },
         );
       if (coverage.bytes !== BigInt(size))
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice size disagrees with lipo metadata: ${entry.path}`,
+          { integrityCheck: "declared-size" },
         );
       if (signal?.aborted)
         return new ArtifactReaderFailure(
@@ -456,7 +469,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `Could not read Mach-O slice range: ${entry.path}`,
-            { cause },
+            { cause, integrityCheck: "read-coverage" },
           );
         }
         validatingSource = true;
@@ -494,7 +507,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
             : new ArtifactReaderFailure(
                 "integrity",
                 `Could not read Mach-O slice range: ${entry.path}`,
-                { cause },
+                { cause, integrityCheck: "read-coverage" },
               )),
       );
     };

@@ -9,6 +9,7 @@ import {
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryResourceFailure,
   type ImageSection,
 } from "../metadata/BinaryContainer.js";
@@ -125,11 +126,15 @@ export const locateDwarfSections = (
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
 ): LocatedDwarfImage => {
   const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
-  if (bytes.length >= 4 && bytes.readUInt32LE(0) === 0x464c457f)
-    return finish(locateElf(bytes, budget));
+  const magic =
+    bytes.length >= 4 ? new BinaryReader(bytes, true, "dwarf").u32(0) : null;
+  if (magic === 0x464c457f) return finish(locateElf(bytes, budget));
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
     return finish(locatePe(bytes, budget));
-  if (bytes.length >= 4 && isMachoMagic(bytes.readUInt32BE(0)))
+  if (
+    bytes.length >= 4 &&
+    isMachoMagic(new BinaryReader(bytes, false, "dwarf").u32(0))
+  )
     return finish(locateMacho(bytes, budget));
   throw new BinaryFormatFailure(
     "unsupported",
@@ -622,7 +627,7 @@ const peSectionNames = (
         "malformed",
         "PE long section name string table is unavailable",
       );
-    const tableSize = bytes.readUInt32LE(table);
+    const tableSize = new BinaryReader(bytes, true, "pe").u32(table);
     if (tableSize < 4 || tableSize > bytes.length - table)
       throw new BinaryFormatFailure(
         "malformed",

@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "./strictUtf8.js";
 /**
  * Pure string predicates for artifact path syntax. The local artifact
  * resolver, the Electron native specifier check, and (by reference) the
@@ -49,7 +50,7 @@ export const htmlUrlText = (value: string): string => {
   return value.slice(start, end).replace(/[\t\n\r]/gu, "");
 };
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 const UTF8_ENCODER = new TextEncoder();
 
 /**

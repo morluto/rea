@@ -13,6 +13,7 @@ import {
 } from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
@@ -131,6 +132,18 @@ const sessionCleanupFailure = (
     : failure;
 };
 
+/**
+ * Let a cleanup failure the client's close reported read that close. A failure
+ * whose cleanup already follows its own owner keeps reading that owner.
+ */
+const bindClientRelease = (
+  release: AnalysisCleanupRelease,
+  failure: AnalysisError,
+): void => {
+  if (failure.cleanupIncomplete && !failure.hasCleanupOwner)
+    release.bind(failure);
+};
+
 const trackCleanupFailures = (
   signal: AbortSignal | undefined,
   operation: string,
@@ -197,7 +210,8 @@ export class BinarySession
     | {
         readonly run: SessionRun;
         readonly retainDocument: boolean;
-        readonly failures: Set<AnalysisError>;
+        /** Confirmed by the client's close; failures it reported read it. */
+        readonly release: AnalysisCleanupRelease;
       }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
@@ -1196,7 +1210,7 @@ export class BinarySession
     this.#pendingCleanup = {
       run,
       retainDocument: options.retainDocument === true,
-      failures: new Set(),
+      release: new AnalysisCleanupRelease(),
     };
     return this.#retryPendingCleanup(
       options.progress,
@@ -1223,18 +1237,15 @@ export class BinarySession
         ...(progress === undefined ? {} : { progress }),
         ...(pending.retainDocument ? { retainDocument: true } : {}),
         onCleanupFailure: (failure) => {
-          if (failure.cleanupIncomplete) pending.failures.add(failure);
+          bindClientRelease(pending.release, failure);
           onCleanupFailure?.(failure);
         },
       },
     );
     if (closed.ok) {
-      for (const failure of pending.failures)
-        if (!failure.hasCleanupOwner) failure.resolveCleanup();
+      pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else if (closed.error.cleanupIncomplete) {
-      pending.failures.add(closed.error);
-    }
+    } else bindClientRelease(pending.release, closed.error);
     return closed;
   }
 

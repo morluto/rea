@@ -1,3 +1,4 @@
+import { BinaryReader } from "./BinaryContainer.js";
 import { constants, inflateSync, zstdDecompressSync } from "node:zlib";
 
 const SHF_COMPRESSED = 0x800n;
@@ -54,21 +55,16 @@ export const decodeElfCompressedSection = (
       message: `${subject} header is truncated`,
       inflatedBytes: 0,
     };
-  const compressionType = little
-    ? bytes.readUInt32LE(0)
-    : bytes.readUInt32BE(0);
+  const reader = new BinaryReader(bytes, little, "elf");
+  const compressionType = reader.u32(0);
   if (
     compressionType !== ELFCOMPRESS_ZLIB &&
     compressionType !== ELFCOMPRESS_ZSTD
   )
     return { state: "unsupported", compressionType };
 
-  const declaredSize =
-    bits === 64
-      ? little
-        ? bytes.readBigUInt64LE(8)
-        : bytes.readBigUInt64BE(8)
-      : BigInt(little ? bytes.readUInt32LE(4) : bytes.readUInt32BE(4));
+  // Elf64_Chdr pads ch_type to eight bytes; Elf32_Chdr does not.
+  const declaredSize = reader.word(bits === 64 ? 8 : 4, bits);
   if (declaredSize > BigInt(maximumDecodedBytes))
     return {
       state: "limit",
@@ -99,7 +95,7 @@ export const decodeElfGnuZlibSection = (
       message: `${subject} is not a GNU ZLIB compressed section`,
       inflatedBytes: 0,
     };
-  const declaredSize = bytes.readBigUInt64BE(4);
+  const declaredSize = new BinaryReader(bytes, false, "elf").word(4, 64);
   if (declaredSize > BigInt(maximumDecodedBytes))
     return {
       state: "limit",

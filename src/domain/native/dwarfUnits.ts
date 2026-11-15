@@ -1,3 +1,4 @@
+import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { z } from "zod";
 
 import {
@@ -295,9 +296,17 @@ export const dwarfUnitsSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    const info = report.sections.find(
-      (section) => section.role === ".debug_info",
+    const debugInfo = uniqueKeyed(
+      keyedBy(report.sections, (section) => section.role),
+      ".debug_info",
     );
+    if (!debugInfo.ok)
+      context.addIssue({
+        code: "custom",
+        path: ["sections"],
+        message: "A report names one .debug_info section",
+      });
+    const info = debugInfo.ok ? debugInfo.value : undefined;
     const pageCount = Math.min(
       report.page.limit,
       Math.max(0, report.total_units - report.page.offset),

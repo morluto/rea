@@ -10,8 +10,6 @@ export const readPeCoffHeader = (bytes: Buffer) => {
   return ok({
     machine: bytes.readUInt16LE(0),
     sectionCount: bytes.readUInt16LE(2),
-    symbolTableOffset: bytes.readUInt32LE(8),
-    symbolCount: bytes.readUInt32LE(12),
     optionalHeaderSize: bytes.readUInt16LE(16),
     characteristics: bytes.readUInt16LE(18),
   });

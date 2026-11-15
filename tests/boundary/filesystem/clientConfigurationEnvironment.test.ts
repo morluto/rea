@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -255,6 +256,7 @@ it.skipIf(process.platform !== "win32")(
       rea_mcp_input_schema_profile: "full",
     });
     const statuses = await readClientRegistrationStatuses(home, command[1], {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "kimi")).toMatchObject({
@@ -964,6 +966,7 @@ it.each([
       false,
     );
     const statuses = await readClientRegistrationStatuses(home, "rea", {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "cursor")).toMatchObject({
