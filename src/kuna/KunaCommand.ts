@@ -142,7 +142,12 @@ export const kunaFileCleanupError = (
           diagnostics,
           userMessage: `Kuna ${operation} failed: ${message(primaryCause)}`,
         });
-  return analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  const composed = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  // The installation facts stay where every other outcome reports them, not
+  // only inside the composed primary and cleanup reports.
+  return diagnostics === undefined
+    ? composed
+    : composed.retainDiagnostics(diagnostics);
 };
 
 /** Preserve the exact retryable resources when an inspection admission retries them. */
