@@ -11,8 +11,11 @@ import {
   guestFileAnswerBytes,
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
-  type AgentEnvComputer,
 } from "./AgentEnvComputer.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
 
 const CONTROLLER = fileURLToPath(
   new URL("../../bridge/agentenv/capture.py", import.meta.url),
@@ -63,12 +66,6 @@ const controllerArgumentPieces = (text: string): readonly string[] => {
   }
   return pieces;
 };
-
-/** The computer routes REA's build controller uses, and the control token's redaction for what it reads. */
-export type ControlledComputer = Pick<
-  AgentEnvComputer,
-  "exec" | "homeFiles" | "redacted"
->;
 
 /**
  * Run one command of REA's build controller in the computer, as its user and
@@ -145,8 +142,8 @@ export const runBuildController = async (
   );
 };
 
-/** What REA's build controller answers a command with. The wire format stays here. */
-export const answerSchema = z.looseObject({
+/** What REA's build controller answers a command with. The wire format stays here; the port names its fields. */
+export const answerSchema: z.ZodType<BuildControllerAnswer> = z.looseObject({
   error: z.string().optional(),
   /** Why the controller refused a request before acting on it, such as a state path outside the home. */
   refused: z.string().optional(),
@@ -170,7 +167,6 @@ export const answerSchema = z.looseObject({
     .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
     .optional(),
 });
-export type Answer = z.infer<typeof answerSchema>;
 
 /** One controller command, its answer parsed. */
 export const controller = async (
@@ -178,7 +174,7 @@ export const controller = async (
   command: "start" | "mark" | "stop",
   argumentsJson: Readonly<Record<string, JsonValue>>,
   options: { readonly timeoutS: number; readonly signal: AbortSignal },
-): Promise<Answer> =>
+): Promise<BuildControllerAnswer> =>
   answerSchema.parse(
     await runBuildController(computer, command, argumentsJson, options),
   );
