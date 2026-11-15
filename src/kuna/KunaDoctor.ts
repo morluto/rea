@@ -5,7 +5,7 @@ import { dirname, posix, win32 } from "node:path";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import {
   admitKunaCommand,
   type KunaAdmissionRefusal,

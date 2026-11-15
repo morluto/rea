@@ -1,7 +1,7 @@
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import {
   readIdaConfiguration,
   type IdaConfiguration,

@@ -1,10 +1,9 @@
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
-import {
-  systemDoctorHost,
-  type DoctorCheck,
-  type DoctorHost,
-  type DoctorProviderInspection,
-} from "./application/Doctor.js";
+import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "./ports/DoctorProviderInspection.js";
 import { fileURLToPath } from "node:url";
 import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
