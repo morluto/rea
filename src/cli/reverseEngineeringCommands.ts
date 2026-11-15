@@ -497,26 +497,39 @@ export const registerReverseEngineeringCommands = (
         logCliCommand(logger, CLI_COMMANDS.debugWithLldb, async () => {
           const manager = createLldbManager(environment);
           let sessionId: string | undefined;
-          try {
-            const started = await manager.start(
-              signal,
-              options.path === undefined ? {} : { path: options.path },
-            );
-            if (!started.ok) return projectAnalysisError(started.error);
-            sessionId = started.value.session_id;
-            const executed = await manager.execute(
-              sessionId,
-              args.command,
-              signal,
-            );
-            return executed.ok
-              ? executed.value.evidence
-              : projectAnalysisError(executed.error);
-          } finally {
-            if (sessionId !== undefined) {
-              await manager.close(sessionId).catch(() => undefined);
-            }
-          }
+          return finishAnalysisCommand(
+            async () => {
+              const started = await manager.start(
+                signal,
+                options.path === undefined ? {} : { path: options.path },
+              );
+              if (!started.ok) return started;
+              sessionId = started.value.session_id;
+              const executed = await manager.execute(
+                sessionId,
+                args.command,
+                signal,
+              );
+              return executed.ok ? ok(executed.value.evidence) : executed;
+            },
+            {
+              close: () =>
+                closeDebuggerCommandSession(
+                  manager,
+                  sessionId,
+                  "apple.lldb",
+                  "lldb_command",
+                  (cleanup) =>
+                    logger.error(
+                      { command: CLI_COMMANDS.debugWithLldb, cleanup },
+                      "LLDB cleanup failed after collecting command output",
+                    ),
+                ),
+            },
+            "apple.lldb",
+            "lldb_command",
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
