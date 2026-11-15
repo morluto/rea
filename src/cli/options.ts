@@ -13,6 +13,8 @@ import {
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
+import { toolContract } from "../contracts/toolContracts.js";
+import type { CliSessionTarget } from "./contractCliDescription.js";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
 const DECIMAL_INTEGER_TOKEN = /^[0-9]+$/u;
@@ -158,16 +160,27 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
     ]),
   ) as Shape;
 
+/** Help of the flags that bind a native target interpretation. */
+const NATIVE_OPEN_HELP = {
+  format:
+    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
+  architecture:
+    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
+  entryPoint:
+    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
+  provider:
+    "Bind deep analysis to a provider ID or use deterministic auto selection",
+  snapshot: "Load and update a local analysis snapshot",
+} as const;
+
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
-  .describe(
-    "Bind deep analysis to a provider ID or use deterministic auto selection",
-  );
+  .describe(NATIVE_OPEN_HELP.provider);
 
 /** Optional path to the local analysis snapshot loaded or updated by a command. */
 export const snapshotSelectionOption = localPathStringSchema
   .optional()
-  .describe("Load and update a local analysis snapshot");
+  .describe(NATIVE_OPEN_HELP.snapshot);
 
 /**
  * Explicit interpretation for headerless native executable formats. Flash
@@ -176,21 +189,15 @@ export const snapshotSelectionOption = localPathStringSchema
 const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
-  .describe(
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
-  );
+  .describe(NATIVE_OPEN_HELP.format);
 
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
-  .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
-  );
+  .describe(NATIVE_OPEN_HELP.architecture);
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema
   .optional()
-  .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
-  );
+  .describe(NATIVE_OPEN_HELP.entryPoint);
 
 /** Shared CLI flags that bind a native target interpretation. */
 export const nativeOpenOptionFields = {
@@ -199,6 +206,45 @@ export const nativeOpenOptionFields = {
   "entry-point": entryPointSelectionOption,
   provider: providerSelectionOption,
 };
+
+/**
+ * A native executable opened as an MCP client opens it, with `open_binary`'s
+ * format, architecture, entry point and provider fields. An operation that
+ * loads and updates an analysis snapshot also takes `snapshot_path`, with
+ * `snapshot` as its help when it differs from the shared one.
+ */
+export const nativeTarget = (
+  description: string,
+  snapshot?: true | string,
+): CliSessionTarget => ({
+  description,
+  open: {
+    contract: toolContract("open_binary"),
+    fields: {
+      ...(snapshot === undefined
+        ? {}
+        : {
+            snapshot_path: {
+              name: "snapshot",
+              callerPath: true,
+              description:
+                snapshot === true ? NATIVE_OPEN_HELP.snapshot : snapshot,
+            },
+          }),
+      format: {
+        name: "target-format",
+        values: ["dos-com", "raw-binary", "gamecube-dol"],
+        description: NATIVE_OPEN_HELP.format,
+      },
+      architecture: { description: NATIVE_OPEN_HELP.architecture },
+      entry_point: {
+        name: "entry-point",
+        description: NATIVE_OPEN_HELP.entryPoint,
+      },
+      provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
+    },
+  },
+});
 
 /** Native CLI flags consumed when opening a target for one-shot analysis. */
 export interface NativeOpenCliFlags {
