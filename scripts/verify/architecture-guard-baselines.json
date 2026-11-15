@@ -280,14 +280,7 @@
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
-    "src/captures/TsharkCaptureProvider.ts": 1,
-    "src/cutter/CutterBridgeClient.ts": 1,
-    "src/domain/localPath.ts": 1,
-    "src/electron/ElectronFusePath.ts": 1,
-    "src/ida/IdaWorkspace.ts": 1,
-    "src/inspector/JavaScriptRuntimeScope.ts": 1,
-    "src/serverIdentity.ts": 1,
-    "src/wasm/WabtArtifactProvider.ts": 1
+    "src/domain/localPath.ts": 1
   },
   "hand-caught-configuration-error": {
     "src/application/McpClientRegistration.ts": 1,
@@ -351,8 +344,7 @@
     "src/native/pwntools/PwntoolsDecoder.ts": 1
   },
   "test-host-platform-stub": {
-    "tests/boundary/cli/debuggerOneShotExit.test.ts": 1,
-    "tests/boundary/process/nativeUiVerifierActions.test.ts": 1
+    "tests/boundary/cli/debuggerOneShotExit.test.ts": 1
   },
   "local-completeness-enum": {
     "src/contracts/cutterToolContracts.ts": 1,

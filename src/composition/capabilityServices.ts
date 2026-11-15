@@ -517,8 +517,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
