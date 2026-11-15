@@ -28,6 +28,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 export interface AndroidMappingReadDeadline {
   readonly timeout: AbortSignal;
@@ -192,7 +193,8 @@ export const readAndroidMapping = async (
     );
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+    // A mapping file saved by an editor may start with a BOM signature.
+    text = decodeStrictUtf8(snapshot.bytes, "strip-signature");
   } catch {
     return malformed(`Mapping file is not valid UTF-8: ${path}`);
   }

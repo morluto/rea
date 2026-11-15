@@ -34,6 +34,7 @@ import {
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -216,10 +217,8 @@ const snapshotRecoveryInput = async (
       cause,
     );
   }
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch (cause: unknown) {
-    throw new AnalysisInputError(OPERATION, { cause }, [
+  if (!isStrictUtf8(bytes))
+    throw new AnalysisInputError(OPERATION, {}, [
       {
         path: ["path"],
         reason: "invalid_format",
@@ -227,7 +226,6 @@ const snapshotRecoveryInput = async (
         message: `JavaScript input is not valid UTF-8: ${path}`,
       },
     ]);
-  }
   try {
     await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
     await writeFile(snapshotPath, bytes, { flag: "wx", mode: 0o600 });

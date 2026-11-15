@@ -31,6 +31,7 @@ import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -319,9 +320,7 @@ const asarFiles = async (
       throwIfAborted(signal);
       if (!sameRegularFileState(identity, afterRead))
         throw new Error("ASAR identity changed during header read");
-      const parsed: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(json),
-      );
+      const parsed: unknown = JSON.parse(decodeStrictUtf8(json, "preserve"));
       if (!isRecord(parsed) || !isRecord(parsed.files))
         throw new Error("ASAR header has no file tree");
       return { files: parsed.files, jsonBytes, headerBytes };
