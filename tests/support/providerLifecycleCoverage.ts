@@ -910,11 +910,17 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "preserves the caller reason when cancellation arrives after provider output",
         ),
       ),
-      cleanup: gap(
-        "Cleanup failure is covered only through the shared service's Rizin command path.",
+      cleanup: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "retains an objdump command's unverified process owner until a later inspection stops it",
+        ),
       ),
-      retry: gap(
-        "Cleanup retry is covered only through the shared service's Rizin command path.",
+      retry: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "retains an objdump command's unverified process owner until a later inspection stops it",
+        ),
       ),
     },
   },
@@ -1780,8 +1786,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "retains a completed observation and cleanup ownership for retry",
         ),
       ),
-      retry: gap(
-        "Descriptor cleanup retry is covered by generated titles in recordingDescriptorCleanup.test.ts; process cleanup retry has no regression.",
+      retry: covered(
+        test(
+          "tests/boundary/signals/recordingProvider.test.ts",
+          "releases a retained decoder process cleanup before the next decode completes",
+        ),
       ),
     },
   },
@@ -1848,8 +1857,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "retains a completed observation and cleanup ownership for retry",
         ),
       ),
-      retry: gap(
-        "Descriptor cleanup retry is covered by generated titles in captureDescriptorCleanup.test.ts; process cleanup retry has no regression.",
+      retry: covered(
+        test(
+          "tests/boundary/captures/captureProvider.test.ts",
+          "releases a retained decoder process cleanup before the next inspection completes",
+        ),
       ),
     },
   },
@@ -1917,8 +1929,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "bounds the excerpt when cleanup also fails after the output budget",
         ),
       ),
-      retry: gap(
-        "No regression retries a failed WABT cleanup; the corrected-retry test runs after cleanup succeeds.",
+      retry: covered(
+        test(
+          "src/wasm/WabtArtifactProvider.test.ts",
+          "retries a retained input descriptor before admitting the next WABT operation",
+        ),
       ),
     },
   },
@@ -1967,8 +1982,6 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
 export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "aioquic-qlog-json:operation",
   "mitmproxy-native-tnetstring:operation",
-  "objdump.command:cleanup",
-  "objdump.command:retry",
   "rea-apple-application:cleanup",
   "rea-apple-application:launch",
   "rea-apple-application:retry",
@@ -1986,8 +1999,5 @@ export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "rea-v8-inspector:handshake",
   "rea-web-module-trace:handshake",
   "rea-web-module-trace:retry",
-  "sigrok-recording:retry",
   "sqlite:launch",
-  "tshark-capture:retry",
-  "wabt-artifact:retry",
 ];
