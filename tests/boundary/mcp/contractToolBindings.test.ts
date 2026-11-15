@@ -95,7 +95,7 @@ mcpTest(
 );
 
 mcpTest(
-  "binds a retained summary only to a contract that selects detail",
+  "binds exactly one handler, and a retained summary only to a contract that selects detail",
   () => {
     const bindings: ContractToolBindings = {
       inspect_pe_imports: {
@@ -104,6 +104,17 @@ mcpTest(
         summary: () => Promise.reject(new Error("never registered")),
       },
     };
-    expect(Object.keys(bindings)).toEqual(["inspect_pe_imports"]);
+    const both: ContractToolBindings = {
+      inspect_devicetree: {
+        admission: "application",
+        run: () => Promise.reject(new Error("never registered")),
+        // @ts-expect-error a binding selects exactly one handler.
+        summary: () => Promise.reject(new Error("never registered")),
+      },
+    };
+    expect(Object.keys({ ...bindings, ...both })).toEqual([
+      "inspect_pe_imports",
+      "inspect_devicetree",
+    ]);
   },
 );

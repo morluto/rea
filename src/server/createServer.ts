@@ -9,14 +9,7 @@ import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
 import { serverInstructions } from "./serverInstructions.js";
-import {
-  contractServiceBindings,
-  registerContractTools,
-} from "./contractToolBindings.js";
-import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
-import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
-import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
-import { ok } from "../domain/result.js";
+import { registerServiceTools } from "./serviceToolBindings.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
@@ -458,218 +451,50 @@ export const createServer = (
         evidenceById,
         analysisAdmission,
       );
-      const byteEntropy = createByteEntropyService(artifactResources);
-      registerContractTools(
+      registerServiceTools(
         server,
         {
-          inspect_byte_entropy: {
-            admission: "sdk",
-            summary: (input, options) => byteEntropy.inspect(input, options),
-          },
-          inspect_pe_resources: {
-            admission: "application",
-            run: (input, options) => peResources.inspect(input, options),
-          },
-          inspect_native_exports: {
-            admission: "application",
-            summary: (input, options) => nativeExports.inspect(input, options),
-          },
-          inspect_devicetree: {
-            admission: "application",
-            summary: (input, options) => devicetree.inspect(input, options),
-          },
-          inspect_elf_notes: {
-            admission: "sdk",
-            run: (input, options) => elfNotes.inspect(input, options),
-          },
-          inspect_native_initializers: {
-            admission: "sdk",
-            run: (input, options) => nativeInitializers.inspect(input, options),
-          },
-          inspect_elf_unwind_ranges: {
-            admission: "sdk",
-            run: (input, options) => elfUnwindRanges.inspect(input, options),
-          },
-          inspect_apple_ips: {
-            admission: "sdk",
-            run: (input, options) => appleIps.inspect(input, options),
-          },
-          inspect_kernel_module: {
-            admission: "sdk",
-            run: (input, options) => kernelModule.inspect(input, options),
-          },
-          inspect_kernel_build_config: {
-            admission: "sdk",
-            run: (input, options) => kernelBuildConfig.inspect(input, options),
-          },
-          inspect_pe_load_config: {
-            admission: "sdk",
-            run: (input, options) => peLoadConfig.inspect(input, options),
-          },
-          audit_release_exposure: {
-            admission: "sdk",
-            run: (input, options) => releaseExposure.inspect(input, options),
-          },
-          inspect_binary_hardening: {
-            admission: "sdk",
-            run: (input, options) => binaryHardening.inspect(input, options),
-          },
-          inspect_pe_certificates: {
-            admission: "sdk",
-            run: (input, options) => peCertificates.inspect(input, options),
-          },
-          inspect_pe_imports: {
-            admission: "sdk",
-            run: (input, options) => peImports.inspect(input, options),
-          },
-          inspect_windows_shortcut: {
-            admission: "sdk",
-            run: (input, options) => windowsShortcut.inspect(input, options),
-          },
-          inspect_recorded_crash: {
-            admission: "application",
-            run: (input, options) => recordedCrash.inspect(input, options),
-          },
+          byteEntropy: createByteEntropyService(artifactResources),
+          peResources,
+          nativeExports,
+          devicetree,
+          elfNotes,
+          nativeInitializers,
+          elfUnwindRanges,
+          appleIps,
+          kernelModule,
+          kernelBuildConfig,
+          peLoadConfig,
+          releaseExposure,
+          binaryHardening,
+          peCertificates,
+          peImports,
+          windowsShortcut,
+          recordedCrash,
         },
         contractTools,
       );
     },
     artifact: () => {
       registerArtifactTools(server, { ...evidenceOptions, evidenceById });
-      registerContractTools(
+      registerServiceTools(
         server,
         {
-          inspect_desktop_application: {
-            admission: "application",
-            summary: (input, options) =>
-              desktopApplication.inspect(input, options),
-          },
-          inspect_model_artifact: {
-            admission: "sdk",
-            run: (input, options) =>
-              modelArtifact.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_gpu_code_objects: {
-            admission: "sdk",
-            run: (input, options) =>
-              gpuCodeObjects.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_evm_interface: {
-            admission: "application",
-            summary: (input, options) => evmInterface.inspect(input, options),
-          },
-          inspect_go_binary: {
-            admission: "application",
-            run: (input, options) =>
-              goBinary.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_il2cpp_metadata: {
-            admission: "application",
-            run: (input, options) =>
-              il2cppMetadata.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_rust_binary: {
-            admission: "application",
-            run: (input, options) =>
-              rustBinary.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_python_pyc: {
-            admission: "application",
-            summary: (input, options) => pythonPyc.inspect(input, options),
-          },
-          inspect_erlang_beam: {
-            admission: "application",
-            summary: (input, options) => erlangBeam.inspect(input, options),
-          },
-          inspect_v8_code_cache: {
-            admission: "sdk",
-            run: (input, options) => v8CodeCache.inspect(input, options),
-          },
-        },
-        contractTools,
-      );
-      registerContractTools(
-        server,
-        {
-          compare_wasm_interfaces: {
-            admission: "sdk",
-            run: async (rawInput, options) => {
-              const result = retainAnalysisResultSources(
-                "compare_wasm_interfaces",
-                recordEvidence,
-                await compareWasmInterfaces(rawInput, options, evidenceById),
-                { sourceOwner: "caller" },
-              );
-              return result.ok ? ok(result.value.evidence) : result;
-            },
-          },
-          inspect_wasm_artifact: {
-            admission: "application",
-            summary: (input, options) => wasmArtifact.inspect(input, options),
-          },
-        },
-        contractTools,
-      );
-      registerContractTools(
-        server,
-        {
-          inspect_apk_signature: {
-            admission: "sdk",
-            run: (input, options) =>
-              apkSignature.inspect(input, options, {
-                recordEvidence,
-                evidenceById,
-              }),
-          },
-          inspect_sqlite_database: {
-            admission: "application",
-            run: (input, options) => sqliteDatabase.inspect(input, options),
-          },
-        },
-        contractTools,
-      );
-      registerContractTools(
-        server,
-        {
-          inspect_packet_capture: {
-            admission: "application",
-            run: (input, options) => packetCapture.inspect(input, options),
-          },
-          inspect_packet_fields: {
-            admission: "sdk",
-            run: (input, options) =>
-              packetCapture.inspectFields(input, options),
-          },
-        },
-        contractTools,
-      );
-      registerContractTools(
-        server,
-        {
-          decode_signal_recording: {
-            admission: "application",
-            run: (input, options) => signalRecording.decode(input, options),
-          },
-          inspect_signal_decoders: {
-            admission: "sdk",
-            run: (input, options) =>
-              signalRecording.inspectDecoders(input, options),
-          },
+          desktopApplication,
+          modelArtifact,
+          gpuCodeObjects,
+          evmInterface,
+          goBinary,
+          il2cppMetadata,
+          rustBinary,
+          pythonPyc,
+          erlangBeam,
+          v8CodeCache,
+          wasmArtifact,
+          apkSignature,
+          sqliteDatabase,
+          packetCapture,
+          signalRecording,
         },
         contractTools,
       );
@@ -686,14 +511,7 @@ export const createServer = (
         });
     },
     firmware: () =>
-      registerContractTools(
-        server,
-        contractServiceBindings(firmwareAnalysis, [
-          "inspect_firmware_regions",
-          "extract_firmware",
-        ]),
-        contractTools,
-      ),
+      registerServiceTools(server, { firmwareAnalysis }, contractTools),
     android: () =>
       registerAndroidTools(
         server,
@@ -704,39 +522,16 @@ export const createServer = (
         evidenceById,
       ),
     pcap: () => {
-      const pcapService = new PcapAnalysisService(pcap);
-      registerContractTools(
+      registerServiceTools(
         server,
-        {
-          ...contractServiceBindings(pcapService, ["inspect_pcap_client"]),
-          inspect_pcap_capture: {
-            admission: "application",
-            summary: (input, options) =>
-              pcapService.execute("inspect_pcap_capture", input, options),
-          },
-        },
+        { pcapAnalysis: new PcapAnalysisService(pcap) },
         contractTools,
       );
     },
     flutter: () => {
-      const flutterService = new FlutterBuildAnalysisService(flutter);
-      registerContractTools(
+      registerServiceTools(
         server,
-        {
-          ...contractServiceBindings(flutterService, [
-            "identify_flutter_build",
-          ]),
-          inspect_dart_aot: {
-            admission: "sdk",
-            run: (input, options) =>
-              inspectDartAot(
-                flutterService,
-                input,
-                { recordEvidence, evidenceById },
-                options,
-              ),
-          },
-        },
+        { flutterAnalysis: new FlutterBuildAnalysisService(flutter) },
         contractTools,
       );
     },
@@ -750,54 +545,21 @@ export const createServer = (
         evidenceById,
       ),
     apktool: () =>
-      registerContractTools(
+      registerServiceTools(
         server,
-        contractServiceBindings(new ApktoolResourceAnalysisService(apktool), [
-          "inspect_apktool_client",
-          "decode_android_resources",
-        ]),
+        { apktoolAnalysis: new ApktoolResourceAnalysisService(apktool) },
         contractTools,
       ),
     jeb: () =>
-      registerContractTools(
+      registerServiceTools(
         server,
-        contractServiceBindings(new JebAnalysisService(jeb), [
-          "inspect_jeb_client",
-          "open_jeb_project",
-          "list_jeb_units",
-          "decompile_jeb_item",
-        ]),
+        { jebAnalysis: new JebAnalysisService(jeb) },
         contractTools,
       ),
     adb: () =>
-      registerContractTools(
+      registerServiceTools(
         server,
-        contractServiceBindings(new AdbDeviceAnalysisService(adbDevice), [
-          "inspect_adb_client",
-          "list_adb_devices",
-          "inspect_adb_device",
-          "list_adb_packages",
-          "pull_adb_package",
-          "read_adb_logcat",
-          "inspect_adb_package",
-          "pull_adb_file",
-          "push_adb_file",
-          "capture_adb_screen",
-          "list_adb_processes",
-          "list_adb_directory",
-          "list_adb_features",
-          "list_adb_services",
-          "inspect_adb_display",
-          "inspect_adb_window",
-          "read_adb_setting",
-          "collect_adb_bugreport",
-          "resolve_adb_packages",
-          "install_adb_package",
-          "uninstall_adb_package",
-          "start_adb_app",
-          "start_adb_activity",
-          "stop_adb_app",
-        ]),
+        { adbDeviceAnalysis: new AdbDeviceAnalysisService(adbDevice) },
         contractTools,
       ),
     browser: () => {
@@ -862,23 +624,12 @@ export const createServer = (
         artifactResources,
       );
       registerWebScriptTool(server, { ...common, artifactResources });
-      registerContractTools(
+      registerServiceTools(
         server,
         {
-          trace_web_module_imports: {
-            admission: "application",
-            run: (input, options) => webModuleTrace.trace(input, options),
-          },
-          trace_web_source_location: {
-            admission: "application",
-            summary: (input, options) =>
-              webSourceLocation.trace(input, options),
-          },
-          recover_javascript_sources: {
-            admission: "sdk",
-            run: (input, options) =>
-              javascriptRecoveryService.recover(input, options),
-          },
+          webModuleTrace,
+          webSourceLocation,
+          javascriptRecovery: javascriptRecoveryService,
         },
         contractTools,
       );

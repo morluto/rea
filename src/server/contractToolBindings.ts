@@ -53,6 +53,7 @@ type EvidenceOperation<Input> = (
 interface EvidenceBinding {
   readonly admission: ContractInputAdmission;
   readonly run: EvidenceOperation<unknown>;
+  readonly summary?: never;
 }
 
 /**
@@ -62,6 +63,7 @@ interface EvidenceBinding {
 interface RetainedSummaryBinding<Input> {
   readonly admission: ContractInputAdmission;
   readonly summary: EvidenceOperation<Omit<Input, "detail" | "view">>;
+  readonly run?: never;
 }
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
@@ -143,7 +145,7 @@ export const registerContractTools = (
         ? toolRegistrationOptions(contract)
         : applicationToolRegistrationOptions(contract);
     const handler =
-      "run" in binding
+      binding.run !== undefined
         ? createEvidenceToolHandler(
             server,
             binding.run,

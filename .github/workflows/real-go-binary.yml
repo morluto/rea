@@ -12,7 +12,9 @@ on:
       - "src/contracts/go/**"
       - "src/composition/go.ts"
       - "src/cli/goCommands.ts"
-      - "src/server/registerGoTools.ts"
+      - "src/server/contractToolBindings.ts"
+      - "src/server/serviceToolBindings.ts"
+      - "src/server/createServer.ts"
       - "scripts/verify-go-binary.mjs"
       - "scripts/lib/mcp-verifier-results.mjs"
 

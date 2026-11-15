@@ -7,7 +7,7 @@ import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerContractTools } from "../../../src/server/contractToolBindings.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -20,18 +20,9 @@ const registerModelArtifact = (
   service: ModelArtifactService,
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
 ) =>
-  registerContractTools(
+  registerServiceTools(
     server,
-    {
-      inspect_model_artifact: {
-        admission: "sdk",
-        run: (input, options) =>
-          service.inspect(input, options, {
-            recordEvidence,
-            evidenceById: undefined,
-          }),
-      },
-    },
+    { modelArtifact: service },
     { logger: silentLogger, recordEvidence },
   );
 

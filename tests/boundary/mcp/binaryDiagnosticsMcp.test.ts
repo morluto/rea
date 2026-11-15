@@ -17,7 +17,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerContractTools } from "../../../src/server/contractToolBindings.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
@@ -102,21 +102,11 @@ it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
       undefined,
       createToolResultDelivery(undefined),
     );
-    registerContractTools(
+    registerServiceTools(
       server,
       service instanceof ByteEntropyService
-        ? {
-            inspect_byte_entropy: {
-              admission: "sdk",
-              summary: (input, options) => service.inspect(input, options),
-            },
-          }
-        : {
-            inspect_native_exports: {
-              admission: "application",
-              summary: (input, options) => service.inspect(input, options),
-            },
-          },
+        ? { byteEntropy: service }
+        : { nativeExports: service },
       { logger: silentLogger },
     );
     const client = new Client({
@@ -190,14 +180,9 @@ it.each([false, true])(
       recordEvidence,
       createToolResultDelivery(undefined),
     );
-    registerContractTools(
+    registerServiceTools(
       server,
-      {
-        inspect_byte_entropy: {
-          admission: "sdk",
-          summary: (input, options) => service.inspect(input, options),
-        },
-      },
+      { byteEntropy: service },
       {
         logger: silentLogger,
         recordEvidence,

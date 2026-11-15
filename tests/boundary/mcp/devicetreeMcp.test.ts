@@ -5,7 +5,7 @@ import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerContractTools } from "../../../src/server/contractToolBindings.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
@@ -35,14 +35,9 @@ const createDtbServer = (
     record,
     createToolResultDelivery(undefined),
   );
-  registerContractTools(
+  registerServiceTools(
     server,
-    {
-      inspect_devicetree: {
-        admission: "application",
-        summary: (input, options) => service.inspect(input, options),
-      },
-    },
+    { devicetree: service },
     { logger: silentLogger, recordEvidence: record, evidenceById: lookup },
   );
   registerAnalysisViewTool(server, silentLogger, lookup, record);
