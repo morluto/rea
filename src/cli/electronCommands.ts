@@ -2,7 +2,6 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 import { Cli, z } from "incur";
 
-import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
@@ -16,9 +15,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import type { CliInstance } from "./types.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 
@@ -103,10 +100,10 @@ const registerElectronActiveCommand = (
         ["application_root"],
       ],
     },
-    async (document, { signal, operation, spelled }) => {
-      const parsed = electronActiveObservationInputSchema.safeParse(document);
-      if (!parsed.success)
-        return inputError(operation, parsed.error.issues, spelled);
+    async (_document, context) => {
+      const { signal, operation } = context;
+      const parsed = admittedContractInput(context);
+      if (!parsed.ok) return cliError(parsed.error);
       const { captureElectronScenario } =
         await import("../application/javascript/ElectronActiveObservationService.js");
       const provider =
@@ -117,7 +114,7 @@ const registerElectronActiveCommand = (
             )
           : options.createActiveProvider(environment);
       const result = await finishAnalysisCommand(
-        () => captureElectronScenario(provider, parsed.data, { signal }),
+        () => captureElectronScenario(provider, parsed.value, { signal }),
         {
           close: async () => {
             await provider.close?.();
@@ -311,19 +308,6 @@ const createCliElectronObservationProvider = async (
     await import("../composition/electronObservation.js");
   return createElectronObservationProvider(environment);
 };
-
-const inputError = (
-  operation: string,
-  issues?: Parameters<typeof projectInputIssues>[0],
-  input?: unknown,
-): JsonValue =>
-  cliError(
-    new AnalysisInputError(
-      operation,
-      undefined,
-      issues === undefined ? [] : projectInputIssues(issues, input),
-    ),
-  );
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],

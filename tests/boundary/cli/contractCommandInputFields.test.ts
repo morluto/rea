@@ -6,6 +6,7 @@ import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDel
 import {
   admittedContractInput,
   registerContractCommand,
+  registerContractDocumentCommand,
 } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -210,5 +211,87 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
     process.exitCode = exitCode;
   }
   // The parse applied the contract default the raw input did not carry.
+  expect(received).toEqual([{ name: "ok", limit: 5 }, "refused"]);
+});
+
+it("hands a JSON-document handler the contract's parse of its document, once, only when read", async () => {
+  const cli = Cli.create("rea-admitted-document-test", {
+    version: "1",
+    sync: false,
+  });
+  const received: unknown[] = [];
+  let wholeParses = 0;
+  const inputSchema = z
+    .object({
+      name: z.string(),
+      limit: z.number().int().default(5),
+    })
+    .refine(
+      ({ name }) => {
+        wholeParses += 1;
+        return name !== "blocked";
+      },
+      { message: "This name is reserved", path: ["name"] },
+    );
+  registerContractDocumentCommand(
+    cli as unknown as CliInstance,
+    pino({ enabled: false }),
+    { name: "document_probe", inputSchema },
+    {
+      command: "document-probe",
+      description: "Document probe",
+      document: "Probe",
+    },
+    async (_document, context) => {
+      const admitted = admittedContractInput(context);
+      // A second read reuses the first parse.
+      expect(admittedContractInput(context)).toBe(admitted);
+      received.push(admitted.ok ? admitted.value : "refused");
+      return admitted.ok ? {} : { refused: admitted.error.issues.length };
+    },
+  );
+  registerContractDocumentCommand(
+    cli as unknown as CliInstance,
+    pino({ enabled: false }),
+    { name: "unread_document_probe", inputSchema },
+    {
+      command: "unread-document-probe",
+      description: "Unread document probe",
+      document: "Probe",
+    },
+    // A handler whose document is not the whole input never parses it here.
+    async () => ({}),
+  );
+  const command = (name: string) => {
+    const registered = Cli.toCommands.get(cli)?.get(name);
+    if (registered === undefined) throw new Error(`${name} is missing`);
+    const args = (value: unknown) =>
+      (Reflect.get(registered, "args") as { parse(v: unknown): unknown }).parse(
+        value,
+      );
+    const run = Reflect.get(registered, "run") as (
+      value: unknown,
+    ) => Promise<unknown>;
+    return (document: unknown) =>
+      run({
+        args: args({ inputJson: JSON.stringify(document) }),
+        options: {},
+      });
+  };
+  const documentProbe = command("document-probe");
+  const unreadProbe = command("unread-document-probe");
+  const exitCode = process.exitCode;
+  try {
+    await documentProbe({ name: "ok" });
+    expect(wholeParses).toBe(1);
+    await expect(documentProbe({ name: "blocked" })).resolves.toEqual({
+      refused: 1,
+    });
+    expect(wholeParses).toBe(2);
+    await unreadProbe({ name: "ok" });
+    expect(wholeParses).toBe(2);
+  } finally {
+    process.exitCode = exitCode;
+  }
   expect(received).toEqual([{ name: "ok", limit: 5 }, "refused"]);
 });
