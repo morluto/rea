@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import type { ClientRegistrationCommand } from "../../src/domain/clientRegistrationCommand.js";
 import {
   registerMcpClient,
