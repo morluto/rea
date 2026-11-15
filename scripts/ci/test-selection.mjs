@@ -39,6 +39,13 @@ const ownedTests = (path) =>
   );
 
 const isTest = (path) => path.endsWith(".test.ts");
+// Owners of what the built CLI and MCP server present: tool contracts,
+// server registration and presentation, entrypoints and CLI commands.
+const isPresentationOwner = (path) =>
+  !isTest(path) &&
+  /^src\/(?:server|contracts|main|cli)\/|^src\/(?:main|cli)\.ts$/u.test(path);
+// A test that starts the built CLI or MCP server instead of importing it.
+const LAUNCHES_BUILT_RUNTIME = /scripts\/rea\.mjs|["'`/]dist\//u;
 // Inputs that only a non-test check reads: declarations (typecheck), guard
 // baselines (architecture guards, static job) and the advertised-schema
 // summaries (build job). They select no tests.
@@ -107,7 +114,7 @@ const importsOf = (path, source) =>
  *
  * `snapshot` lists the tracked paths of the revision under test and reads
  * them. `selected` maps each affected test to the first reason that selected
- * it: `changed`, `imports`, `beside`, `owner` or `names`. `untraced` names
+ * it: `changed`, `imports`, `built`, `beside`, `owner` or `names`. `untraced` names
  * inputs whose consumers cannot be traced to tests; CI runs the complete suite
  * for them, while a bounded local gate runs the traced selection.
  */
@@ -199,6 +206,31 @@ export function traceAffectedTests({ files, snapshot }) {
         untraced.push(
           `Script consumer is not traced: ${consumer} uses ${library}`,
         );
+    }
+  }
+
+  // Tests that start the built CLI or MCP server reach a presentation owner
+  // through the build rather than an import. Bound them to the tests that
+  // also import a module from a changed owner's directory.
+  const changedOwners = new Set(
+    changedModules
+      .filter(isPresentationOwner)
+      .map((path) => posix.dirname(path)),
+  );
+  if (changedOwners.size) {
+    const launchers = throughHelpers(
+      helpers.filter((path) =>
+        LAUNCHES_BUILT_RUNTIME.test(sources.get(path) ?? ""),
+      ),
+    );
+    for (const test of tests) {
+      const targets = imports.get(test);
+      if (
+        (LAUNCHES_BUILT_RUNTIME.test(sources.get(test) ?? "") ||
+          targets.some((target) => launchers.has(target))) &&
+        targets.some((target) => changedOwners.has(posix.dirname(target)))
+      )
+        select(test, "built");
     }
   }
 

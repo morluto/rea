@@ -18,6 +18,7 @@ export type TestSelectionSnapshot = {
 export type TestSelectionReason =
   | "changed"
   | "imports"
+  | "built"
   | "beside"
   | "owner"
   | "names";

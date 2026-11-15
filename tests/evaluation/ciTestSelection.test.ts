@@ -67,6 +67,34 @@ it("selects a leaf adapter's tests by its name and directory across test project
   ]);
 });
 
+it("selects tests that start the built runtime beside a changed presentation owner", () => {
+  const sources = {
+    "src/server/Core.ts": "",
+    "src/server/recovery.ts": "",
+    "src/domain/Value.ts": "",
+    "tests/support/launch.ts": 'spawn("scripts/rea.mjs", ["mcp"]);',
+    "tests/fixtures/client.ts": 'import "../support/launch.js";',
+    // Starts the built server and imports a sibling of the changed owner.
+    "tests/boundary/mcp/direct.test.ts":
+      'import "../../../src/server/recovery.js"; resolve("dist/main.js");',
+    "tests/boundary/mcp/helper.test.ts":
+      'import "../../fixtures/client.js"; import "../../../src/server/recovery.js";',
+    // Starts it but imports nothing from that owner, or imports it in process.
+    "tests/boundary/mcp/unrelated.test.ts":
+      'import "../../fixtures/client.js"; import "../../../src/domain/Value.js";',
+    "tests/boundary/mcp/inProcess.test.ts":
+      'import "../../../src/server/recovery.js";',
+  };
+  expect(selectedFiles(plan(["src/server/Core.ts"], sources))).toEqual([
+    "tests/boundary/mcp/direct.test.ts",
+    "tests/boundary/mcp/helper.test.ts",
+  ]);
+  // Other owners keep import tracing only.
+  expect(plan(["src/domain/Value.ts"], sources)).toMatchObject({
+    reason: "Affected tests: 1 imports",
+  });
+});
+
 it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",
