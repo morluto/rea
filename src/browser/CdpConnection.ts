@@ -23,6 +23,7 @@ import {
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { isRecord } from "../domain/isRecord.js";
 
 // ws currently stores maxPayload as a signed 32-bit integer. Larger values can
 // wrap to a negative number, which disables its limit check.
@@ -624,9 +625,6 @@ const rawBytes = (data: RawData): Buffer =>
     : Buffer.isBuffer(data)
       ? data
       : Buffer.from(data);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const waitForOpen = async (
   socket: WebSocket,

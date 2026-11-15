@@ -78,6 +78,7 @@ describe("headless IDA reference coverage", () => {
         args: [],
         env: {},
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

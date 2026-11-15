@@ -20,11 +20,12 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -127,9 +128,10 @@ export const sqliteDatabaseFailure = (
           workerTimeoutMs,
         );
       else if (cause.reason === "cancelled")
-        previous = new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-        });
+        previous = cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+        );
       else if (physicalRead?.kind === "completed") previous = undefined;
       else if (cause.cause !== undefined)
         previous = sqliteDatabaseFailure(
@@ -166,18 +168,21 @@ export const sqliteDatabaseFailure = (
         cause,
       });
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     return stableArtifactInputFailure(cause, operation);
   }
   if (cause instanceof Error && cause.name === "AbortError")
-    return new AnalysisCancelledError(operation, {
-      cause:
+    return cancelledBy(
+      operation,
+      carriedReason(
         signal?.aborted === true && cause.cause === signal.reason
           ? signal.reason
           : cause,
-    });
+      ),
+    );
   if (cause instanceof OwnedCommandFailure) {
     const projected = ownedCommandFailure(cause, path, workerTimeoutMs);
     if (projected !== undefined) return projected;
@@ -242,10 +247,9 @@ const ownedCommandFailure = (
   const operation = "inspect_sqlite_database";
   const capturedOutput =
     cause.snapshot === null ? undefined : capturedSqliteOutput(cause.snapshot);
-  const options = {
-    cause,
-    ...(capturedOutput === undefined ? {} : { capturedOutput }),
-  };
+  const optionsWithoutCause =
+    capturedOutput === undefined ? {} : { capturedOutput };
+  const options = { cause, ...optionsWithoutCause };
   // Preserve the same typed primary whether or not owned cleanup also fails.
   const timeout =
     cause.reason === "timeout"
@@ -279,11 +283,13 @@ const ownedCommandFailure = (
       },
     );
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      ...options,
-      cause:
+    return cancelledBy(
+      operation,
+      carriedReason(
         cause.cancellation === undefined ? cause : cause.cancellation.reason,
-    });
+      ),
+      optionsWithoutCause,
+    );
   if (timeout !== undefined) return timeout;
   // The supervisor observed V8's heap report as output streamed, so a
   // retention budget or a stack trace that overflowed it cannot hide it.
