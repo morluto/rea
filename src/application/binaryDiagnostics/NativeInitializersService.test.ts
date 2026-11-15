@@ -155,7 +155,8 @@ it("rejects an architecture selection when the report has no universal slice", a
 it.each([
   ["a page that does not match the request", { offset: 1 }],
   ["a returned count that differs from the entries", { returned_entries: 0 }],
-  ["complete coverage on an incomplete report", { status: "incomplete" }],
+  ["partial coverage on a parsed report", { status: "partial" }],
+  ["unknown coverage on a parsed report", { status: "unknown" }],
 ] as const)("rejects provider output with %s", async (_label, coverage) => {
   const result = await serviceFor({
     ...report,

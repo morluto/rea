@@ -1,10 +1,8 @@
 {
   "upward": {
-    "artifacts -> application": 1,
     "dotnet -> application": 1
   },
   "cycles": [
-    "application <-> artifacts",
     "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
@@ -14,18 +12,14 @@
   ],
   "crossProvider": {
     "android -> artifacts": 2,
-    "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
     "artifacts -> native": 1,
-    "browser -> artifacts": 4,
+    "browser -> artifacts": 2,
     "captures -> pcap": 2,
-    "desktop -> browser": 1,
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
     "gpu -> artifacts": 1,
-    "il2cpp -> ghidra": 1,
-    "inspector -> browser": 2,
     "model -> artifacts": 1,
     "native -> artifacts": 2
   },

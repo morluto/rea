@@ -24,13 +24,13 @@ import {
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
   assertArtifactFileSelectedSource,
+  resolveAsarHeaderAdmission,
 } from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
-import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,

@@ -1,9 +1,4 @@
 import {
-  MAX_GHIDRA_SEED_BYTES,
-  MAX_GHIDRA_SEED_ENTRIES,
-  MAX_GHIDRA_SEED_NAME_LENGTH,
-} from "../ghidra/GhidraAnalysisSeeds.js";
-import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -26,6 +21,11 @@ const capacity = (
     fixedAllowanceOptions(allowance, kind),
   );
 import type { Il2cppMetadata } from "../domain/il2cpp/il2cppMetadata.js";
+import {
+  MAX_GHIDRA_SEED_BYTES,
+  MAX_GHIDRA_SEED_ENTRIES,
+  MAX_GHIDRA_SEED_NAME_LENGTH,
+} from "../domain/native/ghidraSeedFile.js";
 
 /** A linked metadata report reduced to Ghidra function seeds. */
 export interface Il2cppGhidraSeeds {
