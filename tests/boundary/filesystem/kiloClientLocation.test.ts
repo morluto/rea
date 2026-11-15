@@ -104,6 +104,77 @@ it("plans kilo.json in an empty KILO_CONFIG_DIR", async () => {
   expect(await mcpAddTarget(home, environment)).toBe(row?.configPath);
 });
 
+it("loads KILO_CONFIG above Kilo's root files and below its home folders", async () => {
+  const home = await createTestTempDirectory("rea-kilo-config-file-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "kilo.json"), "{}");
+  const explicit = join(home, "profiles", "kilo.json");
+  const environment = { KILO_CONFIG: explicit };
+  // A selected file that does not exist yet is still Kilo's last root layer.
+  const planned = await kiloRow(home, environment);
+  expect(planned).toMatchObject({
+    configPath: explicit,
+    configPaths: [join(root, "kilo.json"), explicit],
+  });
+  expect(await mcpAddTarget(home, environment)).toBe(explicit);
+  // A home folder layer loads after it and becomes the write target.
+  await mkdir(join(home, ".kilo"));
+  await writeFile(join(home, ".kilo", "kilo.jsonc"), "{}");
+  const layered = await kiloRow(home, environment);
+  expect(layered).toMatchObject({
+    configPath: join(home, ".kilo", "kilo.jsonc"),
+    configPaths: [
+      join(root, "kilo.json"),
+      explicit,
+      join(home, ".kilo", "kilo.jsonc"),
+    ],
+  });
+  expect(await mcpAddTarget(home, environment)).toBe(layered?.configPath);
+});
+
+it("loads ~/.kilo after the legacy ~/.kilocode folder", async () => {
+  const home = await createTestTempDirectory("rea-kilo-home-folders-");
+  for (const folder of [".kilocode", ".kilo"]) {
+    await mkdir(join(home, folder));
+    await writeFile(join(home, folder, "kilo.json"), "{}");
+  }
+  const row = await kiloRow(home);
+  expect(row).toMatchObject({
+    configPath: join(home, ".kilo", "kilo.json"),
+    configPaths: [
+      join(home, ".kilocode", "kilo.json"),
+      join(home, ".kilo", "kilo.json"),
+    ],
+  });
+  expect(await mcpAddTarget(home, {})).toBe(row?.configPath);
+});
+
+it("lets doctor and setup accept REA's entry that only KILO_CONFIG_CONTENT defines", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-only-");
+  // Kilo is installed but none of its files exists yet.
+  await mkdir(join(home, ".config", "kilo"), { recursive: true });
+  const environment = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { type: "local", command, enabled: true } },
+    }),
+  };
+  const statuses = await readClientRegistrationStatuses(home, command[1], {
+    platform,
+    environment,
+  });
+  expect(statuses.find(({ client }) => client === "kilo")).toMatchObject({
+    state: "aligned",
+  });
+  const row = await kiloRow(home, environment);
+  if (row === undefined) throw new Error("Kilo row is missing");
+  // Writing the same entry beneath it changes nothing Kilo loads, so setup
+  // may still record it in the file it manages.
+  expect(await inspectClientConfiguration(row, {}, command)).toMatchObject({
+    status: "create",
+  });
+});
+
 it("refuses a relative Kilo configuration path instead of guessing its folder", async () => {
   const home = await createTestTempDirectory("rea-kilo-relative-");
   for (const environment of [
@@ -273,6 +344,48 @@ it("refuses Kilo's location while KILO_CONFIG_CONTENT cannot be parsed", async (
   const row = await kiloRow(home, { KILO_CONFIG_CONTENT: "{" });
   expect(row?.configPathError).toContain(
     "KILO_CONFIG_CONTENT cannot be admitted",
+  );
+});
+
+it("registers Kilo through its table row in rea mcp add", async () => {
+  const home = await createTestTempDirectory("rea-kilo-mcp-add-row-");
+  const resources = new ArtifactResourceScope();
+  const select = (environment: NodeJS.ProcessEnv) =>
+    resolveMcpRegistrationClients(
+      {
+        agents: ["kilo"],
+        global: true,
+        cwd: home,
+        home,
+        platform,
+        environment,
+      },
+      resources,
+    );
+  // A relative path is refused as setup refuses it, not resolved from cwd.
+  const relative = await select({ KILO_CONFIG: "kilo.json" });
+  expect(relative.ok).toBe(false);
+  if (!relative.ok) expect(relative.error.message).toContain("is relative");
+  // The row's inline layer still decides what Kilo loads.
+  const selected = await select({
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { command: ["/opt/other/rea", "mcp"] } },
+    }),
+  });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value[0]?.inlineConfiguration?.origin).toBe(
+    "KILO_CONFIG_CONTENT",
+  );
+  const [outcome] = await registerMcpClients(
+    selected.value,
+    { command: command[0] ?? "", args: command.slice(1) },
+    undefined,
+    resources,
+  );
+  if (outcome?.status !== "completed") throw new Error("Kilo did not run");
+  if (outcome.result.ok) throw new Error("The inline launcher was ignored");
+  expect(outcome.result.error.message).toContain(
+    "higher-priority configuration overrides",
   );
 });
 
