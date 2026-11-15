@@ -15,9 +15,15 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
+  invalidateSemanticEscapedPath,
+  invalidateSemanticMutationPaths,
+} from "./javascriptSemanticMutationValues.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import {
   isUnshadowedGlobal,
-  semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
+  semanticEscapeFollowsCapture,
+  semanticEffectTiming,
   semanticBindingEffectFollowsRead,
   semanticReadPrecedesEffectWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -315,12 +321,67 @@ export const opaqueCodeMayRebindBinding = (
  * it was captured; objects stay reachable through aliases where the name is
  * shadowed or out of scope.
  */
-export const opaqueCodeMayReachBindingReference = (
+const opaqueCodeMayReachBindingReference = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
   capturePoint: t.Node | undefined,
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
+
+/**
+ * The value of `binding`'s reference as a read captured at `capturePoint`
+ * observes it, after the recorded effects that may precede the capture:
+ * member writes invalidate their paths, escapes invalidate the escaped object
+ * references, and a direct eval that may reach the reference makes an object
+ * or array unknown. Without a capture point, every recorded effect counts.
+ */
+export const applySemanticBindingReferenceEffects = (
+  value: JavaScriptSemanticValue,
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node | undefined,
+): JavaScriptSemanticValue => {
+  let projected = invalidateSemanticMutationPaths(
+    value,
+    binding.memberWrites
+      .filter(
+        ({ node }) =>
+          capturePoint === undefined ||
+          node === undefined ||
+          !semanticBindingEffectFollowsCapture(
+            binding,
+            capturePoint,
+            node,
+            state.parentsByNode,
+          ),
+      )
+      .map(({ path }) => path),
+  );
+  for (const escape of binding.escapedPaths) {
+    // Escapes only invalidate object references; other lattice values survive.
+    if (projected.status !== "object" && projected.status !== "array") break;
+    if (
+      capturePoint !== undefined &&
+      semanticEscapeFollowsCapture(
+        binding,
+        capturePoint,
+        escape.node,
+        state.parentsByNode,
+      )
+    )
+      continue;
+    projected = invalidateSemanticEscapedPath(projected, escape.path);
+  }
+  if (
+    (projected.status === "object" || projected.status === "array") &&
+    opaqueCodeMayReachBindingReference(binding, state, capturePoint)
+  )
+    projected = {
+      status: "unknown",
+      reason: "Direct eval may have mutated this object reference.",
+    };
+  return projected;
+};
 
 /**
  * Opaque sites that may affect a binding, for a report of every effect: direct
