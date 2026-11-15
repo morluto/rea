@@ -464,7 +464,9 @@ checkCounted(
 
 // Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
 // The pattern matches the inline copy with the same expression in all three
-// places; a named local helper with this body is the same copy.
+// places; a named local helper with this body is the same copy. The copy in
+// src/process/RegexMatcher.ts runs inside the isolated worker's source string,
+// which cannot import the owner.
 checkCounted(
   "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
   "inline-error-message",
