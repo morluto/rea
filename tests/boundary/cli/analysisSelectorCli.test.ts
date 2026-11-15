@@ -162,14 +162,9 @@ cliTest(
     for (const [selection, expected] of [
       [[], choice],
       [["--type", "/MyStruct", "--address", "0x1000"], choice],
-      [
-        ["--type", ""],
-        invalid({ path: ["type"], reason: "out_of_range", minimum: 1 }),
-      ],
-      [
-        ["--address", ""],
-        invalid({ path: ["address"], reason: "out_of_range", minimum: 1 }),
-      ],
+      // Each selector's own constraint is an argv constraint.
+      [["--type", ""], { code: "VALIDATION_ERROR" }],
+      [["--address", ""], { code: "VALIDATION_ERROR" }],
       [["--type", "/MyStruct"], { code: "target_unavailable" }],
       [["--address", "0x1000"], { code: "target_unavailable" }],
     ] as const) {

@@ -183,6 +183,12 @@ export interface CliTargetOpening {
 export interface CliOpeningFieldProjection extends CliFieldProjection {
   /** The values this command admits: a subset of the field's enum. */
   readonly values?: readonly [string, ...string[]];
+  /**
+   * A local path the caller may spell relative to the working directory.
+   * It is admitted resolved and passed on as the caller spelled it, like the
+   * target itself.
+   */
+  readonly callerPath?: true;
 }
 
 /** An option that supplies one field of the opening contract. */
@@ -191,6 +197,8 @@ export interface ContractCliOpeningOption {
   readonly key: string;
   readonly description: string | undefined;
   readonly schema: z.ZodType;
+  /** Passed on as the caller spelled it once its resolved form is admitted. */
+  readonly callerPath: boolean;
 }
 
 /** The described session target of a contract command. */
@@ -454,11 +462,19 @@ const assertArgvField = (
   schema: z.ZodType,
 ) => {
   const current = core(schema);
+  // A union of text forms, such as `auto` or a provider ID, is one token.
+  const text = (member: z.ZodType): boolean =>
+    member instanceof z.ZodString ||
+    member instanceof z.ZodEnum ||
+    (member instanceof z.ZodLiteral &&
+      [...member.values].every((value) => typeof value === "string"));
   const scalar =
     current instanceof z.ZodString ||
     current instanceof z.ZodNumber ||
     current instanceof z.ZodBoolean ||
-    current instanceof z.ZodEnum;
+    current instanceof z.ZodEnum ||
+    (current instanceof z.ZodUnion &&
+      (current.options as readonly z.ZodType[]).every(text));
   const element =
     current instanceof z.ZodArray ? core(current.element as z.ZodType) : null;
   if (
@@ -786,7 +802,11 @@ const describeSessionTarget = (
     if (!admitsOmission(declared))
       throw new Error(`${opener}.${field} is required`);
     let schema: z.ZodType;
-    if (projected.values === undefined) {
+    if (projected.callerPath === true) {
+      if (!(core(declared) instanceof z.ZodString))
+        throw new Error(`${opener}.${field} is not a path`);
+      schema = localPathStringSchema.optional();
+    } else if (projected.values === undefined) {
       assertArgvField(opener, field, declared);
       schema = cliDecimalShape({ field: argvOptional(declared) }).field;
     } else {
@@ -802,6 +822,7 @@ const describeSessionTarget = (
       key: projected.name ?? camelCase(field),
       description,
       schema,
+      callerPath: projected.callerPath === true,
     };
   });
   const keyOf = new Map(options.map(({ field, key }) => [field, key]));
@@ -818,8 +839,18 @@ const describeSessionTarget = (
       );
       // The target itself was admitted as the positional.
       if (Object.keys(selected).length === 0) return ok({});
+      const callerPaths: ReadonlySet<string> = new Set(
+        options.flatMap(({ field, callerPath }) => (callerPath ? [field] : [])),
+      );
       const candidate = {
-        ...selected,
+        ...Object.fromEntries(
+          Object.entries(selected).map(([field, value]) => [
+            field,
+            callerPaths.has(field)
+              ? absoluteCallerPath(value as string)
+              : value,
+          ]),
+        ),
         [SESSION_TARGET_KEY]: absoluteCallerPath(
           values[SESSION_TARGET_KEY] as string,
         ),
@@ -843,7 +874,10 @@ const describeSessionTarget = (
       const data = admitted.data as Readonly<Record<string, unknown>>;
       return ok(
         Object.fromEntries(
-          Object.keys(selected).map((field) => [field, data[field]]),
+          Object.keys(selected).map((field) => [
+            field,
+            callerPaths.has(field) ? selected[field] : data[field],
+          ]),
         ),
       );
     },
