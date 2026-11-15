@@ -2,70 +2,9 @@ import {
   legacyMachoPlatform,
   type MachoVersionMinPlatform,
 } from "../domain/apple/machoPlatform.js";
+import { machoLoadCommandName } from "../domain/apple/machoLoadCommandCodes.js";
 import type { MachoCommandNames } from "./MachoCommandNames.js";
 
-/** The binary is the sole owner of command framing and decoded facts. */
-const COMMAND_NAMES = new Map<number, string>([
-  [1, "LC_SEGMENT"],
-  [2, "LC_SYMTAB"],
-  [3, "LC_SYMSEG"],
-  [4, "LC_THREAD"],
-  [5, "LC_UNIXTHREAD"],
-  [6, "LC_LOADFVMLIB"],
-  [7, "LC_IDFVMLIB"],
-  [8, "LC_IDENT"],
-  [9, "LC_FVMFILE"],
-  [0xa, "LC_PREPAGE"],
-  [0xb, "LC_DYSYMTAB"],
-  [0xc, "LC_LOAD_DYLIB"],
-  [0xd, "LC_ID_DYLIB"],
-  [0xe, "LC_LOAD_DYLINKER"],
-  [0xf, "LC_ID_DYLINKER"],
-  [0x10, "LC_PREBOUND_DYLIB"],
-  [0x11, "LC_ROUTINES"],
-  [0x12, "LC_SUB_FRAMEWORK"],
-  [0x13, "LC_SUB_UMBRELLA"],
-  [0x14, "LC_SUB_CLIENT"],
-  [0x15, "LC_SUB_LIBRARY"],
-  [0x16, "LC_TWOLEVEL_HINTS"],
-  [0x17, "LC_PREBIND_CKSUM"],
-  [0x80000018, "LC_LOAD_WEAK_DYLIB"],
-  [0x19, "LC_SEGMENT_64"],
-  [0x1a, "LC_ROUTINES_64"],
-  [0x1b, "LC_UUID"],
-  [0x8000001c, "LC_RPATH"],
-  [0x1d, "LC_CODE_SIGNATURE"],
-  [0x1e, "LC_SEGMENT_SPLIT_INFO"],
-  [0x8000001f, "LC_REEXPORT_DYLIB"],
-  [0x20, "LC_LAZY_LOAD_DYLIB"],
-  [0x21, "LC_ENCRYPTION_INFO"],
-  [0x22, "LC_DYLD_INFO"],
-  [0x80000022, "LC_DYLD_INFO_ONLY"],
-  [0x80000023, "LC_LOAD_UPWARD_DYLIB"],
-  [0x24, "LC_VERSION_MIN_MACOSX"],
-  [0x25, "LC_VERSION_MIN_IPHONEOS"],
-  [0x26, "LC_FUNCTION_STARTS"],
-  [0x27, "LC_DYLD_ENVIRONMENT"],
-  [0x80000028, "LC_MAIN"],
-  [0x29, "LC_DATA_IN_CODE"],
-  [0x2a, "LC_SOURCE_VERSION"],
-  [0x2b, "LC_DYLIB_CODE_SIGN_DRS"],
-  [0x2c, "LC_ENCRYPTION_INFO_64"],
-  [0x2d, "LC_LINKER_OPTION"],
-  [0x2e, "LC_LINKER_OPTIMIZATION_HINT"],
-  [0x2f, "LC_VERSION_MIN_TVOS"],
-  [0x30, "LC_VERSION_MIN_WATCHOS"],
-  [0x31, "LC_NOTE"],
-  [0x32, "LC_BUILD_VERSION"],
-  [0x80000033, "LC_DYLD_EXPORTS_TRIE"],
-  [0x80000034, "LC_DYLD_CHAINED_FIXUPS"],
-  [0x80000035, "LC_FILESET_ENTRY"],
-  [0x36, "LC_ATOM_INFO"],
-  [0x37, "LC_FUNCTION_VARIANTS"],
-  [0x38, "LC_FUNCTION_VARIANT_FIXUPS"],
-  [0x39, "LC_TARGET_TRIPLE"],
-  [0x3a, "LC_LAZY_LOAD_DYLIB_INFO"],
-]);
 const PLATFORM_NAMES = new Map<number, string>([
   [1, "MACOS"],
   [2, "IOS"],
@@ -261,7 +200,7 @@ export const projectMachoBinary = (
   };
   for (const row of binary.commands) {
     const kind =
-      COMMAND_NAMES.get(row.command) ??
+      machoLoadCommandName(row.command) ??
       `LC_UNKNOWN_0x${row.command.toString(16)}`;
     const fields: Record<string, string | number | null> = {
       cmd: kind,
@@ -546,14 +485,18 @@ export const projectMachoBinary = (
       if (id.bytesHex !== null) fields.entry_id_bytes_hex = id.bytesHex;
       fields.reserved = row.fileset.reserved;
     }
-    if (!row.fullyDecoded || !decoded || !COMMAND_NAMES.has(row.command)) {
+    if (
+      !row.fullyDecoded ||
+      !decoded ||
+      machoLoadCommandName(row.command) === undefined
+    ) {
       fields.command_code = row.command;
       fields.command_offset = (binary.header.wide ? 32 : 28) + row.offset;
       fields.command_sha256 = row.rawSha256;
       commandLimitations.add(
         "Some load-command payload fields are not decoded; command codes, positions and sizes remain observed, but the payload bytes are not retained. A whole-command SHA-256 is included when it fit the read allowance.",
       );
-      if (!COMMAND_NAMES.has(row.command)) {
+      if (machoLoadCommandName(row.command) === undefined) {
         dependencyLimitations.add(
           "An unknown load command may contain dependency facts that were not decoded.",
         );

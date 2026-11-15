@@ -6,9 +6,10 @@ import {
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -176,7 +177,6 @@ export const inspectJadxJava = async (
         ) {
           const reason = command.cancellation.reason;
           const errorOptions = {
-            cause: reason,
             ...(output === undefined ? {} : { capturedOutput: output }),
             ...(observed?.ok === true
               ? {
@@ -197,13 +197,14 @@ export const inspectJadxJava = async (
                   options.operationDeadline.timeoutMs,
                   {
                     ...errorOptions,
+                    cause: reason,
                     ...jadxOperationTimeoutGuidance(
                       options.operationDeadline.timeoutMs,
                     ),
                   },
                 )
               : (inspectionCancellation ??
-                new AnalysisCancelledError(operation, errorOptions));
+                cancelledBy(operation, carriedReason(reason), errorOptions));
         } else if (inspectionCancellation !== undefined) {
           primary = inspectionCancellation;
         } else if (
