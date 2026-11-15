@@ -12,6 +12,10 @@ import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { CdpDomainWith } from "./protocol/CdpCommands.js";
 import {
+  observedFrameUrl,
+  type CdpFrameTree,
+} from "./protocol/CdpFrameTree.js";
+import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
@@ -28,6 +32,110 @@ import {
 export interface CdpTargetSession {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
+}
+
+/** The committed document a target session selected: root frame, loader and URL. */
+export interface CdpDocumentIdentity {
+  readonly frameId: string;
+  /** Absent when CDP did not report the loader, which leaves the document unproven. */
+  readonly loaderId?: string | undefined;
+  /** The frame's complete URL, absent when CDP did not report a readable one. */
+  readonly url?: string | undefined;
+}
+
+/**
+ * How a later observation relates to the selected document. Only a different
+ * root frame or loader proves `changed`; a missing loader is `unknown`, never a
+ * change, and a known unchanged loader at another URL is a same-document
+ * navigation. Consumers decide what each outcome means for their evidence.
+ */
+export type CdpDocumentComparison =
+  | "same"
+  | "same_document_navigation"
+  | "changed"
+  | "unknown";
+
+const knownLoader = (loaderId: string | undefined): string | undefined =>
+  loaderId === "" ? undefined : loaderId;
+
+/** Compare two observations of the selected target's root document. */
+export const compareCdpDocuments = (
+  selected: CdpDocumentIdentity,
+  observed: CdpDocumentIdentity,
+): CdpDocumentComparison => {
+  if (selected.frameId !== observed.frameId) return "changed";
+  const before = knownLoader(selected.loaderId);
+  const after = knownLoader(observed.loaderId);
+  if (before === undefined || after === undefined) return "unknown";
+  if (before !== after) return "changed";
+  return selected.url === observed.url ? "same" : "same_document_navigation";
+};
+
+/** The reply root's document, or undefined when the reply cannot identify it. */
+export const cdpRootDocument = (
+  tree: CdpFrameTree,
+): CdpDocumentIdentity | undefined => {
+  const { frameId, identityIssue, parentRelation, loaderId, loaderIssue } =
+    tree.root.facts;
+  if (
+    frameId === null ||
+    identityIssue !== null ||
+    parentRelation !== "root" ||
+    loaderIssue !== null
+  )
+    return undefined;
+  return { frameId, loaderId, url: observedFrameUrl(tree.root.url) };
+};
+
+/** Coverage note for a document whose loader identity CDP did not report. */
+export const unverifiedDocumentLimitation = (
+  selected: CdpDocumentIdentity,
+): string =>
+  `The ${knownLoader(selected.loaderId) === undefined ? "initial" : "final"} document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.`;
+
+/**
+ * Tracks the selected document across observations. A change is sticky: once
+ * another document was observed, evidence gathered since selection may mix
+ * documents. The first identity stays as the evidence subject.
+ */
+export class CdpDocumentTracker {
+  readonly selected: CdpDocumentIdentity;
+  #current: CdpDocumentIdentity;
+  #changed = false;
+  #unknown = false;
+
+  constructor(selected: CdpDocumentIdentity) {
+    this.selected = selected;
+    this.#current = selected;
+  }
+
+  get current(): CdpDocumentIdentity {
+    return this.#current;
+  }
+
+  /** Another root frame or loader was observed since selection. */
+  get changed(): boolean {
+    return this.#changed;
+  }
+
+  /** Some observation lacked the loader needed to prove the document. */
+  get unknown(): boolean {
+    return this.#unknown;
+  }
+
+  observe(observed: CdpDocumentIdentity): CdpDocumentComparison {
+    const comparison = compareCdpDocuments(this.#current, observed);
+    if (comparison === "changed") this.#changed = true;
+    if (comparison === "unknown") this.#unknown = true;
+    // A missing loader does not forget the loader that proved this document.
+    this.#current = {
+      ...observed,
+      loaderId:
+        knownLoader(observed.loaderId) ??
+        (comparison === "changed" ? undefined : this.#current.loaderId),
+    };
+    return comparison;
+  }
 }
 
 /** Discovery for one caller-selected endpoint and the browser socket that read it. */

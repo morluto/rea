@@ -15,7 +15,7 @@ it("starts each domain at its first event or enable acknowledgment, preserving e
     }),
     new Set(["https://example.test"]),
   );
-  events.beginAuthorizedFrame("main");
+  events.beginAuthorizedFrame({ frameId: "main" });
   vi.setSystemTime(new Date("2026-10-24T00:00:01.000Z"));
   events.ingest({
     method: "Network.loadingFinished",
