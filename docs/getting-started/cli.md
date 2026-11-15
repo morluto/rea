@@ -5,6 +5,16 @@ workflows and evidence contracts as REA's MCP server. Each CLI invocation is a
 separate process; save results when you want to use them in a later command.
 For a pinned, noninteractive workflow with retained reports, see
 [static analysis in GitHub Actions](../ci-analysis.md).
+For investigation through independent implementation, comparison and correction,
+use the [web and CLI reconstruction recipes](../guides/reconstruction/investigation-reconstruction-recipes.md).
+
+`rea verify-reconstruction request.json --json` evaluates a finite
+`specification` against the explicitly supplied canonical `evidence_bundle`.
+It returns per-claim `pass`, `fail` or `unknown` with Evidence links. A failed
+claim is a completed analysis result; malformed or unauthenticated input returns
+an actionable command error. See [web verification](../guides/reconstruction/web-reconstruction-verification.md)
+and the [CLI recipe](../guides/reconstruction/cli-reconstruction-recipe.md) for
+complete requests and matching MCP calls.
 
 ## Run a command
 

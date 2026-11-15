@@ -4,13 +4,13 @@ import type {
   CompareWebScreenshotsInput,
   WebScreenshotArtifact,
   WebScreenshotDiff,
-} from "../domain/webScreenshot.js";
+} from "./webScreenshot.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
-import { decodeCanonicalBase64 } from "../domain/webScreenshot.js";
-import { hasPngSignature, readPngIhdrFacts } from "../domain/pngHeader.js";
+} from "./analysisErrorCore.js";
+import { decodeCanonicalBase64 } from "./webScreenshot.js";
+import { hasPngSignature, readPngIhdrFacts } from "./pngHeader.js";
 
 interface DecodedPng {
   readonly width: number;

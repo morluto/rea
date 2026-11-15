@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { compareWebCaptureEvidence } from "../../../src/application/BrowserObservationService.js";
-import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
 import { browserCaptureComparisonInputSchema } from "../../../src/domain/browserCaptureComparison.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -388,7 +387,6 @@ const compareCaptures = async (
   after: WebPageInspection,
 ) => {
   const result = await compareWebCaptureEvidence(
-    new CdpBrowserProvider(),
     browserCaptureComparisonInputSchema.parse({
       before: { inspection: before },
       after: { inspection: after },

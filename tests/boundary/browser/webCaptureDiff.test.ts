@@ -1578,11 +1578,15 @@ const markSectionsComplete = (
       attach_limited_sections: string[];
       truncated_sections: string[];
       unavailable_sections: string[];
+      excluded: { section: string }[];
     };
   },
   sections: readonly string[],
 ): void => {
   const completed = new Set(sections);
+  inspection.completeness.excluded = inspection.completeness.excluded.filter(
+    (exclusion) => !completed.has(exclusion.section),
+  );
   for (const key of [
     "policy_filtered_sections",
     "attach_limited_sections",

@@ -2,6 +2,24 @@ import { z } from "zod";
 
 import { retainedBrowserScenarioCaptureSchema } from "./browserScenarioCapture.js";
 
+import { browserOriginSchema } from "./browserObservation.js";
+
+/** Explicit correspondence between the original and reconstructed HTTP origins. */
+const canonicalOriginSchema = z
+  .string()
+  .min(1)
+  .refine((value) => {
+    const parsed = browserOriginSchema.safeParse(value);
+    return parsed.success && parsed.data === value;
+  }, "Use an exact canonical HTTP(S) origin without path, query or credentials.");
+export const browserScenarioOriginMappingSchema = z.strictObject({
+  before_origin: canonicalOriginSchema,
+  after_origin: canonicalOriginSchema,
+});
+export type BrowserScenarioOriginMapping = z.infer<
+  typeof browserScenarioOriginMappingSchema
+>;
+
 /** Scenario artifact families compared after step alignment. */
 export const browserScenarioArtifactKindSchema = z.enum([
   "action_state",
@@ -73,19 +91,39 @@ const normalizationInputSchema = z
   });
 
 /** Input for step-aligned comparison of two browser scenario captures. */
-export const compareBrowserScenariosInputSchema = z.strictObject({
-  before_scenario: retainedBrowserScenarioCaptureSchema
-    .describe(
-      "Earlier complete normalized_result from capture_browser_scenario.",
-    )
-    .meta({ "x-rea-complete-observation": true }),
-  after_scenario: retainedBrowserScenarioCaptureSchema
-    .describe("Later complete normalized_result from capture_browser_scenario.")
-    .meta({ "x-rea-complete-observation": true }),
-  normalization: normalizationInputSchema
-    .default({ rules: [] })
-    .describe("Exact-literal rules committed in the comparison result."),
-});
+export const compareBrowserScenariosInputSchema = z
+  .strictObject({
+    before_scenario: retainedBrowserScenarioCaptureSchema
+      .describe(
+        "Earlier complete normalized_result from capture_browser_scenario.",
+      )
+      .meta({ "x-rea-complete-observation": true }),
+    after_scenario: retainedBrowserScenarioCaptureSchema
+      .describe(
+        "Later complete normalized_result from capture_browser_scenario.",
+      )
+      .meta({ "x-rea-complete-observation": true }),
+    normalization: normalizationInputSchema
+      .default({ rules: [] })
+      .describe("Exact-literal rules committed in the comparison result."),
+    origin_mapping: browserScenarioOriginMappingSchema.optional(),
+  })
+  .superRefine((input, context) => {
+    const mapping = input.origin_mapping;
+    if (mapping === undefined) return;
+    for (const side of ["before", "after"] as const) {
+      if (
+        mapping[`${side}_origin`] !==
+        input[`${side}_scenario`].scenario.start_origin
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["origin_mapping", `${side}_origin`],
+          message:
+            "Origin mapping must identify the corresponding scenario start_origin",
+        });
+    }
+  });
 /** Parsed browser scenario comparison input. */
 export type CompareBrowserScenariosInput = z.infer<
   typeof compareBrowserScenariosInputSchema
@@ -151,6 +189,7 @@ export const browserScenarioDiffSchema = z.strictObject({
       .array(builtInNormalizationSchema)
       .length(BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES.length),
     rules: z.array(normalizationRuleSchema),
+    origin_mapping: browserScenarioOriginMappingSchema.optional(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   }),
   alignment: z.strictObject({

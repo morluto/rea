@@ -43,9 +43,7 @@ export const optionalObservationFactories = (
     analyzeBundle: unselected,
     observeSession: unselected,
     discoverWebMcpTools: unselected,
-    compareCaptures: unselected,
     captureScreenshot: unselected,
-    compareScreenshots: unselected,
   };
   const runtime: JavaScriptRuntimeObservationPort = {
     identity: () => V8_INSPECTOR_PROVIDER_IDENTITY,

@@ -8,7 +8,7 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
 import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
@@ -98,6 +98,22 @@ export const registerApplicationCommands = (
   });
   registerObligationLedgerCommand(cli, logger);
   registerCoverageCommand(cli, logger);
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.verifyReconstruction,
+    description:
+      "Verify finite reconstruction claims against an explicit canonical Evidence bundle",
+    inputSchema: z.unknown(),
+    workflow: async (input) => {
+      const { verifyReconstructionRequest } =
+        await import("../application/ReconstructionVerificationService.js");
+      const result = verifyReconstructionRequest(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
   registerEvidenceJsonCommand({
     cli,
     logger,

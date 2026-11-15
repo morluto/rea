@@ -7,11 +7,13 @@ import {
   type BrowserScenarioDiff,
   type BrowserScenarioNormalization,
   type BrowserScenarioNormalizationRule,
+  type BrowserScenarioOriginMapping,
 } from "./browserScenarioDiffValues.js";
 
 /** Canonically order and commit a parsed browser scenario normalization policy. */
 export const commitBrowserScenarioNormalization = (
   input: BrowserScenarioNormalization,
+  originMapping?: BrowserScenarioOriginMapping,
 ): BrowserScenarioDiff["normalization"] => {
   const rules = [...input.rules]
     .map((rule) => ({
@@ -24,6 +26,7 @@ export const commitBrowserScenarioNormalization = (
   const commitment = {
     built_in_rules: [...BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES],
     rules,
+    ...(originMapping === undefined ? {} : { origin_mapping: originMapping }),
   };
   return {
     ...commitment,

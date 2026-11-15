@@ -1104,6 +1104,198 @@ describe("browser scenario comparison validation", () => {
   });
 });
 
+const mapping = {
+  before_origin: "https://app.example.test",
+  after_origin: "http://localhost:4173",
+};
+const compare = (
+  before: BrowserScenarioCapture,
+  after: BrowserScenarioCapture,
+) =>
+  compareBrowserScenarios(
+    compareBrowserScenariosInputSchema.parse({
+      before_scenario: before,
+      after_scenario: after,
+      origin_mapping: mapping,
+    }),
+  );
+
+describe("browser scenario origin correspondence", () => {
+  it("requires an explicit matching correspondence and commits it without changing sources", () => {
+    const before = scenarioCapture({});
+    const after = scenarioCapture({ origin: mapping.after_origin });
+    const saved = structuredClone(after);
+    const unmapped = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+      }),
+    );
+    expect(unmapped.alignment.failures).toContainEqual(
+      expect.objectContaining({
+        code: "capture_context_mismatch",
+      }),
+    );
+    const mapped = compare(before, after);
+    expect(mapped.overall_status).toBe("unchanged");
+    expect(mapped.normalization.origin_mapping).toEqual(mapping);
+    expect(mapped.normalization.sha256).not.toBe(unmapped.normalization.sha256);
+    expect(after).toEqual(saved);
+    for (const originMapping of [
+      { ...mapping, before_origin: "https://another.example.test" },
+      { ...mapping, after_origin: mapping.before_origin },
+      { ...mapping, after_origin: "http://localhost:4173/path" },
+      { ...mapping, after_origin: "http://person:secret@localhost:4173" },
+      { ...mapping, after_origin: "http://*.example.test" },
+    ])
+      expect(
+        compareBrowserScenariosInputSchema.safeParse({
+          before_scenario: before,
+          after_scenario: after,
+          origin_mapping: originMapping,
+        }).success,
+      ).toBe(false);
+  });
+
+  it("maps typed history and event URLs while preserving path, query and text differences", () => {
+    const withHistory = (origin: string) => {
+      const capture = scenarioCapture({ origin });
+      const location = capture.steps[0]?.after_url;
+      if (location === undefined) throw new Error("Expected initial URL");
+      for (const step of capture.steps)
+        step.artifacts.history = {
+          state: "captured",
+          value: {
+            length: 1,
+            current_url: location,
+            navigation_entries: [{ type: "navigate", name: location }],
+          },
+        };
+      const event = capture.events.items[0];
+      if (event?.kind !== "console") throw new Error("Expected console event");
+      event.url = location;
+      return browserScenarioCaptureSchema.parse(capture);
+    };
+    const before = withHistory(mapping.before_origin);
+    const after = withHistory(mapping.after_origin);
+    expect(compare(before, after).overall_status).toBe("unchanged");
+    const changed = structuredClone(after);
+    const event = changed.events.items[0];
+    if (event?.kind !== "console" || event.url === null)
+      throw new Error("Expected console URL");
+    event.url.url += `?redirect=${mapping.after_origin}/other`;
+    event.url.query_parameter_names = ["redirect"];
+    event.text = mapping.after_origin;
+    const result = compare(before, changed);
+    expect(result.steps.flatMap((step) => step.artifact_diffs)).toContainEqual(
+      expect.objectContaining({ artifact: "events", status: "changed" }),
+    );
+    const changedPath = scenarioCapture({ origin: mapping.after_origin });
+    const step = changedPath.steps[1];
+    if (step === undefined) throw new Error("Expected action step");
+    step.after_url = {
+      ...step.after_url,
+      url: `${mapping.after_origin}/other`,
+    };
+    expect(compare(before, changedPath).overall_status).toBe("changed");
+    const changedText = scenarioCapture({
+      origin: mapping.after_origin,
+      domText: mapping.after_origin,
+    });
+    expect(
+      compare(
+        scenarioCapture({ domText: mapping.before_origin }),
+        changedText,
+      ).steps.flatMap((item) => item.artifact_diffs),
+    ).toContainEqual(
+      expect.objectContaining({ artifact: "dom", status: "changed" }),
+    );
+  });
+});
+
+describe("browser scenario origin correspondence boundaries", () => {
+  it("does not map foreign origins, text containing a URL, or cookie domains", () => {
+    const before = scenarioCapture({});
+    const after = scenarioCapture({ origin: mapping.after_origin });
+    const step = after.steps[1];
+    if (step === undefined) throw new Error("Expected action step");
+    step.artifacts.url = {
+      state: "captured",
+      value: {
+        ...step.after_url,
+        origin: "http://localhost:41730",
+        url: "http://localhost:41730/settings",
+      },
+    };
+    expect(
+      compare(before, after).steps.flatMap((item) => item.artifact_diffs),
+    ).toContainEqual(
+      expect.objectContaining({ artifact: "url", status: "changed" }),
+    );
+    const withCookie = (capture: BrowserScenarioCapture, domain: string) => {
+      const initial = capture.steps[0];
+      if (initial === undefined) throw new Error("Expected initial step");
+      initial.artifacts.storage = {
+        state: "captured",
+        value: {
+          fingerprint_version: BROWSER_STORAGE_FINGERPRINT_VERSION,
+          cookies: [
+            {
+              name: "theme",
+              domain,
+              path: "/",
+              secure: false,
+              http_only: false,
+              same_site: "Lax",
+              value_state: "hashed",
+              value_sha256: "a".repeat(64),
+            },
+          ],
+          local_storage: [],
+          session_storage: [],
+        },
+      };
+      return capture;
+    };
+    expect(
+      compare(
+        withCookie(scenarioCapture({}), "app.example.test"),
+        withCookie(
+          scenarioCapture({ origin: mapping.after_origin }),
+          "localhost",
+        ),
+      ).steps.flatMap((item) => item.artifact_diffs),
+    ).toContainEqual(
+      expect.objectContaining({ artifact: "storage", status: "changed" }),
+    );
+  });
+
+  it("keeps missing coverage and incompatible browser context unknown", () => {
+    const before = scenarioCapture({});
+    const after = scenarioCapture({ origin: mapping.after_origin });
+    const missing = browserScenarioCaptureSchema.parse({
+      ...after,
+      completeness: {
+        status: "incomplete",
+        equality_eligible: false,
+        missing_sections: ["dom"],
+        truncated_sections: [],
+      },
+    });
+    expect(compare(before, missing).overall_status).toBe("unknown");
+    const differentBrowser = structuredClone(after);
+    differentBrowser.browser.version = "150.0";
+    expect(compare(before, differentBrowser)).toMatchObject({
+      overall_status: "unknown",
+      alignment: {
+        failures: [
+          expect.objectContaining({ code: "capture_context_mismatch" }),
+        ],
+      },
+    });
+  });
+});
+
 const multiStepScenarioCapture = (
   actionCount: number,
   content: string,
@@ -1288,6 +1480,7 @@ describe("storage fingerprint provenance", () => {
 });
 
 interface ScenarioCaptureOptions {
+  readonly origin?: string;
   readonly stepId?: string;
   readonly action?: string;
   readonly domText?: string;
@@ -1299,8 +1492,8 @@ const scenarioCapture = (
   options: ScenarioCaptureOptions,
 ): BrowserScenarioCapture => {
   const url = {
-    url: "https://app.example.test/settings",
-    origin: "https://app.example.test",
+    url: `${options.origin ?? "https://app.example.test"}/settings`,
+    origin: options.origin ?? "https://app.example.test",
     query_parameter_names: [],
     redacted: false,
   };
@@ -1328,7 +1521,7 @@ const scenarioCapture = (
       version: "149.0",
     },
     scenario: {
-      start_origin: "https://app.example.test",
+      start_origin: options.origin ?? "https://app.example.test",
       action_count: 1,
       secret_references: [],
       network_content: {

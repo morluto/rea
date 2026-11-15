@@ -1,3 +1,7 @@
+import {
+  compareWebEvidence,
+  type WebComparisonContext,
+} from "./WebComparisonEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type {
   InspectWebPageInput,
@@ -17,14 +21,8 @@ import {
   type DiscoverWebMcpToolsInput,
 } from "../domain/webMcpDiscovery.js";
 import {
-  browserCaptureComparisonSchema,
-  type BrowserCaptureComparisonInput,
-} from "../domain/browserCaptureComparison.js";
-import {
   webScreenshotSchema,
-  webScreenshotDiffSchema,
   type CaptureWebScreenshotInput,
-  type CompareWebScreenshotsInput,
 } from "../domain/webScreenshot.js";
 import {
   AnalysisCancelledError,
@@ -54,8 +52,6 @@ const browserResultSchemas = {
   observe_web_session: webObservationSessionSchema,
   discover_webmcp_tools: webMcpDiscoverySchema,
   capture_web_screenshot: webScreenshotSchema,
-  compare_web_captures: browserCaptureComparisonSchema,
-  compare_web_screenshots: webScreenshotDiffSchema,
 };
 
 /** List browser targets within the endpoint and origin scope in the request. */
@@ -202,22 +198,10 @@ export const discoverWebMcpTools = async (
 
 /** Compare two already-normalized web captures without external access. */
 export const compareWebCaptureEvidence = async (
-  browser: BrowserObservationPort | undefined,
-  input: BrowserCaptureComparisonInput,
-): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = requireBrowser(browser, "compare_web_captures");
-  if (!ready.ok) return ready;
-  const compared = await ready.value.compareCaptures(input);
-  return compared.ok
-    ? browserEvidence(
-        "compare_web_captures",
-        input,
-        compared.value,
-        ready.value.identity(),
-        {},
-      )
-    : compared;
-};
+  input: unknown,
+  context: WebComparisonContext = {},
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareWebEvidence("compare_web_captures", input, context);
 
 /** Capture one visible-viewport screenshot for the requested target. */
 export const captureWebScreenshot = async (
@@ -247,22 +231,10 @@ export const captureWebScreenshot = async (
 
 /** Compare two self-verifying PNG artifacts without external access. */
 export const compareWebScreenshotEvidence = async (
-  browser: BrowserObservationPort | undefined,
-  input: CompareWebScreenshotsInput,
-): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = requireBrowser(browser, "compare_web_screenshots");
-  if (!ready.ok) return ready;
-  const compared = await ready.value.compareScreenshots(input);
-  return compared.ok
-    ? browserEvidence(
-        "compare_web_screenshots",
-        input,
-        compared.value,
-        ready.value.identity(),
-        {},
-      )
-    : compared;
-};
+  input: unknown,
+  context: WebComparisonContext = {},
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareWebEvidence("compare_web_screenshots", input, context);
 
 const requireBrowser = (
   browser: BrowserObservationPort | undefined,

@@ -1,6 +1,6 @@
 # Guided MCP prompts and completion
 
-REA exposes six provider-neutral investigation workflows through the MCP
+REA exposes provider-neutral investigation workflows through the MCP
 `prompts` capability. They complement the generated tool catalog; they do not add, remove, or
 invoke tools by themselves.
 
@@ -52,14 +52,21 @@ locator unreadable.
 
 ## Prompt inventory
 
-| Prompt                            | Purpose                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------ |
-| `investigate_feature`             | Trace a feature from discovery into relevant function evidence.                      |
-| `compare_application_versions`    | Compare two shipped artifacts, with optional static and runtime follow-up.           |
-| `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence. |
-| `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
-| `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
-| `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
+| Prompt                            | Purpose                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `reconstruct_web_feature`         | Investigate one web feature, build independently, compare, correct and verify finite claims.    |
+| `reconstruct_cli_feature`         | Investigate meaningful CLI inputs, build independently, retain failures and verify corrections. |
+| `investigate_feature`             | Trace a feature from discovery into relevant function evidence.                                 |
+| `compare_application_versions`    | Compare two shipped artifacts, with optional static and runtime follow-up.                      |
+| `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence.            |
+| `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.              |
+| `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.                         |
+| `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                                |
+
+The [reconstruction recipes](../guides/reconstruction/investigation-reconstruction-recipes.md)
+connect observations, an Evidence-cited brief, ordinary coding tools and finite
+verification. Their executable examples retain the failing candidate and the
+correction. Retrieving or rendering a recipe does not execute its steps.
 
 A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow when its required tools
 belong to selected families. Optional APK, managed, Apple-resource, and archive

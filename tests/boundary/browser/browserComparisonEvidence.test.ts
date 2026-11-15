@@ -3,7 +3,6 @@ import {
   compareWebCaptureEvidence,
   compareWebScreenshotEvidence,
 } from "../../../src/application/BrowserObservationService.js";
-import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { scenarioCaptureFixture } from "../../fixtures/browserScenarioCapture.js";
@@ -16,11 +15,9 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 
 it("retains distinct offline comparison inputs even when their diff reports match", async () => {
-  const browser = new CdpBrowserProvider();
   const compare = async (path: string) => {
     const inspection = passiveNetworkCapture([path]);
     const result = await compareWebCaptureEvidence(
-      browser,
       compareWebCapturesInputSchema.parse({
         before: { inspection },
         after: { inspection },
@@ -54,10 +51,7 @@ it("commits complete scenario comparison inputs beyond the diff projection", asy
       before_scenario: capture,
       after_scenario: capture,
     });
-    const result = await compareWebCaptureEvidence(
-      new CdpBrowserProvider(),
-      input,
-    );
+    const result = await compareWebCaptureEvidence(input);
     if (!result.ok) throw result.error;
     return result.value;
   };
@@ -77,12 +71,9 @@ it("commits complete screenshot comparison inputs and reports derived provenance
     ({ name }) => name === "compare_web_screenshots",
   );
   const input = compareWebScreenshotsInputSchema.parse(
-    contract?.examples[0]?.input,
+    contract?.examples.find(({ input }) => "before" in input)?.input,
   );
-  const result = await compareWebScreenshotEvidence(
-    new CdpBrowserProvider(),
-    input,
-  );
+  const result = await compareWebScreenshotEvidence(input);
   if (!result.ok) throw result.error;
   expect(parseEvidence(result.value)).toMatchObject({
     confidence: "derived",

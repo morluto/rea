@@ -3,6 +3,8 @@ import { z } from "zod";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import { browserScenarioArtifactKindSchema } from "./browserScenarioDiffValues.js";
+import { webCaptureDiffSchema } from "./webCaptureDiffSchemas.js";
 import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -35,10 +37,40 @@ const artifactClaimSchema = z.object({
   dimension: z.literal("overall"),
 });
 
+const webScenarioClaimSchema = z.strictObject({
+  ...commonClaim,
+  kind: z.literal("web-scenario"),
+  dimension: z.enum(["overall", ...browserScenarioArtifactKindSchema.options]),
+  step_id: z.string().min(1).optional(),
+});
+const webCaptureClaimSchema = z.strictObject({
+  ...commonClaim,
+  kind: z.literal("web-capture"),
+  dimension: z.enum([
+    "overall",
+    ...webCaptureDiffSchema.shape.dimensions.keyof().options,
+  ]),
+});
+const webScreenshotClaimSchema = z.strictObject({
+  ...commonClaim,
+  kind: z.literal("web-screenshot"),
+  dimension: z.literal("pixels"),
+  maximum_changed_ratio: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe(
+      "Maximum accepted changed-pixel proportion at the comparison's recorded channel_threshold. Visual acceptance does not establish behavior equivalence.",
+    ),
+});
+
 const reconstructionClaimSchema = z.discriminatedUnion("kind", [
   behavioralClaimSchema,
   functionClaimSchema,
   artifactClaimSchema,
+  webScenarioClaimSchema,
+  webCaptureClaimSchema,
+  webScreenshotClaimSchema,
 ]);
 
 /** Finite, typed behavioral and structural specification. */
@@ -51,9 +83,13 @@ export const reconstructionSpecificationSchema = z
     const ids = value.claims.map(({ claim_id: id }) => id);
     if (new Set(ids).size !== ids.length)
       context.addIssue({ code: "custom", message: "Claim IDs must be unique" });
-    const selectors = value.claims.map(
-      ({ kind, comparison_evidence_id: id, dimension }) =>
-        `${kind}:${id}:${dimension}`,
+    const selectors = value.claims.map((claim) =>
+      JSON.stringify([
+        claim.kind,
+        claim.comparison_evidence_id,
+        claim.dimension,
+        "step_id" in claim ? (claim.step_id ?? null) : null,
+      ]),
     );
     if (new Set(selectors).size !== selectors.length)
       context.addIssue({
@@ -69,8 +105,18 @@ export const reconstructionVerificationInputSchema = z.strictObject({
 
 export const reconstructionClaimResultSchema = z.object({
   claim_id: claimIdSchema,
-  kind: z.enum(["behavioral", "structural-function", "structural-artifact"]),
+  kind: z.enum([
+    "behavioral",
+    "structural-function",
+    "structural-artifact",
+    "web-scenario",
+    "web-capture",
+    "web-screenshot",
+  ]),
   dimension: z.string().min(1),
+  step_id: z.string().min(1).optional(),
+  maximum_changed_ratio: z.number().min(0).max(1).optional(),
+  measured_changed_ratio: z.number().min(0).max(1).optional(),
   status: verificationStatusSchema,
   observed_status: z.enum([
     "unchanged",
@@ -134,9 +180,13 @@ export const reconstructionVerificationResultSchema = z
       ],
       [
         summary.behavioral !==
-          claims.filter(({ kind }) => kind === "behavioral").length ||
+          claims.filter(
+            ({ kind }) => kind === "behavioral" || kind === "web-scenario",
+          ).length ||
           summary.structural !==
-            claims.filter(({ kind }) => kind !== "behavioral").length,
+            claims.filter(
+              ({ kind }) => kind !== "behavioral" && kind !== "web-scenario",
+            ).length,
         "Claim kind counts must summarize retained claims",
         ["summary"],
       ],

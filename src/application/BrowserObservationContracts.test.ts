@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
-import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
@@ -10,10 +8,7 @@ import {
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
-import {
-  captureWebScreenshotInputSchema,
-  compareWebScreenshotsInputSchema,
-} from "../domain/webScreenshot.js";
+import { captureWebScreenshotInputSchema } from "../domain/webScreenshot.js";
 import { ok, err } from "../domain/result.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { parseEvidence } from "../domain/evidence.js";
@@ -34,24 +29,11 @@ const pageProvider = (
     observeSession: unused,
     discoverWebMcpTools: unused,
     captureScreenshot: unused,
-    compareCaptures: unused,
-    compareScreenshots: unused,
   };
 };
 
 const selected = { cdp_endpoint: "http://127.0.0.1:9222", target_id: "page" };
 const inspection = passiveNetworkCapture();
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDYQAAAAASUVORK5CYII=",
-  "base64",
-);
-const artifact = {
-  bytes: png.length,
-  sha256: createHash("sha256").update(png).digest("hex"),
-  media_type: "image/png",
-  data_base64: png.toString("base64"),
-};
-
 const operations = [
   {
     operation: "list_browser_targets",
@@ -103,28 +85,6 @@ const operations = [
         captureWebScreenshotInputSchema.parse(selected),
       ),
   },
-  {
-    operation: "compare_web_captures",
-    run: (browser: BrowserObservationPort) =>
-      service.compareWebCaptureEvidence(
-        browser,
-        browserCaptureComparisonInputSchema.parse({
-          before: { inspection },
-          after: { inspection },
-        }),
-      ),
-  },
-  {
-    operation: "compare_web_screenshots",
-    run: (browser: BrowserObservationPort) =>
-      service.compareWebScreenshotEvidence(
-        browser,
-        compareWebScreenshotsInputSchema.parse({
-          before: artifact,
-          after: artifact,
-        }),
-      ),
-  },
 ];
 
 it.each(operations)(
@@ -151,8 +111,6 @@ it.each(operations)(
         observeSession: observed,
         discoverWebMcpTools: observed,
         captureScreenshot: observed,
-        compareCaptures: observed,
-        compareScreenshots: observed,
       };
       const result = await run(browser);
       expect(result).toMatchObject({

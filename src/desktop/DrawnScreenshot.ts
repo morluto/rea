@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-import { isOneColourPng } from "../browser/PngVisualDiff.js";
+import { isOneColourPng } from "../domain/pngVisualDiff.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 /** How often REA retakes a first screenshot the desktop has not drawn on, and the time the retries share. */

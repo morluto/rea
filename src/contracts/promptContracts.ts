@@ -1,4 +1,5 @@
 import type { TOOL_CONTRACTS } from "./toolContracts.js";
+import { RECONSTRUCTION_RECIPE_PROMPTS } from "./reconstructionRecipePrompts.js";
 import { z } from "zod";
 
 type ToolName = (typeof TOOL_CONTRACTS)[number]["name"];
@@ -22,6 +23,7 @@ export interface PromptArgumentContract {
 }
 
 interface PromptWorkflowStep {
+  readonly phase?: string;
   readonly tools: readonly ToolName[];
   /** Omit this route, rather than the workflow, when its tools are disabled. */
   readonly availability?: "optional";
@@ -120,10 +122,11 @@ export const renderGuidedPrompt = (
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
   );
   const workflow = contract.steps
-    .map(
-      (step) =>
-        `- ${step.instruction}\n  Tools: ${step.tools.map((tool) => `\`${tool}\``).join(", ")}`,
-    )
+    .map((step) => {
+      const phase = step.phase === undefined ? "" : `**${step.phase}:** `;
+      const tools = step.tools.map((tool) => `\`${tool}\``).join(", ");
+      return `- ${phase}${step.instruction}${tools === "" ? "" : `\n  Tools: ${tools}`}`;
+    })
     .join("\n");
   const discipline = COMMON_DISCIPLINE.map(
     (rule, index) => `${String(index + 1)}. ${rule}`,
@@ -145,6 +148,7 @@ ${discipline}`;
 
 /** Complete guided workflow inventory advertised through MCP prompts. */
 export const PROMPT_CONTRACTS = [
+  ...RECONSTRUCTION_RECIPE_PROMPTS,
   {
     name: "investigate_feature",
     title: "Investigate a feature",
@@ -339,6 +343,12 @@ export const PROMPT_CONTRACTS = [
         ],
         instruction:
           "Produce missing comparison Evidence when needed; incomplete comparison dimensions remain unknown.",
+      },
+      {
+        tools: ["compare_web_captures", "compare_web_screenshots"],
+        availability: "optional",
+        instruction:
+          "For web claims, compare authenticated source Evidence or exact retained references and declare an explicit origin_mapping for differing origins. Keep interaction claims separate from screenshot claims with an explicit maximum_changed_ratio; matching pixels do not establish behavior.",
       },
       {
         tools: ["verify_reconstruction"],

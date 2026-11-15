@@ -88,9 +88,7 @@ it.each(operations)(
           analyzeBundle: unused,
           observeSession: unused,
           discoverWebMcpTools: unused,
-          compareCaptures: unused,
           captureScreenshot: unused,
-          compareScreenshots: unused,
         },
         browserScenarioCapture: {
           identity,

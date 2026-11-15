@@ -131,18 +131,32 @@ export const reconstructionProbes = (
 const defaultProbe = (
   kind: ReconstructionClaim["kind"],
 ): { operation: string; rationale: string } =>
-  kind === "behavioral"
+  kind === "web-scenario" || kind === "web-screenshot"
     ? {
-        operation: "capture_process_scenario",
-        rationale: "Repeat both scenarios under one controlled environment.",
+        operation: "capture_browser_scenario",
+        rationale:
+          "Capture independent original and reconstruction observations with matching environment, step IDs and requested artifacts.",
       }
-    : kind === "structural-function"
+    : kind === "web-capture"
       ? {
-          operation: "analyze_function",
-          rationale: "Capture complete function dossiers under equal limits.",
-        }
-      : {
-          operation: "inspect_artifact",
+          operation: "inspect_web_page",
           rationale:
-            "Capture complete artifact inventories under equal limits.",
-        };
+            "Capture independent complete page observations with matching browser context and content selection.",
+        }
+      : kind === "behavioral"
+        ? {
+            operation: "capture_process_scenario",
+            rationale:
+              "Repeat both scenarios under one controlled environment.",
+          }
+        : kind === "structural-function"
+          ? {
+              operation: "analyze_function",
+              rationale:
+                "Capture complete function dossiers under equal limits.",
+            }
+          : {
+              operation: "inspect_artifact",
+              rationale:
+                "Capture complete artifact inventories under equal limits.",
+            };

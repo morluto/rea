@@ -16,7 +16,12 @@
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
     "scripts/verify-real-ghidra-function-bundle.mjs",
-    "tests/processOwnershipRunner.ts"
+    "tests/processOwnershipRunner.ts",
+    "scripts/examples/web-reconstruction.mjs",
+    "scripts/examples/web-reconstruction-recipe.mjs",
+    "scripts/examples/cli-reconstruction.mjs",
+    "scripts/examples/fixtures/cli-sum-builder.mjs",
+    "scripts/examples/fixtures/cli-sum-original.mjs"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "vitepress": {

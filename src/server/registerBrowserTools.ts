@@ -23,6 +23,7 @@ import type { Logger } from "pino";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runEvidenceToolOperation } from "./contractToolHandler.js";
+import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 
 interface BrowserToolRegistration {
   readonly logger: Logger;
@@ -48,6 +49,11 @@ export const registerBrowserTools = (
   const captureDiffContract = toolContract("compare_web_captures");
   const screenshotContract = toolContract("capture_web_screenshot");
   const screenshotDiffContract = toolContract("compare_web_screenshots");
+  const comparisonContext = {
+    lookup: options.evidenceById,
+    retain: (records: Parameters<typeof recordEvidenceSources>[1]) =>
+      recordEvidenceSources(options.recordEvidence, records),
+  };
 
   server.registerTool(
     listContract.name,
@@ -147,9 +153,9 @@ export const registerBrowserTools = (
       runEvidenceToolOperation(
         registration,
         captureDiffContract,
-        options.loadFailure,
+        undefined,
         { input, context },
-        (parsed) => compareWebCaptureEvidence(options.browser, parsed),
+        (parsed) => compareWebCaptureEvidence(parsed, comparisonContext),
       ),
   );
   server.registerTool(
@@ -175,9 +181,9 @@ export const registerBrowserTools = (
       runEvidenceToolOperation(
         registration,
         screenshotDiffContract,
-        options.loadFailure,
+        undefined,
         { input, context },
-        (parsed) => compareWebScreenshotEvidence(options.browser, parsed),
+        (parsed) => compareWebScreenshotEvidence(parsed, comparisonContext),
       ),
   );
 };

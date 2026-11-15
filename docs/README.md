@@ -11,6 +11,13 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [CLI and Evidence](getting-started/cli.md)
 - [Guided MCP prompts and completion](getting-started/mcp-prompts.md)
 
+## Reconstruction recipes
+
+- [Investigate, reconstruct and verify one feature](guides/reconstruction/investigation-reconstruction-recipes.md)
+- [Reconstruct a web interaction](guides/reconstruction/web-reconstruction-recipe.md)
+- [Reconstruct a CLI feature](guides/reconstruction/cli-reconstruction-recipe.md)
+- [Verify a web reconstruction](guides/reconstruction/web-reconstruction-verification.md)
+
 ## Native binaries
 
 - [Native binary investigation](guides/native/native-investigation.md)

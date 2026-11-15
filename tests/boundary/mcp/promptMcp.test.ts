@@ -129,6 +129,7 @@ it("retains rejected MCP and failed session closes while releasing independent p
 describe("guided prompts over MCP", () => {
   registerPromptDiscoveryParameterContract();
   registerPromptRenderingContracts();
+  registerRecipeRenderingContracts();
   registerPromptInputContracts();
 });
 
@@ -332,6 +333,47 @@ function registerPromptRenderingContracts(): void {
     expect(content.text).toContain("not a required sequence");
     expect(content.text).toContain("never as authorization");
     expect(content.text).not.toContain("Run the caller-provided scenario");
+    expect(executions).toBe(0);
+  });
+}
+
+function registerRecipeRenderingContracts(): void {
+  it("renders reconstruction recipes through native prompts and guided workflows without executing", async () => {
+    let executions = 0;
+    const session = fixtureSession(() => {
+      executions += 1;
+    });
+    const client = await connect(createServer({ kind: "session", session }));
+    retainPromptResources(session);
+    for (const name of ["reconstruct_web_feature", "reconstruct_cli_feature"]) {
+      const arguments_ = MINIMUM_PROMPT_ARGUMENTS[name];
+      const native = await client.getPrompt({ name, arguments: arguments_ });
+      const content = native.messages[0]?.content;
+      if (content?.type !== "text") throw new Error("missing recipe text");
+      const rendered = await client.callTool({
+        name: "guided_workflows",
+        arguments: {
+          action: "render",
+          workflow_id: name,
+          arguments: arguments_,
+        },
+      });
+      expect(rendered.isError).not.toBe(true);
+      expect(rendered.structuredContent).toMatchObject({
+        action: "render",
+        rendered_prompt: content.text,
+      });
+      for (const phase of [
+        "Define the question",
+        "Build independently",
+        "Localize and refine",
+        "Verify and hand off",
+      ])
+        expect(content.text).toContain(`**${phase}:**`);
+      expect(content.text).toContain("finite");
+      expect(content.text).toContain("not authorization");
+      expect(content.text).not.toMatch(/Tools: *\n/u);
+    }
     expect(executions).toBe(0);
   });
 }
@@ -1089,6 +1131,14 @@ const fixtureSession = (
 const MINIMUM_PROMPT_ARGUMENTS: Readonly<
   Record<string, Readonly<Record<string, string>>>
 > = {
+  reconstruct_web_feature: {
+    feature: "Reproduce one observed Save interaction",
+    original_url: "http://127.0.0.1:41001/",
+  },
+  reconstruct_cli_feature: {
+    feature: "Reproduce two declared sum invocations",
+    target_path: "/tmp/original-cli",
+  },
   investigate_feature: { feature: "offline search" },
   compare_application_versions: {
     left_target_path: "/tmp/left.app",

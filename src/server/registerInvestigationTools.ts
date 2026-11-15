@@ -1,6 +1,5 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
 import {
   buildCallPathEvidence,
   findChangedBehaviorEvidence,
@@ -26,7 +25,7 @@ import {
 } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import { verifyReconstruction } from "../domain/reconstructionVerification.js";
+import { verifyReconstructionRequest } from "../application/ReconstructionVerificationService.js";
 
 export const registerInvestigationTools = (
   server: EvidenceMcpServer,
@@ -149,23 +148,24 @@ const registerReconstruction = (
           const computed = await runDerivedOperation(
             context,
             contract.name,
-            () => verifyReconstruction(input.specification, owned),
+            () =>
+              verifyReconstructionRequest({
+                specification: input.specification,
+                evidence_bundle: owned,
+              }),
           );
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
-          const result = computed.value;
-          const closure = resolveInvestigationEvidenceClosure(
-            session,
-            result.evidence_links,
-          );
-          if (!closure.ok)
-            return server.delivery.toCallToolResult(closure, contract);
-          const links = closure.value;
+          const verified = computed.value;
+          if (!verified.ok)
+            return server.delivery.toCallToolResult(verified, contract);
+          const result = verified.value;
+          const links = result.evidence_links;
           const evidence = createEvidence(undefined, RECONSTRUCTION_PROVIDER, {
             predicateType: "rea.reconstruction-verification",
             operation: contract.name,
             analysisProfile: createAnalysisProfile(RECONSTRUCTION_PROVIDER, {
-              workflow_revision: 2,
+              workflow_revision: 3,
             }),
             parameters: {
               specification_sha256: result.specification_sha256,

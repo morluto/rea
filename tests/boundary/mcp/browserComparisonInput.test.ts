@@ -15,6 +15,10 @@ import {
 } from "../../../src/domain/browserCaptureComparison.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
+import {
+  compareBrowserScenariosInputSchema,
+  type CompareBrowserScenariosInput,
+} from "../../../src/domain/browserScenarioDiffValues.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
@@ -57,7 +61,7 @@ async function capturePassivePair(
 
 function invalidComparisonInputs(
   passive: Awaited<ReturnType<typeof capturePassivePair>>,
-  scenario: (typeof contract.examples)[number]["input"],
+  scenario: CompareBrowserScenariosInput,
 ) {
   const scenarioCapture = browserScenarioCaptureSchema.parse(
     scenario.before_scenario,
@@ -105,7 +109,7 @@ describe("browser comparison input boundary", () => {
       toolRegistrationOptions(contract),
       async (input) => {
         calls += 1;
-        const compared = await compareWebCaptureEvidence(provider, input);
+        const compared = await compareWebCaptureEvidence(input);
         return compared.ok
           ? delivery.toEvidenceToolResult(compared.value, contract, undefined)
           : delivery.toErrorToolResult(
@@ -140,8 +144,14 @@ describe("browser comparison input boundary", () => {
       }).compile(advertised.inputSchema);
       expect(fillDefaults(defaultFilledPassive)).toBe(true);
       expect(defaultFilledPassive).not.toHaveProperty("normalization");
-      const scenario = contract.examples[0]?.input;
-      if (scenario === undefined) throw new Error("Missing scenario example");
+      const scenarioExample = contract.examples.find(
+        ({ input }) => "before_scenario" in input,
+      );
+      if (scenarioExample === undefined)
+        throw new Error("Missing scenario example");
+      const scenario = compareBrowserScenariosInputSchema.parse(
+        scenarioExample.input,
+      );
       const withoutNormalization = Object.fromEntries(
         Object.entries(scenario).filter(([key]) => key !== "normalization"),
       );

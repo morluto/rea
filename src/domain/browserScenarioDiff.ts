@@ -31,6 +31,8 @@ import {
   normalizeScenarioValue,
 } from "./browserScenarioNormalization.js";
 
+import { mapBrowserScenarioOrigin } from "./browserScenarioOriginMapping.js";
+
 const scenarioEventsValueSchema = z.strictObject({
   events: z.array(z.unknown()),
   network_transactions: z.array(z.string()),
@@ -68,32 +70,33 @@ interface AlignedStepComparison {
 export const compareBrowserScenarios = (
   input: CompareBrowserScenariosInput,
 ): BrowserScenarioDiff => {
-  const normalization = commitBrowserScenarioNormalization(input.normalization);
+  const normalization = commitBrowserScenarioNormalization(
+    input.normalization,
+    input.origin_mapping,
+  );
+  const afterCapture =
+    input.origin_mapping === undefined
+      ? input.after_scenario
+      : mapBrowserScenarioOrigin(input.after_scenario, input.origin_mapping);
   const beforeEvents = prepareScenarioEvents(
     input.before_scenario,
     normalization.rules,
   );
-  const afterEvents = prepareScenarioEvents(
-    input.after_scenario,
-    normalization.rules,
-  );
+  const afterEvents = prepareScenarioEvents(afterCapture, normalization.rules);
   const familyIncomparableReason = eventFamilyCoverageReason(
     input.before_scenario,
-    input.after_scenario,
+    afterCapture,
   );
   const incomparableReason = eventCoverageReason(
     familyIncomparableReason,
-    networkContentCoverageReason(input.before_scenario, input.after_scenario),
+    networkContentCoverageReason(input.before_scenario, afterCapture),
     beforeEvents.coverageReason,
     afterEvents.coverageReason,
   );
-  const alignment = alignScenarioSteps(
-    input.before_scenario,
-    input.after_scenario,
-  );
+  const alignment = alignScenarioSteps(input.before_scenario, afterCapture);
   const compared = compareAlignedSteps({
     beforeCapture: input.before_scenario,
-    afterCapture: input.after_scenario,
+    afterCapture: afterCapture,
     alignment,
     rules: normalization.rules,
     beforeEvents,
@@ -111,7 +114,7 @@ export const compareBrowserScenarios = (
   const stepStatuses = compared.steps.map(({ status }) => status);
   const equalityEligible =
     input.before_scenario.completeness.equality_eligible &&
-    input.after_scenario.completeness.equality_eligible &&
+    afterCapture.completeness.equality_eligible &&
     alignmentStatus === "aligned";
   const overallStatus = stepStatuses.includes("changed")
     ? "changed"
@@ -138,6 +141,11 @@ export const compareBrowserScenarios = (
       "Steps align only by exact, unique step_id; missing, duplicate, or action-mismatched steps are reported and prevent an unchanged claim.",
       "Only declared literal normalization rules are applied, in canonical rule_id order, to already-redacted durable capture fields.",
       "Elapsed time, event sequence/index values, request observation times and durations, and capture-local transaction IDs are excluded as volatile; network transactions are compared as an unordered collection in the step that sent their request; cookies, local storage and session storage entries are compared as unordered collections after literal normalization; screenshot bytes are compared by content digest.",
+      ...(input.origin_mapping === undefined
+        ? []
+        : [
+            "The declared origin correspondence applies only to typed URL fields; source captures, text, storage, headers and bodies remain unchanged. Noncanonical URL spellings remain literal.",
+          ]),
       "A changed status proves an observed normalized difference. Missing or truncated evidence, incompatible capture context, or alignment failure prevents an unchanged claim.",
     ],
   });

@@ -90,6 +90,20 @@ export const browserCompletenessSchema = z.object({
 });
 export type BrowserCompleteness = z.infer<typeof browserCompletenessSchema>;
 
+/** Owning projection of every section whose evidence cannot establish absence. */
+export const incompleteBrowserSections = (
+  completeness: BrowserCompleteness,
+): ReadonlySet<BrowserSection> =>
+  new Set([
+    ...completeness.policy_filtered_sections,
+    ...completeness.attach_limited_sections,
+    ...completeness.truncated_sections,
+    ...completeness.unavailable_sections,
+    ...completeness.excluded
+      .filter((exclusion) => exclusion.count !== 0)
+      .map((exclusion) => exclusion.section),
+  ]);
+
 /** Build canonical completeness output from one adapter-owned capture ledger. */
 export const classifyBrowserCompleteness = (input: {
   readonly policyFilteredSections: ReadonlySet<BrowserSection>;

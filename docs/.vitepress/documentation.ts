@@ -26,6 +26,31 @@ export const documentationSections = [
     ],
   },
   {
+    text: "Reconstruction recipes",
+    items: [
+      {
+        text: "Investigate, reconstruct and verify one feature",
+        source: "guides/reconstruction/investigation-reconstruction-recipes.md",
+        route: "/investigation-reconstruction-recipes",
+      },
+      {
+        text: "Reconstruct a web interaction",
+        source: "guides/reconstruction/web-reconstruction-recipe.md",
+        route: "/web-reconstruction-recipe",
+      },
+      {
+        text: "Reconstruct a CLI feature",
+        source: "guides/reconstruction/cli-reconstruction-recipe.md",
+        route: "/cli-reconstruction-recipe",
+      },
+      {
+        text: "Verify a web reconstruction",
+        source: "guides/reconstruction/web-reconstruction-verification.md",
+        route: "/web-reconstruction-verification",
+      },
+    ],
+  },
+  {
     text: "Native binaries",
     items: [
       {

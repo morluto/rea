@@ -35,28 +35,16 @@ import {
   type WebMcpDiscovery,
 } from "../domain/webMcpDiscovery.js";
 import {
-  browserCaptureComparisonSchema,
-  compareBrowserCaptures,
-  type BrowserCaptureComparison,
-  type BrowserCaptureComparisonInput,
-} from "../domain/browserCaptureComparison.js";
-import {
-  webScreenshotDiffSchema,
   webScreenshotSchema,
   type CaptureWebScreenshotInput,
-  type CompareWebScreenshotsInput,
   type WebScreenshot,
-  type WebScreenshotDiff,
 } from "../domain/webScreenshot.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -84,7 +72,6 @@ import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -408,18 +395,6 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     }
   }
 
-  async compareCaptures(
-    input: BrowserCaptureComparisonInput,
-  ): Promise<Result<BrowserCaptureComparison, AnalysisError>> {
-    try {
-      return ok(
-        browserCaptureComparisonSchema.parse(compareBrowserCaptures(input)),
-      );
-    } catch (cause: unknown) {
-      return err(providerError(cause, "compare_web_captures"));
-    }
-  }
-
   async captureScreenshot(
     input: CaptureWebScreenshotInput,
     options: ExecutionOptions = {},
@@ -449,22 +424,6 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       return err(
         providerError(cause, "capture_web_screenshot", options.signal),
       );
-    }
-  }
-
-  async compareScreenshots(
-    input: CompareWebScreenshotsInput,
-  ): Promise<Result<WebScreenshotDiff, AnalysisError>> {
-    try {
-      return ok(webScreenshotDiffSchema.parse(comparePngScreenshots(input)));
-    } catch (cause: unknown) {
-      if (cause instanceof TypeError)
-        return err(
-          new AnalysisInputError("compare_web_screenshots", { cause }, [
-            { path: [], reason: "invalid_format", message: cause.message },
-          ]),
-        );
-      return err(providerError(cause, "compare_web_screenshots"));
     }
   }
 

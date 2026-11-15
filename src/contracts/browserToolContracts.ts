@@ -1,3 +1,8 @@
+import {
+  webCaptureComparisonRequestSchema,
+  webScreenshotComparisonRequestSchema,
+} from "./webComparisonInputContracts.js";
+import { webScreenshotComparisonResultSchema } from "../domain/webComparisonSources.js";
 import { z } from "zod";
 import {
   javaScriptRoutesCompleteDeliveryShape,
@@ -29,15 +34,10 @@ import {
   discoverWebMcpToolsInputSchema,
   webMcpDiscoverySchema,
 } from "../domain/webMcpDiscovery.js";
-import {
-  browserCaptureComparisonInputSchema,
-  browserCaptureComparisonSchema,
-} from "../domain/browserCaptureComparison.js";
+import { browserCaptureComparisonSchema } from "../domain/browserCaptureComparison.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import {
   captureWebScreenshotInputSchema,
-  compareWebScreenshotsInputSchema,
-  webScreenshotDiffSchema,
   webScreenshotSchema,
 } from "../domain/webScreenshot.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -67,7 +67,9 @@ const captureDiffOutputSchema = evidenceResultOf(
   browserCaptureComparisonSchema,
 );
 const screenshotOutputSchema = evidenceResultOf(webScreenshotSchema);
-const screenshotDiffOutputSchema = evidenceResultOf(webScreenshotDiffSchema);
+const screenshotDiffOutputSchema = evidenceResultOf(
+  webScreenshotComparisonResultSchema,
+);
 
 const endpoint = "http://127.0.0.1:9222";
 const origin = "https://app.example.test";
@@ -267,9 +269,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "compare_web_captures",
     ...toolContractMetadata("compare_web_captures"),
     description:
-      "Compare two passive page inspections or two recorded browser scenarios. For passive captures, pass before/after with each complete inspect_web_page normalized_result in inspection and optional complete discover_webmcp_tools normalized_result in webmcp. For scenarios, pass complete normalized_result objects as before_scenario/after_scenario; use exactly one input group. Returns artifact differences and alignment failures. Scenario steps align by exact IDs; optional literal normalization is recorded. HTTP requests and ordered WebSocket streams are compared without inventing stable identities for same-URL connections. Missing or truncated Evidence never proves equality.",
+      "Compare existing web observations offline. For verifiable provenance pass left and right as complete capture_browser_scenario or inspect_web_page Evidence, or exact same-session retained-evidence references. Both sides must have the same operation. Scenario Evidence accepts normalization and an explicit origin_mapping {before_origin, after_origin}; the correspondence is committed and changes only typed URL origins. Derived comparison Evidence retains exact source links for verify_reconstruction. Legacy detached inputs remain supported: before/after inspection wrappers with optional webmcp, or before_scenario/after_scenario normalized captures. Use exactly one input group. Scenario steps align by exact unique step_id; missing, truncated or incompatible observations never establish equality. Returns complete differences and alignment failures inline without contacting a browser.",
     kind: "browser-provider",
-    inputSchema: browserCaptureComparisonInputSchema,
+    inputSchema: webCaptureComparisonRequestSchema,
     outputSchema: captureDiffOutputSchema,
     examples: [
       {
@@ -286,6 +288,20 @@ export const BROWSER_TOOL_CONTRACTS = [
                 replacement: "[BUILD_ID]",
               },
             ],
+          },
+        },
+      },
+      {
+        title:
+          "Compare authenticated scenario Evidence already retained in this session",
+        input: {
+          left: {
+            kind: "retained-evidence",
+            evidence_id: `ev_${"0".repeat(64)}`,
+          },
+          right: {
+            kind: "retained-evidence",
+            evidence_id: `ev_${"1".repeat(64)}`,
           },
         },
       },
@@ -313,9 +329,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "compare_web_screenshots",
     ...toolContractMetadata("compare_web_screenshots"),
     description:
-      "Compare two self-verifying PNG screenshot artifacts with local pixel metrics. Returns exact changed-pixel ratios and channel deltas without OCR or external services.",
+      "Compare captured pixels offline. Pass left/right as complete capture_web_screenshot Evidence or same-session retained references; capture_browser_scenario Evidence also requires an exact shared step_id. An explicit origin_mapping binds differing original/reconstruction scenario origins. Derived comparison Evidence links both observations and commits channel_threshold; verify_reconstruction web-screenshot claims separately declare maximum_changed_ratio. Missing captured pixels return unavailable, never equality. Legacy before/after self-verifying PNG artifacts remain supported without observation provenance. Returns pixel ratios/channel deltas without OCR, browser access or external services; visual agreement does not prove behavior.",
     kind: "browser-provider",
-    inputSchema: compareWebScreenshotsInputSchema,
+    inputSchema: webScreenshotComparisonRequestSchema,
     outputSchema: screenshotDiffOutputSchema,
     examples: [
       {

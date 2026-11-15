@@ -178,14 +178,8 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     discoverWebMcpTools: async () => {
       throw new Error("Unexpected discovery call");
     },
-    compareCaptures: async () => {
-      throw new Error("Unexpected comparison call");
-    },
     captureScreenshot: async () => {
       throw new Error("Unexpected screenshot call");
-    },
-    compareScreenshots: async () => {
-      throw new Error("Unexpected diff call");
     },
   };
   const session = createTestBinarySession(() => {

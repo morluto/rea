@@ -1,3 +1,9 @@
+import { hasWebComparisonEvidenceIdentity } from "./webComparisonSources.js";
+import {
+  createWebReconstructionEvaluator,
+  isWebReconstructionClaim,
+  type WebReconstructionEvaluator,
+} from "./reconstructionWebVerification.js";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
@@ -43,6 +49,9 @@ import {
 import type { ResidualUnknown } from "./residualUnknown.js";
 
 const comparisonOperationsByClaimKind = {
+  "web-scenario": "compare_web_captures",
+  "web-capture": "compare_web_captures",
+  "web-screenshot": "compare_web_screenshots",
   behavioral: "compare_process_captures",
   "structural-function": "compare_functions",
   "structural-artifact": "compare_artifacts",
@@ -87,8 +96,11 @@ export const verifyReconstruction = (
     bundle.records.map((item) => [item.evidence_id, item]),
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
+  const evaluateWebClaim = createWebReconstructionEvaluator(records);
   const results = specification.claims
-    .map((claim, index) => evaluateClaim(claim, index, records, heads))
+    .map((claim, index) =>
+      evaluateClaim(claim, index, records, heads, evaluateWebClaim),
+    )
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
     );
@@ -114,8 +126,12 @@ export const verifyReconstruction = (
       passed: count(results, "pass"),
       failed,
       unknown: unresolved,
-      behavioral: results.filter(({ kind }) => kind === "behavioral").length,
-      structural: results.filter(({ kind }) => kind !== "behavioral").length,
+      behavioral: results.filter(
+        ({ kind }) => kind === "behavioral" || kind === "web-scenario",
+      ).length,
+      structural: results.filter(
+        ({ kind }) => kind !== "behavioral" && kind !== "web-scenario",
+      ).length,
     },
     claims: {
       items: results,
@@ -134,6 +150,7 @@ const evaluateClaim = (
   claimIndex: number,
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
+  evaluateWebClaim: WebReconstructionEvaluator,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
@@ -161,30 +178,56 @@ const evaluateClaim = (
       );
     return source;
   });
-  const sourceFacts = readValidatedSourceFacts(claim, sources);
-  const observation = comparisonObservation(claim, comparison);
+  const web = isWebReconstructionClaim(claim)
+    ? evaluateWebClaim(claim, comparison, sides)
+    : undefined;
+  const sourceFacts =
+    web === undefined
+      ? readValidatedSourceFacts(claim, sources)
+      : { functions: [], processes: [] };
+  const observation =
+    web === undefined
+      ? comparisonObservation(claim, comparison)
+      : { status: web.observed, limitations: web.limitations };
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
     sourceFacts.functions,
     observation.hasIndependentFunctionChange === true,
   );
-  const blockers = [
-    ...authorityLimitations(claim, sources, sides),
-    ...callCoverage.blockers,
-    ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
-  ];
+  const blockers =
+    web === undefined
+      ? [
+          ...authorityLimitations(claim, sources, sides),
+          ...callCoverage.blockers,
+          ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
+        ]
+      : [...web.limitations];
   const relevantUnknowns = reconstructionClaimUnknowns(
     heads,
     comparison.evidence_id,
     allSourceIds,
     observation.selectedDimensions ?? [claim.dimension],
   );
-  const status = classify(observed, blockers, relevantUnknowns);
+  const status =
+    web?.accepted_visual_difference === true &&
+    blockers.length === 0 &&
+    relevantUnknowns.length === 0
+      ? "pass"
+      : classify(observed, blockers, relevantUnknowns);
   return reconstructionClaimResultSchema.parse({
     claim_id: claim.claim_id,
     kind: claim.kind,
     dimension: claim.dimension,
+    ...("step_id" in claim && claim.step_id !== undefined
+      ? { step_id: claim.step_id }
+      : {}),
+    ...(claim.kind === "web-screenshot"
+      ? { maximum_changed_ratio: claim.maximum_changed_ratio }
+      : {}),
+    ...(web?.measured_changed_ratio === undefined
+      ? {}
+      : { measured_changed_ratio: web.measured_changed_ratio }),
     status,
     observed_status: observed,
     comparison_evidence_id: comparison.evidence_id,
@@ -197,6 +240,12 @@ const evaluateClaim = (
       ...observation.limitations,
       ...blockers,
       ...callCoverage.diagnostics,
+      ...(web?.diagnostics ?? []),
+      ...(claim.kind === "web-screenshot"
+        ? [
+            "Visual acceptance covers only the selected captured pixels; it does not establish functional equivalence.",
+          ]
+        : []),
       ...relevantUnknowns.map(
         ({ question }) => `Residual unknown: ${question}`,
       ),
@@ -293,7 +342,11 @@ const validateComparisonIdentity = (
       claimIndex,
       `Claim ${claim.claim_id} requires ${expectedOperation} Evidence; selected ${evidence.operation}`,
     );
-  if (!hasComparisonEvidenceIdentity(evidence)) {
+  if (
+    !(isWebReconstructionClaim(claim)
+      ? hasWebComparisonEvidenceIdentity(evidence)
+      : hasComparisonEvidenceIdentity(evidence))
+  ) {
     const message = "Comparison Evidence identity or authority disagrees";
     throw new EvidenceIntegrityError(message, { userMessage: message });
   }

@@ -325,9 +325,14 @@ export const readEvidenceBundle = (
   context: {
     readonly operation: string;
     readonly path: readonly (string | number)[];
+    /** Seal once when several consumers share these authenticated facts. */
+    readonly immutable?: boolean;
   },
 ): Result<EvidenceBundle, AnalysisInputError | EvidenceIntegrityError> => {
-  const parsed = safeParseEvidenceBundle(input);
+  const parsed =
+    context.immutable === true
+      ? safeParseImmutableEvidenceBundle(input)
+      : safeParseEvidenceBundle(input);
   if (parsed.ok) return parsed;
   const { cause, kind, message } = parsed.error;
   if (kind === "single-record")

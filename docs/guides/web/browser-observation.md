@@ -1,5 +1,9 @@
 # Website observation with CDP
 
+For original-to-candidate verification, see [web reconstruction verification](../reconstruction/web-reconstruction-verification.md).
+For the full investigation, independent implementation and correction cycle, use
+the [web reconstruction recipe](../reconstruction/web-reconstruction-recipe.md).
+
 Captured Debugger sources can be exported for REA's existing static JavaScript
 analysis with `export_web_scripts`. See [captured website scripts](website-script-export.md)
 for the capture options, source mappings, and browser/local resolution limits.

@@ -128,6 +128,18 @@ const actionSecretReferences = (
   return [];
 };
 
+/** Exact input references whose resolved values are intentionally not retained. */
+export const browserScenarioSecretReferences = (
+  scenario: ScenarioShape,
+): readonly string[] =>
+  [
+    ...new Set([
+      ...scenario.actions.flatMap(actionSecretReferences),
+      ...destinationSecretReferences(scenario.start_url),
+      ...validateStorage(scenario),
+    ]),
+  ].sort();
+
 /** Each saved value a step sends was saved by an earlier step. */
 const validateSavedValues = (
   scenario: ScenarioShape,
@@ -286,10 +298,11 @@ const validateBrowserScenario = (
 
   validateRequestSteps(scenario, context);
   validateSavedValues(scenario, context);
-  const references = scenario.actions.flatMap(actionSecretReferences);
-  references.push(...destinationSecretReferences(scenario.start_url));
-  references.push(...validateStorage(scenario));
-  validateSecretReferences(scenario, references, context);
+  validateSecretReferences(
+    scenario,
+    browserScenarioSecretReferences(scenario),
+    context,
+  );
 };
 
 /** Strict provider-neutral contract for one controlled browser scenario. */

@@ -1,3 +1,7 @@
+import {
+  incompleteBrowserSections,
+  type BrowserSection,
+} from "./browserCompleteness.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   compareUnicodeCodePoints,
@@ -1039,30 +1043,16 @@ const webMcpComplete = (discovery: WebMcpDiscovery | null): boolean =>
   discovery !== null &&
   discovery.status === "available" &&
   discovery.completeness.dropped_events.webmcp_tools === 0 &&
-  !incompleteSections(discovery.completeness).has("webmcp_tools");
+  !incompleteBrowserSections(discovery.completeness).has("webmcp_tools");
 
 const sectionsComplete = (
   inspection: WebPageInspection,
-  sections: readonly string[],
+  sections: readonly BrowserSection[],
 ): boolean => {
-  const incomplete = incompleteSections(inspection.completeness);
+  const incomplete = incompleteBrowserSections(inspection.completeness);
   return sections.every((section) => !incomplete.has(section));
 };
 
-const incompleteSections = (completeness: {
-  readonly policy_filtered_sections: readonly string[];
-  readonly attach_limited_sections: readonly string[];
-  readonly truncated_sections: readonly string[];
-  readonly unavailable_sections: readonly string[];
-}): ReadonlySet<string> =>
-  new Set([
-    ...completeness.policy_filtered_sections,
-    ...completeness.attach_limited_sections,
-    ...completeness.truncated_sections,
-    ...completeness.unavailable_sections,
-  ]);
-
-/** Whole-collection digest differences cannot prove a change across omissions. */
 const compareAggregate = (
   identity: string,
   before: unknown,
