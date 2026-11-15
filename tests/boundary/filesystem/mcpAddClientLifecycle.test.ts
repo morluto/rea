@@ -65,6 +65,7 @@ it.each([
   { agent: "fx", client: "fx" },
   { agent: "junie", client: "junie" },
   { agent: "goose", client: "goose" },
+  { agent: "kilo", client: "kilo" },
 ])(
   "inspects, refreshes and removes the $agent registration that mcp add wrote as $client",
   async ({ agent, client }) => {

@@ -1,18 +1,26 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
   resolveSupportedClients,
   supportedClients,
 } from "../../../src/application/SupportedClients.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
+import {
+  runUninstall,
+  systemUninstallHost,
+} from "../../../src/application/Uninstall.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const platform = process.platform;
+const command = currentClientRegistrationCommand({ platform });
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -106,4 +114,48 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
       "is relative",
     );
   }
+});
+
+it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
+  const home = await createTestTempDirectory("rea-kilo-lifecycle-");
+  const legacy = join(home, ".kilocode");
+  await mkdir(legacy);
+  const target = join(legacy, "kilo.jsonc");
+  await writeFile(target, "{}\n");
+  const resources = new ArtifactResourceScope();
+  const selected = await resolveMcpRegistrationClients(
+    {
+      agents: ["kilo"],
+      global: true,
+      cwd: home,
+      home,
+      platform,
+      environment: {},
+    },
+    resources,
+  );
+  if (!selected.ok) throw selected.error;
+  const [outcome] = await registerMcpClients(
+    selected.value,
+    { command: command[0] ?? "", args: command.slice(1) },
+    undefined,
+    resources,
+  );
+  expect(outcome).toMatchObject({ status: "completed" });
+  const statuses = await readClientRegistrationStatuses(home, command[1], {
+    platform,
+    environment: {},
+  });
+  expect(statuses.find(({ client }) => client === "kilo")).toMatchObject({
+    config_path: target,
+    state: "aligned",
+  });
+  const uninstall = await runUninstall(
+    false,
+    systemUninstallHost(home, undefined, {}, platform),
+  );
+  expect(uninstall.items).toContainEqual(
+    expect.objectContaining({ name: "kilo", status: "removed" }),
+  );
+  expect(await readFile(target, "utf8")).not.toContain('"rea"');
 });
