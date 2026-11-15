@@ -86,6 +86,7 @@ const CDP_COMMAND_REPLIES = {
   "DOMDebugger.getEventListeners": eventListenersReply,
   "Debugger.enable": acknowledgement,
   "Debugger.evaluateOnCallFrame": z.object({
+    result: z.looseObject({}),
     exceptionDetails: z.unknown().optional(),
   }),
   "Debugger.getScriptSource": z.object({ scriptSource: z.string() }),

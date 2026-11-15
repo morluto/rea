@@ -56,7 +56,7 @@ export const MACHO_ARCHITECTURE_POLICIES: Readonly<
 };
 
 /** Unlisted subtypes follow the preferred slices in FAT table order. */
-export const machoSubtypeRank = (
+const machoSubtypeRank = (
   policy: MachoArchitecturePolicy,
   subtype: number,
 ): number => {

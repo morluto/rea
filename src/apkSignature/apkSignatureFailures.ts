@@ -14,10 +14,11 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
@@ -222,9 +223,10 @@ const artifactReaderFailure = (
         cause,
       });
     case "cancelled":
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,

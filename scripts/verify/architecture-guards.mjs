@@ -163,6 +163,14 @@ check(
   ],
 );
 
+// Mach-O load-command codes have one table; a local copy drifts from it.
+check(
+  "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
+  files,
+  /\bLC_[A-Z0-9_]+\s*=\s*(?:0x[0-9a-f]+|\d+)\b/iu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
+);
+
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
@@ -281,6 +289,17 @@ checkCounted(
   parserFiles,
   /throw new (?:Error|TypeError|RangeError)\(/gu,
   [],
+);
+
+// A per-format failure class restates the ParseFailure algebra under its own
+// spelling and needs its own catch-site translation; parsers throw a
+// ParseFailureError (or a subclass of it) instead.
+checkCounted(
+  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-format-failure-class",
+  files,
+  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  ["src/domain/parseFailure.ts"],
 );
 
 // JSON.parse keeps the last of repeated member names without saying so; a
