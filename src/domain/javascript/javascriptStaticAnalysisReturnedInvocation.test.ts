@@ -122,6 +122,12 @@ it.each([
     "Object.custom=custom;Object.custom({});const get=()=>({});get.call(null)",
     true,
   ],
+  // A member Object inherits is user code that receives the constructor.
+  [
+    "Function.prototype.custom=custom;Object.custom();const get=()=>({});get.call(null)",
+    true,
+  ],
+  ["Object.custom();const get=()=>({});get.call(null)", true],
   [
     "const get=()=>({});get.call(null);Object.defineProperty=custom;Object.defineProperty(o,'a',{})",
     false,
