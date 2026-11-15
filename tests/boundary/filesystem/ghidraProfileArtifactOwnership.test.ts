@@ -21,13 +21,13 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import {
   resolveGhidraAnalysisSeeds,
   snapshotGhidraAnalysisSeeds,
-  MAX_GHIDRA_SEED_BYTES,
 } from "../../../src/ghidra/GhidraAnalysisSeeds.js";
 import {
   resolveGhidraExtensions,
   snapshotGhidraExtensions,
 } from "../../../src/ghidra/extensions/GhidraExtensions.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { MAX_GHIDRA_SEED_BYTES } from "../../../src/domain/native/ghidraSeedFile.js";
 
 const controls = vi.hoisted(() => ({
   realpath: undefined as ((path: string) => Promise<void>) | undefined,

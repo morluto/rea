@@ -53,7 +53,7 @@ import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
 } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -512,11 +512,11 @@ export class PwntoolsDecoder<
                 }));
           replyFinalization =
             cleanup !== undefined && primary !== cleanup
-              ? analysisErrorWithCleanupFailure(
+              ? analysisErrorWithCleanupDependencies(
                   primary,
                   cleanup,
                   OPERATION,
-                ).bindCleanupDependencies([primary, cleanup])
+                )
               : primary;
         }
         const decoded = safeParseUtf8Json(file.bytes);
@@ -660,11 +660,11 @@ export class PwntoolsDecoder<
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               primary,
               replyFinalization,
               OPERATION,
-            ).bindCleanupDependencies([primary, replyFinalization])
+            )
           : primary.retainSecondaryFailure(replyFinalization, {
               reply_finalization_error:
                 projectAnalysisErrorWithoutCapturedOutput(replyFinalization),
@@ -717,11 +717,11 @@ export class PwntoolsDecoder<
     if (cleanup !== undefined) {
       const failure = result.ok
         ? cleanup
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             result.error,
             cleanup,
             OPERATION,
-          ).bindCleanupDependencies([result.error, cleanup]);
+          );
       if (this.#pendingCleanup !== undefined)
         this.#pendingCleanup.failure = failure;
       return err(failure);
@@ -786,11 +786,11 @@ export class PwntoolsDecoder<
       if (outcome.ok) throw cleanup;
       // Until retirement succeeds, resource-limit markers remain unverified.
       const primary = failure(outcome.error);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         this.profile.operation,
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     if (!outcome.ok) throw outcome.error;
     return outcome.value;
@@ -829,11 +829,11 @@ export class PwntoolsDecoder<
           failure =
             failure === undefined
               ? resourceFailure
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   failure,
                   resourceFailure,
                   this.profile.operation,
-                ).bindCleanupDependencies([failure, resourceFailure]);
+                );
         }
         if (failure !== undefined) throw failure;
       })
@@ -931,11 +931,11 @@ export class PwntoolsDecoder<
     if (processFailure !== undefined) {
       return failure === undefined
         ? processFailure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             failure,
             processFailure,
             this.profile.operation,
-          ).bindCleanupDependencies([failure, processFailure]);
+          );
     }
     // Retained descriptors still own local evidence under this root.
     if (failure !== undefined) return failure;

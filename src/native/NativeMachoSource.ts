@@ -6,8 +6,6 @@ import {
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-} from "../resources/index.js";
-import {
   hashStableRootArtifactHandle,
   targetDigestChangedFailure,
 } from "../resources/index.js";

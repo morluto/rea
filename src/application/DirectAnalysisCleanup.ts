@@ -15,7 +15,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
 import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { BinarySession } from "./binary/BinarySession.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCloseRejection,
+} from "../domain/analysisErrorCleanup.js";
 import {
   tryParseEvidence,
   withEvidenceCallerInputPath,
@@ -159,16 +162,8 @@ export const managedAnalysisCleanupFailure = (
   result: Result<AnalysisExecution, AnalysisError>,
   error: AnalysisError,
 ): Result<AnalysisExecution, AnalysisError> => {
-  // A close rejection without a live cleanup state has unknown completion;
-  // an empty dependency set must not turn that rejection into confirmed cleanup.
-  if (!result.ok) {
-    const failure = analysisErrorWithCleanupFailure(result.error, error);
-    return err(
-      error.cleanupIncomplete
-        ? failure.bindCleanupDependencies([result.error, error])
-        : failure,
-    );
-  }
+  if (!result.ok)
+    return err(analysisErrorWithCloseRejection(result.error, error));
   const failure = new ProviderAdapterError(
     error instanceof ProviderAdapterError ? error.providerId : "rea",
     "close_binary",
