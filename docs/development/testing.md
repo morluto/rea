@@ -323,15 +323,18 @@ a developer machine. To check them locally, install that file into a virtual
 environment with `pip install --require-hashes -r` and set
 `REA_SCHEMA_ENGINES_PYTHON` to its interpreter. A missing engine is reported
 as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
-into a failure.
+into a failure. CI's build job sets it after uploading the build, using the
+runner's Go and a virtual environment cached by the requirements file's
+digest, so every code change runs every engine. The pre-push hook does not
+run the check, because it needs a current build.
 
 The same run builds a validator for every distinct advertised input and output
 schema with the Rust `jsonschema` crate's defaults, which check the declared
 draft's meta-schema and formats and compile every subschema, as a Rust client
 using that crate does. `--complete` adds Python `jsonschema`'s
 `check_schema`, which `jsonschema.validate` runs before validating a
-structured result in Python clients; it takes several seconds, so it is
-opt-in. Ajv
+structured result in Python clients; it takes several seconds, so CI runs it
+only in full qualification. Ajv
 strict mode is not part of the check: it rejects authoring constructs such as
 unknown formats that no supported client has been seen to refuse, and Ajv's
 default meta-schema validation already runs in the package verifier. Clients
