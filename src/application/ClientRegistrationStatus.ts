@@ -133,6 +133,12 @@ interface ClientRegistrationReadOptions {
 export interface ClientRegistrationInspection {
   readonly status: ClientRegistrationStatus;
   readonly activation: "enabled" | "disabled" | "unknown";
+  /**
+   * The client policy reason setup refuses to write this registration (for
+   * example Junie's disabled default locations). Maintenance must leave such a
+   * client to the user instead of asking setup for a write it will reject.
+   */
+  readonly setupBlocker?: string;
 }
 
 /** Project diagnostics from the same inspection used to select maintenance. */
@@ -157,8 +163,13 @@ export const readClientRegistrationInspections = async (
   const record = (
     status: ClientRegistrationStatus,
     activation: ClientRegistrationInspection["activation"] = "unknown",
+    setupBlocker?: string,
   ): void => {
-    inspections.push({ status, activation });
+    inspections.push({
+      status,
+      activation,
+      ...(setupBlocker === undefined ? {} : { setupBlocker }),
+    });
   };
   for (const client of supportedClients(
     home,
@@ -456,6 +467,7 @@ export const readClientRegistrationInspections = async (
           ? { ...status, manual_conflict: "shared_disabled_activation" }
           : status,
         activation,
+        policyBlock,
       );
     } catch (cause: unknown) {
       if (
