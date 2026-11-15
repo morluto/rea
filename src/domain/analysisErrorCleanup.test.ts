@@ -120,6 +120,20 @@ it("reads completion through nested compositions from the releasing owner only",
   expect(outer.cleanupIncomplete).toBe(false);
 });
 
+it("keeps completion when a dependency is bound after release without an intermediate read", () => {
+  const owner = new ProviderCleanupError("fixture", ["owned-worker"], {});
+  const outer = new ProviderCleanupError(
+    "fixture",
+    ["owned-worker"],
+    {},
+  ).bindCleanupDependencies([owner]);
+  owner.resolveCleanup();
+  outer.bindCleanupDependencies([
+    new ProviderCleanupError("fixture", ["later"], {}),
+  ]);
+  expect(outer.cleanupIncomplete).toBe(false);
+});
+
 it("keeps primary diagnostics separate from historical cleanup diagnostics with the same keys", () => {
   const primary = new AnalysisInputError("inspect", {
     diagnostics: {
