@@ -1,5 +1,6 @@
 import { types } from "node:util";
 import { z } from "zod";
+import { invariantViolation } from "../internalInvariant.js";
 
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { ParseFailureError } from "../parseFailure.js";
@@ -101,7 +102,7 @@ export const projectPlistValue = (
   const project = (item: unknown, depth: number): JsonValue => {
     if (depth > maximumDepth) throw new PlistNestingLimitError(maximumDepth);
     if (item !== null && typeof item === "object" && types.isProxy(item))
-      throw new TypeError("Plist values cannot contain proxies");
+      throw invariantViolation("Plist values cannot contain proxies");
     if (item instanceof Uint8Array)
       return scalar({
         $plist_type: "data",
@@ -146,7 +147,7 @@ export const projectPlistValue = (
       for (let index = 0; index < item.length; index++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, index);
         if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
-          throw new TypeError(
+          throw invariantViolation(
             "Plist arrays require dense data properties without accessors",
           );
         result.push(project(descriptor.value, depth + 1));
@@ -159,7 +160,7 @@ export const projectPlistValue = (
         const descriptor = Object.getOwnPropertyDescriptor(item, key);
         if (descriptor?.enumerable !== true) continue;
         if (typeof key !== "string" || !Object.hasOwn(descriptor, "value"))
-          throw new TypeError(
+          throw invariantViolation(
             "Plist dictionary entries require string keys and data properties",
           );
         entries.push([key, project(descriptor.value, depth + 1)]);

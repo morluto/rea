@@ -1,4 +1,8 @@
-import { ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  ParseFailureError,
+  unsupportedInput,
+} from "../../domain/parseFailure.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
@@ -414,7 +418,9 @@ export const decodeBinaryPlistScalars = (
     }
   const sourceLayoutResult = readBinaryPlistLayout(bytes);
   if (!sourceLayoutResult.ok)
-    throw new RangeError("binary plist trailer is truncated");
+    throw invariantViolation(
+      "binary plist trailer was not validated by its preflight",
+    );
   const sourceLayout = sourceLayoutResult.value;
   const sourceReferenceSize = sourceLayout.referenceWidth;
   const normalizedReferenceSize =
@@ -478,7 +484,8 @@ const cloneBinaryPlistObjects = (
     normalizedOffsetSize ??
     binaryPlistCloneOffsetWidth(offsetSize, trailerOffset, replacementLengths);
   if (newOffsetSize === undefined)
-    throw new RangeError(
+    throw unsupportedInput(
+      "plist",
       "binary plist cloned scalar offset exceeds supported width",
     );
   // Preserve every source offset, including objects after the old table. The
@@ -491,7 +498,8 @@ const cloneBinaryPlistObjects = (
   const newTableOffset = cloneStart + cloneBytes;
   const newLength = bytes.length + cloneBytes + objectCount * newOffsetSize;
   if (!Number.isSafeInteger(newLength))
-    throw new RangeError(
+    throw unsupportedInput(
+      "plist",
       "binary plist cloned scalar representation is too large",
     );
   const compatible = Buffer.alloc(newLength);

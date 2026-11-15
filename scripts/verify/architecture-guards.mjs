@@ -295,8 +295,11 @@ checkCounted(
   ["src/native/metadata/BinaryContainer.ts"],
 );
 
+// An input fault is a ParseFailureError; a broken internal assumption is a
+// defect, not an input fault, and throws invariantViolation from
+// src/domain/internalInvariant so callers never read it as bad bytes.
 checkCounted(
-  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure)",
+  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
   parserFiles,
   /throw new (?:Error|TypeError|RangeError)\(/gu,

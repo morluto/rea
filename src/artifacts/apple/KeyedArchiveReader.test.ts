@@ -11,6 +11,7 @@ import {
   inspectBundleKeyedArchive,
 } from "./KeyedArchiveReader.js";
 import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
@@ -657,7 +658,8 @@ describe("binary keyed archive invalid dates", () => {
       } catch (cause: unknown) {
         decodeFailure = cause;
       }
-      expect(decodeFailure).toBeInstanceOf(TypeError);
+      expect(decodeFailure).toBeInstanceOf(ParseFailureError);
+      expect(decodeFailure).toMatchObject({ kind: "malformed" });
       if (!(decodeFailure instanceof Error))
         throw new Error("Expected invalid date marker to fail");
       expect(decodeFailure.message).toContain(`0x${marker.toString(16)}`);
