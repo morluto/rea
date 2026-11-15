@@ -58,9 +58,12 @@ export interface EspPartitionTableMd5 {
   readonly computed: string | null;
 }
 
+export type EspBootTableAdmission = "admitted" | "rejected" | "unknown";
+
 export interface EspPartitionTable {
   readonly partitions: readonly EspPartition[];
   readonly md5: EspPartitionTableMd5;
+  readonly bootAdmission: EspBootTableAdmission;
   /** Bytes through the terminating entry. */
   readonly length: number;
   readonly limitations: readonly string[];
@@ -150,8 +153,29 @@ export const decodeEspPartitionTable = (
     const terminator =
       magic === END_MAGIC && entry[2] === END_TYPE && entry[3] === END_TYPE;
     // An MD5 entry is not a partition: a table declares at least one.
-    if (terminator && partitions.length > 0)
-      return ok({ partitions, md5, length: at + ENTRY_BYTES, limitations });
+    if (terminator && partitions.length > 0) {
+      const digestOffset = md5.entryOffset;
+      // The ESP-IDF loader limits its raw-slot loop to the count of partition
+      // records. An early MD5 slot can make it miss later declarations.
+      const earlyDigest =
+        digestOffset !== null && digestOffset < partitions.length * ENTRY_BYTES;
+      if (md5.status === "valid" && earlyDigest)
+        limitations.push(
+          `The partition table MD5 at ${offsetText(digestOffset)} covers only the preceding entries. Boot selection is unknown.`,
+        );
+      return ok({
+        partitions,
+        md5,
+        bootAdmission:
+          md5.status === "invalid"
+            ? "rejected"
+            : earlyDigest
+              ? "unknown"
+              : "admitted",
+        length: at + ENTRY_BYTES,
+        limitations,
+      });
+    }
     return err(
       slot === 0 && magic === END_MAGIC
         ? "the first entry is empty"
