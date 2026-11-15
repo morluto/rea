@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -12,11 +13,9 @@ import {
 } from "../../fixtures/applicationMcpHarness.js";
 import {
   createCacheProvider,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const failureLeaves = (reason: unknown): unknown[] =>
@@ -66,12 +65,10 @@ it("reports a failed session close, joins concurrent attempts and retries the re
   const failure = new ProviderCleanupError("fixture", ["binary-owner"], {
     reason: "controlled binary close denial",
   });
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const providerClose = phaseGate();
   let allowClose = false;
   const closeProvider = vi.fn(async () => {
-    entered.resolve();
-    await release.promise;
+    await providerClose.hold();
     if (!allowClose) return err(failure);
     releaseOwnedCleanup(failure);
     return ok(null);
@@ -82,11 +79,11 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     harness = acquired.harness;
     const closing = harness.close();
     const outcome = closing.catch((reason: unknown) => reason);
-    await awaitAcknowledgement(entered.promise, outcome, "provider close");
+    await providerClose.reached(outcome, "provider close");
     const concurrent = harness.close();
     const concurrentOutcome = concurrent.catch((reason: unknown) => reason);
     expect(closeProvider).toHaveBeenCalledTimes(1);
-    release.resolve();
+    providerClose.release();
     const reason: unknown = await outcome;
     expect(reason).toBeInstanceOf(AggregateError);
     if (!(reason instanceof AggregateError))
@@ -110,7 +107,7 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     expect(closeProvider).toHaveBeenCalledTimes(2);
   } finally {
     allowClose = true;
-    release.resolve();
+    providerClose.release();
     await harness?.close();
   }
 });

@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, writeFile, rm, access, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import type {
   Browser,
   BrowserContext,
@@ -49,14 +49,6 @@ it("locks one attached browser across loopback spellings of one endpoint", () =>
     attachedScenarioLeaseKey("http://127.0.0.1:9223", "page-1"),
   );
 });
-
-const deferred = <Value>() => {
-  let resolve: (value: Value | PromiseLike<Value>) => void = () => undefined;
-  const promise = new Promise<Value>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-};
 
 it("passes the selected environment to the actual browser launch boundary", async () => {
   vi.stubEnv("LANG", "ambient-language");
@@ -215,8 +207,7 @@ it.each([false, true])(
   async (cancelled) => {
     const controller = new AbortController();
     const reason = { caller: "cancelled during browser launch" };
-    const started = deferred<void>();
-    const launched = deferred<BrowserContext>();
+    const launch = phaseGate<void, BrowserContext>();
     let profile = "";
     const close = vi.fn(async () => undefined);
     const newPage = vi.fn(async () => ({}) as Page);
@@ -228,8 +219,7 @@ it.each([false, true])(
         launcher: {
           launchPersistentContext: (directory) => {
             profile = directory;
-            started.resolve(undefined);
-            return launched.promise;
+            return launch.hold();
           },
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -247,9 +237,9 @@ it.each([false, true])(
       newPage,
     } as unknown as BrowserContext;
     try {
-      await awaitAcknowledgement(started.promise, opening, "browser launch");
+      await launch.reached(opening, "browser launch");
       if (cancelled) controller.abort(reason);
-      launched.resolve(context);
+      launch.release(context);
       const result = await opening;
       if (result.ok) {
         try {
@@ -272,7 +262,7 @@ it.each([false, true])(
       await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       controller.abort(reason);
-      launched.resolve(context);
+      launch.release(context);
       const outcome = await opening;
       if (outcome.ok) await outcome.value.cleanup.close();
     }
@@ -350,13 +340,12 @@ it("waits for bounded event finalization and owned browser teardown", async () =
 it("keeps attached-target ownership after the cleanup response timeout", async () => {
   vi.useFakeTimers();
   try {
-    const closeStarted = deferred<void>();
-    const closeResult = deferred<void>();
+    const browserClose = phaseGate();
     const settled: boolean[] = [];
     const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
       closeBrowser: async (disconnectAtBoundary) => {
-        closeStarted.resolve(undefined);
-        await disconnectAtBoundary(() => closeResult.promise);
+        const closed = browserClose.hold();
+        await disconnectAtBoundary(() => closed);
       },
       removeProfile: undefined,
       onSettled: (browserClosed) => settled.push(browserClosed),
@@ -370,7 +359,7 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
       reason: "cleanup_failed",
       cleanup: { reason: expect.stringContaining("timed out") },
     });
-    await closeStarted.promise;
+    await browserClose.reached(timedOutClose, "browser close");
     let responseSettled = false;
     void timedOutClose
       .finally(() => {
@@ -385,7 +374,7 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
     await timeoutExpectation;
     expect(settled).toEqual([]);
 
-    closeResult.resolve(undefined);
+    browserClose.release();
     await cleanup.close();
     expect(settled).toEqual([true]);
     expect(timedOutFailure).toMatchObject({
@@ -398,9 +387,10 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
 });
 
 it("does not configure a late attached connection after cancellation", async () => {
-  const connection =
-    deferred<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>();
-  const connectionStarted = deferred<void>();
+  const connection = phaseGate<
+    void,
+    Pick<Browser, "contexts" | "close" | "isConnected" | "version">
+  >();
   const connectedBrowser = {
     close: vi.fn(async () => undefined),
     contexts: vi.fn(() => []),
@@ -409,10 +399,7 @@ it("does not configure a late attached connection after cancellation", async () 
   };
   const controller = new AbortController();
   const launcher = {
-    connectOverCDP: () => {
-      connectionStarted.resolve(undefined);
-      return connection.promise;
-    },
+    connectOverCDP: () => connection.hold(),
     launchPersistentContext: async () => {
       throw new Error("Unexpected launch");
     },
@@ -435,13 +422,9 @@ it("does not configure a late attached connection after cancellation", async () 
     },
   );
   try {
-    await awaitAcknowledgement(
-      connectionStarted.promise,
-      opening,
-      "CDP connection",
-    );
+    await connection.reached(opening, "CDP connection");
     controller.abort();
-    connection.resolve(connectedBrowser);
+    connection.release(connectedBrowser);
 
     await expect(opening).rejects.toMatchObject({
       _tag: "BrowserObservationError",
@@ -451,7 +434,7 @@ it("does not configure a late attached connection after cancellation", async () 
     expect(connectedBrowser.close).toHaveBeenCalledOnce();
   } finally {
     controller.abort();
-    connection.resolve(connectedBrowser);
+    connection.release(connectedBrowser);
     const opened = await opening.catch(() => undefined);
     await opened?.cleanup.close();
   }
@@ -643,8 +626,7 @@ it("restores its environment overrides before releasing an attached browser", as
 });
 
 it("checks a late stop after attached restoration and before transport disconnect", async () => {
-  const restorationStarted = deferred<void>();
-  const finishRestoration = deferred<void>();
+  const restoration = phaseGate();
   const order: string[] = [];
   const fixture = attachedBrowserFixture({
     send: async (method, parameters) => {
@@ -653,8 +635,7 @@ it("checks a late stop after attached restoration and before transport disconnec
         (parameters as { timezoneId?: string }).timezoneId === ""
       ) {
         order.push("restore-started");
-        restorationStarted.resolve(undefined);
-        await finishRestoration.promise;
+        await restoration.hold();
         order.push("restore-finished");
       }
     },
@@ -674,16 +655,12 @@ it("checks a late stop after attached restoration and before transport disconnec
   });
 
   try {
-    await awaitAcknowledgement(
-      restorationStarted.promise,
-      release,
-      "browser restoration",
-    );
+    await restoration.reached(release, "browser restoration");
     revision += 1;
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release;
   } finally {
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release.catch(() => undefined);
   }
 
@@ -777,27 +754,21 @@ it("restores an attached environment override whose success reply is malformed",
 });
 
 it("waits for a cancelled environment mutation before restoring it", async () => {
-  const localeStarted = deferred<void>();
-  const localeResult = deferred<void>();
+  const localeMutation = phaseGate();
   const fixture = attachedBrowserFixture({
     send: async (method, parameters) => {
       if (
         method === "Emulation.setLocaleOverride" &&
         (parameters as { locale?: string }).locale === "en-US"
       ) {
-        localeStarted.resolve(undefined);
-        await localeResult.promise;
+        await localeMutation.hold();
       }
     },
   });
   const controller = new AbortController();
   const opening = fixture.open(controller.signal);
   try {
-    await awaitAcknowledgement(
-      localeStarted.promise,
-      opening,
-      "locale mutation",
-    );
+    await localeMutation.reached(opening, "locale mutation");
     const cancelled = expect(opening).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
     });
@@ -808,7 +779,7 @@ it("waits for a cancelled environment mutation before restoring it", async () =>
       { locale: "" },
     );
 
-    localeResult.resolve(undefined);
+    localeMutation.release();
     await cancelled;
     expect(fixture.environmentSession.send).toHaveBeenCalledWith(
       "Emulation.setLocaleOverride",
@@ -818,7 +789,7 @@ it("waits for a cancelled environment mutation before restoring it", async () =>
     expect(fixture.browser.close).toHaveBeenCalledOnce();
   } finally {
     controller.abort();
-    localeResult.resolve(undefined);
+    localeMutation.release();
     const opened = await opening.catch(() => undefined);
     await opened?.cleanup.close();
   }
@@ -881,21 +852,11 @@ it("cancels same-target queued connection before acquiring a browser", async () 
         },
       ],
     });
-  let rejectFirst: ((cause: Error) => void) | undefined;
-  const firstConnection = new Promise<never>((_resolve, reject) => {
-    rejectFirst = reject;
-  });
-  let resolveFirstStarted: (() => void) | undefined;
-  const firstStarted = new Promise<void>((resolve) => {
-    resolveFirstStarted = resolve;
-  });
+  const firstConnection = phaseGate<void, never>();
   const endpoints: string[] = [];
   const connectOverCDP = vi.fn((endpoint: string) => {
     endpoints.push(endpoint);
-    if (endpoints.length === 1) {
-      resolveFirstStarted?.();
-      return firstConnection;
-    }
+    if (endpoints.length === 1) return firstConnection.hold();
     return Promise.reject(new Error("connection failed"));
   });
   const launchPersistentContext = vi.fn(async () => {
@@ -908,7 +869,7 @@ it("cancels same-target queued connection before acquiring a browser", async () 
     environment,
     { launcher },
   );
-  await firstStarted;
+  await firstConnection.reached(first, "first CDP connection");
   expect(connectOverCDP).toHaveBeenCalledTimes(1);
 
   const controller = new AbortController();
@@ -945,9 +906,7 @@ it("cancels same-target queued connection before acquiring a browser", async () 
   });
   expect(launchPersistentContext).toHaveBeenCalledTimes(1);
 
-  if (rejectFirst === undefined)
-    throw new Error("first connection did not begin");
-  rejectFirst(new Error("first connection failed"));
+  firstConnection.reject(new Error("first connection failed"));
   await expect(first).rejects.toThrow("first connection failed");
   await expect(
     openPlaywrightScenarioBrowser(makeScenario("page-1"), environment, {
@@ -970,20 +929,18 @@ it("serializes concurrent attach across loopback spellings of one browser", asyn
         },
       ],
     });
-  const firstConnection =
-    deferred<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>();
+  const firstConnection = phaseGate<
+    void,
+    Pick<Browser, "contexts" | "close" | "isConnected" | "version">
+  >();
   let rejectFirstConnection: ((cause: Error) => void) | undefined;
   const failingConnection = new Promise<never>((_resolve, reject) => {
     rejectFirstConnection = reject;
   });
-  const firstStarted = deferred<void>();
   const endpoints: string[] = [];
   const connectOverCDP = vi.fn((endpoint: string) => {
     endpoints.push(endpoint);
-    if (endpoints.length === 1) {
-      firstStarted.resolve(undefined);
-      return firstConnection.promise;
-    }
+    if (endpoints.length === 1) return firstConnection.hold();
     return failingConnection;
   });
   const launcher = {
@@ -998,7 +955,7 @@ it("serializes concurrent attach across loopback spellings of one browser", asyn
     {},
     { launcher },
   );
-  await firstStarted.promise;
+  await firstConnection.reached(first, "first CDP connection");
 
   const second = openPlaywrightScenarioBrowser(
     makeScenario("http://[::1]:9222"),
@@ -1017,7 +974,7 @@ it("serializes concurrent attach across loopback spellings of one browser", asyn
   expect(race).toBe("queued");
   expect(connectOverCDP).toHaveBeenCalledTimes(1);
 
-  firstConnection.resolve({
+  firstConnection.release({
     close: vi.fn(async () => undefined),
     contexts: vi.fn(() => []),
     isConnected: vi.fn(() => true),
@@ -1086,10 +1043,8 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
 });
 
 it("rechecks the browser release gate after finalization changes its revision", async () => {
-  const eventsStarted = deferred<void>();
-  const finishEvents = deferred<void>();
-  const gateStarted = deferred<void>();
-  const finishGate = deferred<void>();
+  const eventFinalization = phaseGate();
+  const releaseGate = phaseGate();
   const closeBrowser = vi.fn(
     async (
       disconnectAtBoundary: (disconnect: () => Promise<void>) => Promise<void>,
@@ -1103,8 +1058,7 @@ it("rechecks the browser release gate after finalization changes its revision", 
   const gateRuns: number[] = [];
   const release = owner.release(
     async () => {
-      eventsStarted.resolve(undefined);
-      await finishEvents.promise;
+      await eventFinalization.hold();
     },
     {
       get revision() {
@@ -1112,32 +1066,21 @@ it("rechecks the browser release gate after finalization changes its revision", 
       },
       async run() {
         gateRuns.push(revision);
-        if (gateRuns.length === 1) {
-          gateStarted.resolve(undefined);
-          await finishGate.promise;
-        }
+        if (gateRuns.length === 1) await releaseGate.hold();
       },
     },
   );
 
   try {
-    await awaitAcknowledgement(
-      eventsStarted.promise,
-      release,
-      "browser event finalization",
-    );
-    finishEvents.resolve(undefined);
-    await awaitAcknowledgement(
-      gateStarted.promise,
-      release,
-      "browser release gate",
-    );
+    await eventFinalization.reached(release, "browser event finalization");
+    eventFinalization.release();
+    await releaseGate.reached(release, "browser release gate");
     revision += 1;
-    finishGate.resolve(undefined);
+    releaseGate.release();
     await release;
   } finally {
-    finishEvents.resolve(undefined);
-    finishGate.resolve(undefined);
+    eventFinalization.release();
+    releaseGate.release();
     await release.catch(() => undefined);
   }
 
@@ -1147,15 +1090,13 @@ it("rechecks the browser release gate after finalization changes its revision", 
 });
 
 it("runs the latest stop gate after attached restoration and before disconnect", async () => {
-  const restorationStarted = deferred<void>();
-  const finishRestoration = deferred<void>();
+  const restoration = phaseGate();
   const gateRevisions: number[] = [];
   let revision = 0;
   let disconnected = false;
   const owner = new PlaywrightScenarioBrowserCleanupOwner({
     closeBrowser: async (disconnectAtBoundary) => {
-      restorationStarted.resolve(undefined);
-      await finishRestoration.promise;
+      await restoration.hold();
       await disconnectAtBoundary(async () => {
         disconnected = true;
       });
@@ -1172,16 +1113,12 @@ it("runs the latest stop gate after attached restoration and before disconnect",
   });
 
   try {
-    await awaitAcknowledgement(
-      restorationStarted.promise,
-      release,
-      "browser restoration",
-    );
+    await restoration.reached(release, "browser restoration");
     revision += 1;
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release;
   } finally {
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release.catch(() => undefined);
   }
 
@@ -1209,8 +1146,7 @@ it.each([false, true])(
       removeProfile: undefined,
     });
     const failure = new Error("navigation stop was not confirmed");
-    const gateStarted = deferred<void>();
-    const finishGate = deferred<void>();
+    const gateRun = phaseGate();
     let revision = 0;
     let failGate = true;
     const gate = {
@@ -1220,8 +1156,7 @@ it.each([false, true])(
       async run() {
         if (failGate) {
           failGate = false;
-          gateStarted.resolve(undefined);
-          await finishGate.promise;
+          await gateRun.hold();
           throw failure;
         }
       },
@@ -1232,13 +1167,9 @@ it.each([false, true])(
       (cause: unknown) => ({ ok: false as const, cause }),
     );
     try {
-      await awaitAcknowledgement(
-        gateStarted.promise,
-        release,
-        "browser release gate",
-      );
+      await gateRun.reached(release, "browser release gate");
       if (changeRevision) revision += 1;
-      finishGate.resolve(undefined);
+      gateRun.release();
       await expect(release).resolves.toEqual({ ok: false, cause: failure });
       expect(closeBrowser).toHaveBeenCalledTimes(1);
       expect(transportClosed).toBe(false);
@@ -1250,7 +1181,7 @@ it.each([false, true])(
       expect(transportClosed).toBe(true);
       expect(owner.browserClosed).toBe(true);
     } finally {
-      finishGate.resolve(undefined);
+      gateRun.release();
       try {
         await release;
       } finally {
@@ -1515,14 +1446,7 @@ it("closes a context that launches after its deadline before removing the profil
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {
   vi.useFakeTimers();
-  let releaseHandshake!: () => void;
-  const held = new Promise<void>((resolve) => {
-    releaseHandshake = resolve;
-  });
-  let handshakeEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    handshakeEntered = resolve;
-  });
+  const handshake = phaseGate();
   const closed = vi.fn(async () => undefined);
   const leases: AnalysisCleanupLease[] = [];
   const scenario = browserScenarioSchema.parse({
@@ -1544,8 +1468,7 @@ it("closes a browser that connects after its deadline without waiting to report 
       retainCleanup: (lease) => leases.push(lease),
       launcher: {
         connectOverCDP: async () => {
-          handshakeEntered();
-          await held;
+          await handshake.hold();
           return {
             close: closed,
             contexts: () => [],
@@ -1564,19 +1487,19 @@ it("closes a browser that connects after its deadline without waiting to report 
       settled = true;
     });
   try {
-    await entered;
+    await handshake.reached(opening, "late CDP handshake");
     await vi.advanceTimersByTimeAsync(40);
     expect(settled).toBe(true);
     expect(closed).not.toHaveBeenCalled();
     expect(await opening).toMatchObject({ reason: "timeout" });
     expect(leases).toHaveLength(1);
     expect(leases[0]?.released).toBe(false);
-    releaseHandshake();
+    handshake.release();
     await leases[0]!.release();
     expect(closed).toHaveBeenCalledTimes(1);
     expect(leases[0]?.released).toBe(true);
   } finally {
-    releaseHandshake();
+    handshake.release();
     try {
       await opening;
       await Promise.all(leases.map((lease) => lease.release()));

@@ -419,6 +419,21 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // and captured value projection) instead of keeping a second client.
     reason: "the V8 inspector reuses the browser provider's CDP client",
   }),
+  Object.freeze({
+    from: "browser",
+    to: "electron",
+    files: Object.freeze([
+      "ElectronFuseFailures.ts",
+      "ElectronFusePath.ts",
+      "ElectronFuseReader.ts",
+    ]),
+    // Active Electron capture launches the target with inspect arguments,
+    // which the EnableNodeCliInspectArguments fuse can silently disable.
+    // The preflight reads that fuse with the electron provider's fuse reader
+    // and reports its failures, instead of parsing the fuse wire twice.
+    reason:
+      "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
+  }),
 ]);
 
 /** Whether one provider-to-provider import is a declared dependency. */

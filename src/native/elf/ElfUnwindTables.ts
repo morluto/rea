@@ -31,7 +31,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */

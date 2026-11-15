@@ -5,6 +5,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { expect, it, onTestFinished, test, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { runPcapCommand } from "../../../src/pcap/PcapCommand.js";
 import { Deadline } from "../../../src/domain/deadline.js";
 import * as ownership from "../../../src/process/ProcessOwnershipObservation.js";
@@ -149,14 +150,7 @@ it.skipIf(process.platform !== "darwin")(
   "does not spend the tool execution deadline preparing native ownership",
   async () => {
     const original = ownership.prepareProcessOwnershipInspection;
-    let entered!: () => void;
-    let release!: () => void;
-    const preparing = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const ownershipPreparation = phaseGate();
     let first = true;
     const prepare = vi
       .spyOn(ownership, "prepareProcessOwnershipInspection")
@@ -164,8 +158,7 @@ it.skipIf(process.platform !== "darwin")(
         await original(signal);
         if (first) {
           first = false;
-          entered();
-          await gate;
+          await ownershipPreparation.hold();
         }
       });
     const timeoutMs = 4321;
@@ -177,7 +170,7 @@ it.skipIf(process.platform !== "darwin")(
     onTestFinished(() => {
       deadlines.mockRestore();
       prepare.mockRestore();
-      release();
+      ownershipPreparation.release();
     });
     const pending = runPcapCommand({
       platform: HOST_PLATFORM.platform,
@@ -196,11 +189,11 @@ it.skipIf(process.platform !== "darwin")(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
     );
-    await preparing;
+    await ownershipPreparation.reached(pending, "native ownership preparation");
     // Observe before release; assert after the command is joined so a failed
     // check never leaves it running past the test.
     const armedWhilePreparing = commandDeadlines();
-    release();
+    ownershipPreparation.release();
     const result = await pending;
     // The command deadline is armed only once preparation has finished.
     expect(armedWhilePreparing).toEqual([]);
