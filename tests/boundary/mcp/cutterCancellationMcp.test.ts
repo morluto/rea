@@ -15,6 +15,8 @@ import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { registerCutterTools } from "../../../src/server/registerCutterTools.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -225,15 +227,16 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       settled = true;
     }
   };
-  const server = new McpServer({
-    name: "cutter-discovery-cancel",
-    version: "1",
-  });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
+  const server = new EvidenceMcpServer(
+    { name: "cutter-discovery-cancel", version: "1" },
+    {},
+    undefined,
     createToolResultDelivery(undefined),
+  );
+  registerServiceTools(
+    server,
+    { cutterSessions: service },
+    { logger: silentLogger },
   );
   const client = new Client({ name: "cutter-discovery-cancel", version: "1" });
   const [clientTransport, serverTransport] =
