@@ -16,6 +16,8 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const failureLeaves = (reason: unknown): unknown[] =>
   reason instanceof AggregateError
@@ -71,7 +73,7 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     entered.resolve();
     await release.promise;
     if (!allowClose) return err(failure);
-    failure.resolveCleanup();
+    releaseOwnedCleanup(failure);
     return ok(null);
   });
   let harness: ApplicationMcpHarness | undefined;
@@ -80,7 +82,7 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     harness = acquired.harness;
     const closing = harness.close();
     const outcome = closing.catch((reason: unknown) => reason);
-    await entered.promise;
+    await awaitAcknowledgement(entered.promise, outcome, "provider close");
     const concurrent = harness.close();
     const concurrentOutcome = concurrent.catch((reason: unknown) => reason);
     expect(closeProvider).toHaveBeenCalledTimes(1);
@@ -122,7 +124,7 @@ it("preserves independent MCP provider and session close failures and releases e
   let allowAdbClose = false;
   const closeBinary = vi.fn(async () => {
     if (!allowBinaryClose) return err(binaryFailure);
-    binaryFailure.resolveCleanup();
+    releaseOwnedCleanup(binaryFailure);
     return ok(null);
   });
   const closeAdb = vi.fn(async () => {

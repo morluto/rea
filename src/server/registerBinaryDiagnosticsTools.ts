@@ -1,4 +1,3 @@
-import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
@@ -12,26 +11,16 @@ import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err } from "../domain/result.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-import { registerByteEntropyTool } from "./registerByteEntropyTool.js";
 
 /** Bind offline layout inspection to its named contract and session Evidence owner. */
 export const registerBinaryDiagnosticsTools = (
   server: EvidenceMcpServer,
   service: BinaryLayoutService,
-  entropyService: ByteEntropyService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   evidenceById?: EvidenceLookup,
   withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
-  registerByteEntropyTool(
-    server,
-    entropyService,
-    logger,
-    recordEvidence,
-    evidenceById,
-    withAdmittedAnalysis,
-  );
   const contract = toolContract("inspect_binary_layout");
   const delivery = retainedSummaryDelivery(contract.name, {
     recordEvidence,

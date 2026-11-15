@@ -1,3 +1,5 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { jsonPointerTokens } from "../domain/jsonPointer.js";
 import { visit, type JSONPath } from "jsonc-parser";
 import { isExactJsonNumber } from "../domain/exactJsonNumber.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -22,14 +24,6 @@ export interface ResponseValue {
   readonly value: string | number;
 }
 
-const pointerTokens = (pointer: string): readonly string[] =>
-  pointer === ""
-    ? []
-    : pointer
-        .slice(1)
-        .split("/")
-        .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
-
 /** Keep unrelated fields usable while marking numbers that cannot be selected exactly. */
 export const parseScenarioValueJson = (text: string) =>
   safeParseJson(text, (_key, value, context) =>
@@ -44,7 +38,7 @@ export const responsePointerValue = (
   pointer: string,
 ): unknown => {
   let current = value;
-  for (const key of pointerTokens(pointer)) {
+  for (const key of jsonPointerTokens(pointer)) {
     if (Array.isArray(current)) {
       if (!/^(?:0|[1-9][0-9]*)(?![\s\S])/u.test(key)) return undefined;
       current = current[Number(key)];
@@ -75,12 +69,7 @@ export const readResponseValues = (
     return err(issue("the response is too large to save values from."));
   let text: string;
   try {
-    text =
-      typeof body === "string"
-        ? body
-        : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            body,
-          );
+    text = typeof body === "string" ? body : decodeStrictUtf8(body, "preserve");
   } catch {
     return err(
       issue(
@@ -191,7 +180,7 @@ export const redactResponseSource = (
 ): Result<Buffer | undefined, ResponseValueIssue> => {
   const markers = new Map(
     values.map(({ entry, value }) => [
-      JSON.stringify(pointerTokens(entry.json_pointer)),
+      JSON.stringify(jsonPointerTokens(entry.json_pointer)),
       redact(String(value)),
     ]),
   );

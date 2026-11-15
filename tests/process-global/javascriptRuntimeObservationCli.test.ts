@@ -29,8 +29,6 @@ vi.mock("../../src/composition/javascriptRuntimeObservation.js", () => ({
   },
 }));
 
-const TIMEOUT_MS = 20_000;
-
 describe("JavaScript runtime observation CLI parity", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
 
@@ -114,7 +112,6 @@ describe("JavaScript runtime observation CLI parity", () => {
         await provider.close();
       }
     },
-    TIMEOUT_MS,
   );
 
   test("waits for provider cleanup and retains completed Evidence on failure", async () => {

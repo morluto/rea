@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -26,13 +27,12 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { NODE_CAPTURE_HEAP_ENFORCED } from "../../../src/browser/history/CaptureRelease.js";
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../fixtures/captureDecoderLimits.js";
-const hasMemoryBound =
-  NODE_CAPTURE_HEAP_ENFORCED ||
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null;
+import {
+  CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
+  CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
+} from "../../fixtures/captureDecoderLimits.js";
 
-const it = runtimeTest.skipIf(!hasMemoryBound);
+const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 
 // Share schema compilation, not sessions or their retained Evidence.
 const schemaValidation = createMcpSchemaValidation();
@@ -516,15 +516,14 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   const tool = (await client.listTools()).tools.find(
     (item) => item.name === "inspect_web_network_capture",
   );
-  if (tool?.outputSchema === undefined)
-    throw new Error("Missing capture schema");
+  if (tool === undefined) throw new Error("Missing capture schema");
   const args = { capture_path: path, format: "saz", record_ordinals: [1, 0] };
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validate(tool.inputSchema, args)).toBe(true);
   const response = await call("inspect_web_network_capture", args);
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(getValidator).toHaveBeenCalled();
-  const expectedSchema = JSON.stringify(tool.outputSchema);
+  const expectedSchema = JSON.stringify(canonicalOutputSchema(tool.name));
   expect(
     getValidator.mock.calls.some(
       ([schema]) => JSON.stringify(schema) === expectedSchema,
@@ -540,7 +539,7 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   expect(
     records.find((record) => record.evidence_id === fromMcp.evidence_id),
   ).toEqual(fromMcp);
-}, 60_000);
+});
 
 it("pages retained SAZ Evidence through public MCP and portable CLI after source deletion", async () => {
   const path = await fixture(await archive());
@@ -625,7 +624,7 @@ it("pages retained SAZ Evidence through public MCP and portable CLI after source
   expect(
     parseEvidence(JSON.parse(standalone.stdout)).normalized_result,
   ).toEqual(summary.normalized_result);
-}, 60_000);
+});
 
 it("keeps CRLF separators inside a body after LF-only HTTP headers", async () => {
   const body = Buffer.from("\ufefffirst\r\n\r\nsecond\n\nthird");
@@ -947,7 +946,7 @@ it.each([
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
 });
 
-runtimeTest.runIf(!hasMemoryBound)(
+runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(
   "reports SAZ unavailable when its runtime cannot enforce decoder memory",
   async () => {
     const response = await cliResponse(await fixture(await archive()));

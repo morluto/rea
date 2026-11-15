@@ -4,12 +4,13 @@ import {
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";
@@ -23,6 +24,7 @@ import {
   wasmArtifactFixture,
   wasmArtifactExecution,
 } from "../../fixtures/wasm/artifact.js";
+import { waitFor } from "../../support/testWait.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -308,45 +310,52 @@ it.each([undefined, "summary"] as const)(
       { signal: controller.signal },
     );
     const rejected = expect(cancellation).rejects.toThrow();
-    await started;
-    controller.abort(new Error("cancel after provider work starts"));
-    let serverReason: unknown;
     try {
-      await harness.client.ping();
-      serverReason = serverSignal?.reason;
-    } finally {
-      releaseProvider?.();
-    }
-    await rejected;
-    expect(inspect).toHaveBeenCalledOnce();
-    const result = await inspect.mock.results[0]?.value;
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        partialObservation: {
-          operation: "inspect_wasm_artifact",
-          normalized_result: value,
-          confidence: "observed",
+      await awaitAcknowledgement(started, cancellation, "WASM provider start");
+      controller.abort(new Error("cancel after provider work starts"));
+      let serverReason: unknown;
+      try {
+        await harness.client.ping();
+        serverReason = serverSignal?.reason;
+      } finally {
+        releaseProvider?.();
+      }
+      await rejected;
+      expect(inspect).toHaveBeenCalledOnce();
+      const result = await inspect.mock.results[0]?.value;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          partialObservation: {
+            operation: "inspect_wasm_artifact",
+            normalized_result: value,
+            confidence: "observed",
+          },
         },
-      },
-    });
-    if (result === undefined || result.ok)
-      throw new Error("Expected cancelled WASM Evidence");
-    expect(serverSignal?.aborted).toBe(true);
-    expect(result.error.cause).toBe(serverReason);
-    const partial = parseEvidence(result.error.partialObservation);
-    expect(partial.parameters).toEqual({
-      path: value.artifact.path,
-      glue_paths: [],
-      candidate_paths: [],
-    });
-    await harness.client.ping();
-    await vi.waitFor(() => {
-      // Failed summary delivery retains the complete producer, without a derived view.
-      expect(session.exportEvidenceBundle().records).toEqual([partial]);
-    });
-    expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+      });
+      if (result === undefined || result.ok)
+        throw new Error("Expected cancelled WASM Evidence");
+      expect(serverSignal?.aborted).toBe(true);
+      expect(result.error.cause).toBe(serverReason);
+      const partial = parseEvidence(result.error.partialObservation);
+      expect(partial.parameters).toEqual({
+        path: value.artifact.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      await harness.client.ping();
+      await waitFor(() => {
+        // Failed summary delivery retains the complete producer, without a derived view.
+        expect(session.exportEvidenceBundle().records).toEqual([partial]);
+      });
+      expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+    } finally {
+      controller.abort();
+      releaseProvider?.();
+      await cancellation.catch(() => undefined);
+      await rejected.catch(() => undefined);
+    }
   },
 );
 
@@ -544,8 +553,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Missing WASM view schemas");
+  if (advertised === undefined) throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
   for (const [view, expected] of [

@@ -1,9 +1,10 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { dexDescriptorSchema } from "./dexTypes.js";
 
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
 const index = z.number().int().nonnegative();
-const status = z.enum(["complete", "partial", "unknown"]);
+const status = coverageStatusSchema;
 
 /** The exact source record that established a link-time pointer value. */
 export const androidJniRelocationSourceSchema = z.strictObject({

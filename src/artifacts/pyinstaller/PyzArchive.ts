@@ -7,6 +7,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
@@ -44,7 +45,7 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
   readonly signatureMatches: boolean;
@@ -271,8 +272,7 @@ const onePyzEntry = (
     (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
-      pyInstallerFailure(
-        "integrity",
+      pyInstallerLayoutFailure(
         `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );

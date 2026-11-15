@@ -27,7 +27,7 @@ it.each([
         JSON.stringify({
           url: "http://127.0.0.1:13337/mcp",
           mode: protocol === "modern" ? "headless" : "attached",
-          ...(protocol === "native" ? { protocol } : {}),
+          ...(protocol === "modern" ? {} : { protocol }),
         }),
       );
       // The absent target stops accepted option sets at admission, before any provider call.

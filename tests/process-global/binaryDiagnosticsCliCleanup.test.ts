@@ -9,6 +9,7 @@ import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { err } from "../../src/domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../src/domain/analysisErrorCleanup.js";
+import { releaseOwnedCleanup } from "../support/cleanupRelease.js";
 
 const exitCode = process.exitCode;
 afterEach(() => {
@@ -45,7 +46,7 @@ it.each(
       cleanup,
       "inspect_binary_layout",
     ).bindCleanupDependencies([primary, cleanup]);
-    if (recovered) cleanup.resolveCleanup();
+    if (recovered) releaseOwnedCleanup(cleanup);
     const inspectAndClose = vi.fn(async () => err(composed));
     const identity = {
       id: "fixture-decoder",

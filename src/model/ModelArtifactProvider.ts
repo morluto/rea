@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.js";
@@ -17,13 +18,11 @@ import {
 } from "../domain/model/modelArtifact.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -40,12 +39,15 @@ import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
-  ModelFormatFailure,
+  modelCapacityFailure,
+  modelCapacityLimitOf,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
@@ -86,7 +88,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           "capacity",
           "One model inspection is already active",
           { concurrent_inspections: 1 },
-          { retryable: true },
+          { retryable: true, measuredExhaustion: true },
         ),
       );
     this.#busy = true;
@@ -107,54 +109,49 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+      const capacity =
+        primary instanceof ParseFailureError
+          ? modelCapacityLimitOf(primary)
+          : undefined;
+      const formatError = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        primary,
+      );
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
-      else if (primary instanceof ModelFormatFailure) {
-        const limit = primary.kind === "capacity" ? primary.limit : undefined;
-        error =
-          limit !== undefined
-            ? new AnalysisResourceConstraintError(
-                OPERATION,
-                "memory",
-                primary.message,
-                modelCapacityReportedLimits(limit),
-                {
-                  cause,
-                  retryable: false,
-                  remediationAction: modelCapacityRemediation(limit),
-                },
-              )
-            : primary.kind === "unsupported"
-              ? new AnalysisUnsupportedTargetError(
-                  OPERATION,
-                  input.path,
-                  primary.message,
-                  { cause },
-                )
-              : new BinaryTargetError(input.path, primary.message, {
-                  cause,
-                  constraint: "file_format_rejected",
-                });
-      } else if (
+      else if (primary instanceof ParseFailureError && capacity !== undefined)
+        // A model allowance names its own recovery.
+        error = new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          primary.message,
+          modelCapacityReportedLimits(capacity),
+          {
+            cause,
+            retryable: false,
+            remediationAction: modelCapacityRemediation(capacity),
+          },
+        );
+      else if (formatError !== undefined) error = formatError;
+      else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&
@@ -245,10 +242,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
   ): Promise<ModelArtifact> {
     const initial = await file.stat({ bigint: true });
     if (initial.size > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model file exceeds exact host offset precision",
+      throw modelCapacityFailure(
         "exact-offset",
+        "Model file exceeds exact host offset precision",
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
@@ -336,7 +332,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected model path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -345,6 +341,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "Model file changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const groups = new Map<
       string,
@@ -430,11 +427,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       ],
     };
     if (jsonValueByteLength(report, MODEL_REPORT_BYTES) > MODEL_REPORT_BYTES)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model report exceeds 32 MiB",
-        "report-bytes",
-      );
+      throw modelCapacityFailure("report-bytes", "Model report exceeds 32 MiB");
     return modelArtifactSchema.parse(report);
   }
 }

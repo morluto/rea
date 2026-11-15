@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { realpath, stat } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -239,6 +240,7 @@ export const systemUpdateHost = (
   packageRoot = fileURLToPath(new URL("../..", import.meta.url)),
   home: string | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): UpdateHost => {
   const resources = new ArtifactResourceScope();
   const commands = new UpdateCommandRunner();
@@ -251,7 +253,7 @@ export const systemUpdateHost = (
     installation: async () =>
       (await detectBunInstallation(
         packageRoot,
-        bunGlobalDirectory(environment, process.platform),
+        bunGlobalDirectory(environment, platform),
         { canonicalPath: realpath, isFile },
       )) ??
       detectNpmInstallation(packageRoot, {
@@ -321,14 +323,14 @@ export const systemUpdateHost = (
     },
     planMaintenance: (installation) =>
       planIntegrationMaintenance(
-        home ?? homeDirectoryFromEnvironment(environment, process.platform),
+        home ?? homeDirectoryFromEnvironment(environment, platform),
         join(installation.packageRoot, "scripts", "rea.mjs"),
         environment,
         async (command) => {
           const result = await commands.runProbe(command, environment);
           return result.ok ? result : err(result.error.detail);
         },
-        resources,
+        { platform, resources },
       ),
     close: async () => {
       const results = await Promise.allSettled([

@@ -7,6 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,7 +22,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
-import { sqliteDatabaseFailure } from "./SqliteDatabaseFailures.js";
+import { sqliteDatabaseDialect } from "./SqliteDatabaseFailures.js";
 
 it("tags an exact caller reason at snapshot admission", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-snapshot-entry-"));
@@ -47,11 +48,13 @@ it("tags an exact caller reason at snapshot admission", async () => {
       reason: "cancelled",
       cancellation: { reason },
     });
-    const projected = sqliteDatabaseFailure(
+    const projected = classifyProviderFailure(
       failure,
-      join(workspace, "selected.db"),
-      "artifact-read",
-      controller.signal,
+      sqliteDatabaseDialect(
+        join(workspace, "selected.db"),
+        "artifact-read",
+        controller.signal,
+      ),
     );
     expect(projected).toBeInstanceOf(AnalysisCancelledError);
     expect(projected.cause).toBe(reason);
@@ -99,11 +102,9 @@ it("keeps the exact caller reason when cancellation lands at final snapshot veri
       },
       (cause: unknown) => cause,
     );
-    const projected = sqliteDatabaseFailure(
+    const projected = classifyProviderFailure(
       failure,
-      databasePath,
-      "artifact-read",
-      controller.signal,
+      sqliteDatabaseDialect(databasePath, "artifact-read", controller.signal),
     );
     expect(journalStats).toBe(2);
     expect(projected).toBeInstanceOf(AnalysisCancelledError);
@@ -161,7 +162,10 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
       (cause: unknown) => cause,
     );
     const projected = projectAnalysisError(
-      sqliteDatabaseFailure(failure, databasePath, "artifact-read"),
+      classifyProviderFailure(
+        failure,
+        sqliteDatabaseDialect(databasePath, "artifact-read"),
+      ),
     );
     expect(failure).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
@@ -274,10 +278,9 @@ it.each([
           cause: expect.any(ArtifactReaderFailure),
         });
       expect(failure).toMatchObject({ partialObservation, details });
-      const projectedFailure = sqliteDatabaseFailure(
+      const projectedFailure = classifyProviderFailure(
         failure,
-        databasePath,
-        "artifact-read",
+        sqliteDatabaseDialect(databasePath, "artifact-read"),
       );
       if (retainCleanup) {
         expect(projectedFailure).toBeInstanceOf(ProviderCleanupError);

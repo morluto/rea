@@ -1506,7 +1506,6 @@ describe("native DMG localized verification diagnostics", () => {
       ).rejects.toMatchObject({ reason: "unavailable" });
       expect(run).toHaveBeenCalledTimes(3);
     },
-    10_000,
   );
 
   it("keeps a localized failure without an untranslated status line unavailable", async () => {
@@ -1616,6 +1615,8 @@ describe("native DMG checksum-free images", () => {
           ),
         ],
       },
+      // The mounted directory declares its own complete traversal.
+      { status: "complete", limitations: [] },
     ]);
     expect(
       reader
@@ -1747,6 +1748,7 @@ describe("native DMG real verification diagnostics", () => {
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure)) return;
       expect(failure.reason).toBe("integrity");
+      expect(failure.integrityCheck).toBe("image-checksum");
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
       expect(failure.message).toContain('"arguments":["verify"');
       expect(failure.message).toContain('"exitCode":1');
@@ -1758,7 +1760,6 @@ describe("native DMG real verification diagnostics", () => {
       expect(Reflect.get(failure.cause, "code")).toBe(1);
       expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
     },
-    60_000,
   );
 });
 

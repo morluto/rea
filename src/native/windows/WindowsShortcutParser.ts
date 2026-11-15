@@ -11,10 +11,8 @@ import type {
   WindowsShortcutStringField,
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { malformedInput } from "../../domain/parseFailure.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -27,10 +25,15 @@ const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
-const isoFromUnixMs = (unixMs: bigint): string | null =>
-  unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
+const isoFromUnsigned100ns = (ticks: bigint, epoch: bigint): string | null => {
+  // Both stored clocks are unsigned and their epochs are millisecond-aligned.
+  // Truncate before epoch subtraction so pre-1970 fractions stay in their
+  // containing millisecond rather than rounding toward the Unix epoch.
+  const unixMs = ticks / 10000n - epoch / 10000n;
+  return unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
     ? null
     : new Date(Number(unixMs)).toISOString();
+};
 
 const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "HasLinkTargetIDList"],
@@ -156,7 +159,7 @@ const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
   return {
     raw: raw.toString(10),
-    iso8601: isoFromUnixMs((raw - FILETIME_UNIX_EPOCH) / 10000n),
+    iso8601: isoFromUnsigned100ns(raw, FILETIME_UNIX_EPOCH),
   };
 };
 
@@ -229,7 +232,7 @@ const uuidV1 = (
     mac: [...bytes.subarray(offset + 10, offset + 16)]
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join(":"),
-    timestamp_iso8601: isoFromUnixMs((timestamp - UUID_UNIX_EPOCH) / 10000n),
+    timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
   };
 };
@@ -1151,21 +1154,23 @@ export const parseWindowsShortcut = async (
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
   if (bytes.length < HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const headerSize = bytes.readUInt32LE(0);
   if (headerSize !== HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
+      { offset: 0, field: "HeaderSize" },
     );
   const clsid = formatGuid(bytes, 4);
   if (clsid !== SHELL_LINK_CLSID)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
+      { offset: 4, field: "LinkCLSID" },
     );
   const flags = bytes.readUInt32LE(20);
   const unicode = (flags & 0x00000080) !== 0;
