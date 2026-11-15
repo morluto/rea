@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, type FileHandle } from "node:fs/promises";
@@ -304,6 +305,10 @@ const copySignatureBytes = async (
       "file-size",
       `Signature target size is not exactly representable: ${target.path}`,
       null,
+      fixedAllowanceOptions("The exactly representable file size", "input", {
+        limit: Number.MAX_SAFE_INTEGER,
+        unit: "bytes",
+      }),
     );
   const hash = createHash("sha256");
   const chunk = Buffer.alloc(64 * 1024);

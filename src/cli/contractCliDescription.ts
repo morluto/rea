@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { analysisEvidenceDeliveryOptions } from "./analysisEvidenceDelivery.js";
 import { cliDecimalShape } from "./options.js";
 
 /**
@@ -61,6 +62,25 @@ export interface CliContractProjection<Field extends string> {
    * the service's contract parse reports them as an `invalid_request`.
    */
   readonly crossFieldRules?: "argv";
+  /**
+   * The command delivers complete Evidence or a summary saved beside a
+   * bundle: it adds `--detail` and `--evidence_output`. A contract `detail`
+   * field selects that delivery and is not passed to the analysis.
+   */
+  readonly evidenceDelivery?: true;
+}
+
+/** A CLI option with no contract field, such as `--evidence_output`. */
+export interface CliOnlyOption {
+  readonly key: string;
+  readonly description: string | undefined;
+  readonly schema: z.ZodType;
+}
+
+/** The Evidence delivery a command invocation selected. */
+export interface CliEvidenceDeliveryChoice {
+  readonly detail: "complete" | "summary";
+  readonly evidenceOutput: string | undefined;
 }
 
 /** One positional argument or option of a contract command. */
@@ -85,6 +105,8 @@ export interface ContractCliParameter {
   readonly decimal: boolean;
   /** Resolved with `absoluteCallerPath` before the contract sees it. */
   readonly callerPath: boolean;
+  /** Selects CLI Evidence delivery and is not analysis input. */
+  readonly delivery: boolean;
 }
 
 /** One cross-field refusal, naming CLI keys. */
@@ -100,6 +122,8 @@ export interface ContractCliDescription {
   readonly description: string;
   readonly contract: ProjectedContract;
   readonly parameters: readonly ContractCliParameter[];
+  /** Options after the contract parameters that no contract field owns. */
+  readonly cliOnlyOptions: readonly CliOnlyOption[];
   /** Contract fields the command does not expose, with the reason. */
   readonly omitted: Readonly<Record<string, string>>;
   /** Object-level JSON Schema constraints, renamed to CLI keys. */
@@ -121,6 +145,10 @@ export interface ContractCliDescription {
   readonly callerInputs: (
     values: Readonly<Record<string, unknown>>,
   ) => Readonly<Record<string, string>>;
+  /** The selected delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: (
+    values: Readonly<Record<string, unknown>>,
+  ) => CliEvidenceDeliveryChoice;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -301,12 +329,15 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     if (!admitsOmission(shape[field]!))
       throw new Error(`${contract.name}.${field} is required on the CLI`);
 
+  const evidenceDelivery = projection.evidenceDelivery === true;
   const parameter = (field: string): ContractCliParameter => {
     const declared = shape[field]!;
     const projected = fieldProjections[field];
     const callerPath = callerPaths.has(field);
+    const delivery = evidenceDelivery && field === "detail";
     let schema: z.ZodType;
-    if (callerPath) {
+    if (delivery) schema = analysisEvidenceDeliveryOptions.detail;
+    else if (callerPath) {
       schema = admitsOmission(declared)
         ? localPathStringSchema.optional()
         : localPathStringSchema;
@@ -331,6 +362,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       repeatable: value instanceof z.ZodArray,
       decimal: value instanceof z.ZodNumber,
       callerPath,
+      delivery,
     };
   };
   const parameters = [
@@ -339,8 +371,22 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       (field) => !positionals.includes(field) && !Object.hasOwn(omitted, field),
     ),
   ].map(parameter);
-  const keys = new Set(parameters.map(({ key }) => key));
-  if (keys.size !== parameters.length)
+  const cliOnlyOptions: readonly CliOnlyOption[] = Object.entries(
+    evidenceDelivery
+      ? Object.hasOwn(shape, "detail")
+        ? { evidence_output: analysisEvidenceDeliveryOptions.evidence_output }
+        : analysisEvidenceDeliveryOptions
+      : {},
+  ).map(([key, schema]: [string, z.ZodType]) => ({
+    key,
+    description: schema.description,
+    schema,
+  }));
+  const keys = new Set([
+    ...parameters.map(({ key }) => key),
+    ...cliOnlyOptions.map(({ key }) => key),
+  ]);
+  if (keys.size !== parameters.length + cliOnlyOptions.length)
     throw new Error(`${contract.name} projects two fields to one CLI key`);
   const keyOf = new Map(parameters.map(({ field, key }) => [field, key]));
   const rename = (field: string): string => keyOf.get(field) ?? field;
@@ -349,9 +395,9 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     values: Readonly<Record<string, unknown>>,
   ): Record<string, unknown> => {
     const input: Record<string, unknown> = {};
-    for (const { field, key, callerPath } of parameters) {
+    for (const { field, key, callerPath, delivery } of parameters) {
       const value = values[key];
-      if (value === undefined) continue;
+      if (value === undefined || delivery) continue;
       input[field] =
         callerPath && typeof value === "string"
           ? absoluteCallerPath(value)
@@ -397,6 +443,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     description: projection.description,
     contract,
     parameters,
+    cliOnlyOptions,
     omitted,
     optionConstraints: projectObjectConstraints(contract, rename),
     checkOptions,
@@ -410,5 +457,12 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
             : [];
         }),
       ),
+    delivery: (values) => ({
+      detail: values.detail === "summary" ? "summary" : "complete",
+      evidenceOutput:
+        typeof values.evidence_output === "string"
+          ? values.evidence_output
+          : undefined,
+    }),
   };
 };

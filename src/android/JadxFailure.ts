@@ -3,11 +3,12 @@ import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -116,9 +117,7 @@ const observeJadxFailure = (
             cause: cancellation.reason,
             ...jadxOperationTimeoutGuidance(timeoutMs),
           })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
+        : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
     const reason =
       cause.cleanupCause instanceof Error
@@ -141,9 +140,10 @@ const observeJadxFailure = (
               cause: nestedCancellation.reason,
               ...jadxOperationTimeoutGuidance(timeoutMs),
             })
-          : new AnalysisCancelledError(request.operation, {
-              cause: nestedCancellation.reason,
-            });
+          : cancelledBy(
+              request.operation,
+              carriedReason(nestedCancellation.reason),
+            );
     const snapshotObservation =
       completed === undefined
         ? undefined
@@ -315,12 +315,14 @@ const presentDiagnosticFailure = (
   failure: DiagnosticFailure,
 ): AnalysisError => {
   const output = failure.transport?.diagnostics();
-  const options = {
-    cause: failure.cause,
-    ...(output === undefined ? {} : { capturedOutput: output }),
-  };
+  const captured = output === undefined ? {} : { capturedOutput: output };
+  const options = { cause: failure.cause, ...captured };
   if (failure.kind === "cancelled")
-    return new AnalysisCancelledError(failure.operation, options);
+    return cancelledBy(
+      failure.operation,
+      carriedReason(failure.cause),
+      captured,
+    );
   if (failure.kind === "timeout")
     return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
       ...options,
