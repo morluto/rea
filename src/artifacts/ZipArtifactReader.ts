@@ -37,6 +37,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -193,7 +194,10 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     this.#assertOpen(signal);
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
@@ -249,6 +253,7 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       await this.#source.verify();
       this.#assertOpen(signal);
+      options?.onCoverage?.({ status: "complete", limitations: [] });
     } finally {
       this.#enumerations.delete(enumeration);
     }

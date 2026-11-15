@@ -163,8 +163,11 @@
         "docs/**",
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",
-        ".agents/skills/reverse-engineer-anything/**",
+        ".agents/skills/**",
         "README*.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "website/public/**/*.{md,html}",
         {
           "mode": "dependencyOutputs",
           "globs": [

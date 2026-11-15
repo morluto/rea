@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
   readArtifactRange as readExact,
@@ -43,8 +44,6 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;
 const PN_XNUM = 0xffff;
@@ -252,9 +251,9 @@ const locateMachOSlice = async (
   // until that name is confirmed and otherwise leaves the slice unread.
   let damage: string | undefined;
   const framed = frameLoadCommands(table, (command) => {
-    if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
+    if (command.command !== LC.SEGMENT && command.command !== LC.SEGMENT_64)
       return;
-    const segment64 = command.command === LC_SEGMENT_64;
+    const segment64 = command.command === LC.SEGMENT_64;
     const parsedSegment = readMachoSegmentHeader(command.body, segment64, true);
     if (!parsedSegment.ok) {
       // An unparsed segment may be __SUI, so the slice is not fully examined.

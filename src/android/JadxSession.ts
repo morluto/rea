@@ -1,5 +1,5 @@
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
-import { Client } from "@modelcontextprotocol/client";
+import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { AndroidAnalysisExecution } from "../application/android/AndroidAnalysisPort.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
@@ -13,8 +13,9 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -64,7 +65,10 @@ type JadxCallObservation = {
 /** One owned engine connection; its wire protocol stays inside the Android adapter. */
 export class JadxSession {
   readonly transport: JadxMcpTransport;
-  readonly #client = new Client({ name: "rea-android-adapter", version: "1" });
+  readonly #client = new OwnedMcpClient({
+    name: "rea-android-adapter",
+    version: "1",
+  });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
   #connected = false;
   #partialContext:
@@ -260,9 +264,7 @@ export class JadxSession {
                               ...jadxOperationTimeoutGuidance(timeoutMs),
                             },
                           )
-                        : new AnalysisCancelledError(request.operation, {
-                            cause: reason,
-                          }),
+                        : cancelledBy(request.operation, carriedReason(reason)),
                   });
                   if (
                     value.inventory.status === "complete" &&

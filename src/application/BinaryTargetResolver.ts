@@ -5,10 +5,6 @@ import {
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../domain/inesContainer.js";
-import {
   regularFileCancellation,
   RegularFileCleanupFailure,
   RegularFileCancelled,
@@ -78,37 +74,17 @@ import {
 } from "../domain/dosMz.js";
 import {
   createXmlPlistSignatureProbe,
-  hasBinaryPlistSignature,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
-import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
-import { hasUImageMagic } from "../domain/uimageFormat.js";
-import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
-import {
-  hasWxapkgEncryptedMagic,
-  hasWxapkgHeader,
-} from "../domain/wxapkgFormat.js";
-import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
-import { hasUf2Block } from "../domain/firmware/uf2.js";
-import {
-  DFUSE_SUFFIX_BYTES,
-  hasDfuSePrefix,
-  isDfuSeFile,
-} from "../domain/firmware/dfuse.js";
-import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
-import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
+import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
-  ESP8266_REFUSAL,
-  recognizeEspImage,
-} from "../domain/firmware/espImage.js";
-import {
-  hasZipSignature,
   locateTrailingZipArchive,
   isZipPackageFormat,
   zipRootPackageFormat,
@@ -788,56 +764,53 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
-  if (nesContainerFormat(magic) !== undefined) {
-    const parsed = parseInesLayout(magic, initial.size);
+  // The shared recognizer table decides; this route reads the trailer or
+  // locates an ESP flash layout only when a recognizer asks for it, and
+  // refuses a file whose header names a format it cannot open.
+  let suffix: Uint8Array | undefined;
+  let espFlashLayout: boolean | undefined;
+  const recognitionInput = () => ({
+    prefix: magic,
+    fileSize: initial.size,
+    suffix,
+    espFlashLayout,
+  });
+  let recognition = recognizeArtifactFormat(recognitionInput());
+  while (recognition !== undefined) {
     throwIfTargetResolutionCancelled(signal);
-    if (!parsed.ok)
-      throw new BinaryTargetError(path, parsed.error, {
+    if (recognition.state === "recognized")
+      return recognition.format === "zip"
+        ? zipRootPackageFormat(lower)
+        : recognition.format;
+    if (recognition.state === "refused")
+      throw new BinaryTargetError(path, recognition.reason, {
         constraint: "file_format_rejected",
       });
-    return "ines";
+    if (recognition.format === "dfuse")
+      suffix =
+        initial.size < DFUSE_SUFFIX_BYTES
+          ? new Uint8Array(0)
+          : await readHandleRange(
+              handle,
+              initial.size - DFUSE_SUFFIX_BYTES,
+              DFUSE_SUFFIX_BYTES,
+              signal,
+            );
+    else
+      espFlashLayout = (
+        await locateEspFlashLayout(
+          initial.size,
+          (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          {},
+          { explicit: false, ...(signal === undefined ? {} : { signal }) },
+        )
+      ).ok;
+    recognition = recognizeArtifactFormat(
+      recognitionInput(),
+      recognition.index,
+    );
   }
-  if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
-  if (hasGodotPckHeader(magic)) return "godot-pck";
-  if (hasUnityFsHeader(magic)) return "unityfs";
-  if (hasWxapkgEncryptedMagic(magic) || hasWxapkgHeader(magic)) return "wxapkg";
-  if (hasUImageMagic(magic)) return "uimage";
-  const hexRecords = detectHexRecordEncoding(magic);
-  if (hexRecords !== undefined) return hexRecords;
-  if (hasUf2Block(magic)) return "uf2";
-  if (
-    hasDfuSePrefix(magic) &&
-    initial.size >= DFUSE_SUFFIX_BYTES &&
-    isDfuSeFile(
-      magic,
-      await readHandleRange(
-        handle,
-        initial.size - DFUSE_SUFFIX_BYTES,
-        DFUSE_SUFFIX_BYTES,
-        signal,
-      ),
-      initial.size,
-    )
-  )
-    return "dfuse";
-  // A C3 or S3 dump begins with its bootloader, so a layout comes first.
-  const flash = await locateEspFlashLayout(
-    initial.size,
-    (position, length) => readHandleRange(handle, position, length, signal),
-    {},
-    { explicit: false, ...(signal === undefined ? {} : { signal }) },
-  );
-  if (flash.ok) return "esp-flash-image";
-  const esp = recognizeEspImage(magic, initial.size);
-  if (esp === "esp8266")
-    throw new BinaryTargetError(path, ESP8266_REFUSAL, {
-      constraint: "file_format_rejected",
-    });
-  if (esp === "esp-image") return "esp-image";
-  if (hasFitImagesNode(magic)) return "fit";
-  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
-  // Binary plists, including keyed archives, often use other extensions.
-  if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
