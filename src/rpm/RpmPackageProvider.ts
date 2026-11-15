@@ -7,7 +7,7 @@ import {
   readStableArtifact,
   type StableArtifactSnapshot,
 } from "../resources/index.js";
-import type { RpmPackagePort } from "../application/rpm/RpmPackagePort.js";
+import type { RpmPackagePort } from "../ports/rpm/RpmPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";

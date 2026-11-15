@@ -1,5 +1,5 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { RpmPackagePort } from "./RpmPackagePort.js";
+import type { RpmPackagePort } from "../../ports/rpm/RpmPackagePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
