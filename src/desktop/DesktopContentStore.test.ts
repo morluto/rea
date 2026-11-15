@@ -49,6 +49,19 @@ it("DesktopContentStore leaves an occupied partial filename unowned", async () =
   expect(await readFile(partial, "utf8")).toBe("foreign content");
 });
 
+it("DesktopContentStore charges nothing for a write that fails", async () => {
+  const root = await createTestTempDirectory("desktop-content-failed-charge-");
+  const content = await store(root, 1024, 8);
+  await mkdir(join(content.directory, sha256("12345678")));
+  await expect(content.retainBytes(Buffer.from("12345678"))).rejects.toThrow();
+  // The whole budget is still available to the next content.
+  await expect(content.retainBytes(Buffer.from("abcdefgh"))).resolves.toEqual({
+    kind: "retained",
+    sha256: sha256("abcdefgh"),
+    size: 8,
+  });
+});
+
 it("DesktopContentStore retains every unpublished file until discard", async () => {
   const root = await createTestTempDirectory("desktop-content-unpublished-");
   const content = await store(root, 1024, 1024);
