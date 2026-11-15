@@ -19,7 +19,6 @@
     "artifacts -> dotnet": 3,
     "artifacts -> native": 1,
     "browser -> artifacts": 4,
-    "captures -> pcap": 2,
     "desktop -> browser": 1,
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
