@@ -243,6 +243,7 @@ fi`,
   expect(result.devices).toEqual([
     {
       serial: "emulator-5554",
+      serial_status: "reported",
       state: "device",
       transport: "tcp",
       product: "sdk_gphone64_x86_64",
@@ -279,6 +280,7 @@ fi`,
   expect(result.devices).toEqual([
     {
       serial: "emulator-5554",
+      serial_status: "reported",
       state: "device",
       transport: "tcp",
       product: "sdk_gphone64_x86_64",
@@ -333,6 +335,7 @@ fi`,
   expect(result.devices).toEqual([
     {
       serial: "07ef9c2a",
+      serial_status: "reported",
       state: "no permissions",
       transport: "usb",
       product: null,
