@@ -428,7 +428,7 @@ it("reports a work timeout when work throws the budget's abort reason", async ()
   );
 });
 
-it("reports a cancellation when work throws the caller's abort reason", async () => {
+it("keeps a thrown caller abort reason an adapter failure, with the caller's cancellation retained", async () => {
   const caller = new AbortController();
   const callerReason = { caller: "stop" };
   caller.abort(callerReason);
@@ -445,8 +445,39 @@ it("reports a cancellation when work throws the caller's abort reason", async ()
       partial: project,
     },
   );
-  expect(finalized.kind).toBe("cancelled");
-  expect(failure(finalized).cause).toBe(callerReason);
+  // The caller's reason is opaque: equality with a thrown value does not
+  // make that value a cancellation.
+  expect(finalized.kind).toBe("failed");
+  const error = failure(finalized);
+  expect(error._tag).toBe("ProviderAdapterError");
+  expect(error.cause).toBe(callerReason);
+  expect(
+    error.secondaryFailures.some(
+      (secondary) =>
+        secondary instanceof AnalysisCancelledError &&
+        secondary.cause === callerReason,
+    ),
+  ).toBe(true);
+});
+
+it("keeps a late close rejection without cleanup of its own from confirming release", async () => {
+  let rejectClose!: (cause: unknown) => void;
+  const finalized = await runOwned(async () => ok({ count: 3 }), {
+    providerId: "fixture",
+    operation,
+    deadline: Deadline.after(1000, { finalizeMs: 10 }),
+    close: () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectClose = reject;
+      }),
+    partial: project,
+  });
+  if (finalized.kind !== "completed-cleanup-retained")
+    throw new Error(`expected retained cleanup, got ${finalized.kind}`);
+  rejectClose(cancelledBy(operation, OwnerCancellation.ownerClosed));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(finalized.error.cleanupIncomplete).toBe(true);
+  expect(finalized.error.cleanupResources).toEqual([`${operation} resources`]);
 });
 
 it("keeps failures the work recorded when a budget cancellation is replaced", async () => {

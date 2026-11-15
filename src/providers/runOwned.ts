@@ -289,15 +289,19 @@ const closeWithin = async (
       },
     });
     void leases[0]!.release().catch((cause: unknown) => {
-      late = closeFailure(cause, options);
+      const rejection = closeFailure(cause, options);
       const readerLeases =
         cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
           ? cause.cleanupLeases
           : undefined;
       if (readerLeases !== undefined)
-        new AnalysisCleanupLeaseGroup(late, readerLeases);
+        new AnalysisCleanupLeaseGroup(rejection, readerLeases);
+      // A rejection that reports no unreleased cleanup of its own (such as a
+      // cancellation) names no owner: the close's lease stays unreleased.
+      if (!rejection.cleanupIncomplete) return;
+      late = rejection;
       if (cause instanceof AnalysisError || readerLeases !== undefined)
-        failure.bindCleanupResourceOwner(late);
+        failure.bindCleanupResourceOwner(rejection);
     });
   } else void closing.catch(() => undefined);
   return failure;
@@ -320,10 +324,11 @@ export const runOwned = async <Value>(
       error:
         cause instanceof AnalysisError
           ? cause
-          : // Work that throws its signal's abort reason (throwIfAborted)
-            // observed that abort, the same as one returning a cancellation.
-            isAborted(bound.signal) && Object.is(cause, bound.signal.reason)
-            ? cancelledBy(options.operation, bound.signal)
+          : // The budget's abort is this boundary's own typed reason, so work
+            // that throws it (throwIfAborted) observed the budget. A caller's
+            // reason is opaque and never classifies a thrown value.
+            bound.elapsed() && cause === OwnerCancellation.deadlineElapsed
+            ? cancelledBy(options.operation, OwnerCancellation.deadlineElapsed)
             : new ProviderAdapterError(options.providerId, options.operation, {
                 cause,
               }),
