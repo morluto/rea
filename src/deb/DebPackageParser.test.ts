@@ -876,6 +876,25 @@ it("restores header owners when a later global PAX record clears the override", 
   expect(users).toEqual(["alice", "builder"]);
 });
 
+it("trims a long slash run in a PAX path in linear time", () => {
+  const name = `${"/".repeat(256 * 1024)}a`;
+  const started = performance.now();
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        {
+          name: "./PaxHeaders/file",
+          type: "x",
+          content: paxRecord("path", name),
+        },
+        { name: "./usr/share/doc/file", content: "x" },
+      ],
+    }),
+  );
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(report.data_entries.some((entry) => entry.path === name)).toBe(true);
+});
+
 it("refuses a PAX extended header whose record cannot be read", () => {
   const error = expectFailure(
     () =>

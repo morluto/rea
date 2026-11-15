@@ -199,8 +199,15 @@ const paxId = (value: string | undefined): number | undefined => {
 const pad512 = (size: number): number =>
   Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 
+/** Drop trailing `/` by a backward scan; an unanchored regex retries per slash. */
+const trimTrailingSlashes = (name: string): string => {
+  let end = name.length;
+  while (end > 0 && name.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return name.slice(0, end);
+};
+
 const logicalTarPath = (name: string): string =>
-  name.replace(/^(?:\.\/)+/u, "").replace(/\/+$/u, "");
+  trimTrailingSlashes(name.replace(/^(?:\.\/)+/u, ""));
 
 const tarChecksum = (header: Uint8Array): number => {
   let sum = 0;
