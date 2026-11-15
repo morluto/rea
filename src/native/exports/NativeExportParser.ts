@@ -3,7 +3,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   isBinaryFormatOrStringLimitFailure,
-  type BinaryStringReadLimitFailure,
+  type BinaryStringReadLimit,
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
@@ -409,7 +409,7 @@ const createVersionNameReader = () => {
   const decodedNames = new Map<
     string,
     | { readonly value: DecodedElfString | null }
-    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimitFailure }
+    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimit }
   >();
   let cacheBytes = 0;
   const chargeCache = (bytes: number): void => {

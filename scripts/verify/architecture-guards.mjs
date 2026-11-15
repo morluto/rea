@@ -326,6 +326,17 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
+// src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
+// class on plain Error hides the limit's name and maximum from both.
+checkCounted(
+  "local limit class extending plain Error (use decodeLimit from src/domain/parseFailure or an AnalysisRefusal)",
+  "local-limit-error-class",
+  files,
+  /\bclass \w*(?:Limit|Budget|Exhausted|Exceeded)\w* extends Error\b/gu,
+  [],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can
