@@ -2,7 +2,8 @@ import { crc32, deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { readPngHeaderDimensions } from "../domain/pngHeader.js";
+import { comparePngScreenshots, isOneColourPng } from "./PngVisualDiff.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -12,6 +13,48 @@ import {
   createWebScreenshotArtifact,
   webScreenshotDiffSchema,
 } from "../domain/webScreenshot.js";
+
+describe("PNG header admission", () => {
+  it.each([16, 20])(
+    "shares dimension admission with header sniffing at %s",
+    (offset) => {
+      for (const dimension of [0, 0x8000_0000]) {
+        const bytes = png(1, 1, [0, 0, 0, 255]);
+        bytes.writeUInt32BE(dimension, offset);
+        bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+        expect(readPngHeaderDimensions(bytes)).toBeUndefined();
+        const image = createWebScreenshotArtifact(bytes);
+        expect(() =>
+          comparePngScreenshots(
+            compareWebScreenshotsInputSchema.parse({
+              before: image,
+              after: image,
+            }),
+          ),
+        ).toThrow("Invalid PNG header");
+      }
+    },
+  );
+
+  it.each([24, 25, 26, 27, 28])(
+    "preserves header dimensions for unknown encoding field at %s",
+    (offset) => {
+      const bytes = png(1, 1, [0, 0, 0, 255]);
+      bytes[offset] = 255;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+      expect(readPngHeaderDimensions(bytes)).toEqual({ width: 1, height: 1 });
+      const image = createWebScreenshotArtifact(bytes);
+      expect(() =>
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: image,
+            after: image,
+          }),
+        ),
+      ).toThrow("Invalid PNG header");
+    },
+  );
+});
 
 describe("PNG visual diff", () => {
   it("reports exact changed-pixel and channel metrics", () => {
@@ -84,21 +127,23 @@ describe("PNG visual diff", () => {
     });
   });
 
-  it("keeps 8-bit samples opaque when a 16-bit transparency key exceeds 255", () => {
+  it("masks unused transparency-key bits before comparing 8-bit samples", () => {
     const key = Buffer.alloc(6);
     key.writeUInt16BE(266, 0);
-    key.writeUInt16BE(20, 2);
-    key.writeUInt16BE(30, 4);
+    key.writeUInt16BE(0xfe14, 2);
+    key.writeUInt16BE(0xff1e, 4);
     const rgb = transparencyArtifact(2, key, [10, 20, 30]);
     const result = comparePngScreenshots(
       compareWebScreenshotsInputSchema.parse({
         before: rgb,
-        after: artifact(1, 1, [10, 20, 30, 255]),
+        after: artifact(1, 1, [10, 20, 30, 0]),
       }),
     );
     expect(result).toMatchObject({ status: "identical", changed_pixels: 0 });
-    expect(result.limitations).toContain(
-      "PNG tRNS transparency is accepted only as a six-byte RGB color key; tRNS on RGBA or with another length is rejected.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /tRNS.*only.*six-byte RGB.*RGBA.*another length.*rejected/iu,
+      ),
     );
   });
 
@@ -150,6 +195,22 @@ describe("PNG visual diff", () => {
         compared_pixels: 2,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("isOneColourPng", () => {
+  it("tells a one-colour frame from a drawn one, and an unreadable one from both", () => {
+    const base64 = (pixels: readonly number[]) =>
+      png(2, 2, pixels).toString("base64");
+    const black = [0, 0, 0, 255];
+
+    expect(
+      isOneColourPng(base64([...black, ...black, ...black, ...black])),
+    ).toBe(true);
+    expect(
+      isOneColourPng(base64([...black, ...black, ...black, 0, 0, 1, 255])),
+    ).toBe(false);
+    expect(isOneColourPng("AAAA")).toBeUndefined();
   });
 });
 

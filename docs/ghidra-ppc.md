@@ -3,7 +3,8 @@
 This lane extends native ELF analysis to 32-bit big-endian PowerPC; it does
 not execute PowerPC code. It is the first milestone of
 [#1741](https://github.com/morluto/rea/issues/1741). GameCube/Wii DOL
-executables, PPC64 and other PowerPC variants are separate follow-ups.
+executables are covered by [GameCube DOL analysis](ghidra-dol.md). PPC64 and other
+PowerPC variants remain separate follow-ups.
 
 ## Admission boundary
 

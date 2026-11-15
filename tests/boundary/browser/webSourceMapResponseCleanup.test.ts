@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
 describe("source-map discarded HTTP response ownership", () => {
@@ -55,7 +55,7 @@ describe("source-map discarded HTTP response ownership", () => {
           target_id: "page-1",
           fetch_source_maps: true,
         });
-        const result = await fetchWebSourceMaps(
+        const result = await fetchWebSourceMapsOk(
           [
             {
               scriptKey: `scr_${"1".repeat(64)}`,

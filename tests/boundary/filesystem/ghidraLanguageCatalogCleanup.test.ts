@@ -3,9 +3,11 @@ import { basename, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
-  GhidraLanguageCatalogCleanupError,
-  readGhidraLanguageCatalog,
-} from "../../../src/ghidra/GhidraLanguageCatalog.js";
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 interface FileControl {
@@ -16,6 +18,7 @@ interface FileControl {
   readFails: boolean;
   invalidated: boolean;
   closeCalls: number;
+  opens: number;
 }
 
 // Per-file failure controls, keyed by definition file name, and a barrier
@@ -45,6 +48,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const real = await actual.open(...args);
       const control = controls.get(basename(String(args[0])));
       if (control === undefined) return real;
+      control.opens += 1;
       let released = false;
       const release = async () => {
         if (released) return;
@@ -55,6 +59,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         get fd() {
           return control.invalidated ? -1 : real.fd;
         },
+        stat: (...statArgs: Parameters<typeof real.stat>) =>
+          real.stat(...statArgs),
         read: (...readArgs: Parameters<typeof real.read>) =>
           control.readFails
             ? Promise.reject(new Error("definition read failed"))
@@ -77,8 +83,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-let preserveUnconfirmedOwner = false;
-
 const control = (name: string, overrides: Partial<FileControl> = {}) => {
   const value: FileControl = {
     closeFails: false,
@@ -87,6 +91,7 @@ const control = (name: string, overrides: Partial<FileControl> = {}) => {
     readFails: false,
     invalidated: false,
     closeCalls: 0,
+    opens: 0,
     ...overrides,
   };
   controls.set(name, value);
@@ -104,31 +109,77 @@ const installation = async (name: string): Promise<string> => {
   return root;
 };
 
-// Let every retained owner close, then drain them through a healthy read.
+const scopes: ArtifactResourceScope[] = [];
+const scope = (): ArtifactResourceScope => {
+  const value = new ArtifactResourceScope();
+  scopes.push(value);
+  return value;
+};
+
+// Let every retained owner close through its own scope, except an invalidated
+// descriptor whose close can never be confirmed.
 afterEach(async () => {
-  if (preserveUnconfirmedOwner) {
-    preserveUnconfirmedOwner = false;
-    controls.clear();
-    return;
-  }
-  for (const value of controls.values()) value.closeFails = false;
-  await readGhidraLanguageCatalog(await installation("drain"));
+  for (const value of controls.values())
+    if (!value.invalidateOnFailure) value.closeFails = false;
+  await Promise.allSettled(scopes.map((value) => value.close()));
+  scopes.length = 0;
   controls.clear();
 });
 
-it("retries a retained close before the next read", async () => {
+it("retries the retained close in the caller scope before the next read", async () => {
+  const resources = scope();
   const retained = control("flaky.ldefs", { closeFails: true });
-  await expect(
-    readGhidraLanguageCatalog(await installation("flaky")),
-  ).rejects.toMatchObject({ paths: [expect.stringContaining("flaky.ldefs")] });
+  const failure = await readGhidraLanguageCatalog(
+    await installation("flaky"),
+    resources,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({
+    cleanup: { resources: [expect.stringContaining("flaky.ldefs")] },
+  });
+  expect(resources.hasPending).toBe(true);
   retained.closeFails = false;
-  expect(await readGhidraLanguageCatalog(await installation("x86"))).toEqual([
-    { id: "x86:LE:32:default", compilerSpecIds: [] },
-  ]);
+  expect(
+    await readGhidraLanguageCatalog(await installation("x86"), resources),
+  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
   expect(retained.closeCalls).toBe(2);
+  expect(resources.hasPending).toBe(false);
+});
+
+it("refuses new reads without opening definitions while the retry still fails", async () => {
+  const resources = scope();
+  const retained = control("stuck.ldefs", { closeFails: true });
+  await expect(
+    readGhidraLanguageCatalog(await installation("stuck"), resources),
+  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
+  const next = control("next.ldefs");
+  const refused = await readGhidraLanguageCatalog(
+    await installation("next"),
+    resources,
+  ).catch((cause: unknown) => cause);
+  expect(refused).toBeInstanceOf(ArtifactResourceRetryFailure);
+  expect(refused).toMatchObject({
+    cleanup: { resources: [expect.stringContaining("stuck.ldefs")] },
+  });
+  expect(retained.closeCalls).toBe(2);
+  expect(next.opens).toBe(0);
+  expect(resources.hasPending).toBe(true);
+});
+
+it("keeps one scope's retained close out of another scope", async () => {
+  control("isolated.ldefs", { closeFails: true });
+  const failed = scope();
+  await expect(
+    readGhidraLanguageCatalog(await installation("isolated"), failed),
+  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
+  expect(
+    await readGhidraLanguageCatalog(await installation("x86"), scope()),
+  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
+  expect(failed.hasPending).toBe(true);
 });
 
 it("attempts every retained close and reports the remaining failures together", async () => {
+  const resources = scope();
   const first = control("first.ldefs", {
     closeFails: true,
     synchronizedClose: true,
@@ -138,66 +189,72 @@ it("attempts every retained close and reports the remaining failures together", 
     synchronizedClose: true,
   });
   barrier.state.expected = 2;
-  // Concurrent resolutions can each retain an owner.
+  // Concurrent resolutions can each retain an owner in the same scope.
   const roots = [await installation("first"), await installation("second")];
   const results = await Promise.allSettled(
-    roots.map((root) => readGhidraLanguageCatalog(root)),
+    roots.map((root) => readGhidraLanguageCatalog(root, resources)),
   );
   expect(results.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
   second.closeFails = false;
   const failure = await readGhidraLanguageCatalog(
     await installation("x86"),
+    resources,
   ).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(GhidraLanguageCatalogCleanupError);
+  expect(failure).toBeInstanceOf(ArtifactResourceRetryFailure);
   expect(failure).toMatchObject({
-    paths: [expect.stringContaining("first.ldefs")],
+    cleanup: { resources: [expect.stringContaining("first.ldefs")] },
   });
   expect(second.closeCalls).toBe(2);
   expect(first.closeCalls).toBe(2);
 });
 
-it("keeps the read failure when the close also fails", async () => {
+it("keeps the read failure primary when the close also fails", async () => {
   control("damaged.ldefs", { readFails: true, closeFails: true });
   const failure = await readGhidraLanguageCatalog(
     await installation("damaged"),
+    scope(),
   ).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(GhidraLanguageCatalogCleanupError);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
   expect(failure).toMatchObject({
-    readFailure: expect.objectContaining({ message: "definition read failed" }),
+    message: "definition read failed",
+    cleanup: { resources: [expect.stringContaining("damaged.ldefs")] },
   });
 });
 
 it("reports retained cleanup for a catalog without definitions", async () => {
+  const resources = scope();
   control("pending.ldefs", { closeFails: true });
   await expect(
-    readGhidraLanguageCatalog(await installation("pending")),
-  ).rejects.toBeInstanceOf(GhidraLanguageCatalogCleanupError);
+    readGhidraLanguageCatalog(await installation("pending"), resources),
+  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
   const empty = await createTestTempDirectory("rea-ghidra-ldefs-empty-");
-  await expect(readGhidraLanguageCatalog(empty)).rejects.toMatchObject({
-    paths: [expect.stringContaining("pending.ldefs")],
+  await expect(
+    readGhidraLanguageCatalog(empty, resources),
+  ).rejects.toMatchObject({
+    cleanup: { resources: [expect.stringContaining("pending.ldefs")] },
   });
 });
 
 it("retains an invalidated descriptor owner and keeps later reads blocked", async () => {
+  const resources = scope();
   const broken = control("broken.ldefs", {
     closeFails: true,
     invalidateOnFailure: true,
   });
-  const first = await readGhidraLanguageCatalog(
-    await installation("broken"),
-  ).catch((cause: unknown) => cause);
-  expect(first).toBeInstanceOf(GhidraLanguageCatalogCleanupError);
-  expect(first).toMatchObject({
-    paths: [expect.stringContaining("broken.ldefs")],
+  await expect(
+    readGhidraLanguageCatalog(await installation("broken"), resources),
+  ).rejects.toMatchObject({
+    cleanup: { resources: [expect.stringContaining("broken.ldefs")] },
   });
-
   const later = await readGhidraLanguageCatalog(
     await installation("x86"),
+    resources,
   ).catch((cause: unknown) => cause);
-  expect(later).toBeInstanceOf(GhidraLanguageCatalogCleanupError);
+  expect(later).toBeInstanceOf(ArtifactResourceRetryFailure);
   expect(later).toMatchObject({
-    paths: [expect.stringContaining("broken.ldefs")],
+    cleanup: { resources: [expect.stringContaining("broken.ldefs")] },
   });
+  // The owner refuses to re-close an invalidated descriptor it never confirmed.
   expect(broken.closeCalls).toBe(1);
-  preserveUnconfirmedOwner = true;
+  expect(resources.hasPending).toBe(true);
 });

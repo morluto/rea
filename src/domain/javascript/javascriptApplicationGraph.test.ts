@@ -4,6 +4,7 @@ import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
+  mergeJavaScriptApplicationNodes,
   javascriptApplicationGraphSchema,
   parseJavaScriptApplicationGraph,
   serializeJavaScriptApplicationGraph,
@@ -23,6 +24,58 @@ import {
   sourceMapReference,
   unknownEvidence,
 } from "./javascriptApplicationGraph.fixture.js";
+
+it("merges observations by entity identity without changing source nodes", () => {
+  const evidence = artifactEvidence(APPLICATION_GRAPH_DIGESTS.asar, "main.js");
+  const first = contentNode(evidence, { selected: "first" });
+  const second = contentNode(evidence, { selected: "second" });
+  const reversedIdentity = {
+    sha256: APPLICATION_GRAPH_DIGESTS.asar,
+    stability: "global-exact" as const,
+    strategy: "content-digest" as const,
+  };
+  const merged = mergeJavaScriptApplicationNodes([
+    first,
+    { ...second, identity: reversedIdentity },
+    first,
+  ]);
+  expect(merged).toHaveLength(1);
+  const node = firstOf(merged, "merged node");
+  expect(node.node_id).toBe(first.node_id);
+  expect(node.observations.map(({ properties }) => properties)).toEqual(
+    expect.arrayContaining([{ selected: "first" }, { selected: "second" }]),
+  );
+  expect(node.observations).toHaveLength(2);
+  expect(first.observations).toHaveLength(1);
+  expect(second.observations).toHaveLength(1);
+  const graph = graphForNode(node);
+  expect(parseJavaScriptApplicationGraph(graph)).toEqual(graph);
+});
+
+it.each(["kind", "identity"] as const)(
+  "rejects colliding entity IDs with a different %s before merging observations",
+  (field) => {
+    const node = contentNode(
+      artifactEvidence(APPLICATION_GRAPH_DIGESTS.asar, "main.js"),
+    );
+    const conflicting =
+      field === "kind"
+        ? { ...node, kind: "javascript-asset" as const }
+        : {
+            ...node,
+            identity: {
+              strategy: "content-digest" as const,
+              stability: "global-exact" as const,
+              sha256: "f".repeat(64),
+            },
+          };
+    expect(() => mergeJavaScriptApplicationNodes([node, conflicting])).toThrow(
+      "Colliding JAG node identifiers disagree",
+    );
+    expect(node.observations).toHaveLength(1);
+  },
+);
+
 const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
   const properties = Object.fromEntries(
     Array.from({ length: 1_001 }, (_, index) => [
@@ -358,6 +411,7 @@ describe("JavaScript Application Graph: identity and evidence", () => {
       identity: {
         strategy: "runtime-instance",
         stability: "capture-only",
+        capture_evidence_id: `ev_${"c".repeat(64)}`,
         capture_sha256: "6".repeat(64),
         runtime_key: "script-preload",
       },
@@ -758,6 +812,50 @@ describe("JavaScript Application Graph: duplicate and orphan rejection", () => {
   });
 });
 
+it("rejects runtime identities without an explicit capture Evidence identifier", () => {
+  expect(() =>
+    createJavaScriptApplicationNode({
+      kind: "runtime-script-instance",
+      identity: {
+        strategy: "runtime-instance",
+        stability: "capture-only",
+        capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
+        runtime_key: "script-preload",
+      },
+      observations: [
+        {
+          label: null,
+          properties: {},
+          evidence: runtimeEvidence("script-preload"),
+        },
+      ],
+    }),
+  ).toThrow(/capture_evidence_id/u);
+});
+
+it("requires runtime identities to retain their capture Evidence provenance", () => {
+  const runtimeWithUnrelatedEvidence = createJavaScriptApplicationNode({
+    kind: "runtime-script-instance",
+    identity: {
+      strategy: "runtime-instance",
+      stability: "capture-only",
+      capture_evidence_id: `ev_${"d".repeat(64)}`,
+      capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
+      runtime_key: "script-preload",
+    },
+    observations: [
+      {
+        label: null,
+        properties: {},
+        evidence: runtimeEvidence("script-preload"),
+      },
+    ],
+  });
+  expect(() => graphForNode(runtimeWithUnrelatedEvidence)).toThrow(
+    /identity is not supported/u,
+  );
+});
+
 describe("JavaScript Application Graph: identity strategy requirements", () => {
   it("requires every identity strategy to have compatible supporting evidence", () => {
     const mismatchedPath = createJavaScriptApplicationNode({
@@ -788,6 +886,7 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
       identity: {
         strategy: "runtime-instance",
         stability: "capture-only",
+        capture_evidence_id: `ev_${"c".repeat(64)}`,
         capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
         runtime_key: "script-preload",
       },
@@ -815,17 +914,38 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
     );
   });
 
-  it("prevents static authorities from claiming runtime locations", () => {
+  it.each([
+    { start: { line: 2, column: 0 }, end: { line: 1, column: 9 } },
+    { start: { line: 1, column: 9 }, end: { line: 1, column: 0 } },
+  ])("rejects reversed source locations on graph facts: %j", (range) => {
     const evidence = artifactEvidence(
       APPLICATION_GRAPH_DIGESTS.asar,
       "dist/module.js",
       "ast-static-analysis",
     );
-    evidence.location = runtimeEvidence("script-module").location;
+    evidence.location = {
+      available: true,
+      value: { kind: "source-range", source: "dist/module.js", ...range },
+    };
     expect(() => graphForNode(contentNode(evidence))).toThrow(
-      /cannot claim a runtime location/u,
+      /Source range end must not precede its start/u,
     );
   });
+
+  it.each(["ast-static-analysis", "managed-static-analysis"] as const)(
+    "prevents %s from claiming runtime locations",
+    (authority) => {
+      const evidence = artifactEvidence(
+        APPLICATION_GRAPH_DIGESTS.asar,
+        "dist/module.js",
+        authority,
+      );
+      evidence.location = runtimeEvidence("script-module").location;
+      expect(() => graphForNode(contentNode(evidence))).toThrow(
+        /cannot claim a runtime location/u,
+      );
+    },
+  );
 
   it("enforces epistemic truthfulness and content-addressed artifacts", () => {
     const inferredAsObserved = inferredArtifactEvidence(

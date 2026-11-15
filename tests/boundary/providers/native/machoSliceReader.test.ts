@@ -157,8 +157,10 @@ describe("Mach-O slice reader with system lipo", () => {
         ["slices/arm64", 4096, 32],
         ["slices/ppc", 8192, 32],
       ]);
-      expect(entries[1]?.limitations).toContain(
-        "Structural Mach-O facts were unsupported (big-endian Mach-O slices are not supported); slice range is based on lipo output.",
+      expect(entries[1]?.limitations).toContainEqual(
+        expect.stringMatching(
+          /big.endian Mach.O.*not supported.*slice range.*lipo/iu,
+        ),
       );
     },
   );

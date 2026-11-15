@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,27 +38,56 @@ int main(int argc, char **argv) {
 }
 `;
 
+let manager = null;
+
 try {
   await writeFile(testSource, cCode, "utf8");
 
-  // Compile using available Xcode / clang
-  const clangPath = "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang";
-  const sdkPath = "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+  // Locate matching clang and SDK
+  let clangPath = "clang";
+  let sdkPath = "";
 
-  await exec(clangPath, [
-    "-isysroot",
-    sdkPath,
-    "-g",
-    "-O0",
-    testSource,
-    "-o",
-    targetBinary,
-  ]);
+  const candidatePairs = [
+    {
+      clang: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+      sdk: "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    },
+    {
+      clang: "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+      sdk: "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    },
+  ];
 
+  for (const c of candidatePairs) {
+    if (existsSync(c.clang) && existsSync(c.sdk)) {
+      clangPath = c.clang;
+      sdkPath = c.sdk;
+      break;
+    }
+  }
+
+  if (!sdkPath) {
+    try {
+      const { stdout } = await exec("xcrun", ["-find", "clang"]);
+      if (stdout?.trim()) clangPath = stdout.trim();
+    } catch {}
+    try {
+      const { stdout } = await exec("xcrun", ["--show-sdk-path"]);
+      if (stdout?.trim()) sdkPath = stdout.trim();
+    } catch {}
+  }
+
+  const compileArgs = [];
+  if (sdkPath) {
+    compileArgs.push("-isysroot", sdkPath);
+  }
+  compileArgs.push("-g", "-O0", testSource, "-o", targetBinary);
+
+  await exec(clangPath, compileArgs);
   await exec("codesign", ["-s", "-", "-v", "-f", targetBinary]);
 
   console.log("=== Testing Native REA LLDB Session Manager ===");
-  const manager = new LldbSessionManager();
+  manager = new LldbSessionManager();
 
   // 1. Start Session with initial breakpoint on compute_magic
   console.log("\n[1] Starting LLDB session with target:", targetBinary);
@@ -75,7 +105,7 @@ try {
 
   // 2. Query Session Status
   console.log("\n[2] Checking initial session status...");
-  const statusBefore = manager.status(session_id);
+  const statusBefore = await manager.status(session_id);
   console.log("[+] Status:", statusBefore);
   assert.equal(statusBefore?.state, "ready");
 
@@ -119,14 +149,29 @@ try {
   assert.equal(evidence.provider.id, "apple.lldb");
   assert.equal(evidence.predicate_type, "rea.debugger.console-observation");
 
-  // 8. Close LLDB Session
-  console.log("\n[8] Closing LLDB session...");
+  // 8. Close LLDB Session for exited target
+  console.log("\n[8] Closing LLDB session for exited target...");
   const closeResult = await manager.close(session_id);
   assert.equal(closeResult.ok, true);
   console.log("[+] Close Result:", closeResult.value);
-  assert.ok(["exited", "terminated", "none_observed", "unknown"].includes(closeResult.value.target_state));
+  assert.equal(closeResult.value.target_state, "exited");
+
+  // 9. Live-target cleanup regression: verify live process is terminated cleanly
+  console.log("\n[9] Testing live-target cleanup on running session...");
+  const liveStart = await manager.start(undefined, {
+    path: targetBinary,
+    stop_at_entry: true,
+  });
+  assert.equal(liveStart.ok, true);
+  const liveClose = await manager.close(liveStart.value.session_id);
+  assert.equal(liveClose.ok, true);
+  console.log("[+] Live Target Close Result:", liveClose.value);
+  assert.equal(liveClose.value.target_state, "terminated");
 
   console.log("\n>>> ALL LLDB SESSION E2E TESTS PASSED SUCCESSFULLY! <<<\n");
 } finally {
+  if (manager) {
+    await manager.closeAll().catch(() => undefined);
+  }
   await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 }

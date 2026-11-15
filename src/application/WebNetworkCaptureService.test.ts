@@ -17,6 +17,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 it.each(["REDACTED", "[", "]", "/capture.har"])(
   "excludes sensitive path text even when a replacement marker would collide: %s",
@@ -42,6 +43,30 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
     expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
   },
 );
+
+it("records an explicit capture deadline and omits the default", async () => {
+  const seen: Array<number | undefined> = [];
+  const service = new WebNetworkCaptureService({
+    inspect: (input) => {
+      seen.push(input.capture_timeout_ms);
+      return Promise.resolve(ok(fixture()));
+    },
+  });
+  const explicit = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    capture_timeout_ms: 250,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters.capture_timeout_ms).toBe(250);
+  const omitted = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+  });
+  if (!omitted.ok) throw omitted.error;
+  expect(omitted.value.parameters).not.toHaveProperty("capture_timeout_ms");
+  expect(seen).toEqual([250, undefined]);
+});
 
 it("keeps observed artifact identity when the entire sensitive path is excluded", async () => {
   const result = await new WebNetworkCaptureService({
@@ -118,6 +143,9 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
   });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toBeNull();
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(/digest.*unknown.*Evidence/u),
+  );
   expect(result.value.limitations.every((text) => !text.includes("a"))).toBe(
     true,
   );
@@ -182,19 +210,23 @@ it("projects completed raw capture facts on failure through the caller's selecti
   });
   const result = await new WebNetworkCaptureService({
     inspect: () => Promise.resolve({ ok: false, error }),
-  }).inspect({
-    capture_path: report.artifact.path,
-    format: "har",
-    record_ordinals: [0],
-    sensitive_values: ["private-marker"],
-  });
-  expect(result.ok).toBe(false);
+  }).inspect(
+    {
+      capture_path: report.artifact.path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["private-marker"],
+    },
+    undefined,
+    { capture: "./capture.har" },
+  );
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "inspect_web_network_capture",
+    caller_input_path: "./capture.har",
     parameters: { record_ordinals: [0] },
     subject: { local_path: "" },
     normalized_result: {
@@ -223,6 +255,26 @@ it("does not expose a malformed capture-shaped partial observation", async () =>
   if (!result.ok) expect(result.error.partialObservation).toBeUndefined();
 });
 
+it("does not recover a rejected capture from a cleanup primary", async () => {
+  const malformed = fixture();
+  malformed.artifact.sha256 = "invalid";
+  malformed.limitations = ["rejected-capture-only-marker"];
+  const primary = new AnalysisCancelledError("inspect_web_network_capture", {
+    partialObservation: malformed,
+  });
+  const cleanup = new ProviderCleanupError("fixture", ["workspace"], {});
+  const error = analysisErrorWithCleanupFailure(primary, cleanup);
+  const result = await new WebNetworkCaptureService({
+    inspect: async () => err(error),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (result.ok) throw new Error("expected rejected capture");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("cleanup_incomplete");
+  expect(JSON.stringify(projected)).not.toContain(
+    "rejected-capture-only-marker",
+  );
+});
+
 it("keeps a redacted cleanup error linked to its live owner through service close", async () => {
   const report = fixture();
   const cleanupPath = "/tmp/private-marker-capture-root";
@@ -246,7 +298,6 @@ it("keeps a redacted cleanup error linked to its live owner through service clos
     format: "har",
     sensitive_values: ["private-marker"],
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Retained cleanup must remain a failure");
   const returnedError = result.error;
   expect(returnedError.cleanupIncomplete).toBe(true);
@@ -352,6 +403,31 @@ it.each([
   }).inspect({ capture_path: "/capture.har", format: "har", ...extra });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("reports an ordinal past the capture's records as an out-of-range selection", async () => {
+  const report = fixture();
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0, 5],
+  });
+  if (result.ok) throw new Error("expected an out-of-range ordinal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["record_ordinals", 1],
+          reason: "out_of_range",
+          minimum: 0,
+          maximum: report.total_records - 1,
+        },
+      ],
+    },
+  });
 });
 
 it("rejects a port changing the artifact identity or producer ordinal sequence", async () => {
@@ -542,4 +618,30 @@ it("reports malformed retained facts while keeping their cleanup owner retryable
   await service.close();
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(result.error).code).toBe("unreadable_output");
+});
+
+it("rejects relative descriptor paths before starting a capture decoder", async () => {
+  const service = new WebNetworkCaptureService({
+    inspect: () => {
+      throw new Error("Invalid input must fail before provider admission");
+    },
+  });
+  const result = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0],
+    protobuf: {
+      schema: {
+        descriptor_set_path: "relative.pb",
+        message_type: "capture.Message",
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected typed invalid input");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["protobuf", "schema", "descriptor_set_path"] }],
+    },
+  });
 });

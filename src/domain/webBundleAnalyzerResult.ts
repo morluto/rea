@@ -1,17 +1,23 @@
+import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
+import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
+import { browserOriginSchema } from "./browserObservation.js";
 import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
 } from "./webBundleAnalysis.js";
-import type {
-  AnalysisAccumulator,
-  IncludedScript,
-} from "./webBundleAnalyzerInspection.js";
+import {
+  createWebBundleAnalysisAccumulator,
+  isIncludedScript,
+  type AnalysisAccumulator,
+  type IncludedScript,
+} from "./webBundleAnalyzerState.js";
 import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
+import { appendAll } from "./appendAll.js";
 
 export const buildCapturedWebBundleAnalysis = (
   inspection: WebPageInspection,
@@ -29,9 +35,7 @@ export const buildCapturedWebBundleAnalysis = (
       );
     byKey.set(result.script_key, result);
   }
-  const sourceScripts = inspection.scripts.items.filter(
-    (script): script is IncludedScript => script.source.included,
-  );
+  const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   const expectedKeys = new Set(
     sourceScripts.map(({ script_key }) => script_key),
   );
@@ -85,7 +89,7 @@ export const buildCapturedWebBundleAnalysis = (
     "script_sources",
   );
   const omittedSourceMaps =
-    sourceMaps.status === "not_requested"
+    sourceMaps.status === "not_requested" || sourceMaps.excluded !== undefined
       ? undefined
       : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =
@@ -101,6 +105,65 @@ export const buildCapturedWebBundleAnalysis = (
     omittedSourceScripts !== undefined ||
     omittedSourceMaps !== undefined;
   return webBundleAnalysisSchema.parse({
+    route_inventory: completeSemanticSteps(
+      buildJavaScriptRouteInventorySteps(
+        inspection.scripts.items.map((script) => {
+          const result = byKey.get(script.script_key);
+          const analyzed = result?.status === "analyzed" ? result : undefined;
+          return {
+            key: script.script_key,
+            path: null,
+            url: script.url,
+            container_sha256: null,
+            sha256: script.source.included
+              ? script.source.artifact.sha256
+              : null,
+            status:
+              analyzed === undefined || analyzed.parse_status === "failed"
+                ? ("unavailable" as const)
+                : analyzed.parse_status === "recovered"
+                  ? ("partial" as const)
+                  : ("complete" as const),
+            reason: !script.source.included
+              ? script.source.reason
+              : result?.status === "unavailable"
+                ? result.reason
+                : analyzed === undefined
+                  ? "No route syntax result was returned"
+                  : analyzed.parse_status === "failed"
+                    ? "Script parsing failed"
+                    : analyzed.parse_status === "recovered"
+                      ? "Script parsing recovered from errors"
+                      : null,
+            facts: analyzed?.route_facts ?? null,
+          };
+        }),
+        undefined,
+        [
+          ...(omittedScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-records" as const,
+                  count: omittedScripts,
+                  reason: captureBudgetReason("script records", omittedScripts),
+                },
+              ]),
+          ...(omittedSourceScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-sources" as const,
+                  count: omittedSourceScripts,
+                  reason: captureBudgetReason(
+                    "script source artifacts",
+                    omittedSourceScripts,
+                  ),
+                },
+              ]),
+        ],
+      ),
+    ),
     capture: buildCaptureObservation(
       inspection,
       sourceScripts,
@@ -145,19 +208,7 @@ const mergeScriptResults = (
     { readonly status: "analyzed" }
   >[],
 ): AnalysisAccumulator => {
-  const accumulator: AnalysisAccumulator = {
-    edges: [],
-    routes: [],
-    endpoints: [],
-    webMcp: [],
-    inferences: [],
-    seen: new Set(),
-    visitedNodes: 0,
-    parsedScripts: 0,
-    failedScripts: [],
-    recoveredScripts: [],
-    widenedScripts: [],
-  };
+  const accumulator = createWebBundleAnalysisAccumulator();
   for (const result of results) {
     accumulator.visitedNodes += result.visited_ast_nodes;
     if (result.parse_status === "failed") {
@@ -169,11 +220,11 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
-    accumulator.edges.push(...result.observations.edges);
-    accumulator.routes.push(...result.observations.routes);
-    accumulator.endpoints.push(...result.observations.endpoints);
-    accumulator.webMcp.push(...result.observations.webmcp_declarations);
-    accumulator.inferences.push(...result.inferences);
+    appendAll(accumulator.edges, result.observations.edges);
+    appendAll(accumulator.routes, result.observations.routes);
+    appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
+    appendAll(accumulator.inferences, result.inferences);
   }
   return accumulator;
 };
@@ -182,15 +233,19 @@ const buildCaptureObservation = (
   inspection: WebPageInspection,
   sourceScripts: IncludedScript[],
   attemptedScripts: number,
-) => ({
-  target_url: inspection.target.url,
-  scripts_observed: inspection.scripts.total,
-  // This preserves the historical meaning: source scripts submitted for
-  // analysis, including worker/deadline failures; explicitly unstarted suffixes
-  // are excluded. Successfully parsed scripts are counted separately below.
-  scripts_analyzed: attemptedScripts,
-  source_artifacts: sourceScripts.map(sourceArtifact),
-});
+) => {
+  const targetOrigin = browserOriginSchema.safeParse(inspection.target.origin);
+  return {
+    target_url: inspection.target.url,
+    target_origin: targetOrigin.success ? targetOrigin.data : null,
+    scripts_observed: inspection.scripts.total,
+    // This preserves the historical meaning: source scripts submitted for
+    // analysis, including worker/deadline failures; explicitly unstarted suffixes
+    // are excluded. Successfully parsed scripts are counted separately below.
+    scripts_analyzed: attemptedScripts,
+    source_artifacts: sourceScripts.map(sourceArtifact),
+  };
+};
 
 const sourceArtifact = (script: IncludedScript) => {
   if (!script.source.included) throw new TypeError("Filtered source changed");
@@ -331,7 +386,8 @@ const captureBudgetOmission = (
   const exclusions = inspection.completeness.excluded.filter(
     (exclusion) =>
       exclusion.section === section &&
-      exclusion.reason === "resource_budget_exhausted",
+      exclusion.reason === "resource_budget_exhausted" &&
+      exclusion.count !== 0,
   );
   if (exclusions.length === 0) return undefined;
   if (exclusions.some(({ count }) => count === null)) return null;

@@ -1,8 +1,10 @@
+import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { expect, it, vi } from "vitest";
 
 import {
   admitAsarHeader,
+  readAsarHeader,
   createAsarHeaderSignatureProbe,
 } from "./AsarHeader.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
@@ -76,5 +78,66 @@ it("rejects a signature whose declared header exceeds the observed archive", () 
   expect(probe.finish(archive.length - 1)).toMatchObject({
     state: "rejected",
     reason: "archive-too-short",
+  });
+});
+
+it("refuses a header that declares one member name twice", async () => {
+  const archive = asarHeaderBytes(
+    '{"files":{"a.js":{"size":10,"offset":"0"},"a.js":{"size":5,"offset":"10"}}}',
+  );
+  const handle = {
+    stat: async () => ({ isFile: () => true, size: archive.length }) as Stats,
+    read: async (
+      target: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      const bytesRead = Math.min(length, archive.length - position);
+      archive.copy(target, offset, position, position + bytesRead);
+      return { bytesRead, buffer: target };
+    },
+  } as unknown as Parameters<typeof admitAsarHeader>[0];
+  const extents = await admitAsarHeader(handle);
+  await expect(readAsarHeader(handle, extents)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringContaining('"a.js"'),
+  });
+});
+
+it("decodes admitted JSON across short reads without consuming padding", async () => {
+  const archive = asarHeaderBytes('{"files":{"�":{}}}', {
+    padding: Buffer.from([0xff]),
+  });
+  const handle = {
+    stat: async () => ({ isFile: () => true, size: archive.length }) as Stats,
+    read: async (
+      target: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      const bytesRead = Math.min(2, length, archive.length - position);
+      archive.copy(target, offset, position, position + bytesRead);
+      return { bytesRead, buffer: target };
+    },
+  } as unknown as Parameters<typeof admitAsarHeader>[0];
+  const extents = await admitAsarHeader(handle);
+  await expect(readAsarHeader(handle, extents)).resolves.toEqual({
+    files: { "�": {} },
+  });
+  await expect(
+    readAsarHeader(
+      {
+        read: (async (target: Buffer) => ({
+          bytesRead: 0,
+          buffer: target,
+        })) as FileHandle["read"],
+      },
+      extents,
+    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/truncated.*header/iu),
   });
 });

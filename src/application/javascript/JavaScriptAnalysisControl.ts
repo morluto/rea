@@ -7,6 +7,7 @@ export const assertJavaScriptAnalysisActive = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "JavaScript application analysis cancelled",
+      { cause: signal.reason },
     );
 };
 

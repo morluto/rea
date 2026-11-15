@@ -219,6 +219,74 @@ describe("passive network inventory changes", () => {
   });
 });
 
+describe("unknown WebSocket opcode evidence", () => {
+  const captureWithWebSocketFrames = (
+    events: WebPageInspection["network"]["websocket_connections"][number]["events"],
+  ): WebPageInspection => {
+    const capture = unselectedShapes(passiveNetworkCapture([]));
+    capture.network.websocket_connections.push({
+      request_id: "capture-local-socket-id",
+      url: "wss://app.example.test/live",
+      events: structuredClone(events),
+    });
+    return capture;
+  };
+
+  it("does not compare an unknown opcode as a real continuation frame", () => {
+    const malformed = captureWithWebSocketFrames([
+      {
+        direction: "received",
+        opcode: null,
+        payload_bytes: null,
+        payload_shape: null,
+      },
+    ]);
+    const observedZero = captureWithWebSocketFrames([
+      {
+        direction: "received",
+        opcode: 0,
+        payload_bytes: 0,
+        payload_shape: { format: "binary", json_shape: null },
+      },
+    ]);
+
+    for (const [before, after] of [
+      [malformed, observedZero],
+      [observedZero, malformed],
+    ] as const)
+      expect(compare(before, after)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+        changes: [],
+      });
+  });
+
+  it("still compares known payload facts in a stream with another unknown frame", () => {
+    const before = captureWithWebSocketFrames([
+      {
+        direction: "received",
+        opcode: null,
+        payload_bytes: null,
+        payload_shape: null,
+      },
+      {
+        direction: "sent",
+        opcode: 1,
+        payload_bytes: 3,
+        payload_shape: { format: "text", json_shape: null },
+      },
+    ]);
+    const after = structuredClone(before);
+    after.network.websocket_connections[0]!.events[1]!.payload_bytes = 4;
+
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [{ change: "modified" }],
+    });
+  });
+});
+
 describe("passive network coverage uncertainty", () => {
   it.each([
     "attach_limited_sections",
@@ -230,7 +298,7 @@ describe("passive network coverage uncertainty", () => {
     (section) => {
       const before = passiveNetworkCapture();
       const after = passiveNetworkCapture(["/a", "/b"]);
-      after.completeness[section].push("network_requests");
+      before.completeness[section].push("network_requests");
       for (const [left, right] of [
         [before, after],
         [after, before],
@@ -557,6 +625,15 @@ describe("passive dropped-event inventory coverage", () => {
       });
     const changed = structuredClone(before);
     changed.network.requests[0]!.status = 503;
+    expect(compare(before, changed)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    // Once one complete inventory excludes the peer's observed response,
+    // omissions cannot explain that response difference.
+    changed.completeness.dropped_events.network_requests = 0;
+    changed.completeness.dropped_events.total = 0;
     expect(compare(before, changed)).toMatchObject({
       status: "changed",
       total_changes: 1,

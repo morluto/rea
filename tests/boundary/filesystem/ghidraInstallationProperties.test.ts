@@ -14,12 +14,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import {
-  readGhidraInstallationProperties,
-  MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
-} from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { readGhidraInstallationProperties } from "../../../src/ghidra/GhidraInstallationProperties.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 
 const controls = vi.hoisted(() => ({
   file: undefined as ((handle: FileHandle, path: string) => void) | undefined,
@@ -153,11 +152,15 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
   };
   const resources = createInspectionResources();
   try {
-    await expect(
-      readGhidraInstallationProperties(path, {
-        resourceOwner: resources.owner,
-      }),
-    ).rejects.toMatchObject({
+    const failure = await readGhidraInstallationProperties(path, {
+      resourceOwner: resources.owner,
+    }).then(
+      () => {
+        throw new Error("Oversized properties accepted");
+      },
+      (cause) => cause as AnalysisError,
+    );
+    expect(failure).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "file-size",
       retryable: false,
@@ -167,6 +170,18 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
       },
       diagnostics: { path, stage: "installation_properties" },
     });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining(
+          "Ghidra installation-properties read allowance of 1048576 bytes (this release has no runtime override)",
+        ),
+      },
+    });
+    expect(projectAnalysisError(failure).remediation.action).toContain(
+      "Increasing an evidence-reply file-size allowance does not admit this input",
+    );
     expect(reads).toBe(0);
   } finally {
     await resources.close();
@@ -261,6 +276,7 @@ it.each(["read", "capacity", "completed"] as const)(
             },
           },
         });
+        expect(failure.cause).toBe(reason);
       } else if (outcome === "capacity") {
         expect(projectAnalysisError(failure).code).toBe("resource_constraint");
       } else {

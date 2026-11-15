@@ -6,7 +6,7 @@ import type { TestProcesses } from "../process/processFixture.js";
 const LISTENING_MESSAGE = "MCP transport listening";
 const STARTUP_TIMEOUT_MS = 30_000;
 
-/** A compiled `rea mcp --http` child and the URL it announced. */
+/** A compiled REA listener child and the URL it announced. */
 export interface McpHttpProcess {
   readonly child: ChildProcessWithoutNullStreams;
   readonly url: URL;
@@ -36,29 +36,24 @@ const listeningUrl = (stderr: string): URL | undefined => {
   return undefined;
 };
 
-/** Spawn `rea mcp --http --port 0` with stdin closed and resolve once it names its URL. */
-export const startMcpHttpProcess = async (
+/** Spawn `rea <arguments>` with stdin closed and resolve once it announces its MCP URL. */
+export const startListeningProcess = async (
   processes: TestProcesses,
-  arguments_: readonly string[] = [],
+  arguments_: readonly string[],
+  environment: Readonly<Record<string, string>> = {},
 ): Promise<McpHttpProcess> => {
   const child = processes.spawn(
     process.execPath,
-    [
-      resolvePath("scripts/rea.mjs"),
-      "mcp",
-      "--http",
-      "--port",
-      "0",
-      ...arguments_,
-    ],
+    [resolvePath("scripts/rea.mjs"), ...arguments_],
     {
       env: {
         PATH: process.env.PATH ?? "",
         HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+        ...environment,
       },
     },
   );
-  // A closed stdin must not end the HTTP listener; only signals do.
+  // A closed stdin must not end the listener; only signals do.
   child.stdin.end();
   let stderr = "";
   const url = await new Promise<URL>((resolve, reject) => {
@@ -89,3 +84,16 @@ export const startMcpHttpProcess = async (
   });
   return { child, url, stderr: () => stderr };
 };
+
+/** Spawn `rea mcp --http --port 0` and resolve once it names its URL. */
+export const startMcpHttpProcess = (
+  processes: TestProcesses,
+  arguments_: readonly string[] = [],
+): Promise<McpHttpProcess> =>
+  startListeningProcess(processes, [
+    "mcp",
+    "--http",
+    "--port",
+    "0",
+    ...arguments_,
+  ]);

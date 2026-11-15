@@ -1,5 +1,6 @@
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { expect, it as test, vi } from "vitest";
 import {
   firmwareFixture,
@@ -7,17 +8,18 @@ import {
 } from "../../fixtures/firmware/provider.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
+import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 
-// Assert recovery behavior through the public reference table, while keeping
-// row identity expectations independent of the instruction's digest.
-const gapsWithContinuations = (
+// Extraction-stage assertions use producer-reported gaps. Unclassified byte
+// coverage has its own oracle in the selected-interval workflow below.
+const stageGapsWithContinuations = (
   result: ReturnType<typeof firmwareResultSchemas.extract_firmware.parse>,
 ) => {
   const instructions = new Map(
@@ -26,17 +28,20 @@ const gapsWithContinuations = (
       instruction,
     ]),
   );
-  return result.extraction_gaps.map(({ continuation_id, ...gap }) => {
-    const instruction = instructions.get(continuation_id);
-    if (instruction === undefined)
-      throw new Error("Missing recovery instruction");
-    return { ...gap, continuation: instruction };
-  });
+  return result.extraction_gaps
+    .filter(({ kind }) => kind !== "unclassified-range")
+    .map(({ continuation_id, ...gap }) => {
+      const instruction = instructions.get(continuation_id);
+      if (instruction === undefined)
+        throw new Error("Missing recovery instruction");
+      return { ...gap, continuation: instruction };
+    });
 };
 
 const directoryCloseFailure = vi.hoisted(() => ({
   mode: "off" as "off" | "transient" | "persistent",
   attempts: 0,
+  parent: "",
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -47,6 +52,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await filesystem.open(...args);
       if (
         directoryCloseFailure.mode !== "off" &&
+        String(args[0]) === directoryCloseFailure.parent &&
         (await handle.stat()).isDirectory()
       ) {
         const close = handle.close.bind(handle);
@@ -68,7 +74,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -98,6 +104,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
   const normalized = firmwareResultSchemas.inspect_firmware_regions.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "binwalk",
+    version: "3.1.0",
+    executable_path: fixture.commands.binwalk,
+  });
   expect(normalized.regions[0]).toMatchObject({
     offset: 2,
     reported_size: 4,
@@ -109,7 +120,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
     report: [{ Analysis: { file_map: [{ id: "hit" }] } }],
   });
   expect(fixture.launches[1]?.args).toEqual(
-    expect.arrayContaining(["--as=1073741824", "--threads", "1"]),
+    expect.arrayContaining([
+      `--as=${String(FIRMWARE_LIMITS.addressSpaceBytes)}:${String(FIRMWARE_LIMITS.addressSpaceBytes)}`,
+      "--threads",
+      "1",
+    ]),
   );
   await assertFirmwareCleanup(fixture.launches);
 });
@@ -140,7 +155,28 @@ it("extracts a selected interval with verified file identity and parent-byte lin
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "unblob",
+    version: "26.6.4",
+    executable_path: fixture.commands.unblob,
+  });
   expect(normalized.selection).toMatchObject({ offset: 2, length: 4 });
+  const unclassified = normalized.extraction_gaps.filter(
+    ({ kind }) => kind === "unclassified-range",
+  );
+  expect(unclassified).toEqual([
+    expect.objectContaining({
+      input_path: "$output/rootfs/config",
+      range: { offset: 0, length: 14 },
+      root_file_range: null,
+    }),
+  ]);
+  expect(
+    normalized.extraction_continuations.find(
+      ({ id }) => id === unclassified[0]?.continuation_id,
+    )?.instruction,
+  ).toContain("published child");
+
   expect(normalized.files[0]).toMatchObject({
     relative_path: "rootfs/config",
     size: 14,
@@ -236,7 +272,7 @@ it("returns firmware output after a transient published-directory close failure"
     expect(await readFile(normalized.files[0]?.path ?? "", "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -285,7 +321,7 @@ it("retains the complete firmware result when published output cleanup stays unc
     expect(await readFile(`${fixture.output}/rootfs/config`, "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -306,19 +342,17 @@ it("shares recovery prose across distinct unknown chunk identities", async () =>
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(normalized.extraction_gaps).toHaveLength(1000);
-  expect(
-    new Set(normalized.extraction_gaps.map(({ provider_id }) => provider_id))
-      .size,
-  ).toBe(1000);
-  expect(normalized.extraction_continuations).toHaveLength(1);
-  const [instruction] = normalized.extraction_continuations;
+  const gaps = normalized.extraction_gaps.filter(
+    ({ kind }) => kind === "unknown-chunk-handler",
+  );
+  expect(gaps).toHaveLength(1000);
+  expect(new Set(gaps.map(({ provider_id }) => provider_id)).size).toBe(1000);
+  const ids = new Set(gaps.map(({ continuation_id }) => continuation_id));
+  expect(ids.size).toBe(1);
+  const instruction = normalized.extraction_continuations.find(({ id }) =>
+    ids.has(id),
+  );
   expect(instruction?.instruction).toContain("inspect_firmware_regions");
-  expect(
-    normalized.extraction_gaps.every(
-      (gap) => gap.continuation_id === instruction?.id,
-    ),
-  ).toBe(true);
 });
 
 it("retains a task dependency failure when the producer names no executable", async () => {
@@ -331,7 +365,7 @@ it("retains a task dependency failure when the producer names no executable", as
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual([
+  expect(stageGapsWithContinuations(normalized)).toEqual([
     {
       kind: "missing-extractor-dependency",
       input_path: "$input",
@@ -356,7 +390,7 @@ it("preserves an unnamed dependency failure on its owning chunk", async () => {
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual([
+  expect(stageGapsWithContinuations(normalized)).toEqual([
     {
       kind: "missing-extractor-dependency",
       input_path: "$input",
@@ -381,7 +415,7 @@ it("routes a nested unknown chunk through its published child", async () => {
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual(
+  expect(stageGapsWithContinuations(normalized)).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         kind: "unknown-chunk-handler",
@@ -395,10 +429,10 @@ it("routes a nested unknown chunk through its published child", async () => {
       }),
     ]),
   );
-  expect(gapsWithContinuations(normalized)[0]?.continuation).toContain(
+  expect(stageGapsWithContinuations(normalized)[0]?.continuation).toContain(
     "only if Binwalk is configured with REA_BINWALK_COMMAND",
   );
-  expect(gapsWithContinuations(normalized)[0]?.continuation).toContain(
+  expect(stageGapsWithContinuations(normalized)[0]?.continuation).toContain(
     "unavailable without configured Binwalk",
   );
 });
@@ -414,7 +448,7 @@ it("retains every eligible child in a maximum-depth continuation", async () => {
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  const gap = gapsWithContinuations(normalized).find(
+  const gap = stageGapsWithContinuations(normalized).find(
     ({ kind, input_path }) =>
       kind === "depth-limited" && input_path === "$output/rootfs/config",
   );
@@ -436,7 +470,7 @@ it("withholds the nested rerun advice when the published child exceeds the input
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual([
+  expect(stageGapsWithContinuations(normalized)).toEqual([
     {
       kind: "unknown-chunk-handler",
       input_path: "$output/rootfs/config",
@@ -471,7 +505,7 @@ it.each([
     );
     expect(normalized.depth_limited_paths.length).toBeGreaterThan(0);
     expect(
-      gapsWithContinuations(normalized).filter(
+      stageGapsWithContinuations(normalized).filter(
         (gap) => gap.kind === "depth-limited",
       ),
     ).toEqual(
@@ -495,7 +529,7 @@ it("reports a failed multi-file stage as an extractor-failure gap", async () => 
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual(
+  expect(stageGapsWithContinuations(normalized)).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         kind: "extractor-failure",
@@ -509,6 +543,78 @@ it("reports a failed multi-file stage as an extractor-failure gap", async () => 
   );
 });
 
+it.each(["task-error", "task-warning"])(
+  "preserves standalone diagnostic recovery without inventing stage ownership: %s",
+  async (mode) => {
+    const fixture = await firmwareFixture(mode);
+    const result = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const normalized = firmwareResultSchemas.extract_firmware.parse(
+      result.value.normalized_result,
+    );
+    const failures = stageGapsWithContinuations(normalized).filter(
+      (gap) => gap.kind === "extractor-failure",
+    );
+    expect(normalized.diagnostics).toContainEqual(
+      expect.objectContaining({
+        input_path: "$input",
+        report: expect.objectContaining({
+          __typename__:
+            mode === "task-error"
+              ? "UnknownError"
+              : "ExtractCommandFailedReport",
+        }),
+      }),
+    );
+    if (mode === "task-error") {
+      expect(failures).toEqual([
+        expect.objectContaining({
+          input_path: "$input",
+          handler: null,
+          provider_id: null,
+          range: null,
+          root_file_range: null,
+          dependencies: [],
+          continuation: expect.stringContaining("diagnostics"),
+        }),
+      ]);
+    } else expect(failures).toEqual([]);
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+it("retains independent failures beside dependencies at each extraction owner", async () => {
+  const fixture = await firmwareFixture("mixed-failures");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (!result.ok) throw result.error;
+  const normalized = firmwareResultSchemas.extract_firmware.parse(
+    result.value.normalized_result,
+  );
+  const gaps = stageGapsWithContinuations(normalized);
+  expect(gaps).toHaveLength(4);
+  for (const provider_id of ["gzip-id", "mixed-id"]) {
+    const owned = gaps.filter((gap) => gap.provider_id === provider_id);
+    expect(owned.map((gap) => gap.kind).sort()).toEqual([
+      "extractor-failure",
+      "missing-extractor-dependency",
+    ]);
+    for (const gap of owned) {
+      expect(gap.input_path).toBe("$input");
+      expect(gap.range).toEqual(
+        provider_id === "mixed-id" ? null : normalized.chunks[0]?.range,
+      );
+    }
+  }
+  expect(normalized.chunks[0]?.extraction_failed).toBe(true);
+  await assertFirmwareCleanup(fixture.launches);
+});
+
 it("carries the owning multi-file stage on a task-level dependency gap", async () => {
   const fixture = await firmwareFixture("multi-file-dependency");
   const result = await fixture.service.execute("extract_firmware", {
@@ -519,7 +625,7 @@ it("carries the owning multi-file stage on a task-level dependency gap", async (
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
-  expect(gapsWithContinuations(normalized)).toEqual([
+  expect(stageGapsWithContinuations(normalized)).toEqual([
     {
       kind: "missing-extractor-dependency",
       input_path: "$input",
@@ -544,12 +650,16 @@ const injectPublishedDirectoryCloseFailure = (persistent: boolean) => {
     .spyOn(SafeOutputTree.prototype, "commit")
     .mockImplementation(async function (this: SafeOutputTree) {
       directoryCloseFailure.mode = persistent ? "persistent" : "transient";
+      // Only the parent descriptor closes after the publication cutoff. A
+      // child/root close failure aborts sync before output becomes published.
+      directoryCloseFailure.parent = dirname(this.outputRoot);
       await commit.call(this);
     });
   return {
     attempts: () => directoryCloseFailure.attempts,
     restore: () => {
       directoryCloseFailure.mode = "off";
+      directoryCloseFailure.parent = "";
       spy.mockRestore();
     },
   };
@@ -572,7 +682,7 @@ it.each(["depth", "dependency", "link"])(
     if (mode === "depth")
       expect(normalized.depth_limited_paths).toEqual(["$output/rootfs/config"]);
     if (mode === "depth")
-      expect(gapsWithContinuations(normalized)).toEqual([
+      expect(stageGapsWithContinuations(normalized)).toEqual([
         {
           kind: "depth-limited",
           input_path: "$output/rootfs/config",
@@ -601,7 +711,7 @@ it.each(["depth", "dependency", "link"])(
         },
       ]);
     if (mode === "dependency")
-      expect(gapsWithContinuations(normalized)).toEqual([
+      expect(stageGapsWithContinuations(normalized)).toEqual([
         {
           kind: "missing-extractor-dependency",
           input_path: "$input",
@@ -614,15 +724,22 @@ it.each(["depth", "dependency", "link"])(
           continuation: expect.stringContaining("installs nothing"),
         },
       ]);
+    const linkLimitation = expect.stringContaining(
+      "Unblob rewrites absolute targets relative to the extraction root",
+    );
+    if (mode === "link")
+      expect(result.value.limitations).toContainEqual(linkLimitation);
+    else expect(result.value.limitations).not.toContainEqual(linkLimitation);
     if (mode === "link") {
       expect(normalized.unpublished_entries).toEqual([
         {
           relative_path: "escape",
           kind: "symlink",
           link_target: "/etc/passwd",
+          link_target_hex: Buffer.from("/etc/passwd", "utf8").toString("hex"),
         },
       ]);
-      expect(gapsWithContinuations(normalized)).toEqual([
+      expect(stageGapsWithContinuations(normalized)).toEqual([
         {
           kind: "unpublished-entry",
           input_path: "$output/escape",
@@ -694,12 +811,16 @@ it("preserves existing output and rejects invalid intervals before invoking extr
   const previous = fixture.launches.length;
   const invalid = await fixture.service.execute("extract_firmware", {
     path: fixture.path,
-    output_directory: fixture.output,
+    output_directory: `${fixture.output}-invalid-range`,
     range: { offset: 100, length: 1 },
   });
   expect(invalid).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisInputError" },
+  });
+  if (invalid.ok) throw new Error("Expected out-of-file-range rejection");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    details: { issues: [{ path: ["range"], reason: "out_of_range" }] },
   });
   expect(fixture.launches).toHaveLength(previous);
   await assertFirmwareCleanup(fixture.launches);
@@ -730,7 +851,7 @@ it("retains startup stderr when Unblob exits 1 without a report", async () => {
       diagnostics: {
         exit_code: 1,
         stderr: expect.stringContaining("Landlock sandbox is not available"),
-        report_failure: expect.stringContaining("ENOENT"),
+        report_state: "missing",
       },
     },
   });
@@ -740,25 +861,51 @@ it("retains startup stderr when Unblob exits 1 without a report", async () => {
   await assertFirmwareCleanup(fixture.launches);
 });
 
-it("distinguishes a successful process with missing output from startup failure", async () => {
-  const fixture = await firmwareFixture("missing-report");
-  const result = await fixture.service.execute("extract_firmware", {
-    path: fixture.path,
-    output_directory: fixture.output,
-  });
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisOutputError",
-      reason: expect.stringContaining("expected complete report"),
-    },
-  });
-  if (result.ok) throw new Error("Expected missing-output failure");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    details: { reason: expect.stringContaining("Producer forgot its report") },
-  });
-  await assertFirmwareCleanup(fixture.launches);
-});
+it.each([
+  { operation: "inspect_firmware_regions", engine: "binwalk" },
+  { operation: "extract_firmware", engine: "unblob" },
+] as const)(
+  "keeps $engine's missing report after exit 0 distinct from an empty result",
+  async ({ operation, engine }) => {
+    const fixture = await firmwareFixture("missing-report");
+    const result = await fixture.service.execute(operation, {
+      path: fixture.path,
+      ...(operation === "extract_firmware"
+        ? { output_directory: fixture.output }
+        : {}),
+    });
+    if (result.ok) throw new Error("Expected missing-report failure");
+    const error = {
+      code: "unreadable_output",
+      retryable: false,
+      message: expect.stringContaining("not an empty or complete result"),
+      details: {
+        reason: `${engine} exited 0 without a usable report: Report was not created`,
+        diagnostics: {
+          report_state: "missing",
+          report_path: expect.stringMatching(/report\.json$/),
+          command: expect.any(String),
+          args: expect.any(Array),
+          exit_code: 0,
+          signal: null,
+          stderr: "Producer forgot its report\n",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("did not retry or substitute"),
+      },
+    };
+    expect(projectAnalysisError(result.error)).toMatchObject(error);
+    expect(projectAnalysisError(result.error).message).not.toContain(
+      "rea doctor",
+    );
+    expect(
+      delivery.toCallToolResult(result, toolContract(operation))
+        .structuredContent,
+    ).toMatchObject({ error });
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
 
 it("cancels an owned active process and permits the next queued operation", async () => {
   const fixture = await firmwareFixture("stall");

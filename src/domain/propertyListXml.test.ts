@@ -38,6 +38,17 @@ it("keeps document-level processing instructions outside plist members", () => {
   expect(parsed.numberLiterals.incomplete).toBe(false);
 });
 
+it("rejects a dictionary key without a value and preserves an explicit empty string", () => {
+  expect(() =>
+    parseXmlPropertyList("<plist><dict><key>missing</key></dict></plist>"),
+  ).toThrow("Missing value for key while parsing <dict/>");
+  expect(
+    parseXmlPropertyList(
+      "<plist><dict><key>empty</key><string/></dict></plist>",
+    ).value,
+  ).toEqual({ empty: "" });
+});
+
 it.each([
   ["CDATA", "<![CDATA[before<?rea content?>after]]>"],
   ["escaped text", "before&lt;?rea content?&gt;after"],
@@ -174,7 +185,7 @@ it("decodes a signed integer zero as zero and a negative-zero real with its sign
   ]);
 });
 
-it("interprets failures in omitted entries before reporting partial evidence", () => {
+it("validates values under every dictionary key", () => {
   expect(() =>
     parseXmlPropertyList(
       "<plist><dict><key>__proto__</key><unsupported/></dict></plist>",
@@ -290,6 +301,13 @@ it("binds raw literals to their nodes across normalized line endings and UTF-16 
   ]);
 });
 
+it("preserves Unicode line separators in plist string values", () => {
+  const value = "a\u0085b\u2028c\u2029d";
+  expect(
+    parseXmlPropertyList(`<plist><string>${value}</string></plist>`).value,
+  ).toBe(value);
+});
+
 it.each(["\u0085", "\u2028", "\u2029"])(
   "does not normalize unsupported leading whitespace %j into an observed scalar",
   (prefix) => {
@@ -317,3 +335,16 @@ it("expands real references outside CDATA without changing scalar source policy"
     false,
   ]);
 });
+
+it.each(["__proto__", "constructor", "ordinary"])(
+  "retains %s key elements used as scalar values",
+  (value) => {
+    expect(
+      parseXmlPropertyList(`<plist><key>${value}</key></plist>`).value,
+    ).toBe(value);
+    expect(
+      parseXmlPropertyList(`<plist><array><key>${value}</key></array></plist>`)
+        .value,
+    ).toEqual([value]);
+  },
+);

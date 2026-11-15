@@ -1,15 +1,14 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-const temporary: string[] = [];
 
 const electronModuleSource = `const { EventEmitter } = require("node:events");
 const app = new EventEmitter();
@@ -17,6 +16,10 @@ app.isReady = () => true;
 app.relaunch = () => undefined;
 app.setAsDefaultProtocolClient = () => true;
 app.setLoginItemSettings = () => undefined;
+app.requestSingleInstanceLock = () => globalThis.__singleInstanceLockHeld !== false;
+app.moveToApplicationsFolder = () => {
+  throw new Error("moveToApplicationsFolder must not run");
+};
 const ipcMain = new EventEmitter();
 ipcMain.handlers = new Map();
 ipcMain.handle = (channel, listener) => ipcMain.handlers.set(channel, listener);
@@ -44,6 +47,7 @@ class BrowserWindow extends EventEmitter {
     this.id = 3;
     this.webContents = new WebContents();
     this.options = options;
+    this.webContents.session = options.webPreferences.session ?? (options.webPreferences.partition ? createSession() : session);
     this.webContents.getLastWebPreferences = () => options.webPreferences;
     app.emit("browser-window-created", {}, this);
   }
@@ -60,14 +64,16 @@ globalThis.__nativeShellCalls = [];
 const shell = {
   openExternal: () => Promise.resolve(),
   openPath: () => Promise.resolve(),
+  trashItem: (path) => require("node:fs/promises").unlink(path),
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
 const createSession = () => {
   const value = new EventEmitter();
-  value.setPermissionRequestHandler = () => undefined;
-  value.setPermissionCheckHandler = () => undefined;
+  value.setPermissionRequestHandler = function(handler) { this.requestHandler = handler; };
+  value.setPermissionCheckHandler = function(handler) { this.checkHandler = handler; };
   value.setCertificateVerifyProc = () => undefined;
+  app.emit("session-created", value);
   return value;
 };
 const session = createSession();
@@ -85,6 +91,7 @@ module.exports = {
   session: {
     defaultSession: session,
     fromPartition: () => customSession,
+    fromPath: () => customSession,
   },
   shell,
   utilityProcess,
@@ -104,13 +111,18 @@ window.webContents.emit(longEventName);
 const utility = electron.utilityProcess.fork("utility.js");
 utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
-electron.session.defaultSession.emit("will-download", window.webContents, { cancel() {} });
-electron.session.fromPartition("persist:custom").emit("will-download", window.webContents, { cancel() {} });
+electron.session.defaultSession.emit("will-download", {}, { cancel() {} }, window.webContents);
+electron.session.fromPartition("persist:custom").emit("will-download", {}, { cancel() {} }, window.webContents);
 const defaultPopupDecision = window.webContents.windowOpenHandler({ url: "https://default-popup.invalid" });
 window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
 electron.shell.openExternal("https://example.invalid").catch(() => undefined);
 electron.app.relaunch();
+const moveResult = electron.app.moveToApplicationsFolder({
+  conflictHandler: () => {
+    throw new Error("conflictHandler must not run");
+  },
+});
 electron.contextBridge.exposeInMainWorld("api", { value: true });
 window.webContents.loadURL("https://example.invalid").catch(() => undefined);
 for (let index = 0; index < 6000; index++) electron.app.relaunch();
@@ -124,21 +136,12 @@ const firstIpc = firstSnapshot.events.find((event) => event.kind === "main-handl
 if (firstIpc) { firstIpc.channel = "mutated"; firstIpc.argument_shapes.push("mutated"); }
 firstSnapshot.events.length = 0;
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision }) + "\\n");
+process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision, move_result: moveResult }) + "\\n");
 })();
 `;
 
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { force: true, recursive: true })),
-  );
-});
-
 it("retains active hook evidence within its event-retention budget", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "exercise.cjs");
   await writeFile(script, activeCaptureSource);
@@ -149,6 +152,7 @@ it("retains active hook evidence within its event-retention budget", async () =>
   ) as {
     readonly default_popup_decision: { readonly action: string };
     readonly popup_decision: { readonly action: string };
+    readonly move_result: boolean;
     readonly snapshot: {
       readonly hook_error: boolean;
       readonly events: readonly Record<string, unknown>[];
@@ -192,18 +196,33 @@ it("retains active hook evidence within its event-retention budget", async () =>
       expect.objectContaining({ kind: "window-lifecycle", event: "created" }),
       expect.objectContaining({ kind: "preload", event: "configured" }),
       expect.objectContaining({ kind: "shell-attempt", phase: "blocked" }),
-      expect.objectContaining({ kind: "updater", phase: "blocked" }),
+      expect.objectContaining({
+        kind: "app-lifecycle",
+        event: "moveToApplicationsFolder",
+        phase: "blocked",
+        argument_shapes: ["object"],
+        error: true,
+      }),
+      expect.objectContaining({
+        kind: "updater",
+        event: "relaunch",
+        phase: "blocked",
+      }),
       expect.objectContaining({ kind: "native-addon" }),
       expect.objectContaining({ kind: "popup-attempt", phase: "blocked" }),
     ]),
   );
   expect(result.default_popup_decision).toEqual({ action: "deny" });
   expect(result.popup_decision).toEqual({ action: "deny" });
+  expect(result.move_result).toBe(false);
   expect(
     snapshot.events.filter(
       (event) => event.kind === "download" && event.phase === "blocked",
     ),
-  ).toHaveLength(2);
+  ).toEqual([
+    expect.objectContaining({ target: "webContents:12" }),
+    expect.objectContaining({ target: "webContents:12" }),
+  ]);
   const ipc = snapshot.events.find(
     (event) => event.kind === "main-handler-invocation",
   );
@@ -225,9 +244,92 @@ it("retains active hook evidence within its event-retention budget", async () =>
   );
 });
 
+it.each([
+  "ready-default",
+  "deferred-default",
+  "partition",
+  "path",
+  "window",
+  "engine",
+])(
+  "denies permissions before app registration and after replacement for %s sessions",
+  async (admission) => {
+    const root = await createTestTempDirectory("rea-electron-session-policy-");
+    await writeElectronFixture(
+      root,
+      admission === "deferred-default"
+        ? electronModuleSource.replace(
+            "app.isReady = () => true",
+            "app.isReady = () => false",
+          )
+        : electronModuleSource,
+    );
+    const script = join(root, "permissions.cjs");
+    await writeFile(
+      script,
+      `const electron = require("electron");
+const admission = ${JSON.stringify(admission)};
+if (admission === "deferred-default") electron.app.emit("ready");
+const engineSession = {
+  setPermissionRequestHandler(handler) { this.requestHandler = handler; },
+  setPermissionCheckHandler(handler) { this.checkHandler = handler; },
+};
+if (admission === "engine") electron.app.emit("session-created", engineSession);
+const selected = admission === "partition" ? electron.session.fromPartition("persist:caller")
+  : admission === "path" ? electron.session.fromPath("/caller/profile")
+  : admission === "window" ? new electron.BrowserWindow({ webPreferences: { partition: "caller" } }).webContents.session
+  : admission === "engine" ? engineSession : electron.session.defaultSession;
+const webContents = { id: 45 };
+const query = () => {
+  let granted = true;
+  if (selected.requestHandler) selected.requestHandler(webContents, "notifications", value => { granted = value; });
+  return { granted, checked: selected.checkHandler ? selected.checkHandler(webContents, "notifications") : true };
+};
+const initial = query();
+let applicationCalls = 0;
+selected.setPermissionRequestHandler((_contents, _permission, callback) => { applicationCalls++; callback(true); });
+selected.setPermissionCheckHandler(() => { applicationCalls++; return true; });
+const replaced = query();
+selected.setPermissionRequestHandler(null);
+selected.setPermissionCheckHandler(null);
+const cleared = query();
+new electron.BrowserWindow({ webPreferences: { session: selected } });
+console.log(JSON.stringify({ initial, replaced, cleared, applicationCalls,
+  snapshot: globalThis.__reaElectronActiveSnapshot() }));`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const result = JSON.parse(execution.stdout.trim());
+    expect(result.initial).toEqual({ granted: false, checked: false });
+    expect(result.replaced).toEqual(result.initial);
+    expect(result.cleared).toEqual(result.initial);
+    expect(result.applicationCalls).toBe(0);
+    expect(result.snapshot.hook_error).toBe(false);
+    expect(
+      result.snapshot.events.filter(
+        (event: { kind: string }) => event.kind === "permission",
+      ),
+    ).toEqual(
+      Array.from({ length: 3 }, () => [
+        expect.objectContaining({
+          event: "permission-request",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+        expect.objectContaining({
+          event: "permission-check",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+      ]).flat(),
+    );
+    expect(JSON.stringify(result.snapshot)).not.toContain("notifications");
+    electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+  },
+);
+
 it("blocks synchronous shell effects with their native return contracts and retains argument shapes only", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-shell-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "shell.cjs");
   await writeFile(
@@ -279,11 +381,103 @@ process.stdout.write(JSON.stringify({
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
 });
 
+it.each([
+  { held: true, refused: false },
+  { held: false, refused: true },
+])(
+  "stops an application handed off by its single-instance lock (held: $held)",
+  async ({ held, refused }) => {
+    const root = await createTestTempDirectory("rea-electron-hook-lock-");
+    await writeElectronFixture(root);
+    const script = join(root, "lock.cjs");
+    await writeFile(
+      script,
+      `const { app } = require("electron");
+globalThis.__singleInstanceLockHeld = ${String(held)};
+setImmediate(async () => {
+  const snapshot = globalThis.__reaElectronActiveSnapshot();
+  // An already-announced refusal settles first; otherwise false wins.
+  const announced = await Promise.race([
+    globalThis.__reaElectronSingleInstanceLockRefusal,
+    Promise.resolve(false),
+  ]);
+  process.stdout.write(JSON.stringify({
+    refused: snapshot.single_instance_lock_refused,
+    announced,
+    events: snapshot.events.filter((event) => event.event === "requestSingleInstanceLock"),
+  }) + "\\n");
+});
+const primary = app.requestSingleInstanceLock();
+process.stdout.write(JSON.stringify({ application_continued: primary }) + "\\n");
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const lines = execution.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    // A refused launch belongs to the running instance: application code
+    // after the lock request must not run, and the process stays readable.
+    expect(lines).toEqual([
+      ...(held ? [{ application_continued: true }] : []),
+      {
+        refused,
+        announced: refused,
+        events: refused
+          ? [
+              expect.objectContaining({
+                kind: "app-lifecycle",
+                phase: "blocked",
+                target: "app",
+                error: true,
+              }),
+            ]
+          : [],
+      },
+    ]);
+  },
+);
+
+it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-trash-");
+  await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
+  const script = join(root, "trash.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const result = shell.trashItem(${JSON.stringify(selected)});
+const promise = result instanceof Promise;
+result.then(
+  () => { throw new Error("trashItem unexpectedly succeeded"); },
+  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
+);
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim());
+  expect(result.promise).toBe(true);
+  expect(result.message).toBe("External shell effects are blocked");
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(result.snapshot.events).toContainEqual(
+    expect.objectContaining({
+      kind: "shell-attempt",
+      event: "trashItem",
+      phase: "blocked",
+      argument_shapes: ["string"],
+      error: true,
+    }),
+  );
+  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
+});
+
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-browser-preload-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "browser-preload.cjs");
   await writeFile(
@@ -321,7 +515,6 @@ process.stdout.write(JSON.stringify(snapshot) + "\\n");
 
 it("removes observed ipcMain listeners through their original function", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-removal-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-removal.cjs");
   await writeFile(
@@ -365,7 +558,6 @@ process.stdout.write(JSON.stringify({
 
 it("removes the newest matching ipcMain registration across unpatched aliases", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-aliases-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-aliases.cjs");
   await writeFile(
@@ -408,7 +600,6 @@ process.stdout.write(JSON.stringify({
 
 it("records ipcMain listeners registered by a newListener callback during once", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-nested-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-nested.cjs");
   await writeFile(
@@ -439,7 +630,6 @@ process.stdout.write(JSON.stringify({
 
 it("keeps removal working after many fired ipcMain once registrations", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-repeat-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-repeat.cjs");
   await writeFile(
@@ -474,7 +664,6 @@ process.stdout.write(JSON.stringify({
 
 it("removes the newest registration of an ipcMain listener that has its own listener property", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-wrapped-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-wrapped.cjs");
   await writeFile(
@@ -506,7 +695,6 @@ process.stdout.write(JSON.stringify({
 
 it("reports original ipcMain listeners to newListener and removeListener observers", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-meta-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-meta.cjs");
   await writeFile(
@@ -553,7 +741,6 @@ process.stdout.write(JSON.stringify({
 
 it("registers and removes ipcMain once listeners through decorators installed after the hook", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-decor-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-decorators.cjs");
   await writeFile(
@@ -602,7 +789,6 @@ process.stdout.write(JSON.stringify({
 
 it("keeps hooked ipcMain listener semantics identical to an unhooked EventEmitter", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-diff-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-differential.cjs");
   await writeFile(
@@ -686,7 +872,6 @@ process.stdout.write(JSON.stringify({
 
 it("keeps a replacement registered by a removeListener observer during ipcMain removeAllListeners", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-replace-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-replacement.cjs");
   await writeFile(
@@ -758,9 +943,39 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["ch"]);
 });
 
+it("does not infer hook dispatch from an application's listener metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-indirect-owner-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "indirect-owner.cjs");
+  await writeFile(
+    script,
+    `const {ipcMain}=require("electron");
+ipcMain.on("seed",()=>{});
+let calls=0;
+const outer=()=>{calls++;};
+outer.listener=ipcMain.rawListeners("seed")[0];
+ipcMain.on("outer",outer);
+ipcMain.emit("outer", {sender:{id:9}});
+ipcMain.removeListener("outer",outer);
+const events=globalThis.__reaElectronActiveSnapshot().events;
+process.stdout.write(JSON.stringify({calls,remaining:ipcMain.listenerCount("outer"),
+ invocations:events.filter(e=>e.kind==="main-event-invocation"&&e.channel==="outer").length,
+ gaps:events.filter(e=>e.kind==="ipc-observation-gap"&&e.channel==="outer").map(e=>e.event)}));`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 1,
+    remaining: 0,
+    invocations: 0,
+    gaps: ["listener-chain"],
+  });
+});
+
 it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-wrap-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-wrapping-decorator.cjs");
   await writeFile(
@@ -834,7 +1049,6 @@ it.each(["stable", "replaced", "readonly", "getter", "proxy"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-ipc-remove-decorator-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-removal-decorator.cjs");
     await writeFile(
@@ -907,7 +1121,6 @@ it("preserves native removal before mutated raw listener metadata throws", async
   const root = await createTestTempDirectory(
     "rea-electron-hook-ipc-mutated-metadata-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-mutated-listener-metadata.cjs");
   await writeFile(
@@ -942,13 +1155,12 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
 
 it("matches native once dispatch and retains only established invocations", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-native-once-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "electron-once-runtime.mjs");
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),
@@ -1010,7 +1222,6 @@ it.each(["single-on", "multiple-on", "empty-once", "event-once"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-ipc-dispatch-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-native-dispatch.cjs");
     await writeFile(
@@ -1067,7 +1278,6 @@ it.each([
   "primitive",
 ])("preserves raw callback apply with %s argument lists", async (mode) => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-apply-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-apply.cjs");
   await writeFile(
@@ -1121,7 +1331,6 @@ it("preserves the native once argument-list object passed to custom apply", asyn
   const root = await createTestTempDirectory(
     "rea-electron-hook-ipc-once-args-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-once-arguments.cjs");
   await writeFile(
@@ -1172,7 +1381,6 @@ it.each([
   const root = await createTestTempDirectory(
     "rea-electron-hook-ipc-prototype-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-inherited-listener.cjs");
   await writeFile(
@@ -1216,7 +1424,6 @@ it.each(["on", "multiple-on", "once"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-ipc-species-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-array-species.cjs");
     await writeFile(
@@ -1274,7 +1481,6 @@ it.each(["array", "arguments", "array-like", "null"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-custom-apply-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-custom-apply.cjs");
     await writeFile(
@@ -1341,7 +1547,6 @@ it.each([false, true])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-borrowed-apply-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-borrowed-apply.cjs");
     await writeFile(
@@ -1385,7 +1590,6 @@ it("uses the captured Array.isArray intrinsic while selecting a native listener 
   const root = await createTestTempDirectory(
     "rea-electron-hook-captured-array-is-array-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "captured-array-is-array.cjs");
   await writeFile(
@@ -1443,7 +1647,6 @@ it.each([
     const root = await createTestTempDirectory(
       "rea-electron-hook-late-intrinsic-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-late-intrinsic.cjs");
     await writeFile(
@@ -1501,7 +1704,7 @@ it.each([
     depth: 16,
     prototypeDepth: 0,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 1,
   },
   {
@@ -1541,7 +1744,7 @@ it.each([
     depth: 1,
     prototypeDepth: 1,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1565,7 +1768,7 @@ it.each([
     depth: 1,
     prototypeDepth: 16,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1582,7 +1785,6 @@ it.each([
     const root = await createTestTempDirectory(
       "rea-electron-hook-chain-coverage-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-chain-coverage.cjs");
     await writeFile(
@@ -1651,7 +1853,6 @@ it.each(["array", "map"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-snapshot-iterator-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-snapshot-iterator.cjs");
     await writeFile(
@@ -1688,7 +1889,6 @@ console.log(JSON.stringify({ calls, reads, failure, copied: !!copied, retained: 
 
 it("invokes handle callbacks without reading callable method properties", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-callable-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-callable-properties.cjs");
   await writeFile(
@@ -1749,7 +1949,6 @@ const scenario = async (emitter, observed) => {
 
 it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "ipc-prepend-during-removal.cjs");
   await writeFile(
@@ -1799,7 +1998,6 @@ it.each(["accessor", "proxy"])(
     const root = await createTestTempDirectory(
       "rea-electron-hook-ipc-accessor-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "ipc-listener-accessor.cjs");
     await writeFile(
@@ -1852,7 +2050,6 @@ process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooke
 
 it("isolates hook and exercise from ancestor Electron packages", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ancestor-");
-  temporary.push(root);
   await writeElectronFixture(root, 'module.exports = "/ambient/Electron";');
   const ambientHook = await stageHook(join(root, "producer", "scripts"));
   expect(createRequire(ambientHook)("electron")).toBe("/ambient/Electron");
@@ -1882,7 +2079,6 @@ it("does not read an application rawListeners accessor during hook setup", async
   const root = await createTestTempDirectory(
     "rea-electron-hook-raw-listeners-accessor-",
   );
-  temporary.push(root);
   const source = electronModuleSource.replace(
     "const ipcMain = new EventEmitter();",
     `const ipcMain = new EventEmitter();
@@ -1919,7 +2115,6 @@ it("leaves an accessor removal method untouched and suppresses uncertain invocat
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-method-accessor-",
   );
-  temporary.push(root);
   const source = electronModuleSource.replace(
     "const ipcMain = new EventEmitter();",
     `const ipcMain = new EventEmitter();
@@ -1973,7 +2168,6 @@ it("preserves native last-registration order when the last raw listener link is 
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-mutated-lifo-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-mutated-lifo.cjs");
   await writeFile(
@@ -2044,7 +2238,6 @@ it("lets a later data listener link win over an earlier owned callback", async (
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-later-data-link-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-later-data-link.cjs");
   await writeFile(
@@ -2100,7 +2293,6 @@ it("normalizes a later raw link to an earlier owned registration", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-owned-link-chain-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-owned-link-chain.cjs");
   await writeFile(
@@ -2156,7 +2348,6 @@ it("preserves native direct-removal cleanup with throwing listener metadata", as
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-accessor-gap-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-accessor-gap.cjs");
   await writeFile(
@@ -2203,7 +2394,6 @@ it("forwards native direct-removal bookkeeping to the real emitter", async () =>
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-bookkeeping-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-bookkeeping.cjs");
   await writeFile(
@@ -2269,7 +2459,6 @@ it.each([1, 2] as const)(
     const root = await createTestTempDirectory(
       "rea-electron-hook-removal-meta-accessor-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "removal-meta-accessor.cjs");
     await writeFile(
@@ -2340,7 +2529,6 @@ it("keeps listener ownership when native function prototype metadata changes", a
   const root = await createTestTempDirectory(
     "rea-electron-hook-wrapper-constructor-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "wrapper-constructor.cjs");
   await writeFile(
@@ -2377,7 +2565,6 @@ it("matches native custom inspection that mutates the raw listener", async () =>
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-inspect-mutation-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-inspect-mutation.cjs");
   await writeFile(
@@ -2421,7 +2608,6 @@ it("normalizes an earlier raw owner in a later removal meta payload", async () =
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-owned-meta-link-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-owned-meta-link.cjs");
   await writeFile(
@@ -2461,7 +2647,6 @@ it("preserves the native argument that proves a chained removal match", async ()
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-chain-argument-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-chain-argument.cjs");
   await writeFile(
@@ -2506,7 +2691,6 @@ it("falls back to native errors for a revoked listener-array proxy", async () =>
   const root = await createTestTempDirectory(
     "rea-electron-hook-revoked-listener-array-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "revoked-listener-array.cjs");
   await writeFile(
@@ -2559,7 +2743,6 @@ it("records a gap when an opaque later registration blocks ownership ordering", 
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-opaque-gap-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-opaque-gap.cjs");
   await writeFile(
@@ -2607,7 +2790,6 @@ it("preserves pre-hook removeListener decorator receiver and callback identity",
   const root = await createTestTempDirectory(
     "rea-electron-hook-preinstalled-removal-decorator-",
   );
-  temporary.push(root);
   const source = electronModuleSource.replace(
     "const ipcMain = new EventEmitter();",
     `const ipcMain = new EventEmitter();
@@ -2616,7 +2798,7 @@ const originalRemoveListener = EventEmitter.prototype.removeListener;
 ipcMain.removeListener = function(channel, callback) {
   globalThis.__preHookRemovalCalls.push({
     receiverIsEmitter: this === ipcMain,
-    callbackName: callback.name,
+    callback,
   });
   return Reflect.apply(originalRemoveListener, this, arguments);
 };`,
@@ -2631,21 +2813,28 @@ const observations = globalThis.__preHookRemovalCalls;
 const decorate = (emitter) => {
   const native = EventEmitter.prototype.removeListener;
   emitter.removeListener = function(channel, callback) {
-    observations.push({ receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(native, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const original = function original() {};
   emitter.on("ch", original);
   emitter.rawListeners("ch")[0].listener = () => {};
   emitter.removeListener("ch", original);
-  return emitter.listenerCount("ch");
+  return {
+    remaining: emitter.listenerCount("ch"),
+    forwarded: observations.slice(start).map(({ receiverIsEmitter, callback }) => ({
+      receiverIsEmitter, callbackIsOriginal: callback === original,
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.remaining, hooked: hooked.remaining,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
 `,
   );
@@ -2656,25 +2845,23 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly hooked: number;
     readonly observations: readonly {
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIsOriginal: boolean;
     }[];
     readonly hook_error: boolean;
   };
   expect(result.hook_error).toBe(false);
   expect(result.plain).toBe(0);
   expect(result.hooked).toBe(0);
-  expect(result.observations[0]).toEqual({
-    receiverIsEmitter: true,
-    callbackName: "original",
-  });
-  expect(result.observations[1]).toEqual(result.observations[0]);
+  expect(result.observations).toEqual([
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+  ]);
 });
 
 it("forwards pre-hook on and once decorators exact registrations with an explicit gap", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-preinstalled-registration-decorators-",
   );
-  temporary.push(root);
   const source = electronModuleSource.replace(
     "const ipcMain = new EventEmitter();",
     `const ipcMain = new EventEmitter();
@@ -2684,13 +2871,13 @@ const install = (emitter) => {
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "on", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "once", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOnce, this, arguments);
   };
@@ -2708,16 +2895,17 @@ const decorate = (emitter) => {
   const nativeOn = EventEmitter.prototype.on;
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
-    observations.push({ method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "on", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
-    observations.push({ method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "once", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOnce, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const calls = [];
   const ordinary = function ordinary() { calls.push("ordinary"); };
   const oneShot = function oneShot() { calls.push("oneShot"); };
@@ -2725,12 +2913,20 @@ const scenario = (emitter) => {
   emitter.once("ch", oneShot);
   emitter.emit("ch");
   emitter.removeAllListeners("ch");
-  return calls;
+  return {
+    calls,
+    forwarded: observations.slice(start).map(({ method, receiverIsEmitter, callback }) => ({
+      method, receiverIsEmitter,
+      callbackIdentity: callback === ordinary ? "ordinary" : callback === oneShot ? "oneShot" :
+        Object.getOwnPropertyDescriptor(callback, "listener")?.value === oneShot ? "onceWrapper" : "unexpected",
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.calls, hooked: hooked.calls,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   calls: snapshot.events.filter((event) => event.kind === "main-event-invocation"),
   gaps: snapshot.events.filter((event) => event.kind === "ipc-observation-gap"),
   hook_error: snapshot.hook_error }));
@@ -2744,7 +2940,7 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly observations: readonly {
       readonly method: string;
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIdentity: string;
     }[];
     readonly calls: readonly unknown[];
     readonly gaps: readonly {
@@ -2757,19 +2953,19 @@ console.log(JSON.stringify({ plain, hooked, observations,
   expect(result.plain).toEqual(["ordinary", "oneShot"]);
   expect(result.hooked).toEqual(result.plain);
   expect(result.observations).toEqual([
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
   ]);
   expect(result.calls).toEqual([]);
@@ -2783,7 +2979,6 @@ it("forwards borrowed on and once registrations without attributing calls to ipc
   const root = await createTestTempDirectory(
     "rea-electron-hook-borrowed-registration-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "borrowed-registration.cjs");
   await writeFile(
@@ -2879,7 +3074,6 @@ it("does not inspect object event channels while recording registration gaps", a
   const root = await createTestTempDirectory(
     "rea-electron-hook-object-channel-gap-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "object-channel-gap.cjs");
   await writeFile(
@@ -2923,7 +3117,6 @@ it("preserves borrowed removeAllListeners callback identity", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-borrowed-remove-all-identity-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "borrowed-remove-all-identity.cjs");
   await writeFile(
@@ -2982,7 +3175,6 @@ it("does not coerce object channels before native listener removal", async () =>
   const root = await createTestTempDirectory(
     "rea-electron-hook-object-channel-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "object-channel.cjs");
   await writeFile(
@@ -3026,7 +3218,6 @@ it("removes observed ipcMain registrations after the public listener link is del
   const root = await createTestTempDirectory(
     "rea-electron-hook-removal-deleted-link-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "removal-deleted-link.cjs");
   await writeFile(
@@ -3086,7 +3277,6 @@ it("passes canonical owned callbacks through post-hook removeAll decorators desp
   const root = await createTestTempDirectory(
     "rea-electron-hook-remove-all-decorator-accessor-",
   );
-  temporary.push(root);
   await writeElectronFixture(root);
   const script = join(root, "remove-all-decorator-accessor.cjs");
   await writeFile(
@@ -3160,7 +3350,6 @@ it.each(["removeListener", "off"] as const)(
     const root = await createTestTempDirectory(
       "rea-electron-hook-removal-direct-link-",
     );
-    temporary.push(root);
     await writeElectronFixture(root);
     const script = join(root, "removal-direct-link.cjs");
     await writeFile(
@@ -3232,9 +3421,185 @@ process.stdout.write(JSON.stringify({
   },
 );
 
+it("preserves warning-only rejections and records later blocked shell rejections", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-warn-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "warnings.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+Promise.reject(new Error("controlled rejection"));
+setImmediate(() => {
+  shell.openExternal("https://example.invalid");
+  setImmediate(() => {
+    console.log(JSON.stringify({
+      listeners: process.listenerCount("unhandledRejection"),
+      events: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+        event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => ({
+          phase: event.phase, argument_shapes: event.argument_shapes, error: event.error,
+        })),
+    }));
+  });
+});
+`,
+  );
+  const result = await runNode(script, root, undefined, [
+    "--unhandled-rejections=warn",
+  ]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toContain("UnhandledPromiseRejectionWarning");
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 0,
+    events: Array.from({ length: 2 }, () => ({
+      phase: "observed",
+      argument_shapes: ["object", "object"],
+      error: true,
+    })),
+  });
+});
+
+it("preserves application rejection listeners and borrowed process emit behavior", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-listener-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "listeners.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const reason = new Error("controlled listener reason");
+const promise = Promise.resolve();
+const sentinel = new Error("controlled listener throw");
+let calls = 0;
+process.on("unhandledRejection", (actualReason, actualPromise) => {
+  if (actualReason !== reason || actualPromise !== promise) throw new Error("identity changed");
+  calls++;
+  if (calls === 2) throw sentinel;
+});
+const returned = process.emit("unhandledRejection", reason, promise);
+let sameThrow = false;
+try { process.emit("unhandledRejection", reason, promise); } catch (cause) { sameThrow = cause === sentinel; }
+const borrowed = process.emit.call(new EventEmitter(), "unhandledRejection", reason, promise);
+console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
+  listeners: process.listenerCount("unhandledRejection"),
+  observed: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle" && event.event === "unhandled-rejection").length,
+}));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    calls: 2,
+    returned: true,
+    sameThrow: true,
+    borrowed: false,
+    listeners: 1,
+    observed: 2,
+  });
+});
+
+it("delivers revoked proxy rejections to the application's original handler", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-revoked-rejection-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "revoked-rejections.cjs");
+  await writeFile(
+    script,
+    `const entries = [{}, [], () => undefined, []].map((target, index) => {
+  const { proxy, revoke } = Proxy.revocable(target, {});
+  if (index < 3) revoke();
+  return { reason: proxy, promise: undefined };
+});
+const received = [];
+process.on("unhandledRejection", (reason, promise) => {
+  received.push(entries.some(entry => entry.reason === reason && entry.promise === promise));
+});
+for (const entry of entries) entry.promise = Promise.reject(entry.reason);
+setImmediate(() => console.log(JSON.stringify({
+  received,
+  listeners: process.listenerCount("unhandledRejection"),
+  shapes: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+    event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes),
+})));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    received: [true, true, true, true],
+    listeners: 1,
+    shapes: [
+      ["object", "object"],
+      ["object", "object"],
+      ["function", "object"],
+      ["array", "object"],
+    ],
+  });
+});
+
+it("preserves an Electron-style uncaught exception listener policy", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-uncaught-policy-",
+  );
+  await writeElectronFixture(
+    root,
+    electronModuleSource +
+      `
+process.on("uncaughtException", () => {
+  if (process.listenerCount("uncaughtException") > 1) return;
+  console.log(JSON.stringify({ listeners: process.listenerCount("uncaughtException"),
+    kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+  }));
+});
+`,
+  );
+  const script = join(root, "uncaught.cjs");
+  await writeFile(script, 'throw new Error("controlled uncaught");\n');
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 1,
+    kinds: ["uncaught-exception"],
+  });
+});
+
+it.each(["throw", "strict"])(
+  "preserves fatal rejection policy in %s mode",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-rejection-fatal-",
+    );
+    await writeElectronFixture(root);
+    const script = join(root, "fatal-rejection.cjs");
+    await writeFile(
+      script,
+      `process.on("exit", () => console.log(JSON.stringify({
+  listeners: process.listenerCount("uncaughtException"),
+  kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+})));
+Promise.reject(new Error("controlled fatal rejection"));
+`,
+    );
+    const result = await runNode(script, root, undefined, [
+      "--unhandled-rejections=" + mode,
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("controlled fatal rejection");
+    expect(JSON.parse(result.stdout)).toEqual({
+      listeners: 0,
+      kinds:
+        mode === "throw"
+          ? ["unhandled-rejection", "uncaught-exception"]
+          : ["uncaught-exception"],
+    });
+  },
+);
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
-  temporary.push(root);
   await writeElectronFixture(
     root,
     'throw new Error("controlled Electron unavailable");',
@@ -3249,6 +3614,99 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.code).not.toBe(0);
   expect(result.stdout.trim()).toBe("true");
   expect(result.stderr).toContain("fatal-hook-secret");
+});
+
+it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
+  "restores the exact application argv with Playwright prefix %j",
+  async ({ sandboxPrefix }) => {
+    const root = await createTestTempDirectory("rea-electron-argv-");
+    await writeElectronFixture(root);
+    const hook = join(root, "electron-active-hook.cjs");
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "--config=/caller/app.asar/settings",
+      "-r",
+      hook,
+      `--require=${hook}`,
+      "--inspect=0",
+      "--remote-debugging-port=0",
+      "/caller/electron-active-hook.cjs",
+      "",
+      "中文",
+    ];
+    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
+    const script = join(root, "argv.cjs");
+    await writeFile(
+      script,
+      `
+      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
+        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
+      process.argv = argv;
+      const plan = ${JSON.stringify(plan)};
+      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+    );
+    // The bootstrap script establishes Electron's observed argv before loading the hook.
+    const result = await runNode(script, root, undefined, [], false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
+      same: true,
+      handoff_present: false,
+      hook_error: false,
+    });
+  },
+);
+
+it.each([
+  "absent",
+  "invalid-json",
+  "mismatch",
+  "foreign-hook",
+  "unknown-prefix",
+  "no-entry",
+])("preserves observed argv for an %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  await writeElectronFixture(root);
+  const hook = join(root, "electron-active-hook.cjs");
+  const plan = ["-r", hook, "/selected/app", "caller-document"];
+  const script = join(root, "guard.cjs");
+  await writeFile(
+    script,
+    `
+      const mode = ${JSON.stringify(mode)};
+      const plan = ${JSON.stringify(plan)};
+      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
+      process.argv = argv;
+      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
+      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
+      if (mode === "no-entry") plan.length = 2;
+      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
+        length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      const before = JSON.stringify(argv);
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
+        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+  );
+  const result = await runNode(script, root, undefined, [], false);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    unchanged: true,
+    same: true,
+    handoff_present: false,
+    hook_error: mode !== "absent",
+  });
 });
 
 const writeElectronFixture = async (
@@ -3286,29 +3744,26 @@ const runNode = async (
   script: string,
   root: string,
   sourceHook?: string,
+  nodeArguments: readonly string[] = [],
+  preloadHook = true,
 ): Promise<{
   readonly code: number | null;
   readonly stdout: string;
   readonly stderr: string;
 }> => {
-  const hook = await stageHook(root, sourceHook);
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) =>
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
+  const processes = createTestProcessRegistry();
+  onTestFinished(() => processes.shutdown());
+  return withVerifierCleanup(async () => {
+    const hook = await stageHook(root, sourceHook);
+    const result = await processes.run(
+      process.execPath,
+      [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
+      { cwd: root, env: process.env },
     );
-  });
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }, [() => processes.shutdown()]);
 };

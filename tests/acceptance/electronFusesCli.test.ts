@@ -285,6 +285,9 @@ cliTest(
     expect(evidence.limitations.join(" ")).toContain(
       "unknown, not that every fuse is disabled",
     );
+    expect(evidence.limitations.join(" ")).toContain(
+      "fuse state for that slice is unknown, not disabled",
+    );
   },
 );
 

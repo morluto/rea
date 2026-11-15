@@ -15,6 +15,8 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -113,14 +115,30 @@ it.runIf(supportedHost)(
       throw new Error("Expected output overflow and failed cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { truncated: true },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
-          details: { captured_output: { truncated: true } },
+          code: "resource_constraint",
         },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details?.captured_output).toEqual(
+      result.error.capturedOutput,
+    );
+    expect(projected).not.toHaveProperty(
+      "details.diagnostics.primary_error.details.captured_output",
+    );
+    const output = result.error.capturedOutput?.stdout;
+    if (!output) throw new Error("Expected retained truncated worker output");
+    // The cleanup owner also retains a bounded worker snapshot for its own
+    // failed-close receipt. Generic primary history must not add a third copy.
+    expect(projected).toHaveProperty(
+      "details.diagnostics.cleanup_error.details.diagnostics.captured_output.stdout",
+      output,
+    );
+    expect(JSON.stringify(projected).split(output)).toHaveLength(3);
     if (pid === undefined)
       throw new Error("The fixture did not acquire a process");
     const workerPid = pid;
@@ -195,11 +213,9 @@ it.runIf(supportedHost)(
       throw new Error("Expected command and root-removal failures");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { stdout: "retained diagnostic" },
       diagnostics: {
-        primary_error: {
-          code: "execution_failure",
-          details: { diagnostics: { stdout: "retained diagnostic" } },
-        },
+        primary_error: { code: "execution_failure" },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
@@ -248,7 +264,7 @@ it.runIf(supportedHost)(
       await provider.close();
     });
     const first = provider.inspect({ path });
-    await started;
+    await awaitAcknowledgement(started, first, "pwntools launch");
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
     const reason = { stage: "queued" };

@@ -2,9 +2,15 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 
-import { toWebRequest, writeWebResponse } from "./nodeHttpBridge.js";
+import {
+  toWebRequest,
+  writeWebResponse,
+  type WebResponseOptions,
+} from "./nodeHttpBridge.js";
+import { waitFor } from "../../../tests/support/testWait.js";
+import { CallerAbort } from "../../domain/analysisErrorCore.js";
 
 const servers: Server[] = [];
 const encoder = new TextEncoder();
@@ -20,6 +26,7 @@ afterEach(async () => {
 /** Serve a web handler through the bridge on an ephemeral loopback port. */
 const serve = async (
   handle: (request: Request) => Response | Promise<Response>,
+  options: WebResponseOptions = {},
 ): Promise<string> => {
   const server = createServer();
   servers.push(server);
@@ -30,7 +37,7 @@ const serve = async (
     void (async () => {
       try {
         const webRequest = toWebRequest(request, response, origin);
-        await writeWebResponse(await handle(webRequest), response);
+        await writeWebResponse(await handle(webRequest), response, options);
       } catch {
         response.destroy();
       }
@@ -61,7 +68,7 @@ it("ends a HEAD reply after the headers and cancels a body the handler attached"
   const response = await fetch(`${origin}/events`, { method: "HEAD" });
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toBe("text/event-stream");
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(cancelled).toBe(true);
   });
   expect(pulls).toBeLessThanOrEqual(1);
@@ -88,7 +95,7 @@ it("finishes a HEAD reply without waiting on a teed body whose sibling stays liv
     method: "HEAD",
   });
   expect(response.status).toBe(200);
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(finished).toBe(true);
   });
 });
@@ -121,11 +128,11 @@ it("cancels the body when an asynchronous route resolves after its client left",
   const socket = connect(port, "127.0.0.1");
   await once(socket, "connect");
   socket.write("GET /late HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(received).toBe(true);
   });
   socket.destroy();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(settled).toBe(true);
     expect(cancelled).toBe(true);
   });
@@ -160,7 +167,7 @@ it("returns when a client leaves a teed streaming body whose sibling stays live"
   const first = await response.body.getReader().read();
   expect(decoder.decode(first.value)).toBe("data: first\n\n");
   leave.abort();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(settled).toBe(true);
   });
 });
@@ -235,11 +242,11 @@ it("streams response chunks as the handler produces them", async () => {
 });
 
 it("aborts the web Request and cancels its response body when the client leaves", async () => {
-  let aborted = false;
+  let aborted: unknown;
   let cancelled = false;
   const origin = await serve((request) => {
     request.signal.addEventListener("abort", () => {
-      aborted = true;
+      aborted = request.signal.reason;
     });
     return new Response(
       new ReadableStream({
@@ -261,23 +268,41 @@ it("aborts the web Request and cancels its response body when the client leaves"
   if (reader === undefined) throw new Error("Response body missing");
   await reader.read();
   controller.abort();
-  await vi.waitFor(() => {
-    expect(aborted).toBe(true);
+  await waitFor(() => {
+    expect(aborted).toBeInstanceOf(CallerAbort);
+    expect(aborted).toMatchObject({ kind: "client-disconnected" });
     expect(cancelled).toBe(true);
   });
 });
 
-it("preserves every Set-Cookie header of a composed route", async () => {
-  const origin = await serve(() => {
-    const headers = new Headers({ "x-one": "1" });
-    headers.append("set-cookie", "session=a; Path=/; HttpOnly");
-    headers.append("set-cookie", "csrf=b; Path=/");
-    return new Response("ok", { headers });
-  });
-  const response = await fetch(`${origin}/cookies`);
-  expect(response.headers.get("x-one")).toBe("1");
-  expect(response.headers.getSetCookie()).toEqual([
-    "session=a; Path=/; HttpOnly",
-    "csrf=b; Path=/",
-  ]);
-});
+it.each([false, true])(
+  "preserves legal field names and separate cookies with closeConnection=%s",
+  async (closeConnection) => {
+    const origin = await serve(
+      () => {
+        const headers = new Headers([
+          ["x-one", "1"],
+          ["__proto__", "source-value"],
+          ["constructor", "ordinary-field"],
+          ["connection", "keep-alive"],
+        ]);
+        headers.append("set-cookie", "session=a; Path=/; HttpOnly");
+        headers.append("set-cookie", "csrf=b; Path=/");
+        return new Response("ok", { headers });
+      },
+      { closeConnection },
+    );
+    const response = await fetch(`${origin}/cookies`);
+    expect(response.headers.get("x-one")).toBe("1");
+    expect(response.headers.get("__proto__")).toBe("source-value");
+    expect(response.headers.get("constructor")).toBe("ordinary-field");
+    expect(response.headers.get("connection")).toBe(
+      closeConnection ? "close" : "keep-alive",
+    );
+    expect(response.headers.getSetCookie()).toEqual([
+      "session=a; Path=/; HttpOnly",
+      "csrf=b; Path=/",
+    ]);
+    await expect(response.text()).resolves.toBe("ok");
+  },
+);

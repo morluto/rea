@@ -12,7 +12,7 @@ const execute = promisify(execFile);
 // A recording port checks the experimental producer/consumer representation.
 // Real provider verification remains in the separate native experiment receipts.
 const generate = `
-import {measureNativeEntry} from './experiments/analysis-efficiency/native-entry.mjs';
+import {measureNativeEntry} from './tests/support/analysis-efficiency/native-entry.mjs';
 const sha='0'.repeat(64);
 const duplicate=process.argv[1]==='duplicate';
 const stale=process.argv[1]==='stale-dos';
@@ -162,7 +162,7 @@ it.each([
       events.map((value) => JSON.stringify(value)).join("\n"),
     );
     const command = execute("python3", [
-      resolve("experiments/analysis-efficiency/review-model.py"),
+      resolve("tests/support/analysis-efficiency/review-model.py"),
       "--domain",
       "native",
       "--trial",
@@ -292,7 +292,7 @@ it.each(["references", "item", "coverage", "limitations", "unknowns"])(
     }
     const output = join(root, "comparison.json");
     const command = execute(process.execPath, [
-      resolve("experiments/analysis-efficiency/compare.mjs"),
+      resolve("tests/support/analysis-efficiency/compare.mjs"),
       "--left",
       left,
       "--right",

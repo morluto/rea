@@ -14,7 +14,7 @@ import {
 } from "./externalMutationAdmission.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 export type LldbToolManager = Pick<
   LldbSessionManager,
@@ -42,22 +42,30 @@ export const registerLldbTools = (
     start.name,
     toolRegistrationOptions(start),
     async (input, context: ServerContext) => {
-      const result = await logToolExecution(logger, start.name, () =>
-        manager.start(context.mcpReq.signal, {
-          ...(input.path !== undefined && { path: input.path }),
-          ...(input.args !== undefined && { args: input.args }),
-          ...(input.env !== undefined && { env: input.env }),
-          ...(input.pid !== undefined && { pid: input.pid }),
-          ...(input.stop_at_entry !== undefined && {
-            stop_at_entry: input.stop_at_entry,
-          }),
-          ...(input.disable_aslr !== undefined && {
-            disable_aslr: input.disable_aslr,
-          }),
-          ...(input.breakpoints !== undefined && {
-            breakpoints: input.breakpoints,
-          }),
-        }),
+      const result = await runWithExternalMutationAdmission(
+        session,
+        start.name,
+        context.mcpReq.signal,
+        () =>
+          logToolExecution(logger, start.name, () =>
+            manager.start(context.mcpReq.signal, {
+              ...(input.path !== undefined && { path: input.path }),
+              ...(input.args !== undefined && { args: input.args }),
+              ...(input.env !== undefined && { env: input.env }),
+              ...(input.pid !== undefined && { pid: input.pid }),
+              ...(input.stop_at_entry !== undefined && {
+                stop_at_entry: input.stop_at_entry,
+              }),
+              ...(input.disable_aslr !== undefined && {
+                disable_aslr: input.disable_aslr,
+              }),
+              ...(input.breakpoints !== undefined && {
+                breakpoints: input.breakpoints,
+              }),
+            }),
+          ),
+        undefined,
+        () => manager.retryCleanupFailures(),
       );
       if (result.ok) {
         return delivery.toCallToolResult(
@@ -141,7 +149,7 @@ export const registerLldbTools = (
     status.name,
     toolRegistrationOptions(status),
     async (input) => {
-      const result = manager.status(input.session_id);
+      const result = await manager.status(input.session_id);
       if (result === undefined) {
         return delivery.toCallToolResult(
           err(invalidSession("lldb_session_status")),

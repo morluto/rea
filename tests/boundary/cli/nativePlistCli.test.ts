@@ -82,7 +82,7 @@ describe.skipIf(process.platform !== "darwin")(
   "native plist CLI source formats",
   () => {
     cliTest(
-      "retains non-finite values through real plutil XML conversion",
+      "retains non-finite values from original XML bytes",
       async ({ cli }) => {
         const directory = await createTestTempDirectory("rea-plist-reals-");
         const path = join(directory, "selected.plist");
@@ -113,7 +113,7 @@ describe.skipIf(process.platform !== "darwin")(
             ]),
           },
         });
-        expect(await readFile(path)).toEqual(source);
+        expect(Buffer.compare(await readFile(path), source)).toBe(0);
       },
     );
 
@@ -228,6 +228,7 @@ describe.skipIf(process.platform !== "darwin")(
             "<key>CFBundleExecutable</key><string>App</string>",
             "<key>CFBundleIdentifier</key><string>com.example.types</string>",
             "<key>Blob</key><data>AAEC</data>",
+            "<key>Separators</key><string>a\u0085b\u2028c\u2029d</string>",
             "<key>Built</key><date>2020-01-01T00:00:00Z</date>",
             // Parse the unsigned extended year as a UTC field, without JS string-date inference.
             "<key>Far</key><date>11507-08-17T05:20:00Z</date>",
@@ -261,6 +262,7 @@ describe.skipIf(process.platform !== "darwin")(
             value: {
               CFBundleIdentifier: "com.example.types",
               Blob: { $plist_type: "data", base64: "AAEC" },
+              Separators: "a\u0085b\u2028c\u2029d",
               Built: {
                 $plist_type: "date",
                 iso8601: "2020-01-01T00:00:00.000Z",
@@ -279,15 +281,19 @@ describe.skipIf(process.platform !== "darwin")(
               ],
             },
             bundle: { identifier: "com.example.types", executable: "App" },
-            provenance: [
-              { tool: "file" },
-              { command: expect.arrayContaining(["json"]), exit: { code: 1 } },
-              { command: expect.arrayContaining(["xml1"]), exit: { code: 0 } },
-            ],
-            limitations: [
-              expect.stringContaining("XML conversion"),
-              expect.stringContaining("2 non-finite real"),
-            ],
+            // An XML source also records its successful native format validation.
+            provenance:
+              format === "xml"
+                ? [
+                    { tool: "file" },
+                    {
+                      tool: "plutil",
+                      command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+                      exit: { code: 0, signal: null },
+                    },
+                  ]
+                : [{ tool: "file" }],
+            limitations: [expect.stringContaining("2 non-finite real")],
           },
         });
       },
@@ -340,10 +346,7 @@ describe.skipIf(process.platform !== "darwin")(
               Real: 9007199254740992,
               Large: 1e20,
             },
-            limitations: [
-              ...(withData ? [expect.stringContaining("XML conversion")] : []),
-              expect.stringContaining("2 integer value(s)"),
-            ],
+            limitations: [expect.stringContaining("2 integer value(s)")],
           },
         });
       },

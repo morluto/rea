@@ -13,6 +13,7 @@ import type {
   Session,
 } from "frida";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { FridaScriptLoadCancelledError } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import type {
@@ -21,12 +22,16 @@ import type {
 } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import type { AnalysisPartialObservation } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
-import type { Evidence } from "../../../src/domain/evidence.js";
+import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
+import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { nativeCallPartialObservationSchema } from "../../../src/domain/native/nativeCallPartialObservation.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -35,12 +40,11 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerFridaTools } from "../../../src/server/registerFridaTools.js";
-import {
-  createToolResultDelivery,
-  ToolResultDelivery,
-} from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { waitFor } from "../../support/testWait.js";
 
 const gate = () => {
   let markEntered = () => {};
@@ -255,6 +259,59 @@ const connectedFixture = async () => {
   return { ...native, manager, session, server, client, start, load };
 };
 
+it.each(["start_frida_session", "instrument_with_frida"] as const)(
+  "selects capture retention through the public %s contract before observation",
+  async (operation) => {
+    const fixture = await connectedFixture();
+    const description = "d".repeat(40_000);
+    fixture.controls.message = {
+      type: "send",
+      payload: "observed",
+      description,
+    };
+    const result = await fixture.client.callTool({
+      name: operation,
+      arguments: {
+        mode: "attach",
+        pid: 512,
+        capture_limits: { message_text_bytes: 50_000 },
+        ...(operation === "instrument_with_frida"
+          ? {
+              source_kind: "inline",
+              source: "send('observed')",
+              duration_ms: 0,
+            }
+          : {}),
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    let observed = result;
+    if (operation === "start_frida_session") {
+      const started = toolContract("start_frida_session").outputSchema.parse(
+        result.structuredContent,
+      );
+      expect(started.capture_limits?.message_text_bytes).toBe(50_000);
+      observed = await fixture.load(started.session_id, "send('observed')");
+    }
+    expect(observed.isError).not.toBe(true);
+    const evidence = parseEvidence(observed.structuredContent);
+    const facts = jsonObjectSchema.parse(evidence.normalized_result);
+    expect(facts.capture_limits).toMatchObject({
+      message_text_bytes: 50_000,
+      session_bytes: 16_777_216,
+    });
+    expect(facts.messages).toEqual([expect.objectContaining({ description })]);
+    expect(JSON.stringify(facts.messages)).not.toContain(
+      '"description_truncated":true',
+    );
+    if (operation === "instrument_with_frida") {
+      expect(evidence.parameters.capture_limits).toEqual({
+        message_text_bytes: 50_000,
+      });
+    }
+  },
+);
+
 it.each(["attached", "during-resume", "after-resume"] as const)(
   "preserves observed detachment through resume settlement: %s",
   async (timing) => {
@@ -268,15 +325,21 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
         name: "frida_session_status",
         arguments: { session_id: id },
       });
-      return toolContract("frida_session_status").outputSchema.parse(
-        result.structuredContent,
-      ).normalized_result.state;
+      return fridaSessionStatusSchema.parse(
+        toolContract("frida_session_status").outputSchema.parse(
+          result.structuredContent,
+        ).normalized_result,
+      ).state;
     };
     const resuming = fixture.client.callTool({
       name: "resume_frida_session",
       arguments: { session_id: id },
     });
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      resuming,
+      "Frida operation admission",
+    );
     if (timing === "during-resume") fixture.markDetached();
     expect(await state()).toBe(
       timing === "during-resume" ? "detached" : "paused",
@@ -295,6 +358,28 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
 
 it("retains detached state and resume evidence when remote cleanup needs retry", async () => {
   const fixture = await connectedFixture();
+  expect(
+    (await fixture.client.listTools()).tools.find(
+      (tool) => tool.name === "close_frida_session",
+    )?.annotations?.destructiveHint,
+  ).toBe(true);
+  const inventory = await fixture.client.callTool({
+    name: "binary_session",
+    arguments: { detail: "complete" },
+  });
+  const availability = expandToolAvailability(
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
+  );
+  expect(
+    availability.find((tool) => tool.name === "close_frida_session"),
+  ).toMatchObject({
+    effects: { executesForeignCode: true },
+    annotations: { destructive: true },
+  });
   const started = await fixture.client.callTool({
     name: "start_frida_session",
     arguments: {
@@ -318,9 +403,11 @@ it("retains detached state and resume evidence when remote cleanup needs retry",
     arguments: { session_id: id },
   });
   expect(
-    toolContract("frida_session_status").outputSchema.parse(
-      result.structuredContent,
-    ).normalized_result.state,
+    fridaSessionStatusSchema.parse(
+      toolContract("frida_session_status").outputSchema.parse(
+        result.structuredContent,
+      ).normalized_result,
+    ).state,
   ).toBe("detached");
   expect(fixture.manager.status(id)?.targetResumeObserved).toBe(true);
   expect(fixture.controls.detachCalls).toBe(1);
@@ -359,7 +446,7 @@ it.each([
     );
     const partial = vi.spyOn(
       ToolResultDelivery.prototype,
-      "toRecordedPartialErrorToolResult",
+      "toPartialErrorToolResult",
     );
     onTestFinished(() => {
       loadSpy.mockRestore();
@@ -386,7 +473,11 @@ it.each([
         (value) => ({ kind: "result" as const, value }),
         (cause: unknown) => ({ kind: "rejected" as const, cause }),
       );
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      pending,
+      "Frida operation admission",
+    );
     expect(fixture.unloaded).toEqual(["completed-before-detach"]);
     if (cancel) {
       controller.abort(new Error("cancel during final detach"));
@@ -396,7 +487,7 @@ it.each([
     const serverReason: unknown = serverSignal?.reason;
     held.release();
     const result = await pending;
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(success.mock.calls.length + partial.mock.calls.length).toBe(1),
     );
     expect(fixture.controls.detachCalls).toBe(1);
@@ -471,7 +562,7 @@ it.each([
       response.structuredContent,
     );
     const result = evidence.normalized_result;
-    expect(result.messages_truncated).toBe(true);
+    expect(result.messages_truncated).toBe(false);
     const retained = jsonObjectSchema.parse(result.messages[0]);
     expect(retained.description_truncated).toBe(true);
     expect(
@@ -487,7 +578,7 @@ it.each([
         status.structuredContent,
       ),
     ).toMatchObject({
-      normalized_result: { messages: [retained], messages_truncated: true },
+      normalized_result: { messages: [retained], messages_truncated: false },
     });
   },
 );
@@ -501,7 +592,7 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
     fixture.controls.resume = async () => {};
     throw new Error("native resume rejected");
   };
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toErrorToolResult");
   onTestFinished(() => delivery.mockRestore());
   let serverSignal: AbortSignal | undefined;
   const resume = fixture.manager.resumeSession.bind(fixture.manager);
@@ -529,20 +620,21 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
       { signal: controller.signal },
     )
     .catch((cause: unknown) => cause);
-  await held.entered;
+  await awaitAcknowledgement(
+    held.entered,
+    pending,
+    "Frida operation admission",
+  );
   controller.abort(new Error("cancel pending resume"));
   await fixture.client.ping();
   expect(serverSignal?.aborted).toBe(true);
   held.release();
   await pending;
-  await vi.waitFor(() => expect(delivery).toHaveBeenCalledOnce());
+  await waitFor(() => expect(delivery).toHaveBeenCalledOnce());
   expect(delivery.mock.calls[0]?.[0]).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCapabilityUnavailableError",
-      operation: "resume_frida_session",
-      message: expect.stringContaining("native resume rejected"),
-    },
+    _tag: "AnalysisCapabilityUnavailableError",
+    operation: "resume_frida_session",
+    message: expect.stringContaining("native resume rejected"),
   });
   expect(fixture.controls.detachCalls).toBe(1);
   expect(fixture.unloaded).toEqual(["resume-failure"]);
@@ -597,13 +689,15 @@ it("declares non-destructive session mutation when status retains Evidence", asy
   ).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   const inventory = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(inventory.isError).not.toBe(true);
   const available = expandToolAvailability(
-    toolContract("binary_session").outputSchema.parse(
-      inventory.structuredContent,
-    ).result.tool_availability,
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
   );
   expect(
     available.find((tool) => tool.name === "frida_session_status"),
@@ -778,7 +872,11 @@ it("preserves inline Frida partial Evidence when its writer rejects it", async (
   expect(attempts).toHaveLength(1);
   expect(error.code).toBe("cancelled");
   const details = jsonObjectSchema.parse(error.details);
-  expect(details.partial_observation).toEqual(attempts[0]);
+  expect(details.partial_observation).toEqual({
+    kind: "inline-evidence",
+    retention: "unknown",
+    evidence: attempts[0],
+  });
 });
 
 it.each([
@@ -950,7 +1048,11 @@ it.each(["load", "resume", "unload"] as const)(
       original.structuredContent,
     ).normalized_result.script_id;
     const first = fixture.load(id, "blocking");
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      first,
+      "Frida operation admission",
+    );
     const controller = new AbortController();
     const cancelled =
       operation === "load"
@@ -994,7 +1096,11 @@ it.each(["create", "load"] as const)(
     const rejected = expect(cancelled).rejects.toThrow(
       "cancel native operation",
     );
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      cancelled,
+      "Frida operation admission",
+    );
     controller.abort(new Error("cancel native operation"));
     await fixture.client.ping();
     await rejected;
@@ -1036,7 +1142,11 @@ it("retains cancellation source facts without claiming native creation when no s
   const loading = fixture
     .load(id, "no-returned-handle", controller.signal)
     .catch((cause: unknown) => cause);
-  await held.entered;
+  await awaitAcknowledgement(
+    held.entered,
+    loading,
+    "Frida operation admission",
+  );
   controller.abort(new Error("cancel while creating"));
   await fixture.client.ping();
   held.release();
@@ -1082,7 +1192,11 @@ it("retains original malformed file identity and decoded representation through 
       { signal: controller.signal },
     )
     .catch((cause: unknown) => cause);
-  await held.entered;
+  await awaitAcknowledgement(
+    held.entered,
+    loading,
+    "Frida operation admission",
+  );
   controller.abort(new Error("cancel file load"));
   await fixture.client.ping();
   held.release();
@@ -1151,7 +1265,11 @@ it.each([
       (value) => ({ kind: "result" as const, value }),
       (cause: unknown) => ({ kind: "rejected" as const, cause }),
     );
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      loading,
+      "Frida operation admission",
+    );
     if (cancel) {
       controller.abort(new Error("cancel before native rejection"));
       await fixture.client.ping();
@@ -1224,7 +1342,11 @@ it("awaits an admitted attach on server shutdown and retries failed native clean
       },
     })
     .catch(() => undefined);
-  await held.entered;
+  await awaitAcknowledgement(
+    held.entered,
+    starting,
+    "Frida operation admission",
+  );
   const { closing } = await pendingShutdown(fixture.server);
   expect(fixture.controls.detachCalls).toBe(0);
   held.release();
@@ -1259,7 +1381,11 @@ it("drains remote discovery before shutdown and retains failed connection cleanu
       },
     })
     .catch(() => undefined);
-  await held.entered;
+  await awaitAcknowledgement(
+    held.entered,
+    discovering,
+    "Frida operation admission",
+  );
   const { closing } = await pendingShutdown(fixture.server);
   held.release();
   expect(await closing).toBeInstanceOf(AggregateError);
@@ -1279,7 +1405,11 @@ it.each(["create", "load"] as const)(
     const rejected = expect(cancelled).rejects.toThrow(
       "cancel retained script",
     );
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      cancelled,
+      "Frida operation admission",
+    );
     controller.abort(new Error("cancel retained script"));
     await fixture.client.ping();
     await rejected;
@@ -1332,7 +1462,11 @@ it.each([0, 1])(
     const rejected = expect(loading).rejects.toThrow(
       "cancel before queued resume",
     );
-    await held.entered;
+    await awaitAcknowledgement(
+      held.entered,
+      loading,
+      "Frida operation admission",
+    );
     const resume = () =>
       fixture.client.callTool({
         name: "resume_frida_session",
@@ -1390,7 +1524,7 @@ it.each([0, 1, 2, 3, 4, 8])(
     };
     const loading = fixture.load(id, "settling-native", controller.signal);
     const observed = loading.catch(() => undefined);
-    await held.entered;
+    await awaitAcknowledgement(held.entered, loading, "Frida script load");
     const resuming = fixture.client.callTool({
       name: "resume_frida_session",
       arguments: { session_id: id },
@@ -1427,5 +1561,37 @@ it.each([0, 1, 2, 3, 4, 8])(
       ]);
       expect(fixture.unloaded).toEqual([]);
     }
+  },
+);
+
+it.each(["attached", "resumed"] as const)(
+  "reports %s Frida resume refusal as selected session input",
+  async (state) => {
+    const fixture = await connectedFixture();
+    const started =
+      state === "attached"
+        ? await fixture.manager.startSession({ mode: "attach", pid: 512 })
+        : await fixture.manager.startSession({
+            mode: "spawn",
+            program: "/fixture",
+          });
+    if (!started.ok) throw started.error;
+    const id = started.value.sessionId;
+    if (state === "resumed")
+      expect((await fixture.manager.resumeSession(id)).ok).toBe(true);
+    const result = await fixture.client.callTool({
+      name: "resume_frida_session",
+      arguments: { session_id: id },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["session_id"], reason: "invalid_value" }],
+        },
+      },
+    });
+    expect(fixture.controls.resumes).toBe(state === "resumed" ? 1 : 0);
   },
 );

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,7 +20,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { silentLogger } from "../../../src/logger.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
@@ -242,9 +243,8 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     response: CallToolResult,
   ) => {
     const tool = tools.find((candidate) => candidate.name === name);
-    if (tool?.outputSchema === undefined)
-      throw new Error(`missing ${name} output schema`);
-    const schema = z.record(z.string(), z.unknown()).parse(tool.outputSchema);
+    if (tool === undefined) throw new Error(`missing ${name} output schema`);
+    const schema = canonicalOutputSchema(tool.name);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,

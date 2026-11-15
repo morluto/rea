@@ -182,8 +182,8 @@ it("snapshots the runtime-selected environment before optional loading and reuse
       return server;
     },
     serve: (factory) => {
-      factory({ era: "modern" });
-      factory({ era: "legacy" });
+      expect(factory({ era: "modern" })).toBe(observed[0]);
+      expect(factory({ era: "legacy" })).toBe(observed[1]);
       return {
         close: async () => {
           await Promise.all(observed.map((server) => server.close()));

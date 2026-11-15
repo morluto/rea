@@ -6,17 +6,13 @@ import { rawHttpRequest } from "../../support/http/rawRequest.js";
 import { startMcpHttpProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 
-const SHUTDOWN_TIMEOUT_MS = 90_000;
+const shutdownSignals: readonly (readonly [NodeJS.Signals, number])[] = [
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+];
 
-const shutdownSignals: readonly (readonly [NodeJS.Signals, number])[] =
-  process.platform === "win32"
-    ? [["SIGINT", 130]]
-    : [
-        ["SIGTERM", 143],
-        ["SIGINT", 130],
-      ];
-
-describe("rea mcp --http shutdown", () => {
+// Windows child.kill() force-terminates even for SIGINT; it does not deliver a console interrupt.
+describe.skipIf(process.platform === "win32")("rea mcp --http shutdown", () => {
   for (const [signal, status] of shutdownSignals)
     processTest(
       `releases the listener and exits ${String(status)} on ${signal}`,
@@ -34,7 +30,6 @@ describe("rea mcp --http shutdown", () => {
           code: "ECONNREFUSED",
         });
       },
-      SHUTDOWN_TIMEOUT_MS,
     );
 
   processTest(
@@ -49,6 +44,5 @@ describe("rea mcp --http shutdown", () => {
       expect(signalCode).toBeNull();
       expect(started.stderr()).not.toContain(MCP_SHUTDOWN_FAILED);
     },
-    SHUTDOWN_TIMEOUT_MS,
   );
 });

@@ -1,8 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { goBinarySchema } from "../../src/domain/go/goBinary.js";
+import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives.js";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   createGoBinaryByteStringFixture,
   createGoBinaryDiagnosticFixtures,
@@ -10,12 +12,243 @@ import {
   createGoSplitElfFixture,
   createGoOverlappingElfFixture,
   createGoBinaryPathFailureFixture,
+  createGoInlineAggregateFixture,
+  setGoPeVirtualSize,
+  setGoElfLoadFileSize,
+  setGoMachOSectionSize,
+  setGoMachOSegmentFileSize,
   GO_MODULE_TEXT,
 } from "../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../fixtures/go/rodataStringImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+cliTest(
+  "reads Mach-O inline Go strings beyond a header-only discovery section through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-macho-inline-range-");
+    const { client, call } = await connectLocalToolsMcp();
+    const complete = createGoBinaryFixture({ format: "macho" });
+    setGoMachOSectionSize(complete.bytes, 32);
+    const truncated = createGoBinaryFixture({ format: "macho" });
+    setGoMachOSectionSize(truncated.bytes, 32);
+    setGoMachOSegmentFileSize(
+      truncated.bytes,
+      truncated.moduleOffset + truncated.moduleBytes.length - 1,
+    );
+
+    for (const item of [
+      { name: "header-only", bytes: complete.bytes, expected: "success" },
+      { name: "truncated", bytes: truncated.bytes, expected: "malformed" },
+    ] as const) {
+      const path = join(root, `${item.name}.macho`);
+      await writeFile(path, item.bytes);
+      const result = await cli.run({
+        arguments: ["inspect-go-binary", path, "--json"],
+      });
+      const response = await call("inspect_go_binary", { path });
+      if (item.expected === "success") {
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+        expect(evidence.normalized_result).toMatchObject({
+          format: "macho",
+          build_info: {
+            header_offset: complete.headerOffset,
+            go_version: "go1.26.0",
+            module: { path: "example.com/tool/cmd/tool" },
+          },
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+      } else {
+        const expected = {
+          code: "invalid_request",
+          details: {
+            operation: "inspect_go_binary",
+            issues: [{ path: ["path"], reason: "invalid_format" }],
+          },
+        };
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject(expected);
+        expect(parseMcpToolError(response).error).toMatchObject(expected);
+      }
+    }
+    await client.ping();
+  },
+);
+
+cliTest(
+  "counts inline Go string contents separately from varint framing through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-inline-budget-");
+    const { client, call } = await connectLocalToolsMcp();
+    const maximum = 1024 * 1024;
+    const impossibleInline = createGoBinaryFixture();
+    impossibleInline.bytes.set(
+      [0x81, 0x80, 0x40],
+      impossibleInline.headerOffset + 32,
+    );
+    const impossiblePointer = createGoBinaryFixture({ encoding: "pointer" });
+    impossiblePointer.bytes.writeBigUInt64LE(BigInt(maximum + 1), 1544);
+    const cases = [
+      {
+        name: "exact",
+        fixture: createGoInlineAggregateFixture(maximum),
+        outcome: "success",
+      },
+      {
+        name: "over",
+        fixture: createGoInlineAggregateFixture(maximum + 1),
+        outcome: "resource",
+      },
+      {
+        name: "truncated",
+        fixture: createGoInlineAggregateFixture(512),
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-inline",
+        fixture: impossibleInline,
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-pointer",
+        fixture: impossiblePointer,
+        outcome: "malformed",
+      },
+    ] as const;
+
+    for (const item of cases) {
+      if (item.name === "truncated")
+        setGoElfLoadFileSize(
+          item.fixture.bytes,
+          item.fixture.moduleOffset + item.fixture.moduleBytes.length - 1,
+        );
+      const path = join(root, `${item.name}.elf`);
+      await writeFile(path, item.fixture.bytes);
+      const result = await cli.run({
+        arguments: ["inspect-go-binary", path, "--json"],
+      });
+      const response = await call("inspect_go_binary", { path });
+
+      if (item.outcome === "success") {
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+        const buildInfo = evidence.normalized_result.build_info;
+        expect(buildInfo).not.toBeNull();
+        expect(
+          buildInfo!.version_location.bytes + buildInfo!.module_location.bytes,
+        ).toBe(maximum);
+        expect(
+          item.fixture.moduleOffset +
+            item.fixture.moduleBytes.length -
+            item.fixture.headerOffset,
+        ).toBeGreaterThan(maximum + 32);
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+      } else {
+        const code =
+          item.outcome === "resource"
+            ? "resource_constraint"
+            : "invalid_request";
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          code,
+          details: {
+            operation: "inspect_go_binary",
+            ...(item.outcome === "resource"
+              ? {
+                  resource: "memory",
+                  reported_limits: {
+                    boundary: "build-info",
+                    maximum_bytes: maximum,
+                  },
+                }
+              : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
+          },
+        });
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code,
+          details: {
+            operation: "inspect_go_binary",
+            ...(item.outcome === "resource"
+              ? {
+                  resource: "memory",
+                  reported_limits: {
+                    boundary: "build-info",
+                    maximum_bytes: maximum,
+                  },
+                }
+              : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
+          },
+        });
+      }
+    }
+    await client.ping();
+  },
+);
+
+cliTest(
+  "delivers a Go CLI summary with its unchanged complete source bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-cli-summary-");
+    const path = join(root, "application.elf");
+    const output = join(root, "source.json");
+    await writeFile(path, createGoBinaryFixture().bytes);
+    const complete = await cli.run({
+      arguments: ["inspect-go-binary", path, "--json"],
+    });
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    const full = evidenceResultOf(goBinarySchema).parse(complete.json);
+    const summary = await cli.run({
+      arguments: [
+        "inspect-go-binary",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        output,
+        "--json",
+      ],
+    });
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        normalized_result: {
+          kind: "summary",
+          parent_evidence_id: full.evidence_id,
+          source_coverage: { runtime_dependencies: "unknown" },
+        },
+      },
+    });
+    const bundle = JSON.parse(await readFile(output, "utf8")) as {
+      records: unknown[];
+    };
+    expect(
+      bundle.records
+        .map((record) => parseEvidence(record))
+        .find((record) => record.evidence_id === full.evidence_id),
+    ).toEqual(full);
+    const refused = await cli.run({
+      arguments: [
+        "inspect-go-binary",
+        join(root, "missing"),
+        "--detail",
+        "summary",
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["evidence_output"] }] },
+    });
+  },
+);
 
 cliTest(
   "bounds overlapping ELF scans through CLI and keeps MCP responsive",
@@ -44,7 +277,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expected);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -61,19 +293,120 @@ cliTest(
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_go_binary").outputSchema.parse(
-        result.json,
-      );
+      const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
       expect(evidence.normalized_result.build_info).not.toBeNull();
       infos.push(evidence.normalized_result.build_info);
       const response = await call("inspect_go_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     expect(infos[1]).toEqual(infos[0]);
     await client.ping();
   },
-  30000,
+);
+
+for (const bits of [32, 64] as const) {
+  for (const encoding of ["inline", "pointer"] as const) {
+    cliTest(
+      `preserves PE ${bits}-bit ${encoding} build info at zero VirtualSize through CLI and stdio MCP`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-go-pe-zero-vsize-");
+        const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
+        const ordinaryBytes = Buffer.from(fixture.bytes);
+        const zeroSizeBytes = Buffer.from(fixture.bytes);
+        setGoPeVirtualSize(zeroSizeBytes, 0);
+        const { client, call } = await connectLocalToolsMcp();
+        const buildInfos = [];
+
+        for (const [label, bytes] of [
+          ["ordinary", ordinaryBytes],
+          ["zero-vsize", zeroSizeBytes],
+        ] as const) {
+          const path = join(root, `${label}.exe`);
+          await writeFile(path, bytes);
+          const result = await cli.run({
+            arguments: ["inspect-go-binary", path, "--json"],
+          });
+          expect(result.exitCode, result.stderr).toBe(0);
+          const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+          expect(evidence.subject?.digest.sha256).toBe(
+            createHash("sha256").update(bytes).digest("hex"),
+          );
+          expect(evidence.normalized_result.build_info).toMatchObject({
+            go_version: "go1.26.0",
+            encoding,
+            header_offset: fixture.headerOffset,
+            module_text: GO_MODULE_TEXT,
+          });
+          buildInfos.push(evidence.normalized_result.build_info);
+
+          const response = await call("inspect_go_binary", { path });
+          expect(response.isError, JSON.stringify(response)).not.toBe(true);
+          expectCliMcpEvidenceParity(
+            evidence,
+            response.structuredContent,
+            path,
+          );
+        }
+
+        expect(buildInfos[1]).toEqual(buildInfos[0]);
+        await client.ping();
+      },
+    );
+  }
+}
+
+cliTest(
+  "rejects misaligned 64-bit Mach-O through Go CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-macho-alignment-");
+    const { client, call } = await connectLocalToolsMcp();
+    const expectedFailure = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_go_binary",
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      },
+    };
+
+    for (const fixture of [
+      { wide: true, size: 12, bits: 64, malformed: true },
+      { wide: true, size: 16, bits: 64, malformed: false },
+      { wide: false, size: 12, bits: 32, malformed: false },
+    ]) {
+      const path = join(root, `image-${fixture.bits}-${fixture.size}.macho`);
+      await writeFile(
+        path,
+        machoImageWithUnknownCommand(fixture.wide, fixture.size),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-go-binary", path, "--json"],
+      });
+      const response = await call("inspect_go_binary", { path });
+
+      if (fixture.malformed) {
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject(expectedFailure);
+        expect(result.json).not.toHaveProperty("normalized_result");
+        expect(parseMcpToolError(response).error).toMatchObject(
+          expectedFailure,
+        );
+        expect(response.structuredContent).toBeUndefined();
+        continue;
+      }
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+      expect(evidence.normalized_result).toMatchObject({
+        format: "macho",
+        bits: fixture.bits,
+        build_info: null,
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+    }
+    await client.ping();
+  },
 );
 
 for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
@@ -120,9 +453,7 @@ cliTest(
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_go_binary").outputSchema.parse(
-      result.json,
-    );
+    const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
     expect(evidence.normalized_result.build_info).toEqual(
       fixture.expectedBuildInfo,
     );
@@ -182,9 +513,7 @@ for (const format of ["elf", "pe", "macho"] as const) {
           cwd: root,
         });
         expect(result.exitCode, result.stderr).toBe(0);
-        const evidence = toolContract("inspect_go_binary").outputSchema.parse(
-          result.json,
-        );
+        const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
         expect(evidence.raw_result).toBeNull();
         expect(evidence.subject?.local_path).toBe(path);
         expect(evidence.subject?.digest.sha256).toBe(
@@ -237,8 +566,11 @@ for (const format of ["elf", "pe", "macho"] as const) {
             .toString("utf8"),
         ).toBe(report.build_info.go_version);
         expect(
-          fixture.bytes.subarray(module.offset, module.offset + module.bytes),
-        ).toEqual(Buffer.from(report.build_info.module_bytes_base64, "base64"));
+          Buffer.compare(
+            fixture.bytes.subarray(module.offset, module.offset + module.bytes),
+            Buffer.from(report.build_info.module_bytes_base64, "base64"),
+          ),
+        ).toBe(0);
       },
     );
   }
@@ -254,9 +586,7 @@ cliTest("preserves MIPS identity in Go CLI Evidence", async ({ cli }) => {
     arguments: ["inspect-go-binary", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
-  const evidence = toolContract("inspect_go_binary").outputSchema.parse(
-    result.json,
-  );
+  const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
   expect(evidence.subject?.architecture).toBe("mips");
   expect(evidence.normalized_result).toMatchObject({
     architecture: "mips",
@@ -275,7 +605,7 @@ cliTest(
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
-    const report = toolContract("inspect_go_binary").outputSchema.parse(
+    const report = evidenceResultOf(goBinarySchema).parse(
       result.json,
     ).normalized_result;
     expect(report.build_info).toBeNull();
@@ -299,9 +629,7 @@ cliTest(
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_go_binary").outputSchema.parse(
-      result.json,
-    );
+    const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
     expect(evidence.normalized_result.build_info?.module).toMatchObject({
       path: "example.com/tool/cmd/tool",
       main: null,
@@ -312,5 +640,74 @@ cliTest(
     expect(evidence.limitations.join(" ")).toContain(
       "Dependency coverage is unknown",
     );
+  },
+);
+
+cliTest(
+  "recovers Go (ptr, len) string literals with CLI and MCP parity and rejects standalone --max-string-literals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-cli-strings-");
+    const path = join(root, "strings.pe");
+    const fixture = createGoRodataStringFixture({
+      format: "pe",
+      rodata: Buffer.from(
+        "ListResourceProvidersgenaihttps://example.invalid/v1",
+        "utf8",
+      ),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+        { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+        { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+      ],
+    });
+    await writeFile(path, fixture.bytes);
+
+    const standaloneCap = await cli.run({
+      arguments: [
+        "inspect-go-binary",
+        path,
+        "--max-string-literals",
+        "2",
+        "--json",
+      ],
+    });
+    expect(standaloneCap.exitCode).toBe(1);
+    expect(standaloneCap.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_go_binary",
+        issues: [{ path: ["max_string_literals"] }],
+      },
+    });
+
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-go-binary",
+        path,
+        "--include-string-literals",
+        "--max-string-literals",
+        "2",
+        "--json",
+      ],
+    });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    const evidence = evidenceResultOf(goBinarySchema).parse(cliResult.json);
+    expect(evidence.normalized_result.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      discovered_count: 3,
+      max_items: 2,
+      truncated: true,
+      items: [{ value: "ListResourceProviders" }, { value: "genai" }],
+    });
+
+    const { client, call } = await connectLocalToolsMcp();
+    const mcpReply = await call("inspect_go_binary", {
+      path,
+      include_string_literals: true,
+      max_string_literals: 2,
+    });
+    expect(mcpReply.isError, JSON.stringify(mcpReply)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, mcpReply.structuredContent, path);
+    await client.ping();
   },
 );

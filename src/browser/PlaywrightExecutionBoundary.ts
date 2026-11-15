@@ -1,7 +1,11 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+
+export const PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS = 5_000;
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -12,13 +16,13 @@ export const withPlaywrightExecutionBoundary = <Value>(
   work: () => Promise<Value>,
   timeoutMs: number | undefined,
   signal?: AbortSignal,
+  timeoutError: () => AnalysisTimeoutError = () =>
+    new AnalysisTimeoutError(OPERATION, timeoutMs ?? 0),
 ): Promise<Value> => {
   if (timeoutMs !== undefined && timeoutMs <= 0)
-    return Promise.reject(new AnalysisTimeoutError(OPERATION, timeoutMs));
+    return Promise.reject(timeoutError());
   if (signal?.aborted === true)
-    return Promise.reject(
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-    );
+    return Promise.reject(cancelledBy(OPERATION, signal));
 
   return new Promise<Value>((resolve, reject) => {
     let settled = false;
@@ -29,10 +33,13 @@ export const withPlaywrightExecutionBoundary = <Value>(
       if (deadline === undefined) return;
       const remaining = deadline - performance.now();
       if (remaining <= 0) {
-        fail(new AnalysisTimeoutError(OPERATION, timeoutMs ?? 0));
+        fail(timeoutError());
         return;
       }
-      timer = setTimeout(scheduleTimeout, Math.min(remaining, 2_147_483_647));
+      timer = setTimeout(
+        scheduleTimeout,
+        Math.min(remaining, MAX_NODE_TIMER_DELAY_MS),
+      );
       timer.unref();
     };
     const cleanup = (): void => {
@@ -52,14 +59,19 @@ export const withPlaywrightExecutionBoundary = <Value>(
       reject(error);
     };
     const onAbort = (): void => {
-      fail(new AnalysisCancelledError(OPERATION, { cause: signal?.reason }));
+      fail(cancelledBy(OPERATION, carriedReason(signal?.reason)));
     };
     scheduleTimeout();
+    if (settled) return;
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted === true) {
       onAbort();
       return;
     }
-    void work().then(succeed, fail);
+    try {
+      void work().then(succeed, fail);
+    } catch (cause: unknown) {
+      fail(cause);
+    }
   });
 };

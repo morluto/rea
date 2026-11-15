@@ -29,7 +29,7 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
     inputSchema: z.strictObject({
       path: localPathStringSchema
         .optional()
-        .describe("Local Mach-O executable path to launch under LLDB."),
+        .describe("Local Mach-O executable path to launch under LLDB. Cannot be combined with pid."),
       args: z
         .array(z.string())
         .optional()
@@ -43,7 +43,7 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
         .int()
         .positive()
         .optional()
-        .describe("Process ID to attach to instead of launching a new target."),
+        .describe("Process ID to attach to instead of launching a new target. Cannot be combined with path."),
       stop_at_entry: z
         .boolean()
         .optional()

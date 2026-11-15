@@ -1,11 +1,13 @@
+import { malformedInput } from "../../domain/parseFailure.js";
 import { TraceMap, decodedMappings } from "@jridgewell/trace-mapping";
 import {
-  SourceMapFormatFailure,
+  SOURCE_MAP_FORMAT,
+  sourceMapSectionOverlap,
   type SourceMapLeaf,
 } from "./SourceMapFormat.js";
 
 /** Determine whether a leaf-local mapping falls before its enclosing boundary. */
-export const isBeforeSourceMapLeafStop = (
+const isBeforeSourceMapLeafStop = (
   leaf: SourceMapLeaf,
   line: number,
   column: number,
@@ -28,7 +30,6 @@ export const decodeValidatedSourceMapLeaves = (
   readonly leaf: SourceMapLeaf;
   readonly map: TraceMap;
   readonly rows: ReturnType<typeof decodedMappings>;
-  readonly resolvedSources: readonly string[];
 }[] =>
   leaves.map((leaf) => {
     check?.();
@@ -40,6 +41,10 @@ export const decodeValidatedSourceMapLeaves = (
         const generatedLine = leaf.offset.line + line;
         const generatedColumn =
           segment[0] + (line === 0 ? leaf.offset.column : 0);
+        if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
+          throw sourceMapSectionOverlap(
+            "Embedded source-map mappings overlap the following section boundary.",
+          );
         if (
           !Number.isSafeInteger(generatedLine) ||
           !Number.isSafeInteger(generatedColumn) ||
@@ -48,11 +53,11 @@ export const decodeValidatedSourceMapLeaves = (
           (segment.length !== 1 && segment[1] >= leaf.map.sources.length) ||
           (segment.length === 5 && segment[4] >= leaf.map.names.length)
         )
-          throw new SourceMapFormatFailure(
-            "format",
+          throw malformedInput(
+            SOURCE_MAP_FORMAT,
             "Decoded local or absolute position, source index or name index is invalid.",
           );
       }
     }
-    return { leaf, map, rows, resolvedSources: map.resolvedSources };
+    return { leaf, map, rows };
   });

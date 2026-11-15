@@ -6,7 +6,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Bind recorded crash inspection to its named contract and session Evidence owner. */
 export const registerRecordedCrashTools = (
@@ -26,7 +26,7 @@ export const registerRecordedCrashTools = (
   );
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     handler(contract),
   );
 };

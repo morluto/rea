@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import { inferJsonShape, jsonShapeSchema } from "./jsonShape.js";
+import { WEB_RUNTIME_LIMITS } from "./webRuntime.js";
+
+const completeShape = (source: string | Uint8Array) => {
+  const result = inferJsonShape(source, WEB_RUNTIME_LIMITS.retainedEventBytes);
+  if (!result.ok) throw result.error;
+  return result.value.shape;
+};
 
 const property = (name: string) => ({ kind: "property" as const, name });
 const element = { kind: "array-element" as const };
 
 describe("inferJsonShape", () => {
   it("retains paths and types without retaining JSON values", () => {
-    const shape = inferJsonShape(
+    const shape = completeShape(
       JSON.stringify({
         token: "super-secret",
         users: [
@@ -43,8 +50,8 @@ describe("inferJsonShape", () => {
   });
 
   it("distinguishes array elements from literal star properties and counts primitive types", () => {
-    const shape = inferJsonShape('{"items":[{"*":1},[true,"x",null],2]}');
-    expect(shape?.properties).toEqual(
+    const shape = completeShape('{"items":[{"*":1},[true,"x",null],2]}');
+    expect(shape.properties).toEqual(
       expect.arrayContaining([
         {
           path: [property("items"), element],
@@ -66,20 +73,22 @@ describe("inferJsonShape", () => {
   });
 
   it("rejects malformed JSON", () => {
-    expect(inferJsonShape("not-json")).toBeNull();
+    expect(
+      inferJsonShape("not-json", WEB_RUNTIME_LIMITS.retainedEventBytes),
+    ).toEqual({ ok: false, error: { kind: "invalid-json" } });
   });
 
   it("orders mixed array and property descendants with parents first", () => {
-    const shape = inferJsonShape('[{"z":1,"a":{"x":true}},[null],{"a":2}]');
+    const shape = completeShape('[{"z":1,"a":{"x":true}},[null],{"a":2}]');
 
-    expect(shape?.properties.map(({ path }) => path)).toEqual([
+    expect(shape.properties.map(({ path }) => path)).toEqual([
       [element],
       [element, element],
       [element, property("a")],
       [element, property("a"), property("x")],
       [element, property("z")],
     ]);
-    expect(shape?.properties[2]).toMatchObject({
+    expect(shape.properties[2]).toMatchObject({
       types: ["number", "object"],
       observations: 2,
     });
@@ -87,10 +96,7 @@ describe("inferJsonShape", () => {
 
   it("retains deep coverage and independently owned path segments", () => {
     const depth = 512;
-    const shape = inferJsonShape("[".repeat(depth) + "1" + "]".repeat(depth));
-    expect(shape).not.toBeNull();
-    if (shape === null) return;
-
+    const shape = completeShape("[".repeat(depth) + "1" + "]".repeat(depth));
     expect(shape.node_count).toBe(depth + 1);
     expect(shape.max_depth_observed).toBe(depth);
     expect(shape.properties).toHaveLength(depth);
@@ -121,7 +127,7 @@ describe("JSON shape completeness and ordering", () => {
         ];
         return Object.fromEntries(reverse ? entries.reverse() : entries);
       };
-      const shape = inferJsonShape(
+      const shape = completeShape(
         JSON.stringify({ nested: [object(1, null), object(2, [null])] }),
       );
 
@@ -199,11 +205,11 @@ describe("JSON shape completeness and ordering", () => {
     const content = Object.fromEntries(
       Array.from({ length: 5_001 }, (_, index) => [`field_${index}`, index]),
     );
-    const shape = inferJsonShape(JSON.stringify(content));
+    const shape = completeShape(JSON.stringify(content));
 
-    expect(shape?.properties).toHaveLength(5_001);
-    expect(shape?.node_count).toBe(5_002);
-    expect(shape?.properties).toContainEqual({
+    expect(shape.properties).toHaveLength(5_001);
+    expect(shape.node_count).toBe(5_002);
+    expect(shape.properties).toContainEqual({
       path: [property("field_5000")],
       types: ["number"],
       observations: 1,

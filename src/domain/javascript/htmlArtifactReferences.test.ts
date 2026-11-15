@@ -30,8 +30,13 @@ it.each([
     '<svg><foreignObject><script src="actual.js"></script></foreignObject></svg>',
     ["actual.js"],
   ],
-  // The existing extraction contract does not classify script MIME types.
   ['<script type="application/json" src="actual.js"></script>', ["actual.js"]],
+  ['<script type="importmap" src="actual.js"></script>', ["actual.js"]],
+  ['<script type="speculationrules" src="actual.js"></script>', ["actual.js"]],
+  ['<script language="vbscript" src="actual.js"></script>', ["actual.js"]],
+  ['<script type=" Text/JavaScript " src="actual.js"></script>', ["actual.js"]],
+  ['<script type="MODULE" src="actual.js"></script>', ["actual.js"]],
+  ['<script type=" module " src="actual.js"></script>', ["actual.js"]],
 ])("extracts document references from %s", (text, expected) => {
   expect(
     htmlArtifactReferences(text).scripts.map(({ scriptPath }) => scriptPath),
@@ -49,6 +54,7 @@ it("retains exact opening-tag coordinates rather than the script body", () => {
     scripts: [
       {
         scriptPath: "actual.js",
+        scriptType: "classic",
         location: {
           start: { line: 3, column: 0 },
           end: { line: 4, column: ' title=">" src=actual.js>'.length },
@@ -100,13 +106,73 @@ it.each([
   ['<script language="vbscript">run()</script>', []],
   ["<!-- <script>run();</script> -->", []],
   ["<template><script>run();</script></template>", []],
-  ["<svg><script>run();</script></svg>", []],
+  ["<svg><script>run();</script></svg>", ["classic"]],
 ])("classifies inline JavaScript in %s", (text, expected) => {
   expect(
     htmlArtifactReferences(text).inlineScripts.map(
       ({ scriptType }) => scriptType,
     ),
   ).toEqual(expected);
+});
+
+it.each([
+  ['src="ignored.js"', "classic"],
+  ['language="vbscript"', "classic"],
+  ['xlink:type="simple"', "classic"],
+  ['type=" Text/JavaScript "', "classic"],
+  ['type="MODULE"', "module"],
+  ['type=" module "', null],
+  ['type="application/json"', null],
+  ['type="text/javascript; charset=utf-8"', null],
+  ['href="external.js"', null],
+  ['href=""', null],
+  ['xlink:href="external.js"', null],
+] as const)("classifies SVG inline bodies using %s", (attributes, expected) => {
+  const result = htmlArtifactReferences(
+    `<svg><script ${attributes}>run();</script></svg>`,
+  );
+  expect(result.inlineScripts.map(({ scriptType }) => scriptType)).toEqual(
+    expected === null ? [] : [expected],
+  );
+  expect(result.inlineScriptCount).toBe(expected === null ? 0 : 1);
+});
+
+it.each([
+  ['href="external.js"', ["external.js"]],
+  ['xlink:href="external.js"', ["external.js"]],
+  ['href="first.js" xlink:href="second.js"', ["first.js"]],
+  ['xlink:href="second.js" href="first.js"', ["first.js"]],
+  ['href="" xlink:href="ignored.js"', []],
+  ['other:href="ignored.js"', []],
+  ['src="ignored.js"', []],
+])("extracts SVG script URL from %s", (attributes, paths) => {
+  const result = htmlArtifactReferences(
+    `<svg><script ${attributes}></script></svg>`,
+  );
+  expect(result.scripts.map(({ scriptPath }) => scriptPath)).toEqual(paths);
+  expect(result.inlineScriptCount).toBe(0);
+});
+
+it("shares precise body coordinates and location limits across HTML and SVG", () => {
+  const prefix = '<!doctype html>\n<svg><script src="ignored.js">';
+  const body = "\nrun();\n";
+  expect(
+    htmlArtifactReferences(`${prefix}${body}</script></svg>`).inlineScripts,
+  ).toEqual([
+    {
+      scriptType: "classic",
+      text: body,
+      location: { start: { line: 2, column: 30 }, end: { line: 4, column: 0 } },
+    },
+  ]);
+  const repeated = "<script>x</script><svg><script>y</script></svg>".repeat(60);
+  const result = htmlArtifactReferences(repeated);
+  expect(result.inlineScriptCount).toBe(120);
+  expect(result.inlineScripts).toHaveLength(HTML_INLINE_SCRIPT_LOCATION_LIMIT);
+  expect(
+    htmlArtifactReferences("<template><svg><script>x</script></svg></template>")
+      .inlineScriptCount,
+  ).toBe(0);
 });
 
 it("retains exact inline script body coordinates, including unclosed scripts", () => {
@@ -117,6 +183,7 @@ it("retains exact inline script body coordinates, including unclosed scripts", (
     {
       scriptType: "classic",
       location: { start: { line: 2, column: 8 }, end: { line: 4, column: 0 } },
+      text: body,
     },
   ]);
   const unclosed = `${prefix}${body}`;
@@ -124,6 +191,7 @@ it("retains exact inline script body coordinates, including unclosed scripts", (
     {
       scriptType: "classic",
       location: { start: { line: 2, column: 8 }, end: { line: 4, column: 0 } },
+      text: body,
     },
   ]);
 });
@@ -141,5 +209,24 @@ it("counts every inline body but retains bounded locations", () => {
       start: { line: 1, column },
       end: { line: 1, column: column + 1 },
     },
+    text: "x",
   });
 });
+
+it.each([
+  ['type=" Text/JavaScript "', "classic"],
+  ['type="MODULE"', "module"],
+  ['type="application/json"', null],
+  ['type="importmap"', null],
+  ['type="speculationrules"', null],
+  ['language="vbscript"', null],
+  ['type=" module "', null],
+])(
+  "retains external src with parsed JavaScript type for %s",
+  (attributes, scriptType) => {
+    expect(
+      htmlArtifactReferences(`<script ${attributes} src="source.js"></script>`)
+        .scripts,
+    ).toMatchObject([{ scriptPath: "source.js", scriptType }]);
+  },
+);

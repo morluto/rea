@@ -1,7 +1,10 @@
-/** Exact UTF-8 bytes of a JSON string literal, counted without serializing it. */
-export const jsonStringByteLength = (value: string): number => {
+/** UTF-8 JSON string bytes without serialization; above budget only establishes overflow. */
+export const jsonStringByteLength = (
+  value: string,
+  budget = Number.POSITIVE_INFINITY,
+): number => {
   let bytes = 2;
-  for (let index = 0; index < value.length; index++) {
+  for (let index = 0; index < value.length && bytes <= budget; index++) {
     const unit = value.charCodeAt(index);
     if (unit === 0x22 || unit === 0x5c) bytes += 2;
     else if (unit < 0x20)

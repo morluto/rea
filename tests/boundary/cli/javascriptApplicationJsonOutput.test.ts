@@ -28,7 +28,7 @@ for (const scenario of [
   { command: "analyze", format: "jsonl", fullOutput: false, filtered: false },
 ] as const) {
   cliTest(
-    `${scenario.command} preserves representative ${scenario.format} output`,
+    `${scenario.command} ${scenario.format === "jsonl" ? "refuses graph documents without a supported record boundary" : "preserves representative JSON output"}`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-js-json-output-");
       await writeFile(join(root, "main.js"), "fetch('');\n");
@@ -47,6 +47,43 @@ for (const scenario of [
           ...(scenario.filtered ? ["--filter-output", filter] : []),
         ],
       });
+      if (scenario.format === "jsonl") {
+        expect(output.exitCode).toBe(1);
+        const record = z
+          .object({
+            $rea: z.literal("jsonl/v1"),
+            type: z.literal("error"),
+            result: z.unknown(),
+          })
+          .parse(output.json);
+        const failure = scenario.fullOutput
+          ? z
+              .object({
+                ok: z.literal(false),
+                error: z.unknown(),
+                meta: z.object({ command: z.literal(scenario.command) }),
+              })
+              .parse(record.result).error
+          : record.result;
+        expect(failure).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          remediation: {
+            action: expect.stringMatching(
+              /--format json.*record collection.*--filter-output/iu,
+            ),
+          },
+          details: {
+            issues: [
+              {
+                path: [scenario.filtered ? "filter-output" : "format"],
+                reason: "invalid_value",
+              },
+            ],
+          },
+        });
+        return;
+      }
       expect(output.exitCode).toBe(0);
       let data: unknown = output.json;
       if (scenario.fullOutput) {
@@ -197,7 +234,24 @@ cliTest(
       expect.arrayContaining([
         { name: "semantic_graph_node_ceiling", value: 50 },
         { name: "semantic_graph_file_node_ceiling", value: 30 },
+        { name: "max_semantic_nodes", value: 50 },
+        { name: "max_semantic_nodes_per_file", value: 30 },
       ]),
     );
+    const limitation = z
+      .object({
+        normalized_result: z.object({
+          semantic_graph: z.object({
+            limitations: z.array(z.string()),
+          }),
+        }),
+      })
+      .parse(output.json);
+    expect(
+      limitation.normalized_result.semantic_graph.limitations.join("\n"),
+    ).toContain("max_semantic_nodes");
+    expect(
+      limitation.normalized_result.semantic_graph.limitations.join("\n"),
+    ).toContain("1 to 1000000");
   },
 );

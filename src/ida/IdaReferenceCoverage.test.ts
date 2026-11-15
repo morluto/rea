@@ -42,8 +42,8 @@ describe("headless IDA reference coverage", () => {
     expect(
       execution.limitations,
       "the diagnostic limitation is still reported",
-    ).toContain(
-      "Upstream xrefs_to capped results at 1000 references; additional references remain unknown.",
+    ).toContainEqual(
+      expect.stringMatching(/xrefs_to.*cap.*1000.*references.*unknown/iu),
     );
   });
 
@@ -78,6 +78,7 @@ describe("headless IDA reference coverage", () => {
         args: [],
         env: {},
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

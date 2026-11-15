@@ -9,7 +9,7 @@ import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type SnapshotMode =
@@ -228,39 +228,50 @@ describe("complete frame and DOM comparison", () => {
 });
 
 describe("DOM evidence through the public CLI", () => {
-  it("preserves omissions and independently proven frame changes", async () => {
-    const { state, inspect } = await startBrowser();
-    const root = await createTestTempDirectory("rea-dom-comparison-");
-    const before = join(root, "before.json");
-    const after = join(root, "after.json");
-    await writeFile(before, JSON.stringify({ inspection: await inspect() }));
-    state.mode = "omitted-node";
-    for (const nested of [false, true]) {
-      state.nested = nested;
+  cliTest(
+    "preserves omissions and independently proven frame changes",
+    async ({ cli }) => {
+      const { state, inspect } = await startBrowser();
+      const root = await createTestTempDirectory("rea-dom-comparison-");
+      const before = join(root, "before.json");
+      const after = join(root, "after.json");
+      await writeFile(before, JSON.stringify({ inspection: await inspect() }));
+      state.mode = "omitted-node";
+      for (const nested of [false, true]) {
+        state.nested = nested;
+        await writeFile(after, JSON.stringify({ inspection: await inspect() }));
+        const cliResult = await cli.run({
+          arguments: ["compare-web-captures", before, after, "--json"],
+          environment: process.env,
+        });
+        expect(cliResult.exitCode).toBe(0);
+        expect(cliResult.signal).toBeNull();
+        expect(cliResult.json).toMatchObject({
+          operation: "compare_web_captures",
+          normalized_result: {
+            overall_status: nested ? "changed" : "unknown",
+            dimensions: {
+              dom_structure: { status: nested ? "changed" : "unknown" },
+              metadata: { status: "unknown" },
+            },
+          },
+        });
+      }
+      state.mode = "missing-nodes";
       await writeFile(after, JSON.stringify({ inspection: await inspect() }));
-      expect(
-        await runCliJson(["compare-web-captures", before, after, "--json"]),
-      ).toMatchObject({
+      const cliResult = await cli.run({
+        arguments: ["compare-web-captures", after, after, "--json"],
+        environment: process.env,
+      });
+      expect(cliResult.exitCode).toBe(0);
+      expect(cliResult.signal).toBeNull();
+      expect(cliResult.json).toMatchObject({
         operation: "compare_web_captures",
         normalized_result: {
-          overall_status: nested ? "changed" : "unknown",
-          dimensions: {
-            dom_structure: { status: nested ? "changed" : "unknown" },
-            metadata: { status: "unknown" },
-          },
+          overall_status: "unknown",
+          dimensions: { dom_structure: { status: "unknown" } },
         },
       });
-    }
-    state.mode = "missing-nodes";
-    await writeFile(after, JSON.stringify({ inspection: await inspect() }));
-    expect(
-      await runCliJson(["compare-web-captures", after, after, "--json"]),
-    ).toMatchObject({
-      operation: "compare_web_captures",
-      normalized_result: {
-        overall_status: "unknown",
-        dimensions: { dom_structure: { status: "unknown" } },
-      },
-    });
-  });
+    },
+  );
 });

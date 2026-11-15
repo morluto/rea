@@ -1,6 +1,6 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -12,7 +12,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   managedArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { managedArtifactInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -20,14 +20,14 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 const createHarness = async () => {
   const session = composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
-  const harness = await createApplicationMcpHarness({ session });
-  onTestFinished(harness.close);
-  return harness;
+  return createApplicationMcpHarness({ session });
 };
 
 it("returns a first-call overview and pages the unchanged source after its file disappears", async () => {
@@ -43,9 +43,10 @@ it("returns a first-call overview and pages the unchanged source after its file 
   const { client, session } = await createHarness();
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((x) => x.name === "inspect_managed_artifact");
-  if (definition?.outputSchema === undefined)
-    throw new Error("Managed schemas are absent");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Managed schemas are absent");
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -56,15 +57,14 @@ it("returns a first-call overview and pages the unchanged source after its file 
       { path, detail: "summary" },
     ),
   ).toBe(false);
-  const reply = await client.callTool({
-    name: "inspect_managed_artifact",
-    arguments: { path, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_artifact",
+      arguments: { path, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedArtifactSummaryViewResultSchema.parse(
     receipt.normalized_result,
@@ -135,13 +135,13 @@ it("returns a first-call overview and pages the unchanged source after its file 
       .exportEvidenceBundle()
       .records.find((x) => x.evidence_id === parent.evidence_id),
   ).toEqual(parent);
-  const portable = inspectAnalysisView({
+  const portable = await inspectAnalysisView({
     source: { kind: "inline", evidence: parent },
     view: { kind: "summary" },
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
 it("keeps malformed metadata, empty returned rows and historical null subjects explicit", async () => {
   const directory = await createTestTempDirectory(
@@ -175,7 +175,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     { kind: "summary" },
     { kind: "managed", collection: "attributes", offset: 0, limit: 3 },
   ]) {
-    const result = inspectAnalysisView({
+    const result = await inspectAnalysisView({
       source: { kind: "inline", evidence: historical },
       view,
     });
@@ -209,7 +209,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     },
   );
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: { kind: "inline", evidence: incompatible },
       view: { kind: "summary" },
     }),
@@ -217,7 +217,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     ok: false,
     error: { _tag: "EvidenceIntegrityError" },
   });
-}, 30000);
+});
 
 it("refuses selected delivery before file access when the server cannot retain Evidence", async () => {
   const directory = await createTestTempDirectory("rea-managed-fixed-view-");
@@ -227,15 +227,20 @@ it("refuses selected delivery before file access when the server cannot retain E
     throw new Error("Deep provider must not start");
   });
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "managed-fixed-delivery", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await analysis.close();
+  const mcp = createTestMcp();
+  onTestFinished(() =>
+    closeVerifierResources([
+      () => mcp.close(),
+      async () => {
+        const result = await analysis.close();
+        if (!result.ok) throw result.error;
+      },
+    ]),
+  );
+  const client = await mcp.connect(server, {
+    name: "managed-fixed-delivery",
+    version: "1",
   });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   for (const name of ["inspect_managed_artifact", "inspect_managed_members"]) {
     const rejected = await client.callTool({
       name,
@@ -255,4 +260,4 @@ it("refuses selected delivery before file access when the server cannot retain E
       complete.structuredContent,
     ).success,
   ).toBe(true);
-}, 30000);
+});

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -13,6 +14,8 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const receiptSchema = z.object({ root: z.string(), codex: z.string() });
+const preparationBudgetMs =
+  process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
 
 // The executable fixture needs a POSIX shebang. Only the permission-denial
 // cases additionally need an ordinary user. No auth copying or model requests run.
@@ -26,6 +29,9 @@ for (const { denied, keep } of [
     process.platform === "win32" || (denied && process.getuid?.() === 0),
   )(
     `cleans independent evaluation files and retains failures (denied: ${String(denied)}, keep: ${String(keep)})`,
+    process.platform === "darwin"
+      ? { timeout: Math.min(2_147_483_647, preparationBudgetMs + 60_000) }
+      : {},
     async () => {
       const directory = await createTestTempDirectory(
         "rea-agent-eval-cleanup-",
@@ -54,8 +60,7 @@ process.exitCode = 1;
         { mode: 0o700 },
       );
       let run: { root: string; codex: string } | undefined;
-      let primaryError: unknown;
-      try {
+      await withVerifierCleanup(async () => {
         let stderr: string;
         try {
           await execFileOutput(
@@ -76,7 +81,7 @@ process.exitCode = 1;
                 REA_AGENT_EVAL_TIMEOUT_MS: "10000",
                 REA_AGENT_EVAL_KEEP_FIXTURES: String(keep),
               },
-              timeout: 15_000,
+              timeout: Math.min(2_147_483_647, preparationBudgetMs + 15_000),
               stopSignal: "SIGTERM",
               maxBuffer: 1024 * 1024,
             },
@@ -119,35 +124,27 @@ process.exitCode = 1;
           await expect(stat(run.root)).rejects.toMatchObject({
             code: "ENOENT",
           });
-      } catch (cause) {
-        primaryError = cause;
-        throw cause;
-      } finally {
-        // Restore this test's deliberately denied subtree before fixture teardown.
-        if (denied)
-          await closeVerifierResources(
-            [
-              async () => {
-                try {
-                  run ??= receiptSchema.parse(
-                    JSON.parse(await readFile(receipt, "utf8")),
-                  );
-                } catch (cause) {
-                  // Startup can fail before the executable creates its receipt.
-                  if (
-                    cause instanceof Error &&
-                    "code" in cause &&
-                    cause.code === "ENOENT"
-                  )
-                    return;
-                  throw cause;
-                }
-                await chmod(run.codex, 0o700);
-              },
-            ],
-            primaryError,
-          );
-      }
+      }, [
+        async () => {
+          // Restore this test's deliberately denied subtree before fixture teardown.
+          if (!denied) return;
+          try {
+            run ??= receiptSchema.parse(
+              JSON.parse(await readFile(receipt, "utf8")),
+            );
+          } catch (cause) {
+            // Startup can fail before the executable creates its receipt.
+            if (
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+              return;
+            throw cause;
+          }
+          await chmod(run.codex, 0o700);
+        },
+      ]);
     },
   );
 }

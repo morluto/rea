@@ -81,11 +81,39 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         res = daemon.execute_command("version")
         self.assertEqual(res["command"], "version")
         self.assertEqual(res["completion_status"], "complete")
+        self.assertFalse(res["output_truncated"])
 
-    def test_daemon_close_lifecycle(self):
+    def test_daemon_execute_command_truncation(self):
         daemon = session_module.ReaLldbSessionDaemon()
+        daemon.MAX_OUTPUT_CHARS = 10
+        res = daemon.execute_command("version")
+        self.assertEqual(res["command"], "version")
+        self.assertTrue(res["output_truncated"])
+        self.assertEqual(len(res["output"]), 10)
+
+    def test_daemon_close_lifecycle_launched(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        daemon.is_attached = False
+        class MockProcess:
+            def IsValid(self): return True
+            def GetState(self): return 5 # Running
+            def Kill(self): pass
+        daemon.process = MockProcess()
         res = daemon.close()
         self.assertEqual(res["status"], "closed")
+        self.assertEqual(res["target_state"], "terminated")
+
+    def test_daemon_close_lifecycle_attached(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        daemon.is_attached = True
+        class MockProcess:
+            def IsValid(self): return True
+            def GetState(self): return 5 # Running
+            def Detach(self): pass
+        daemon.process = MockProcess()
+        res = daemon.close()
+        self.assertEqual(res["status"], "closed")
+        self.assertEqual(res["target_state"], "detached")
 
 
 if __name__ == "__main__":

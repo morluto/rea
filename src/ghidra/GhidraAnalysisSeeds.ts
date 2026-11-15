@@ -1,5 +1,6 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
@@ -13,16 +14,18 @@ import {
   writeGhidraProfileArtifact,
   ghidraFileFailure,
 } from "./GhidraFileArtifacts.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Seed file format admitted by this adapter. */
 export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
 export const MAX_GHIDRA_SEED_BYTES = 32 * 1024 * 1024;
 export const MAX_GHIDRA_SEED_ENTRIES = 1_000_000;
-const MAX_SEED_NAME_LENGTH = 2000;
+export const MAX_GHIDRA_SEED_NAME_LENGTH = 2000;
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
-const count = z.number().int().nonnegative();
+const count = z.int().nonnegative();
 
 /** Caller-declared seeds committed into the analysis profile before import. */
 export const ghidraSeedCommitmentSchema = z.strictObject({
@@ -35,19 +38,33 @@ export const ghidraSeedCommitmentSchema = z.strictObject({
 export type GhidraSeedCommitment = z.infer<typeof ghidraSeedCommitmentSchema>;
 
 /** What the pre-analysis script applied, as reported by the bridge handshake. */
-export const ghidraSeedReportSchema = z.strictObject({
-  format: z.literal(GHIDRA_SEED_FORMAT),
-  sha256: digest,
-  entries: count,
-  function_created: count,
-  function_existing: count,
-  function_failed: count,
-  code_decoded: count,
-  code_failed: count,
-  label_applied: count,
-  label_failed: count,
-  unmapped: count,
-});
+export const ghidraSeedReportSchema = z
+  .strictObject({
+    format: z.literal(GHIDRA_SEED_FORMAT),
+    sha256: digest,
+    entries: count,
+    function_created: count,
+    function_existing: count,
+    function_failed: count,
+    code_decoded: count,
+    code_failed: count,
+    label_applied: count,
+    label_failed: count,
+    unmapped: count,
+  })
+  .refine(
+    (report) =>
+      report.function_created +
+        report.function_existing +
+        report.function_failed +
+        report.code_decoded +
+        report.code_failed +
+        report.label_applied +
+        report.label_failed +
+        report.unmapped ===
+      report.entries,
+    { message: "Seed outcomes must account for exactly the reported entries." },
+  );
 export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
 
 type SeedKind = "function" | "code" | "label";
@@ -92,13 +109,13 @@ export const parseGhidraSeeds = (
     if (
       name !== undefined &&
       (name.length === 0 ||
-        name.length > MAX_SEED_NAME_LENGTH ||
+        name.length > MAX_GHIDRA_SEED_NAME_LENGTH ||
         /[\s\0]/u.test(name))
     )
       return err(
         seedLineError(
           number,
-          `name must be 1..${MAX_SEED_NAME_LENGTH} characters without whitespace`,
+          `name must be 1..${MAX_GHIDRA_SEED_NAME_LENGTH} characters without whitespace`,
         ),
       );
     if (kind === "label" && name === undefined)
@@ -154,7 +171,8 @@ const readSeeds = (
     (bytes) => {
       let text: string;
       try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        // A user-authored seed file may start with a BOM signature.
+        text = decodeStrictUtf8(bytes, "strip-signature");
       } catch {
         throw seedLineError(0, "file is not valid UTF-8");
       }
@@ -163,6 +181,15 @@ const readSeeds = (
       return parsed.value;
     },
   );
+
+/** Preserve native lookup semantics while allowing configured symbolic links. */
+const resolveSeedPath = async (configured: string): Promise<string> => {
+  // Darwin realpath may collapse file/.. even though native lookup rejects it.
+  const selected = await stat(configured);
+  if (!selected.isFile())
+    throw new NonRegularFileReadError(configured, selected.isDirectory());
+  return realpath(configured);
+};
 
 /** Resolve the configured seed file into an immutable profile commitment. */
 export const resolveGhidraAnalysisSeeds = async (
@@ -176,7 +203,7 @@ export const resolveGhidraAnalysisSeeds = async (
       let entries: readonly SeedEntry[];
       let path: string;
       try {
-        path = await realpath(configured);
+        path = await resolveSeedPath(configured);
         entries = await readSeeds(path, resources, signal);
       } catch (cause: unknown) {
         return err(
@@ -215,16 +242,16 @@ export const snapshotGhidraAnalysisSeeds = async (
   resources
     .run(async () => {
       ghidraSeedCommitmentSchema.parse(commitment);
-      if ((await realpath(commitment.configured_path)) !== commitment.path)
-        throw new Error(
-          "Ghidra seed file resolved path differs from explicit configuration",
-        );
+      if (
+        (await resolveSeedPath(commitment.configured_path)) !== commitment.path
+      )
+        throw new GhidraAdmissionError("seed_path_differs");
       const entries = await readSeeds(commitment.path, resources, signal);
       const normalized = normalizedSeeds(entries);
       if (sha256(normalized) !== commitment.sha256)
-        throw new Error(
-          `Ghidra seed file changed after the analysis profile was committed: ${commitment.path}`,
-        );
+        throw new GhidraAdmissionError("seed_changed", {
+          path: commitment.path,
+        });
       const directory = join(runtimeRoot, "seeds");
       await mkdir(directory, { mode: 0o700 });
       const path = join(directory, "seeds.tsv");
@@ -256,7 +283,15 @@ export const ghidraSeedFailure = (
       : report === undefined
         ? "The Ghidra session did not report the committed analysis seeds."
         : report.sha256 !== commitment.sha256 ||
-            report.entries !== totalEntries(commitment)
+            report.entries !== totalEntries(commitment) ||
+            report.function_created +
+              report.function_existing +
+              report.function_failed >
+              commitment.entries.function ||
+            report.code_decoded + report.code_failed >
+              commitment.entries.code ||
+            report.label_applied + report.label_failed >
+              commitment.entries.label
           ? "The Ghidra session applied analysis seeds that differ from the committed profile."
           : undefined;
   return reason === undefined

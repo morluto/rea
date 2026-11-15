@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -26,6 +27,8 @@ import {
   type ApplicationMcpHarness,
 } from "../../fixtures/applicationMcpHarness.js";
 import { createHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 
 async function runUnicodeSourceMapComparison(
   harness: ApplicationMcpHarness,
@@ -139,10 +142,10 @@ async function runUnicodeSourceMapComparison(
   const advertised = (await harness.client.listTools()).tools.find(
     ({ name }) => name === "compare_source_to_bundle",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Comparison tool output schema is missing");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema = advertised.outputSchema as AnySchema;
+  const outputSchema = canonicalOutputSchema(advertised.name) as AnySchema;
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const validateOutput = ajv.compile(outputSchema);
   expect(validateOutput(reply.structuredContent)).toBe(true);
@@ -161,7 +164,21 @@ async function runInlineWorkflowScenarios(
   expect(tracedInline.structuredContent).toMatchObject({
     normalized_result: {
       seed: { kind: "module", value: "renderer.js", match: "exact" },
-      summary: { matched_seeds: 1, traced_nodes: 1, unknown_facts: 0 },
+      summary: {
+        matched_seeds: 1,
+        traced_nodes: 2,
+        traced_edges: 1,
+        unknown_facts: 0,
+      },
+      graph: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ kind: "artifact" }),
+          expect.objectContaining({ kind: "javascript-asset" }),
+        ]),
+        edges: expect.arrayContaining([
+          expect.objectContaining({ relation: "contains" }),
+        ]),
+      },
       coverage: {
         status: "complete-within-source",
         source_graph_status: "complete",
@@ -257,7 +274,12 @@ async function runInlineWorkflowScenarios(
       exclusions: [{ path: "vendor/removed.ts", reason: "project-ignored" }],
     },
   };
-  expect(validate(missingPattern)).toBe(false);
+  expect(
+    ajv.validate(
+      advertisedInputJsonSchema(toolContract("compare_source_to_bundle")),
+      missingPattern,
+    ),
+  ).toBe(false);
   const rejectedExclusion = await harness.client.callTool({
     name: "compare_source_to_bundle",
     arguments: missingPattern,
@@ -316,7 +338,7 @@ async function assertRejectedEvidenceReferences(
       error: {
         code: "invalid_request",
         category: "invalid_input",
-        retryable: true,
+        retryable: false,
       },
     });
   }

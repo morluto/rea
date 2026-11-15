@@ -3,9 +3,9 @@ import { z } from "zod";
 /** Coverage metadata for the bounded projection of candidate relationships. */
 export const bridgeCandidateCoverageSchema = z.strictObject({
   status: z.enum(["complete", "partial"]),
-  total_candidates: z.number().int().nonnegative(),
-  emitted_candidates: z.number().int().nonnegative(),
-  omitted_candidates: z.number().int().nonnegative(),
+  total_candidates: z.int().nonnegative(),
+  emitted_candidates: z.int().nonnegative(),
+  omitted_candidates: z.int().nonnegative(),
 });
 
 // The serialized candidate array is the retained representation; accounting

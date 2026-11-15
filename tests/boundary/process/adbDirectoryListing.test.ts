@@ -231,7 +231,7 @@ itPosix(
     });
     expect(parseAdbDirectoryListing(output)).toEqual({
       entries: [],
-      unparsedLines: [],
+      unparsedLines: { sample: [], total: 0 },
     });
     expect((await readFile(calls, "utf8")).trim()).toBe("3");
   },

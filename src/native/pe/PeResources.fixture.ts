@@ -4,6 +4,10 @@ interface Resource {
   readonly language: number | string;
   readonly payload: Buffer;
 }
+interface EmptyBranch {
+  readonly type: number | string;
+  readonly name?: number | string;
+}
 interface Tree {
   readonly children: Map<
     string,
@@ -30,7 +34,7 @@ const iconGroup = (): Buffer => {
 /** Hand-authored PE resource bytes, independent of the production decoder. */
 export const peResourceFixture = (
   plus = false,
-  resources: readonly Resource[] = [
+  resources: readonly (Resource | EmptyBranch)[] = [
     { type: 3, name: 1, language: 1033, payload: Buffer.from("ICON") },
     { type: 3, name: 1, language: 1041, payload: Buffer.from("JAPN") },
     { type: 10, name: "7", language: 1033, payload: Buffer.from("Hello") },
@@ -38,21 +42,27 @@ export const peResourceFixture = (
     { type: 14, name: 42, language: 1033, payload: iconGroup() },
   ],
   sectionBytes = 65536,
+  recordAlignment: 2 | 4 = 4,
 ) => {
   const tree: Tree = { children: new Map() };
   for (const resource of resources) {
     let parent = tree;
-    for (const [depth, identity] of [
-      resource.type,
-      resource.name,
-      resource.language,
-    ].entries()) {
+    const path =
+      "payload" in resource
+        ? [resource.type, resource.name, resource.language]
+        : resource.name === undefined
+          ? [resource.type]
+          : [resource.type, resource.name];
+    for (const [depth, identity] of path.entries()) {
       const key = `${typeof identity}:${String(identity)}`;
       let child = parent.children.get(key);
       if (child === undefined) {
         child = {
           identity,
-          value: depth === 2 ? resource : { children: new Map() },
+          value:
+            depth === 2 && "payload" in resource
+              ? resource
+              : { children: new Map() },
         };
         parent.children.set(key, child);
       }
@@ -61,7 +71,7 @@ export const peResourceFixture = (
   }
   const section = Buffer.alloc(sectionBytes);
   let cursor = 0;
-  const allocate = (size: number, alignment = 4): number => {
+  const allocate = (size: number, alignment = recordAlignment): number => {
     cursor = Math.ceil(cursor / alignment) * alignment;
     const at = cursor;
     cursor += size;
@@ -110,7 +120,7 @@ export const peResourceFixture = (
   };
   emit(tree);
   for (const { dataAt, resource } of leaves) {
-    const payloadAt = allocate(resource.payload.length);
+    const payloadAt = allocate(resource.payload.length, 4);
     resource.payload.copy(section, payloadAt);
     section.writeUInt32LE(0x2000 + payloadAt, dataAt);
     section.writeUInt32LE(resource.payload.length, dataAt + 4);

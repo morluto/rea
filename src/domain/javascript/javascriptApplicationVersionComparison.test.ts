@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../evidence.js";
+import type { JsonValue } from "../jsonValue.js";
 import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationGraph,
@@ -142,6 +143,121 @@ const nativeEvidence = (sha256: string | undefined, ordinal: number) =>
       result: { ordinal },
     },
   );
+
+const occurrenceGraph = (
+  rootSha256: string,
+  occurrence: JsonValue,
+): JavaScriptApplicationGraph => {
+  const sourceSha256 = "c".repeat(64);
+  const module = createJavaScriptApplicationNode({
+    kind: "javascript-module",
+    identity: {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: sourceSha256,
+      namespace: "source-module",
+      key: `${rootSha256}:main.js`,
+    },
+    observations: [
+      {
+        label: "main.js",
+        properties: {
+          semantic_role: "source-module",
+          source_sha256: sourceSha256,
+          file_occurrence: occurrence,
+        },
+        evidence: artifactEvidence(sourceSha256, "main.js"),
+      },
+    ],
+  });
+  return createJavaScriptApplicationGraph({
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids: [module.node_id],
+    nodes: [module],
+    edges: [],
+    coverage: completeCoverage,
+    limitations: [],
+  });
+};
+
+const occurrenceDifferences: readonly {
+  readonly name: string;
+  readonly leftOccurrence: JsonValue;
+  readonly rightOccurrence: JsonValue;
+}[] = [
+  {
+    name: "path",
+    leftOccurrence: {
+      container_sha256: LEFT_SHA,
+      path: "main.js",
+      sha256: "c".repeat(64),
+    },
+    rightOccurrence: {
+      container_sha256: RIGHT_SHA,
+      path: "moved.js",
+      sha256: "c".repeat(64),
+    },
+  },
+  {
+    name: "content digest",
+    leftOccurrence: {
+      container_sha256: LEFT_SHA,
+      path: "main.js",
+      sha256: "c".repeat(64),
+    },
+    rightOccurrence: {
+      container_sha256: RIGHT_SHA,
+      path: "main.js",
+      sha256: "d".repeat(64),
+    },
+  },
+  {
+    name: "noncanonical data",
+    leftOccurrence: { container_sha256: LEFT_SHA },
+    rightOccurrence: { container_sha256: RIGHT_SHA },
+  },
+];
+
+it.each(occurrenceDifferences)(
+  "keeps occurrence $name differences visible without altering source evidence",
+  ({ leftOccurrence, rightOccurrence }) => {
+    const left = occurrenceGraph(LEFT_SHA, leftOccurrence);
+    const right = occurrenceGraph(RIGHT_SHA, rightOccurrence);
+    const original = JSON.stringify([left, right]);
+    const result = compareJavaScriptApplicationVersions({
+      left: {
+        evidenceId: `ev_${"1".repeat(64)}`,
+        rootArtifactSha256: LEFT_SHA,
+        graph: left,
+      },
+      right: {
+        evidenceId: `ev_${"2".repeat(64)}`,
+        rootArtifactSha256: RIGHT_SHA,
+        graph: right,
+      },
+      leftNativeEvidence: [],
+      rightNativeEvidence: [],
+    });
+
+    expect(result.items).toMatchObject([
+      {
+        status: "changed",
+        match: { basis: "exact-module-source-digest", confidence: "exact" },
+        dimensions: ["properties"],
+      },
+    ]);
+    expect(JSON.stringify([left, right])).toBe(original);
+    expect(left.nodes[0]?.observations[0]?.properties.file_occurrence).toEqual(
+      leftOccurrence,
+    );
+    expect(right.nodes[0]?.observations[0]?.properties.file_occurrence).toEqual(
+      rightOccurrence,
+    );
+    expect(left.nodes[0]?.observations[0]?.evidence).toEqual(
+      right.nodes[0]?.observations[0]?.evidence,
+    );
+  },
+);
 
 describe("application version comparison Evidence links", () => {
   it("links every exact digest observation only to its paired or unmatched item", () => {

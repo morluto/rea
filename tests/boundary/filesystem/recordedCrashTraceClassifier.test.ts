@@ -1,23 +1,43 @@
 import { expect, it } from "vitest";
 
-import { assertHistoricalPidReadsAreOwnershipOnly } from "../../../scripts/verify/recorded-crash/trace-ownership.mjs";
+import { collectOwnershipTraceFacts } from "../../../scripts/verify/recorded-crash/trace-ownership.mjs";
+import { assertHistoricalPidAccess } from "../../../scripts/verify/recorded-crash/trace-policy.mjs";
 
+const node = "/fixture/node";
+const nodeExec = 'execve("/fixture/node", ["node", "rea.mjs"], 0x7fff) = 0';
 const psExec =
   'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
+const parent = (...events: readonly string[]) => ({
+  pid: 1200,
+  text: [nodeExec, ...events].join("\n"),
+});
+const check = (
+  traces: readonly { readonly pid: number; readonly text: string }[],
+) => {
+  const facts = collectOwnershipTraceFacts({
+    traces,
+    nodeExecutable: node,
+    psExecutables: new Set(["/usr/bin/ps"]),
+  });
+  return traces.flatMap((trace) =>
+    assertHistoricalPidAccess({
+      trace,
+      historicalPid: 4008,
+      ownershipThreads: facts.ownershipThreads,
+      liveCollision: true,
+      psInventory: facts.psProcesses.has(trace.pid),
+    }),
+  );
+};
 
 it("correlates the ps child trace with its parent identity read", () => {
-  const ownershipReads = assertHistoricalPidReadsAreOwnershipOnly({
-    sentinelPid: 4008,
-    psExecutables: new Set(["/usr/bin/ps"]),
-    traces: [
-      {
-        pid: 1200,
-        text: [
-          "vfork() = 1201",
-          "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD}, 88) = 1202",
-          'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY|O_CLOEXEC) = 21',
-        ].join("\n"),
-      },
+  expect(
+    check([
+      parent(
+        "vfork() = 1201",
+        "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD}, 88) = 1202",
+        'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY|O_CLOEXEC) = 21',
+      ),
       {
         pid: 1202,
         text: [
@@ -33,55 +53,34 @@ it("correlates the ps child trace with its parent identity read", () => {
           'openat(AT_FDCWD, "/proc/4008/cmdline", O_RDONLY) = 4',
         ].join("\n"),
       },
-    ],
-  });
-
-  expect(ownershipReads).toHaveLength(5);
+    ]),
+  ).toHaveLength(5);
 });
 
 it("joins unfinished and resumed CLONE_THREAD records", () => {
-  const ownershipReads = assertHistoricalPidReadsAreOwnershipOnly({
-    sentinelPid: 4008,
-    psExecutables: new Set(["/usr/bin/ps"]),
-    traces: [
-      {
-        pid: 1200,
-        text: [
-          "vfork() = 1201",
-          "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD, child_tid=0x3 <unfinished ...>",
-          "<... clone3 resumed>) = 1202",
-        ].join("\n"),
-      },
-      {
-        pid: 1202,
-        text: 'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3',
-      },
+  expect(
+    check([
+      parent(
+        "vfork() = 1201",
+        "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD, child_tid=0x3 <unfinished ...>",
+        "<... clone3 resumed>) = 1202",
+      ),
+      { pid: 1202, text: 'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3' },
       { pid: 1201, text: psExec },
-    ],
-  });
-
-  expect(ownershipReads).toHaveLength(1);
+    ]),
+  ).toHaveLength(1);
 });
 
-it("rejects provider-style reads outside the ps child and stat-only caller", () => {
-  const traces = [
-    {
-      pid: 1200,
-      text: [
+it("rejects provider-style reads outside the ps child and identity-only caller", () => {
+  expect(() =>
+    check([
+      parent(
         "vfork() = 1201",
         'openat(AT_FDCWD, "/proc/4008/cmdline", O_RDONLY) = 21',
-      ].join("\n"),
-    },
-    { pid: 1201, text: psExec },
-  ];
-
-  expect(() =>
-    assertHistoricalPidReadsAreOwnershipOnly({
-      traces,
-      sentinelPid: 4008,
-      psExecutables: new Set(["/usr/bin/ps"]),
-    }),
-  ).toThrow("Historical PID caused a provider lookup");
+      ),
+      { pid: 1201, text: psExec },
+    ]),
+  ).toThrow("non-inventory lookup");
 });
 
 it("does not trust a ps command with different arguments or failed exec", () => {
@@ -90,55 +89,83 @@ it("does not trust a ps command with different arguments or failed exec", () => 
     psExec.replace(" = 0", " = -1 EACCES"),
   ])
     expect(() =>
-      assertHistoricalPidReadsAreOwnershipOnly({
-        sentinelPid: 4008,
-        psExecutables: new Set(["/usr/bin/ps"]),
-        traces: [
-          {
-            pid: 1200,
-            text: `vfork() = 1201\nopenat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3`,
-          },
-          { pid: 1201, text },
-        ],
-      }),
-    ).toThrow("Historical PID caused a provider lookup");
+      check([
+        parent(
+          "vfork() = 1201",
+          'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3',
+        ),
+        { pid: 1201, text },
+      ]),
+    ).toThrow("non-inventory lookup");
 });
 
 it("allows only known procfs fields inside the exact ps child", () => {
   expect(() =>
-    assertHistoricalPidReadsAreOwnershipOnly({
-      sentinelPid: 4008,
-      psExecutables: new Set(["/usr/bin/ps"]),
-      traces: [
-        { pid: 1200, text: "vfork() = 1201" },
-        {
-          pid: 1201,
-          text: `${psExec}\nopenat(AT_FDCWD, "/proc/4008/exe", O_RDONLY) = 3`,
-        },
-      ],
-    }),
-  ).toThrow("Historical PID caused a provider lookup");
+    check([
+      parent("vfork() = 1201"),
+      {
+        pid: 1201,
+        text: `${psExec}\nopenat(AT_FDCWD, "/proc/4008/exe", O_RDONLY) = 3`,
+      },
+    ]),
+  ).toThrow("non-inventory lookup");
 });
 
 it("does not grant the ownership process thread permit to a forked child", () => {
   for (const field of ["stat", "status"])
     expect(() =>
-      assertHistoricalPidReadsAreOwnershipOnly({
-        sentinelPid: 4008,
-        psExecutables: new Set(["/usr/bin/ps"]),
-        traces: [
-          {
-            pid: 1200,
-            text: ["vfork() = 1201", "clone3({flags=SIGCHLD}, 88) = 1203"].join(
-              "\n",
-            ),
-          },
-          { pid: 1201, text: psExec },
-          {
-            pid: 1203,
-            text: `openat(AT_FDCWD, "/proc/4008/${field}", O_RDONLY) = 3`,
-          },
-        ],
-      }),
-    ).toThrow("Historical PID caused a provider lookup");
+      check([
+        parent("vfork() = 1201", "clone3({flags=SIGCHLD}, 88) = 1203"),
+        { pid: 1201, text: psExec },
+        {
+          pid: 1203,
+          text: `openat(AT_FDCWD, "/proc/4008/${field}", O_RDONLY) = 3`,
+        },
+      ]),
+    ).toThrow("non-inventory lookup");
+});
+
+it("requires an observed Node execution as well as the inventory ps child", () => {
+  expect(() =>
+    check([
+      {
+        pid: 1200,
+        text: 'vfork() = 1201\nopenat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3',
+      },
+      { pid: 1201, text: psExec },
+    ]),
+  ).toThrow("non-inventory lookup");
+});
+
+it("refuses identity reads in an exec-replaced ownership thread", () => {
+  expect(() =>
+    check([
+      parent(
+        "vfork() = 1201",
+        "clone3({flags=CLONE_VM|CLONE_THREAD}, 88) = 1202",
+      ),
+      { pid: 1201, text: psExec },
+      {
+        pid: 1202,
+        text: 'execve("/fixture/gdb", ["gdb"], 0x7fff) = 0\nopenat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3',
+      },
+    ]),
+  ).toThrow("non-inventory lookup");
+});
+
+it("does not join unrelated groups through child-side clone returns", () => {
+  expect(() =>
+    check([
+      parent("vfork() = 1201", "clone3({flags=CLONE_VM|CLONE_THREAD}, 88) = 0"),
+      { pid: 1201, text: psExec },
+      {
+        pid: 1300,
+        text: [
+          nodeExec,
+          "clone3({flags=CLONE_VM|CLONE_THREAD}, 88) = 0",
+          'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY) = 3',
+        ].join("\n"),
+      },
+    ]),
+  ).toThrow("non-inventory lookup");
 });

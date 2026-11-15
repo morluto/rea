@@ -3,18 +3,10 @@ import assert from "node:assert/strict";
 const ownershipPsArguments =
   '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]';
 
-/**
- * Allow only the procfs paths used by the process-ownership scan: ps may
- * inspect its process-table fields, and its caller's thread group may read
- * native identity and UID records. With strace -ff, libuv worker threads get
- * separate files; follow CLONE_THREAD edges, never ordinary child-process
- * edges. strace cannot distinguish the purpose of a stat/status read inside
- * the same Node thread group, so this is deliberately limited to those two
- * files; provider Python/GDB children remain outside the permit.
- */
-export const assertHistoricalPidReadsAreOwnershipOnly = ({
+/** Parse execution/thread facts once; only an observed Node ps caller owns inventory reads. */
+export const collectOwnershipTraceFacts = ({
   traces,
-  sentinelPid,
+  nodeExecutable,
   psExecutables,
 }) => {
   const processGroups = new Map();
@@ -71,57 +63,65 @@ export const assertHistoricalPidReadsAreOwnershipOnly = ({
     const childPid =
       event.childPid ?? /\) = (\d+)(?:<[^>]*>)?$/u.exec(event.text)?.[1];
     if (childPid === undefined) continue;
-    event.childPid = Number(childPid);
+    const observedChild = Number(childPid);
+    // A child-side clone return of zero is not a parent-to-child edge.
+    if (!Number.isSafeInteger(observedChild) || observedChild <= 0) continue;
+    event.childPid = observedChild;
     if (/\bCLONE_THREAD\b/u.test(event.text))
       joinThreadGroup(event.parentPid, event.childPid);
   }
 
-  const psPids = new Set();
+  const executions = [];
   for (const trace of traces) {
-    const successfulPsExec = trace.text.split("\n").some((line) => {
-      const executable = /^execve\("([^"]+)"/u.exec(line)?.[1];
-      return (
-        executable !== undefined &&
-        psExecutables.has(executable) &&
-        line.includes(ownershipPsArguments) &&
-        line.endsWith(" = 0")
-      );
-    });
-    if (successfulPsExec) psPids.add(trace.pid);
-  }
-
-  const psParentGroups = new Set(
-    cloneEvents
-      .filter(({ childPid }) => childPid !== undefined && psPids.has(childPid))
-      .map(({ parentPid }) => findGroup(parentPid)),
-  );
-
-  const ownershipReads = [];
-  const pidPrefix = `/proc/${sentinelPid}/`;
-  for (const trace of traces) {
-    const isPsProcess = psPids.has(trace.pid);
-    const isOwnershipProcessThread = psParentGroups.has(findGroup(trace.pid));
-    const pidReads = trace.text
-      .split("\n")
-      .filter((line) => line.includes(pidPrefix));
-    for (const line of pidReads) {
-      const psAllowedPath = new RegExp(
-        `/proc/${sentinelPid}/(?:stat|status|cmdline|wchan|environ)"`,
-        "u",
-      ).test(line);
-      const ownershipThreadPath = new RegExp(
-        `/proc/${sentinelPid}/(?:stat|status)"`,
-        "u",
-      ).test(line);
-      const psRead = isPsProcess && psAllowedPath;
-      const ownershipThreadRead =
-        isOwnershipProcessThread && ownershipThreadPath;
+    for (const line of trace.text.split("\n")) {
+      if (!/execve(?:at)?\(/u.test(line)) continue;
+      const match = /^execve\("([^"]+)"/u.exec(line);
+      assert.notEqual(match, null, `Unresolved executable identity: ${line}`);
       assert.ok(
-        psRead || ownershipThreadRead,
-        `Historical PID caused a provider lookup in trace.${trace.pid}: ${line}`,
+        / = (?:0|-1 [A-Z]+)/u.test(line),
+        `Incomplete execution observation: ${line}`,
       );
-      ownershipReads.push(line);
+      executions.push({
+        pid: trace.pid,
+        path: match[1],
+        line,
+        succeeded: line.endsWith(" = 0"),
+        ownershipInventory:
+          psExecutables.has(match[1]) && line.includes(ownershipPsArguments),
+      });
     }
   }
-  return ownershipReads;
+  const psProcesses = new Set(
+    executions
+      .filter(
+        ({ succeeded, ownershipInventory }) => succeeded && ownershipInventory,
+      )
+      .map(({ pid }) => pid),
+  );
+  const psParentGroups = new Set(
+    cloneEvents
+      .filter(({ childPid }) => psProcesses.has(childPid))
+      .map(({ parentPid }) => findGroup(parentPid)),
+  );
+  const nodeGroups = new Set(
+    executions
+      .filter(({ path, succeeded }) => succeeded && path === nodeExecutable)
+      .map(({ pid }) => findGroup(pid)),
+  );
+  const replaced = new Set(
+    executions
+      .filter(({ path, succeeded }) => succeeded && path !== nodeExecutable)
+      .map(({ pid }) => pid),
+  );
+  const ownershipThreads = new Set(
+    traces
+      .filter(
+        ({ pid }) =>
+          nodeGroups.has(findGroup(pid)) &&
+          psParentGroups.has(findGroup(pid)) &&
+          !replaced.has(pid),
+      )
+      .map(({ pid }) => pid),
+  );
+  return { ownershipThreads, psProcesses, executions };
 };

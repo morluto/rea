@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -5,9 +6,9 @@ import { z } from "zod";
 import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
@@ -86,7 +87,7 @@ const readJar = (
     signal,
     (bytes) => {
       if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
-        throw new Error(`Ghidra extension is not a JAR: ${path}`);
+        throw new GhidraAdmissionError("not_jar", { path });
       return bytes;
     },
   );
@@ -103,10 +104,7 @@ export const resolveGhidraExtensions = async (
     .run(async () => {
       const extensions: GhidraExtension[] = [];
       for (const adapter of adapters) {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-          );
+        if (signal?.aborted) return err(cancelledBy("open_binary", signal));
         const configured = adapter.configuredPath(config);
         if (configured === undefined) continue;
         const refusal = adapter.unsupportedReason(target, platform);
@@ -132,10 +130,7 @@ export const resolveGhidraExtensions = async (
           );
         }
       }
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       return ok(extensions);
     })
     .catch((cause: unknown) =>
@@ -213,13 +208,13 @@ export const snapshotGhidraExtensions = async (
           adapter === undefined ||
           adapter.entryClass !== extension.entry_class
         )
-          throw new Error(
-            `Unregistered Ghidra extension identity: ${extension.id}`,
-          );
+          throw new GhidraAdmissionError("unregistered", {
+            id: extension.id,
+          });
         if ((await realpath(extension.configured_path)) !== extension.path)
-          throw new Error(
-            `Ghidra extension resolved path differs from explicit configuration: ${extension.id}`,
-          );
+          throw new GhidraAdmissionError("path_differs", {
+            id: extension.id,
+          });
       }
       const directory = join(runtimeRoot, "extensions");
       await mkdir(directory, { mode: 0o700 });
@@ -229,9 +224,10 @@ export const snapshotGhidraExtensions = async (
         if (
           createHash("sha256").update(bytes).digest("hex") !== extension.sha256
         )
-          throw new Error(
-            `Ghidra extension digest differs from committed profile: ${extension.id} (${extension.path})`,
-          );
+          throw new GhidraAdmissionError("digest_differs", {
+            id: extension.id,
+            path: extension.path,
+          });
         const path = join(directory, `${extension.id}.jar`);
         await writeGhidraProfileArtifact(path, bytes, resources, signal);
         result.push({ ...extension, path });

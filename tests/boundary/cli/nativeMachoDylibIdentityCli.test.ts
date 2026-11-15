@@ -14,24 +14,20 @@ describe.skipIf(process.platform !== "darwin")(
   "native Mach-O CLI dylib identity",
   () => {
     cliTest(
-      "keeps a dylib's own install name out of its dependencies",
+      "preserves dylib identity and thin or single-slice FAT framing",
       async ({ cli, processes }) => {
         const directory = await createTestTempDirectory("rea-dylib-identity-");
         const source = join(directory, "library.c");
         const library = join(directory, "libprobe.dylib");
         await writeFile(source, "int exported_value(void) { return 42; }\n");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          [
-            "clang",
-            "-dynamiclib",
-            source,
-            "-Wl,-install_name,@rpath/libprobe.dylib",
-            "-o",
-            library,
-          ],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-dynamiclib",
+          source,
+          "-Wl,-install_name,@rpath/libprobe.dylib",
+          "-o",
+          library,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
           arguments: ["inspect-macho", library, "--json"],
@@ -51,6 +47,28 @@ describe.skipIf(process.platform !== "darwin")(
             ({ kind }) => kind === "LC_ID_DYLIB",
           )?.fields.name,
         ).toBe("@rpath/libprobe.dylib (offset 24)");
+
+        // One architecture can still have a FAT container header.
+        const universal = join(directory, "libprobe-universal.dylib");
+        const combined = await processes.run("/usr/bin/lipo", [
+          "-create",
+          library,
+          "-output",
+          universal,
+        ]);
+        expect(combined.exitCode, combined.stderr).toBe(0);
+        const fatResult = await cli.run({
+          arguments: ["inspect-macho", universal, "--json"],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(fatResult.exitCode, fatResult.stdout + fatResult.stderr).toBe(0);
+        const fat = evidenceSchema.parse(fatResult.json).normalized_result;
+        expect(fat.format).toBe("mach-o-universal");
+        expect(fat.architectures.items).toHaveLength(1);
+        expect(fatResult.json).toMatchObject({
+          subject: { format: fat.format },
+        });
+        expect(inspected.format).toBe("mach-o");
       },
     );
   },

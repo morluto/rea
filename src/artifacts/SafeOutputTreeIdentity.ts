@@ -1,5 +1,6 @@
 import type { BigIntStats } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -7,11 +8,55 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 export type DirectoryIdentity = Pick<BigIntStats, "dev" | "ino">;
 export type FileIdentity = DirectoryIdentity;
 
+/** Reject unowned, missing or replaced entries before an output tree is published. */
+export const assertExactTreeEntries = async (
+  root: string,
+  directories: ReadonlyMap<string, DirectoryIdentity>,
+  files: ReadonlyMap<string, FileIdentity>,
+): Promise<void> => {
+  const expected = new Map<string, Set<string>>();
+  expected.set(root, new Set());
+  for (const directory of directories.keys())
+    expected.set(directory, new Set());
+  for (const path of directories.keys())
+    expected.get(dirname(path))?.add(basename(path));
+  for (const path of files.keys())
+    expected.get(dirname(path))?.add(basename(path));
+  for (const [directory, names] of expected) {
+    const entries = await readdir(directory);
+    const remaining = new Map<string, number>();
+    for (const name of names) {
+      const key = name.normalize("NFC");
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
+    }
+    let unexpected = entries.length !== names.size;
+    for (const entry of entries) {
+      const key = entry.normalize("NFC");
+      const count = remaining.get(key) ?? 0;
+      if (count === 0) unexpected = true;
+      else remaining.set(key, count - 1);
+    }
+    // HFS+ can return an equivalent decomposed spelling. Counts avoid merging
+    // distinct Linux names; the original paths must still resolve to owned IDs.
+    if (unexpected)
+      throw new ArtifactReaderFailure(
+        "path",
+        `Unowned or missing output entries: ${directory}`,
+      );
+  }
+  for (const [path, identity] of files)
+    await assertFilePathIdentity(path, identity);
+};
+
 export const readDirectoryIdentity = async (
   path: string,
 ): Promise<DirectoryIdentity> => {
   const metadata = await lstat(path, { bigint: true });
-  if (!metadata.isDirectory()) throw replacedDirectory(path);
+  if (!metadata.isDirectory())
+    throw new ArtifactReaderFailure(
+      "path",
+      `Output destination must be a directory: ${path}`,
+    );
   return { dev: metadata.dev, ino: metadata.ino };
 };
 

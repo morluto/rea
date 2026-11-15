@@ -1,9 +1,9 @@
 import type { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import type { FileCloseResourceOwner } from "../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
 
 /** Complete a prerequisite operation, including retained cleanup on failure. */
 export function withVerifierResourceOwner<T>(
-  operation: (owner: FileCloseResourceOwner) => Promise<T>,
+  operation: (owner: RetainedResourceScope) => Promise<T>,
 ): Promise<T>;
 
 /** Hash one verifier input and transfer failed-close ownership to its scope. */

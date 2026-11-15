@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 import { traceSourceMap } from "./TraceSourceMap.js";
+import {
+  inspectSourceMap,
+  isSourceMapSectionOverlap,
+} from "./SourceMapFormat.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const url = "https://app.test/maps/app.js.map?v=2#map";
 const point = { line: 1, column: 0 };
@@ -14,6 +19,98 @@ const leaf = {
 };
 const trace = (map: unknown, position = point) =>
   traceSourceMap(JSON.stringify(map), url, position);
+
+it("classifies external indexed sections as unsupported with their exact URL", () => {
+  const externalUrl = "https://app.test/maps/part.map?revision=7";
+  try {
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, url: externalUrl }],
+      }),
+    );
+    throw new Error("Expected external section rejection");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(ParseFailureError);
+    expect(error).toMatchObject({
+      failure: {
+        kind: "unsupported",
+        format: "source-map",
+        detail: `External source-map section URL is not fetched: ${externalUrl}`,
+      },
+    });
+  }
+});
+
+it.each([
+  ["root field", { ...leaf, version: 2 }],
+  ["leaf field", { ...leaf, mappings: "!" }],
+  [
+    "section field",
+    { version: 3, sections: [{ offset: { line: "0" }, map: leaf }] },
+  ],
+])("reports a %s schema rejection as a format failure", (_, map) => {
+  try {
+    inspectSourceMap(JSON.stringify(map));
+    throw new Error("Expected schema rejection");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(ParseFailureError);
+    expect(error).toMatchObject({
+      failure: { kind: "malformed", format: "source-map" },
+    });
+  }
+});
+
+it("uses the same conservative section classification for URL-plus-map and malformed URLs", () => {
+  const externalUrl = "https://app.test/maps/part.map";
+  const external = () =>
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: [
+          { offset: { line: 0, column: 0 }, url: externalUrl, map: leaf },
+        ],
+      }),
+    );
+  expect(external).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "unsupported" }),
+      message: `External source-map section URL is not fetched: ${externalUrl}`,
+    }),
+  );
+
+  const malformed = () =>
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, url: 12, map: leaf }],
+      }),
+    );
+  expect(malformed).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "malformed" }),
+      message: expect.stringMatching(/section URL.*must be a string.*\[0\]/iu),
+    }),
+  );
+});
+
+it("rejects a present non-array sections member through the shared section-list rule", () => {
+  const malformed = () =>
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: null,
+        sources: ["ignored.ts"],
+        mappings: "AAAA",
+      }),
+    );
+  expect(malformed).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "malformed" }),
+      message: expect.stringMatching(/sections.*must be an array/iu),
+    }),
+  );
+});
 
 it("traces BOM-prefixed maps with a source-map transport prefix ending in CR", () => {
   const text = `\uFEFF)]}'transport prefix\r${JSON.stringify(leaf)}`;
@@ -71,6 +168,23 @@ it("keeps ignore-list precedence and section-local indexes for duplicate sources
 });
 
 describe("upstream source-map point evidence", () => {
+  it("keeps repeated separators in distinct resolved source identities", () => {
+    const report = trace({
+      ...leaf,
+      sources: ["dir/original.ts", "dir//original.ts"],
+      sourcesContent: ["single", "repeated"],
+      mappings: "AAAA,ACAA",
+    });
+    expect(
+      report.matches.map((match) =>
+        match.state === "mapped" ? match.resolved_url : null,
+      ),
+    ).toEqual([
+      "https://app.test/maps/dir/original.ts",
+      "https://app.test/maps/dir//original.ts",
+    ]);
+  });
+
   it("preserves every duplicate-column/source-URL candidate and its own embedded bytes", () => {
     const report = trace({
       ...leaf,
@@ -202,7 +316,7 @@ describe("upstream source-map point evidence", () => {
 });
 
 describe("source-map layout admission", () => {
-  it.each(["ACAA", "AAAAC", "g", "!", "AA", "D"])(
+  it.each(["AAAAC", "g", "!", "AA", "D"])(
     "rejects malformed VLQ/components/indexes: %s",
     (mappings) => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
@@ -228,7 +342,8 @@ describe("source-map layout admission", () => {
     ).toThrow(/offset/u);
   });
   it("rejects overlapping section mappings rather than silently clipping evidence", () => {
-    expect(() =>
+    let overlap: unknown;
+    try {
       trace({
         version: 3,
         sections: [
@@ -238,8 +353,12 @@ describe("source-map layout admission", () => {
           },
           { offset: { line: 0, column: 5 }, map: leaf },
         ],
-      }),
-    ).toThrow(/overlap/u);
+      });
+    } catch (cause) {
+      overlap = cause;
+    }
+    expect(isSourceMapSectionOverlap(overlap)).toBe(true);
+    expect(overlap).toMatchObject({ failure: { kind: "malformed" } });
   });
   it("accepts absent optional names and null contents without changing reported identity", () => {
     expect(

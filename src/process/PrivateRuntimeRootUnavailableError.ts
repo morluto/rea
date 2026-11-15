@@ -1,7 +1,8 @@
+import { RuntimeControlUnavailableError } from "./RuntimeControlUnavailableError.js";
+
 /** Expected failure when a runtime root's privacy boundary is unavailable. */
-export class PrivateRuntimeRootUnavailableError extends Error {
+export class PrivateRuntimeRootUnavailableError extends RuntimeControlUnavailableError {
   readonly code = "private-runtime-root-authority-unavailable";
-  readonly retryable: boolean;
 
   constructor(
     message: string,
@@ -9,6 +10,5 @@ export class PrivateRuntimeRootUnavailableError extends Error {
   ) {
     super(message, options);
     this.name = "PrivateRuntimeRootUnavailableError";
-    this.retryable = options?.retryable ?? false;
   }
 }

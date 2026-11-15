@@ -118,12 +118,58 @@ describe("parseDemangledSymbols", () => {
     ]);
   });
 
-  it("throws TypeError when output count does not match input count", () => {
+  it("reports an output count that does not match the input as malformed output", () => {
     expect(() =>
       parseDemangledSymbols(["sym1", "sym2"], "demangled1\n"),
-    ).toThrow(TypeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          format: "swift-demangle-output",
+        }),
+      }),
+    );
     expect(() =>
       parseDemangledSymbols(["sym1"], "demangled1\ndemangled2\n"),
     ).toThrow("swift-demangle output count does not match input");
+  });
+});
+
+describe("swift-demangle record correspondence", () => {
+  it("retains skipped underscore inputs as invalid without claiming an empty demangling", () => {
+    expect(parseDemangledSymbols(["_"], "")).toEqual([
+      { input: "_", output: "", status: "invalid" },
+    ]);
+    expect(parseDemangledSymbols(["_", "_"], "")).toEqual([
+      { input: "_", output: "", status: "invalid" },
+      { input: "_", output: "", status: "invalid" },
+    ]);
+  });
+
+  it("correlates real records around skipped inputs and preserves native spelling", () => {
+    expect(
+      parseDemangledSymbols(
+        ["_", "$s4main3FooV", "_", "_Sa", "__"],
+        "main.Foo\n_Sa\n_\n",
+      ),
+    ).toEqual([
+      { input: "_", output: "", status: "invalid" },
+      { input: "$s4main3FooV", output: "main.Foo", status: "demangled" },
+      { input: "_", output: "", status: "invalid" },
+      { input: "_Sa", output: "_Sa", status: "unchanged" },
+      { input: "__", output: "_", status: "unchanged" },
+    ]);
+  });
+
+  it("rejects missing, blank and excess records for non-skipped arguments", () => {
+    expect(() => parseDemangledSymbols(["$s4main3FooV"], "")).toThrow(
+      "output count does not match input",
+    );
+    expect(() => parseDemangledSymbols(["$s4main3FooV"], "\n")).toThrow(
+      "omitted an output line",
+    );
+    expect(() => parseDemangledSymbols(["_"], "invented\n")).toThrow(
+      "output count does not match input",
+    );
   });
 });

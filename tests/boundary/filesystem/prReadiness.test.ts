@@ -30,9 +30,22 @@ const makePull = (
   state: "open",
   draft: false,
   body: readyBody,
+  user: { id: 123456 },
   head: { sha: "a".repeat(40) },
   base: { ref: "main" },
   ...changes,
+});
+
+const headPage = (
+  nodes: readonly { number: number; headRefOid: string }[],
+  next: string | null = null,
+) => ({
+  repository: {
+    pullRequests: {
+      nodes,
+      pageInfo: { hasNextPage: next !== null, endCursor: next },
+    },
+  },
 });
 
 function fixture(changes: Partial<ReadinessPullRequest> = {}) {
@@ -46,7 +59,13 @@ function fixture(changes: Partial<ReadinessPullRequest> = {}) {
     ) => ({}),
   );
   const paginate = vi.fn(async () => [pull]);
+  const graphql = vi.fn(
+    async (
+      ..._arguments: Parameters<ReadinessGitHub["graphql"]>
+    ): Promise<unknown> => headPage([]),
+  );
   const github = {
+    graphql,
     rest: {
       pulls: { get },
       repos: {
@@ -63,10 +82,43 @@ function fixture(changes: Partial<ReadinessPullRequest> = {}) {
     runId: 123,
   };
   const core = { info: vi.fn(), setFailed: vi.fn() };
-  return { github, context, core, get, createCommitStatus, paginate, pull };
+  return {
+    github,
+    context,
+    core,
+    get,
+    createCommitStatus,
+    paginate,
+    graphql,
+    pull,
+  };
 }
 
 describe("initial author declaration", () => {
+  it.each([76467478, 208281322, 161784452, 342580529])(
+    "exempts the configured author ID %s, but keeps drafts pending",
+    (id) => {
+      expect(
+        evaluateReadiness(makePull({ user: { id }, body: null }), template),
+      ).toMatchObject({
+        state: "success",
+        description: expect.stringContaining("exempt"),
+      });
+      expect(
+        evaluateReadiness(
+          makePull({ user: { id }, body: null, draft: true }),
+          template,
+        ).state,
+      ).toBe("pending");
+    },
+  );
+
+  it("does not exempt unknown or missing author identities", () => {
+    for (const user of [{ id: 123456 }, null])
+      expect(
+        evaluateReadiness(makePull({ user, body: null }), template).state,
+      ).toBe("failure");
+  });
   it("accepts the filled current template and uppercase checkmarks", () => {
     expect(evaluateReadiness(makePull(), template).state).toBe("success");
     expect(
@@ -153,6 +205,24 @@ describe("initial author declaration", () => {
     );
   });
 
+  it.each([
+    ["longer backticks", "````markdown", "`````", "success"],
+    ["longer tildes", "~~~~markdown", "~~~~~", "success"],
+    ["indented closer with whitespace", "```", "   ```` \t", "success"],
+    ["shorter backticks", "````", "```", "failure"],
+    ["shorter tildes", "~~~~", "~~~", "failure"],
+    ["different marker", "```", "~~~", "failure"],
+    ["mixed markers", "```", "``~", "failure"],
+    ["four-space indentation", "```", "    ```", "failure"],
+    ["text after the closer", "~~~", "~~~ text", "failure"],
+  ])(
+    "keeps declarations hidden until a valid closing fence: %s",
+    (_name, opening, closing, state) => {
+      const body = `${opening}\n${readyBody}\n${closing}\n${readyBody}`;
+      expect(evaluateReadiness(makePull({ body }), template).state).toBe(state);
+    },
+  );
+
   it("fails closed when the trusted template loses a declaration", () => {
     expect(() =>
       evaluateReadiness(
@@ -167,6 +237,35 @@ describe("initial author declaration", () => {
 });
 
 describe("GitHub status boundary", () => {
+  it.each([76467478, 208281322, 161784452, 342580529])(
+    "publishes a labeled exemption for author ID %s after checking the head",
+    async (id) => {
+      const input = fixture({ user: { id }, body: null });
+      expect(await runReadinessCheck(input)).toMatchObject({
+        state: "success",
+        description: expect.stringContaining("exempt"),
+      });
+      expect(input.paginate).toHaveBeenCalledOnce();
+      expect(input.createCommitStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ state: "success", sha: input.pull.head.sha }),
+      );
+    },
+  );
+  it("does not let an exempt author lend success to another PR sharing the head", async () => {
+    const input = fixture({ user: { id: 76467478 }, body: null });
+    input.paginate.mockResolvedValue([input.pull, makePull({ number: 43 })]);
+    expect((await runReadinessCheck(input))?.state).toBe("failure");
+  });
+
+  it("does not publish an exemption if the author changes during the check", async () => {
+    const input = fixture({ user: { id: 76467478 }, body: null });
+    input.get
+      .mockResolvedValueOnce({ data: input.pull })
+      .mockResolvedValueOnce({
+        data: makePull({ user: { id: 123456 }, body: null }),
+      });
+    expect((await runReadinessCheck(input))?.state).toBe("pending");
+  });
   it("publishes failure on the actual PR head when declarations are unchecked", async () => {
     const input = fixture({ body: readyBody.replaceAll("[x]", "[ ]") });
     expect((await runReadinessCheck(input))?.state).toBe("failure");
@@ -192,6 +291,7 @@ describe("GitHub status boundary", () => {
     expect((await runReadinessCheck(input))?.state).toBe("pending");
     expect(input.core.setFailed).not.toHaveBeenCalled();
     expect(input.paginate).not.toHaveBeenCalled();
+    expect(input.graphql).not.toHaveBeenCalled();
   });
 
   it("keeps the initial declaration valid after later pushes", async () => {
@@ -202,6 +302,7 @@ describe("GitHub status boundary", () => {
         expect.objectContaining({ sha, state: "success" }),
       );
       expect(input.github.rest.pulls).toEqual({ get: input.get });
+      expect(input.graphql).not.toHaveBeenCalled();
     }
   });
 
@@ -244,6 +345,7 @@ describe("GitHub status boundary", () => {
     input.paginate.mockResolvedValue([]);
     expect((await runReadinessCheck(input))?.state).toBe("pending");
     expect(input.core.setFailed).not.toHaveBeenCalled();
+    expect(input.graphql).toHaveBeenCalledOnce();
   });
 
   it.each([{ state: "closed" as const }, { base: { ref: "other-branch" } }])(
@@ -269,6 +371,139 @@ describe("GitHub status boundary", () => {
       repo: "rea",
       pull_number: 42,
     });
+  });
+});
+
+describe("Live PR-head identity", () => {
+  it("confirms an unindexed commit through complete paged live PR heads", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.graphql
+      .mockResolvedValueOnce(
+        headPage([{ number: 1, headRefOid: "b".repeat(40) }], "next-page"),
+      )
+      .mockResolvedValueOnce(
+        headPage([
+          { number: input.pull.number, headRefOid: input.pull.head.sha },
+        ]),
+      );
+    expect((await runReadinessCheck(input))?.state).toBe("success");
+    expect(input.graphql).toHaveBeenNthCalledWith(1, expect.any(String), {
+      owner: "morluto",
+      name: "rea",
+      after: null,
+    });
+    expect(input.graphql).toHaveBeenNthCalledWith(2, expect.any(String), {
+      owner: "morluto",
+      name: "rea",
+      after: "next-page",
+    });
+    expect(input.createCommitStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sha: input.pull.head.sha, state: "success" }),
+    );
+  });
+
+  it("rejects a shared head discovered on a later live page", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.graphql
+      .mockResolvedValueOnce(
+        headPage(
+          [{ number: input.pull.number, headRefOid: input.pull.head.sha }],
+          "next",
+        ),
+      )
+      .mockResolvedValueOnce(
+        headPage([{ number: 43, headRefOid: input.pull.head.sha }]),
+      );
+    expect((await runReadinessCheck(input))?.state).toBe("failure");
+    expect(input.core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining("distinct head commits"),
+    );
+  });
+
+  it("does not publish stale success when a fallback scan spans a head update", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.graphql.mockResolvedValue(
+      headPage([
+        { number: input.pull.number, headRefOid: input.pull.head.sha },
+      ]),
+    );
+    input.get
+      .mockResolvedValueOnce({ data: input.pull })
+      .mockResolvedValueOnce({
+        data: makePull({ head: { sha: "b".repeat(40) } }),
+      });
+    expect((await runReadinessCheck(input))?.state).toBe("pending");
+    expect(input.createCommitStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sha: "b".repeat(40), state: "pending" }),
+    );
+  });
+});
+
+describe("Live PR-head coverage failures", () => {
+  it("leaves readiness pending when live head metadata is unavailable", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.graphql.mockRejectedValue(new Error("live heads unavailable"));
+    await expect(runReadinessCheck(input)).rejects.toThrow(
+      "live heads unavailable",
+    );
+    expect(input.createCommitStatus).toHaveBeenCalledOnce();
+    expect(input.createCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "pending" }),
+    );
+  });
+
+  it.each([
+    null,
+    { repository: null },
+    {
+      repository: {
+        pullRequests: { nodes: null, pageInfo: { hasNextPage: false } },
+      },
+    },
+    headPage([{ number: 42, headRefOid: "unknown" }]),
+    headPage([{ number: 43, headRefOid: "A".repeat(40) }]),
+  ])(
+    "cannot turn incomplete live metadata into success (%#)",
+    async (response) => {
+      const input = fixture();
+      input.paginate.mockResolvedValue([]);
+      input.graphql.mockResolvedValue(response);
+      await expect(runReadinessCheck(input)).rejects.toThrow(
+        /open-PR head metadata/u,
+      );
+      expect(input.createCommitStatus).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects non-progressing live pagination without another API request", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.graphql
+      .mockRejectedValue(new Error("unexpected extra page"))
+      .mockResolvedValueOnce(headPage([], "repeat"))
+      .mockResolvedValueOnce(headPage([], "repeat"));
+    await expect(runReadinessCheck(input)).rejects.toThrow(
+      "pagination did not advance",
+    );
+    expect(input.graphql).toHaveBeenCalledTimes(2);
+    expect(input.createCommitStatus).toHaveBeenCalledOnce();
+  });
+
+  it("rejects overlapping live pages instead of claiming complete coverage", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    const node = { number: input.pull.number, headRefOid: input.pull.head.sha };
+    input.graphql
+      .mockResolvedValueOnce(headPage([node], "next"))
+      .mockResolvedValueOnce(headPage([node]));
+    await expect(runReadinessCheck(input)).rejects.toThrow(
+      "repeated open-PR head metadata",
+    );
+    expect(input.createCommitStatus).toHaveBeenCalledOnce();
   });
 });
 

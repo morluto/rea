@@ -36,8 +36,8 @@ export const processObservationLocationSchema = z.strictObject({
     "process_samples",
     "filesystem_checkpoints",
   ]),
-  index: z.number().int().nonnegative(),
-  capture_order: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
+  capture_order: z.int().nonnegative(),
 });
 export type ProcessObservationLocation = z.infer<
   typeof processObservationLocationSchema

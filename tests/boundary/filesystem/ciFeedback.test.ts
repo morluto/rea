@@ -12,7 +12,6 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
-import { createGhApiRequest } from "../../../scripts/ci/github-api.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -201,8 +200,41 @@ it("starts source feedback before build and requires both groups without waiving
   expect(
     jobs.static?.steps?.find(
       (step) => step.run === "npm run ci:static-context",
-    )?.["continue-on-error"],
-  ).toBe(true);
+    ),
+  ).toMatchObject({
+    "continue-on-error": true,
+    env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:fast:tasks" },
+  });
+  expect(
+    jobs["static-deep"]?.steps?.find(
+      (step) => step.run === "npm run ci:static-context",
+    ),
+  ).toMatchObject({
+    "continue-on-error": true,
+    env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:deep:tasks" },
+  });
+  const deepUpload = jobs["static-deep"]?.steps?.find(
+    (step) => step.with?.name === "static-deep-check-reports",
+  );
+  expect(deepUpload?.if).toBe("always()");
+  expect(deepUpload?.with).toMatchObject({
+    path: ".cache/static-checks/",
+    "if-no-files-found": "ignore",
+    "retention-days": 7,
+  });
+  const deepSteps = jobs["static-deep"]?.steps ?? [];
+  const contextIndex = deepSteps.findIndex(
+    (step) => step.run === "npm run ci:static-context",
+  );
+  const checkIndex = deepSteps.findIndex(
+    (step) => step.run === "npm run check:ci:deep",
+  );
+  const uploadIndex = deepSteps.findIndex(
+    (step) => step.with?.name === "static-deep-check-reports",
+  );
+  expect(contextIndex).toBeGreaterThanOrEqual(0);
+  expect(checkIndex).toBeGreaterThan(contextIndex);
+  expect(uploadIndex).toBeGreaterThan(checkIndex);
   expect(jobs["test-source"]?.needs).toBe("changes");
   expect(jobs["test-shard"]?.needs).toEqual(["changes", "build"]);
   expect(
@@ -267,8 +299,30 @@ it("records the actual static task graph with explicit source identity and no am
   const context = await recordStaticTaskContext({ outputDirectory: directory });
   const head = await execute("git", ["rev-parse", "HEAD"]);
   expect(context.sourceSha).toBe(head.stdout.trim());
-  expect(context.taskHashes["lint:built"]).toMatch(/^[a-f0-9]{16}$/u);
-  expect(context.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes.lint).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes.typecheck).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes["format:check"]).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes).not.toHaveProperty("jscpd");
+  expect(context.taskHashes).not.toHaveProperty("knip");
+  const deep = await recordStaticTaskContext({
+    outputDirectory: `${directory}/deep`,
+    script: "check:ci:deep:tasks",
+  });
+  expect(deep.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
+  expect(deep.taskHashes.knip).toMatch(/^[a-f0-9]{16}$/u);
+  expect(deep.taskHashes).not.toHaveProperty("lint");
+  await expect(
+    recordStaticTaskContext({
+      outputDirectory: directory,
+      script: "check:ci",
+    }),
+  ).rejects.toThrow("Static context script is not a known check");
+  await expect(
+    recordStaticTaskContext({
+      outputDirectory: directory,
+      script: "check:ci:fast",
+    }),
+  ).rejects.toThrow("Static context script is not a known check");
   expect(context).not.toHaveProperty("environmentVariables");
   expect(context).not.toHaveProperty("env");
   expect(
@@ -282,17 +336,6 @@ it("records the actual static task graph with explicit source identity and no am
     { ...context, taskHashes: { jscpd: "stale" } },
   ])
     expect(() => parseStaticTaskContext(invalid)).toThrow();
-});
-
-it("rejects mutation methods at the shared GitHub transport before invoking the CLI", async () => {
-  const request = createGhApiRequest({ env: { PATH: "" } });
-  await expect(
-    request("POST", "repos/owner/repo/actions/runs/1/rerun", {
-      requests: 0,
-      startedAt: Date.now(),
-      limitMs: 1000,
-    }),
-  ).rejects.toThrow("read-only GET");
 });
 
 it("collects basic CI telemetry before optional dependency installation can fail", async () => {

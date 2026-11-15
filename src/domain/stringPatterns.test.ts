@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
@@ -11,6 +12,7 @@ import {
   canonicalBase64Schema,
   isCanonicalBase64,
   isPaddedBase64,
+  rejectUnpairedSurrogates,
 } from "./stringPatterns.js";
 
 it("preserves identifier grammars under Unicode and Unicode-set compilation", () => {
@@ -135,4 +137,40 @@ it("advertises every portable base64 constraint and keeps large inputs stack-saf
     ).toBe(true);
   }
   expect(isCanonicalBase64(encoded)).toBe(true);
+});
+
+it("validates complete projected canonical schemas at the encoded-input budget", () => {
+  const projected = z.toJSONSchema(canonicalBase64Schema, {
+    target: "draft-2020-12",
+  });
+  const validate = new Ajv2020({ strict: true }).compile(projected);
+  const encoded = Buffer.alloc(24 * 1024 * 1024 - 3, 0x81).toString("base64");
+  for (const { value, expected } of [
+    { value: encoded, expected: true },
+    { value: `${encoded.slice(0, -1)}!`, expected: false },
+    { value: `${encoded.slice(0, -3)}R==`, expected: false },
+    { value: `${encoded}A`, expected: false },
+  ]) {
+    expect(canonicalBase64Schema.safeParse(value).success).toBe(expected);
+    expect(validate(value)).toBe(expected);
+  }
+});
+
+it("rejects unpaired surrogates at runtime without advertising a pattern", () => {
+  const schema = rejectUnpairedSurrogates(z.string(), "Must be well-formed");
+  for (const value of ["\ud800", "a\udc00", "\udc00\ud800", "\ud83d"])
+    expect(
+      schema.safeParse(value).error?.issues,
+      JSON.stringify(value),
+    ).toEqual([
+      {
+        code: "invalid_format",
+        format: "regex",
+        message: "Must be well-formed",
+        path: [],
+      },
+    ]);
+  for (const value of ["", "plain", "\ud83d\ude00", "\ufffd", "\uffff"])
+    expect(schema.safeParse(value).success, JSON.stringify(value)).toBe(true);
+  expect(z.toJSONSchema(schema, { io: "input" })).not.toHaveProperty("pattern");
 });

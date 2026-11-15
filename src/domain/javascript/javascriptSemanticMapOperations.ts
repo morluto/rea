@@ -4,7 +4,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -54,8 +54,7 @@ export const isIntrinsicMapLookup = (
     if (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, bindings.parentsByNode)
-        .hasDefiniteInitializer
+      !semanticBindingAtRead(binding, receiver, bindings).hasDefiniteInitializer
     )
       return false;
     receiver = unwrapJavaScriptExpression(initializer.node).node;

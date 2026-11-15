@@ -1,5 +1,5 @@
 import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
-import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   type ManagedToolName,

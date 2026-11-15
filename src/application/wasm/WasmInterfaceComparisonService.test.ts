@@ -1,7 +1,11 @@
-import { expect, it } from "vitest";
-import { createEvidence } from "../../domain/evidence.js";
+import { expect, it, vi } from "vitest";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { createEvidence, parseEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { wasmInterfaceComparisonSchema } from "../../contracts/wasm/wasmComparisonContracts.js";
 import { compareWasmInterfaces } from "./WasmInterfaceComparisonService.js";
+import { retainAnalysisResultSources } from "../investigation/recordEvidenceSources.js";
+import { ok } from "../../domain/result.js";
 import type { WasmInterface } from "../../domain/wasm/wasmInterface.js";
 import { wasmArtifactFixture } from "../../../tests/fixtures/wasm/artifact.js";
 
@@ -24,14 +28,17 @@ const facts = (
     },
   ],
 });
-const evidence = (interfaceFacts?: WasmInterface) => {
+const evidence = (
+  interfaceFacts?: WasmInterface,
+  format: "file" | "pe" = "file",
+) => {
   const report = wasmArtifactFixture();
   if (interfaceFacts !== undefined) report.interface = interfaceFacts;
   return createEvidence(
     {
       path: report.artifact.path,
       sha256: report.artifact.sha256,
-      format: "file",
+      format,
     },
     { id: "fixture", name: "typed fixture", version: "1" },
     {
@@ -48,7 +55,9 @@ const compare = async (
 ) => {
   const result = await compareWasmInterfaces({ left, right, scope: "both" });
   if (!result.ok) throw result.error;
-  return wasmInterfaceComparisonSchema.parse(result.value.normalized_result);
+  return wasmInterfaceComparisonSchema.parse(
+    result.value.evidence.normalized_result,
+  );
 };
 
 it("reports all five comparison states, including duplicate ambiguity and explicit selected scope", async () => {
@@ -84,7 +93,7 @@ it("reports all five comparison states, including duplicate ambiguity and explic
     scope: "imports",
   });
   if (!selected.ok) throw selected.error;
-  expect(selected.value.normalized_result).toMatchObject({
+  expect(selected.value.evidence.normalized_result).toMatchObject({
     changes: [],
     coverage: "complete-within-inputs",
   });
@@ -122,7 +131,7 @@ it("withholds absence claims for historical or partial inventories and unsupport
   });
 });
 
-it("authenticates semantic Evidence and binds display subject and selection identity", async () => {
+it("authenticates semantic Evidence and rejects altered artifact digests", async () => {
   const left = JSON.parse(JSON.stringify(evidence(facts("f"))));
   left.normalized_result.interface.entries[0].name = "tampered";
   expect(
@@ -133,7 +142,7 @@ it("authenticates semantic Evidence and binds display subject and selection iden
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const rebound = JSON.parse(JSON.stringify(evidence(facts("f"))));
-  rebound.subject.local_path = "/other.wasm";
+  rebound.subject.digest.sha256 = "b".repeat(64);
   expect(
     await compareWasmInterfaces({
       left: rebound,
@@ -142,6 +151,52 @@ it("authenticates semantic Evidence and binds display subject and selection iden
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
+
+it("requires the producer's file subject format even for authentic Evidence", async () => {
+  const wrongFormat = evidence(facts("f"), "pe");
+  expect(parseEvidence(wrongFormat)).toEqual(wrongFormat);
+  expect(
+    await compareWasmInterfaces({
+      left: wrongFormat,
+      right: evidence(facts("f")),
+      scope: "both",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+});
+
+it.each(["left", "right"] as const)(
+  "names the %s argument whose Evidence is rejected",
+  async (side) => {
+    const tampered = JSON.parse(JSON.stringify(evidence(facts("f"))));
+    tampered.normalized_result.interface.entries[0].name = "tampered";
+    const report = wasmArtifactFixture();
+    const otherSelection = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture", name: "typed fixture", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: "/artifacts/other.wasm" },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    for (const rejected of [tampered, otherSelection])
+      expect(
+        await compareWasmInterfaces({
+          left: side === "left" ? rejected : evidence(facts("f")),
+          right: side === "right" ? rejected : evidence(facts("f")),
+          scope: "both",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { issues: [{ path: [side], reason: "invalid_value" }] },
+      });
+  },
+);
 
 it("resolves exact retained references and permits cancellation between comparison batches", async () => {
   const left = evidence(facts("f"));
@@ -159,7 +214,7 @@ it("resolves exact retained references and permits cancellation between comparis
     id === left.evidence_id ? left : right,
   );
   if (!result.ok) throw result.error;
-  expect(result.value.evidence_links).toEqual([
+  expect(result.value.evidence.evidence_links).toEqual([
     left.evidence_id,
     right.evidence_id,
   ]);
@@ -168,14 +223,55 @@ it("resolves exact retained references and permits cancellation between comparis
     ...Array.from({ length: 2000 }, (_, i) => facts(`f${i}`).entries[0]!),
   );
   const controller = new AbortController();
+  const reason = { request: "cancel between interface batches" };
   const pending = compareWasmInterfaces(
     { left: evidence(large), right: evidence(large), scope: "both" },
     { signal: controller.signal },
   );
-  setImmediate(() => controller.abort());
-  expect(await pending).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
+  setImmediate(() => controller.abort(reason));
+  const cancelled = await pending;
+  if (cancelled.ok) throw new Error("Expected cancellation between batches");
+  expect(cancelled.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(cancelled.error.cause).toBe(reason);
+  expect(cancelled.error.partialObservation).toBeUndefined();
+});
+
+it("admits each selected inventory independently and recovers a combined comparison with more capacity", async () => {
+  const left = evidence(facts("left"));
+  const right = evidence(facts("right"));
+  const empty = evidence({ state: "complete", issues: [], entries: [] });
+  const alone = await compareWasmInterfaces({
+    left,
+    right: empty,
+    scope: "both",
+    max_interface_bytes: 2048,
+  });
+  expect(alone.ok).toBe(true);
+  const selected = { left, right, scope: "both" as const };
+  const combined = await compareWasmInterfaces({
+    ...selected,
+    max_interface_bytes: 2048,
+  });
+  if (combined.ok)
+    throw new Error("Expected combined comparison capacity refusal");
+  const projected = projectAnalysisError(combined.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: { reported_limits: { maximum_bytes: 2048, source: "request" } },
+  });
+  expect(projected.remediation.action).toContain("max_interface_bytes");
+  const recovered = await compareWasmInterfaces({
+    ...selected,
+    max_interface_bytes: 8192,
+  });
+  if (!recovered.ok) throw recovered.error;
+  expect(recovered.value.evidence.normalized_result).toMatchObject({
+    coverage: "complete-within-inputs",
+    summary: { added: 1, removed: 1 },
+  });
+  expect(recovered.value.evidence.parameters).toMatchObject({
+    max_interface_bytes: 8192,
   });
 });
 
@@ -196,3 +292,79 @@ it.each([false, true])(
     );
   },
 );
+
+it("preserves the caller reason when comparison admission is already cancelled", async () => {
+  const left = evidence(facts("f"));
+  const right = evidence(facts("f"));
+  const reason = { request: "cancel before comparison" };
+  const preAborted = await compareWasmInterfaces(
+    { left, right, scope: "both" },
+    { signal: AbortSignal.abort(reason) },
+  );
+  if (preAborted.ok) throw new Error("Expected cancellation before comparison");
+  expect(preAborted.error.cause).toBe(reason);
+});
+
+it("retains the complete comparison when cancelled at the final handoff", async () => {
+  const left = evidence(facts("changed"));
+  const right = evidence(facts("changed", "i64"));
+  const reason = { request: "cancel completed comparison" };
+  const controller = new AbortController();
+  const pending = compareWasmInterfaces(
+    { left, right, scope: "both" },
+    { signal: controller.signal },
+  );
+  // One entry per side needs no batched yields. The initial turn resumes the
+  // comparison and queues its final handoff before this control turn resumes.
+  await nextTurn();
+  controller.abort(reason);
+  const result = await pending;
+  if (result.ok) throw new Error("Expected cancellation during final handoff");
+  expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(result.error.cause).toBe(reason);
+  expect(result.sourceEvidence).toEqual([left, right]);
+  const retainedSources: string[] = [];
+  const retained = retainAnalysisResultSources(
+    "compare_wasm_interfaces",
+    (source) => {
+      retainedSources.push(source.evidence_id);
+      return ok("added");
+    },
+    result,
+  );
+  expect(retained.ok).toBe(false);
+  expect(retainedSources).toEqual([left.evidence_id, right.evidence_id]);
+  const partial = parseEvidence(result.error.partialObservation);
+  expect(partial).toMatchObject({
+    operation: "compare_wasm_interfaces",
+    confidence: "derived",
+    authority: "analyst-inference",
+    evidence_links: [left.evidence_id, right.evidence_id],
+  });
+  expect(
+    wasmInterfaceComparisonSchema.parse(partial.normalized_result),
+  ).toMatchObject({
+    coverage: "complete-within-inputs",
+    summary: { changed: 1, added: 0, removed: 0, unchanged: 0, unknown: 0 },
+  });
+});
+
+it("does not report unexpected output-construction failures as invalid caller Evidence", async () => {
+  const failure = new Error("comparison output construction failed");
+  const parse = vi
+    .spyOn(wasmInterfaceComparisonSchema, "parse")
+    .mockImplementation(() => {
+      throw failure;
+    });
+  try {
+    await expect(
+      compareWasmInterfaces({
+        left: evidence(facts("f")),
+        right: evidence(facts("f")),
+        scope: "both",
+      }),
+    ).rejects.toBe(failure);
+  } finally {
+    parse.mockRestore();
+  }
+});

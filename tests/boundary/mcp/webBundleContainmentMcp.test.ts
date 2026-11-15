@@ -77,7 +77,18 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
     },
   });
   const timeout = parseMcpToolError(interrupted).error;
-  expect(timeout.code).toBe("provider_timeout");
+  expect(timeout).toMatchObject({
+    code: "provider_timeout",
+    message: expect.stringContaining("total_analysis_timeout_ms"),
+    remediation: {
+      action: expect.stringContaining("total_analysis_timeout_ms"),
+    },
+    recovery: {
+      kind: "inspect_timeout_state",
+      operation: "analyze_web_bundle",
+      timeout_ms: 1,
+    },
+  });
   const timeoutDetails = z
     .object({ partial_observation: z.unknown() })
     .passthrough()
@@ -146,4 +157,4 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   });
   await client.ping();
   expect(browser.activeConnectionCount()).toBe(0);
-}, 60_000);
+});

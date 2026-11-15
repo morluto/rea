@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
+import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
 
 const observationsSchema = z.strictObject({
   edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
@@ -19,6 +20,7 @@ export const webBundleScriptAnalysisSchema = z
       parse_status: z.enum(["parsed", "recovered", "failed"]),
       visited_ast_nodes: z.number().int().min(0),
       widened_return_references: z.boolean(),
+      route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
     }),

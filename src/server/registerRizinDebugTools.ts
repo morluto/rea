@@ -3,9 +3,11 @@ import type { Logger } from "pino";
 
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
-import { evidenceSchema } from "../domain/evidence.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
   runWithExternalMutationAdmission,
@@ -13,7 +15,7 @@ import {
 } from "./externalMutationAdmission.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 export type RizinDebugToolManager = Pick<
   RizinDebugSessionManager,
@@ -58,9 +60,7 @@ export const registerRizinDebugTools = (
         () => manager.retryCleanupFailures(),
         (value) => ({ session_id: value.session_id }),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, start)
-        : delivery.toCallToolResult(result, start);
+      return delivery.toCallToolResult(result, start);
     },
   );
   server.registerTool(
@@ -82,22 +82,12 @@ export const registerRizinDebugTools = (
         (value) => value.evidence,
         () => manager.retryCleanupFailures(),
       );
-      if (!result.ok) {
-        const partial = evidenceSchema.safeParse(
-          result.error.partialObservation,
+      if (!result.ok)
+        return delivery.toPartialErrorToolResult(
+          result.error,
+          command.returnsTargetContent,
+          recordEvidence,
         );
-        if (partial.success) {
-          const recorded = recordEvidence?.(partial.data);
-          if (recorded !== undefined)
-            return delivery.toRecordedPartialErrorToolResult(
-              result.error,
-              partial.data.evidence_id,
-              recorded,
-              command.returnsTargetContent,
-            );
-        }
-        return delivery.toCallToolResult(result, command);
-      }
       return delivery.toEvidenceToolResult(
         result.value.evidence,
         command,
@@ -112,7 +102,13 @@ export const registerRizinDebugTools = (
       const result = manager.status(input.session_id);
       if (result === undefined)
         return delivery.toCallToolResult(
-          { ok: false, error: new AnalysisInputError(status.name) },
+          {
+            ok: false,
+            error: unknownDebuggerSessionError(
+              RIZIN_DEBUG_SESSION_TOOLS,
+              status.name,
+            ),
+          },
           status,
         );
       return delivery.toCallToolResult(
@@ -138,9 +134,7 @@ export const registerRizinDebugTools = (
             manager.close(input.session_id),
           ),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, close)
-        : delivery.toCallToolResult(result, close);
+      return delivery.toCallToolResult(result, close);
     },
   );
 };

@@ -54,8 +54,13 @@ const verifyMacOS = async (
     cli: "fixture-cli",
     environment: {},
     platform: "darwin",
-    runCommand: async (_cli, arguments_) =>
-      JSON.stringify(outputs[arguments_[0]!]) ?? "",
+    commands: {
+      run: async (_cli, arguments_) =>
+        JSON.stringify(outputs[arguments_[0]!]) ?? "",
+      runWithStatus: async () => {
+        throw new Error("Unexpected status command in macOS fixture");
+      },
+    },
   });
 };
 

@@ -4,7 +4,8 @@ import {
 } from "../../domain/go/goBinary.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
-import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
+import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 
 /** Static Go metadata is independent of active native-analysis providers and host toolchains. */
 export const GO_TOOL_CONTRACTS = [
@@ -12,10 +13,14 @@ export const GO_TOOL_CONTRACTS = [
     name: "inspect_go_binary",
     ...toolContractMetadata("inspect_go_binary"),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
-      "Inspect embedded Go compiler version, main module, dependency/replacement versions and build settings in an explicit local ELF, PE or thin Mach-O image. Returns original artifact SHA-256, exact build-info source ranges, raw framed module bytes and unparsed module-text lines inline as observed Evidence. Supports inline and historical pointer encodings without installing Go, opening a disassembler, executing the target, writing temporary files or accessing the network. Missing metadata is reported as unknown, not proof that an image is not Go. Does not recover functions, source mappings, types or runtime behavior. Resource guards bound files to 256 MiB, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete inline metadata to 8 MiB; malformed, unsupported and oversized inputs receive typed failures rather than partial success.",
+      "Read embedded Go compiler, module, dependency/replacement and build-setting metadata from a local ELF, PE or selected Mach-O slice without running it or requiring Go. include_string_literals: true adds inferred static UTF-8 literals; runtime use and dependency completeness remain unknown. Missing build info does not prove the image is not Go. Default complete returns artifact SHA-256, source ranges and original metadata; detail summary retains it for inspect_analysis_view kind go, collections dependencies/settings/string_literals, with parent_evidence_id. Slice ranges remain offsets in the original universal file. No function/type/source recovery. Increase only the reported per-call budget and retry the same artifact; it does not raise parser or MCP delivery limits. Malformed/unsupported inputs fail explicitly.",
     inputSchema: inspectGoBinaryInputSchema,
-    outputSchema: evidenceResultOf(goBinarySchema),
+    outputSchema: analysisDetailOutputSchemaOf(
+      goBinarySchema,
+      goBinarySummaryViewResultSchema,
+    ),
     examples: [
       {
         title: "Inspect embedded build provenance",

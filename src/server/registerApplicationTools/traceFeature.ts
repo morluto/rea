@@ -1,16 +1,15 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { requireAnalysisViewRetention } from "../../application/analysisView/AnalysisViewService.js";
 
-import { traceApplicationFeatureEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { traceApplicationFeatureEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { recordResult } from "./helpers.js";
+import { deliverApplicationEvidence } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const traceContract = applicationToolContract("trace_application_feature");
+const traceContract = toolContract("trace_application_feature");
 
 /** Register the provider-neutral JavaScript feature trace tool. */
 export const registerTraceFeatureTool = (
@@ -20,39 +19,41 @@ export const registerTraceFeatureTool = (
   server.registerTool(
     traceContract.name,
     toolRegistrationOptions(traceContract),
-    async (input, context) =>
+    async ({ view, ...input }, context) =>
       runAdmittedToolOperation(
         server,
         options.withAdmittedAnalysis,
         traceContract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolveApplicationEvidenceRequest(
-            input,
-            options.evidenceById,
-          );
-          if (!resolved.ok)
-            return server.delivery.toCallToolResult(resolved, traceContract);
-          const parsed = resolved.value;
+          // A selected view is meaningful only when the complete trace can be retained.
+          if (view !== undefined) {
+            const retention = requireAnalysisViewRetention(
+              traceContract.name,
+              options,
+            );
+            if (!retention.ok)
+              return server.delivery.toCallToolResult(retention, traceContract);
+          }
           const result = await logToolExecution(
             options.logger,
             traceContract.name,
             () =>
-              Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
+              Promise.resolve(
+                traceApplicationFeatureEvidence(input, options.evidenceById, {
+                  signal: context.mcpReq.signal,
+                }),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, traceContract);
-          const sources = [parsed.application, ...parsed.native_observations];
-          const recorded = recordSessionEvidenceSources(
-            options.recordEvidence,
-            sources,
-          );
-          if (!recorded.ok)
-            return server.delivery.toCallToolResult(recorded, traceContract);
-          return recordResult(
-            { ...options, delivery: server.delivery },
+          return deliverApplicationEvidence(
+            server,
+            options,
             traceContract,
             result.value,
+            view,
+            context.mcpReq.signal,
           );
         },
       ),

@@ -9,6 +9,7 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { deliverEvidenceResult } from "./contractToolHandler.js";
 
 /** Register local script export without requiring a live browser provider. */
 export const registerWebScriptTool = (
@@ -39,13 +40,11 @@ export const registerWebScriptTool = (
                 signal: context.mcpReq.signal,
               }),
           );
-          if (!result.ok)
-            return server.delivery.toCallToolResult(result, contract);
-          const recorded = options.recordEvidence?.(result.value);
-          return server.delivery.toEvidenceToolResult(
-            result.value,
+          return deliverEvidenceResult(
+            server,
+            result,
             contract,
-            recorded,
+            options.recordEvidence,
           );
         },
       ),

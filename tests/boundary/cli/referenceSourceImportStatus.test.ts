@@ -4,15 +4,19 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  analysisCliErrorEnvelopeSchema,
+  analysisErrorProjectionSchema,
+} from "../../../src/contracts/errorSchemas.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const unsupportedHostOutput = {
+const unsupportedHostOutput = expect.objectContaining({
   error: "Import failed",
-  category: "unsupported_host",
+  category: "unsupported_provider",
   message: expect.stringContaining(
     "Safe no-follow file opens are unavailable on this host.",
   ),
-};
+});
 
 const permissionChecksUnavailable =
   process.platform === "win32" || process.getuid?.() === 0;
@@ -48,7 +52,13 @@ describe("compiled Windows reference-source import", () => {
           scenario.fullOutput
             ? expect.objectContaining({
                 ok: false,
-                error: unsupportedHostOutput,
+                error: expect.objectContaining({
+                  code: "capability_unavailable",
+                  category: "unsupported_provider",
+                  message: expect.stringContaining(
+                    "Safe no-follow file opens are unavailable on this host.",
+                  ),
+                }),
               })
             : unsupportedHostOutput,
         );
@@ -108,7 +118,6 @@ describe("compiled reference-source import preflight failures", () => {
             ? "Reference source root could not be resolved"
             : "Reference source root is not a directory";
         const invalidRootOutput = {
-          error: "Import failed",
           category: "invalid_input",
           message: expect.stringContaining(rootReason),
         };
@@ -118,8 +127,20 @@ describe("compiled reference-source import preflight failures", () => {
             error: invalidRootOutput,
           });
         } else {
-          expect(result.json).toMatchObject(invalidRootOutput);
+          expect(result.json).toMatchObject({
+            ...invalidRootOutput,
+            error: "Import failed",
+          });
         }
+        const projection = scenario.fullOutput
+          ? (result.json as { error: unknown }).error
+          : result.json;
+        expect(
+          (scenario.fullOutput
+            ? analysisErrorProjectionSchema
+            : analysisCliErrorEnvelopeSchema
+          ).safeParse(projection).success,
+        ).toBe(true);
         const messagePath = scenario.fullOutput ? "error.message" : "message";
         expect(result.json).toHaveProperty(
           messagePath,

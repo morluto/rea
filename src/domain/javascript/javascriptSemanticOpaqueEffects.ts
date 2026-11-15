@@ -1,28 +1,18 @@
 import * as t from "@babel/types";
+import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import {
-  semanticEffectTiming,
-  semanticBindingEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
 import {
   isUnshadowedGlobal,
+  semanticEffectTiming,
+  semanticBindingEffectFollowsCapture,
+  semanticBindingEffectFollowsRead,
+  semanticReadPrecedesEffectWithinActivation,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-
-/** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
-export interface JavaScriptOpaqueScopeEffects {
-  /** Cheap source evidence collected with declarations, before alias queries. */
-  mayReferenceGlobalEval: boolean;
-  readonly sites: WeakSet<t.Node>;
-  readonly sloppySites: WeakSet<t.Node>;
-  readonly byScope: Map<string, t.CallExpression[]>;
-  readonly children: Map<string, Set<string>>;
-  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
-}
 
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
@@ -56,32 +46,75 @@ export const indexSemanticOpaqueEffects = (
  * neither retain a second call list nor create another alias resolver. */
 export const createSemanticOpaqueGlobalObserver = (
   state: JavaScriptSemanticAnalysisState,
+  dependencies: {
+    createAmbientPathResolver: (
+      state: JavaScriptSemanticAnalysisState,
+      observeGlobals: boolean,
+    ) => (
+      node: t.Node,
+      site: t.Node | undefined,
+    ) => {
+      paths: readonly (readonly (string | null)[])[];
+      callerPaths: readonly (readonly (string | null)[])[];
+    };
+    createSemanticModuleInterop: (
+      state: JavaScriptSemanticAnalysisState,
+      options?: {
+        intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+      },
+    ) => {
+      intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+      intrinsicInvocation: (
+        node:
+          | t.CallExpression
+          | t.OptionalCallExpression
+          | t.NewExpression
+          | t.TaggedTemplateExpression,
+      ) => { readonly path: readonly string[] } | undefined;
+    };
+  },
 ): ((node: t.Node) => void) | undefined => {
-  if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
-  const ambientPaths = createAmbientPathResolver(state, true);
+  if (!state.opaqueEffects.mayReferenceGlobalCode) return undefined;
+  const ambientPaths = dependencies.createAmbientPathResolver(state, true);
   let invocationSite: t.Node | undefined;
-  const interop = createSemanticModuleInterop(state, {
+  const interop = dependencies.createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
-      const paths = ambientPaths(node, invocationSite);
-      const path = paths.find((path) => path[1] === "eval") ?? paths[0];
+      const { paths, callerPaths } = ambientPaths(node, invocationSite);
+      const path =
+        paths.find((path) => path[1] === "eval" || path[1] === "Function") ??
+        callerPaths.find(
+          (path) => path[1] === "eval" || path[1] === "Function",
+        ) ??
+        paths[0];
       if (path?.[0] !== "global" || path.some((key) => key === null))
         return undefined;
       // Keep the global callable owner for generic call/apply/bind resolution.
-      return path[1] === "eval"
+      return path[1] === "eval" || path[1] === "Function"
         ? ["intrinsic", ...(path as readonly string[])]
         : ["intrinsic", ...(path.slice(1) as readonly string[])];
     },
   });
   return (node) => {
-    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
+    if (
+      !t.isCallExpression(node) &&
+      !t.isOptionalCallExpression(node) &&
+      !t.isNewExpression(node) &&
+      !t.isTaggedTemplateExpression(node)
+    )
+      return;
     invocationSite = node;
-    const invocation = interop.intrinsicInvocation(node);
-    if (invocation?.path.join(".") === "intrinsic.global.eval")
+    const path = interop.intrinsicInvocation(node)?.path;
+    // Constructed code may escape and activate a classic-script global. Keep
+    // its creation as a conservative timing bound, not proof of execution.
+    if (
+      path?.join(".") === "intrinsic.global.eval" ||
+      path?.join(".") === "intrinsic.global.Function"
+    )
       state.opaqueEffects.globalSites.push(node);
   };
 };
 
-/** Indirect eval can change globals, but cannot rebind its caller's locals. */
+/** Global code can affect globals, but cannot rebind its caller's locals. */
 export const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -133,6 +166,17 @@ export const semanticBindingMayHaveOpaqueEffect = (
           read,
           effect,
           state.parentsByNode,
+        ) &&
+        // Rebinding a freshly initialized local is activation-specific;
+        // mutations to the referenced object may persist across calls.
+        !(
+          kind === "binding" &&
+          semanticBindingEffectFollowsRead(
+            binding,
+            read,
+            effect,
+            state.parentsByNode,
+          )
         ))
     )
       return true;
@@ -185,7 +229,13 @@ export const semanticOpaqueNameMayHaveChanged = (
           (binding === undefined ||
             resolveSemanticBindingState(state, effect, binding.name)
               ?.bindingId === binding.bindingId) &&
-          semanticEffectTiming(read, effect, state) !== "after",
+          semanticEffectTiming(read, effect, state) !== "after" &&
+          // A sloppy-eval name belongs to this activation, not a prior call.
+          !semanticReadPrecedesEffectWithinActivation(
+            read,
+            effect,
+            state.parentsByNode,
+          ),
       )
     )
       return true;
@@ -238,11 +288,13 @@ const strictEval = (
     node !== undefined;
     node = state.parentsByNode.get(node)
   ) {
-    if (t.isClass(node) || (t.isProgram(node) && node.sourceType === "module"))
+    if (
+      t.isClass(node) ||
+      (t.isProgram(node) && javaScriptProgramStrictness(node) === "strict")
+    )
       return true;
-    const directives = t.isProgram(node)
-      ? node.directives
-      : t.isFunction(node) && t.isBlockStatement(node.body)
+    const directives =
+      t.isFunction(node) && t.isBlockStatement(node.body)
         ? node.body.directives
         : [];
     if (directives.some(({ value }) => value.value === "use strict"))

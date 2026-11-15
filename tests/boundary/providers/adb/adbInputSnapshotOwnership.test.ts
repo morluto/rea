@@ -9,6 +9,7 @@ import {
   execFileOutput,
 } from "../../../../src/process/ExecFileOutput.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js";
@@ -40,6 +41,7 @@ const fixture = async () => {
   const root = await createTestTempDirectory("rea-adb-input-owner-");
   const binary = join(root, "adb");
   const source = join(root, "payload.bin");
+  const devicePath = "/data/local/tmp/payload.bin";
   const bytes = Buffer.from("immutable payload");
   await writeFile(source, bytes);
   const digest = createHash("sha256").update(bytes).digest("hex");
@@ -56,27 +58,44 @@ const fixture = async () => {
       return output(
         `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${binary}\n`,
       );
-    return output("");
+    throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
   vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
-    if (args[2] === "push") {
+    if (args[2] === "shell" && args[3] === "test" && args[5] === devicePath) {
+      if (args[4] === "-d")
+        throw Object.assign(new Error("Selected destination is a file"), {
+          code: 1,
+          stdout: "",
+          stderr: "",
+          signal: null,
+          killed: false,
+        });
+      if (args[4] === "-e")
+        return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    if (args[2] === "push" && args[4] === devicePath) {
       snapshotPath = args[3]!;
       consumedBytes = await readFile(snapshotPath);
       if (consumedBytes.byteLength === 0)
         throw new Error("adb received an empty local snapshot");
+      return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
-    if (args[3] === "sha256sum") {
+    if (
+      args[2] === "shell" &&
+      args[3] === "sha256sum" &&
+      args[4] === devicePath
+    ) {
       if (consumedBytes === undefined)
         throw new Error("checksum requested before a push was consumed");
       const consumedDigest = createHash("sha256")
         .update(consumedBytes)
         .digest("hex");
       return {
-        stdout: Buffer.from(`${consumedDigest}  /data/local/tmp/payload.bin\n`),
+        stdout: Buffer.from(`${consumedDigest}  ${devicePath}\n`),
         stderr: Buffer.alloc(0),
       };
     }
-    return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
   const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
   onTestFinished(() => provider.close());
@@ -91,7 +110,7 @@ const fixture = async () => {
       input: {
         serial: "device",
         local_path: source,
-        device_path: "/data/local/tmp/payload.bin",
+        device_path: devicePath,
         overwrite: true,
       },
     },
@@ -111,7 +130,6 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected snapshot cleanup failure");
   expect(result.error.cleanupResources).toContain(dirname(f.snapshotPath()));
   const evidence = parseEvidence(result.error.partialObservation);
@@ -126,9 +144,9 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
       sha256: f.digest,
     },
   });
-  await expect(readFile(f.snapshotPath())).resolves.toEqual(
-    await readFile(f.source),
-  );
+  expect(
+    Buffer.compare(await readFile(f.snapshotPath()), await readFile(f.source)),
+  ).toBe(0);
 
   await f.provider.close();
   await expect(lstat(dirname(f.snapshotPath()))).rejects.toMatchObject({
@@ -341,7 +359,6 @@ test.each([
     const result = await f.provider.execute(f.request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected snapshot operation failure");
     expect(result.error._tag).toBe(tag);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -354,9 +371,10 @@ test.each([
     const secondary = result.error.secondaryFailures[0];
     expect(secondary).toBeInstanceOf(AnalysisOutputError);
     expect(secondary?.cause).toBeInstanceOf(AdbInputSnapshotFailure);
-    expect(
-      (secondary?.cause as AdbInputSnapshotFailure).cleanupCause,
-    ).toBeDefined();
+    const snapshotFailure = secondary?.cause;
+    if (!(snapshotFailure instanceof AdbInputSnapshotFailure))
+      throw new Error("Expected snapshot cleanup failure");
+    expect(snapshotFailure.cleanupCause).toBeDefined();
   },
 );
 
@@ -418,7 +436,6 @@ test.each([
       },
       cancelDuringClose ? { signal: controller.signal } : undefined,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected retained digest cleanup failure");
     expect(result.error._tag).toBe(
       cancelDuringClose ? "AnalysisCancelledError" : "ProviderAdapterError",
@@ -446,7 +463,7 @@ test.each([
             }),
       },
     });
-    await expect(readFile(localPath)).resolves.toEqual(pulledBytes);
+    expect(Buffer.compare(await readFile(localPath), pulledBytes)).toBe(0);
     const originatingError = result.error;
     await f.provider.close();
     expect(closeAttempts).toBe(failClose ? 2 : 1);
@@ -528,7 +545,9 @@ test.each([false, true])(
       throw new Error("expected retained package digest cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(!cancelDuringClose);
     if (cancelDuringClose) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(primaryAnalysisError(result.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
     }
@@ -594,7 +613,6 @@ test("resolves package-directory cleanup on the originating pull error", async (
       output_directory: outputDirectory,
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected pull and cleanup failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(packageDirectory);
@@ -633,9 +651,10 @@ test.each([false, true])(
     const result = await f.provider.execute(f.request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cancellation");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(primaryAnalysisError(result.error)._tag).toBe(
+      "AnalysisCancelledError",
+    );
     if (failCleanup) {
       expect(result.error.cause).toBeInstanceOf(AggregateError);
       const causes = (result.error.cause as AggregateError).errors as [
@@ -663,7 +682,12 @@ test.each([false, true])(
         dirname(f.snapshotPath()),
       );
     else expect(result.error.cleanupIncomplete).toBe(false);
-    expect(await readFile(f.source)).toEqual(Buffer.from("immutable payload"));
+    expect(
+      Buffer.compare(
+        await readFile(f.source),
+        Buffer.from("immutable payload"),
+      ),
+    ).toBe(0);
     await f.provider.close();
   },
 );
@@ -693,10 +717,12 @@ test("cancels after the input snapshot copy and before contacting the device", a
   const result = await f.provider.execute(f.request, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   expect(await readFile(f.source, "utf8")).toBe("immutable payload");
   await f.provider.close();
 });
@@ -720,10 +746,10 @@ test("reports input snapshot capacity failures before contacting the device", as
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected snapshot capacity failure");
   expect(result.error._tag).toBe("AnalysisOutputError");
   expect(result.error.cause).toBe(capacityFailure);
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   await f.provider.close();
 });

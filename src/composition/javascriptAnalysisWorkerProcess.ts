@@ -20,19 +20,44 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
   capacity,
   callbacks,
+  packageType,
+  purpose,
+  precision,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
   await callbacks.phase("parse");
-  let parsed = parseJavaScriptSource(file.text.value, file.path);
+  let parsed = parseJavaScriptSource(file.text.value, file.path, packageType);
   if (parsed === null) {
     await callbacks.checkpoint(failedJavaScriptStaticAnalysis());
     return null;
   }
   await callbacks.phase("static");
   const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
+    analyzeParsedJavaScriptStaticSourceSteps(
+      file.text.value,
+      parsed,
+      precision,
+    ),
   );
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations.
+    const empty = failedJavaScriptStaticAnalysis();
+    await callbacks.checkpoint({
+      ...empty,
+      parse_status: facts.parse_status,
+      parse_error_count: facts.parse_error_count,
+      analysis_coverage: facts.analysis_coverage,
+      visited_ast_nodes: facts.visited_ast_nodes,
+      limitations: facts.limitations,
+      electron: {
+        ...empty.electron,
+        browser_windows: facts.electron.browser_windows,
+      },
+    });
+    return null;
+  }
   const resultBudgetBytes = await callbacks.checkpoint(facts);
   if (facts.parse_status === "failed") return null;
   if (resultBudgetBytes === 0)
@@ -41,12 +66,15 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       "memory",
       `The parent reserved its remaining result capacity for static observations; semantic analysis of ${file.path} was not started`,
       { semantic_result_budget_bytes: 0 },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("semantic");
   const ir = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      capacity.nodes,
+      precision,
     ),
   );
   parsed = null;
@@ -64,6 +92,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
         semantic_result_budget_bytes: resultBudgetBytes,
         module_transfer_bytes: measured.bytes,
       },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(

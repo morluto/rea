@@ -93,6 +93,7 @@ interface ActiveSession {
  */
 export class LldbSessionManager {
   readonly #sessions = new Map<string, ActiveSession>();
+  readonly #failedCleanups = new Set<string>();
   readonly #environment: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
   readonly #commandTimeoutMs: number;
@@ -129,6 +130,18 @@ export class LldbSessionManager {
       );
     }
 
+    if (options.path !== undefined && options.pid !== undefined) {
+      return err(
+        new AnalysisInputError("start_lldb_session", undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: "Cannot specify both path (launch) and pid (attach).",
+          },
+        ]),
+      );
+    }
+
     const sessionId = randomUUID();
     const childEnv = { ...this.#environment };
 
@@ -149,6 +162,18 @@ export class LldbSessionManager {
     const child = spawn("/usr/bin/python3", [BRIDGE_SCRIPT], {
       env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    child.stderr?.resume(); // Drain stderr diagnostics to prevent pipe backpressure
+    child.on("error", (error: Error) => {
+      for (const [id, rpc] of pending.entries()) {
+        clearTimeout(rpc.timer);
+        rpc.reject(error);
+        pending.delete(id);
+      }
+    });
+    child.stdin?.on("error", () => {
+      // EPIPE or child exit handled on process exit
     });
 
     const pending = new Map<number, PendingRpc>();
@@ -334,17 +359,28 @@ export class LldbSessionManager {
         AnalysisError
       >
     > => {
+      if (signal?.aborted) return err(new AnalysisCancelledError("lldb_command"));
       try {
         const timeoutMs = this.#commandTimeoutMs;
+        const rpcTimeoutMs = timeoutMs + 5000;
         const res = await this.#sendSessionRpc<{
           command: string;
           output: string;
           process_state?: string;
+          output_truncated?: boolean;
           completion_status: "complete" | "unknown";
-        }>(session, "command", { command, timeout: timeoutMs / 1000 }, timeoutMs);
+          pid?: number | null;
+          target?: string | null;
+        }>(session, "command", { command, timeout: timeoutMs / 1000 }, rpcTimeoutMs);
 
         if (res.process_state) {
           session.processState = res.process_state;
+        }
+        if (res.pid !== undefined) {
+          session.pid = res.pid;
+        }
+        if (res.target !== undefined) {
+          session.target = res.target;
         }
 
         const cmdResult: LldbCommandResult = {
@@ -353,7 +389,7 @@ export class LldbSessionManager {
           ...(res.process_state !== undefined
             ? { process_state: res.process_state }
             : {}),
-          output_truncated: false,
+          output_truncated: res.output_truncated ?? false,
           completion_status: res.completion_status ?? "complete",
         };
 
@@ -411,9 +447,27 @@ export class LldbSessionManager {
     return task;
   }
 
-  status(sessionId: string): LldbStatusResult | undefined {
+  async status(sessionId: string): Promise<LldbStatusResult | undefined> {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
+
+    if (!session.closed) {
+      try {
+        const res = await this.#sendSessionRpc<{
+          state?: "ready" | "closed";
+          process_state?: string;
+          pid?: number | null;
+          target?: string | null;
+        }>(session, "status", {}, 3000);
+        if (res) {
+          if (res.process_state !== undefined) session.processState = res.process_state;
+          if (res.pid !== undefined) session.pid = res.pid;
+          if (res.target !== undefined) session.target = res.target;
+        }
+      } catch {
+        // Fall back to cached session values if status query times out
+      }
+    }
 
     return {
       session_id: sessionId,
@@ -444,43 +498,72 @@ export class LldbSessionManager {
       return ok({ target_state: "none_observed" });
     }
 
-    this.#sessions.delete(sessionId);
-    session.closed = true;
-    session.state = "closed";
+    const closeOperation = async (): Promise<
+      Result<
+        {
+          readonly target_state:
+            | "terminated"
+            | "detached"
+            | "exited"
+            | "none_observed"
+            | "unknown";
+        },
+        AnalysisError
+      >
+    > => {
+      let targetState:
+        | "terminated"
+        | "detached"
+        | "exited"
+        | "none_observed"
+        | "unknown" = "none_observed";
 
-    let targetState:
-      | "terminated"
-      | "detached"
-      | "exited"
-      | "none_observed"
-      | "unknown" = "none_observed";
-
-    try {
-      const res = await this.#sendSessionRpc<{
-        target_state:
-          | "terminated"
-          | "detached"
-          | "exited"
-          | "none_observed"
-          | "unknown";
-      }>(session, "close", {}, 5000);
-      if (res?.target_state) {
-        targetState = res.target_state;
+      try {
+        const res = await this.#sendSessionRpc<{
+          target_state:
+            | "terminated"
+            | "detached"
+            | "exited"
+            | "none_observed"
+            | "unknown";
+        }>(session, "close", {}, 5000);
+        if (res?.target_state) {
+          targetState = res.target_state;
+        }
+        this.#failedCleanups.delete(sessionId);
+      } catch {
+        targetState = "unknown";
+        this.#failedCleanups.add(sessionId);
+      } finally {
+        session.closed = true;
+        session.state = "closed";
+        await this.#terminateChild(session.child);
+        session.rl.close();
+        this.#sessions.delete(sessionId);
       }
-    } catch {
-      targetState = "unknown";
-    } finally {
-      await this.#terminateChild(session.child);
-      session.rl.close();
-    }
 
-    return ok({ target_state: targetState });
+      return ok({ target_state: targetState });
+    };
+
+    const task = session.queue.then(closeOperation);
+    session.queue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  }
+
+  async closeAll(): Promise<void> {
+    const sessionIds = Array.from(this.#sessions.keys());
+    await Promise.allSettled(sessionIds.map((id) => this.close(id)));
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
-    for (const [id, session] of this.#sessions.entries()) {
-      if (session.closed) {
-        await this.close(id);
+    const failedIds = Array.from(this.#failedCleanups);
+    for (const id of failedIds) {
+      const res = await this.close(id);
+      if (res.ok && res.value.target_state !== "unknown") {
+        this.#failedCleanups.delete(id);
       }
     }
     return ok(null);

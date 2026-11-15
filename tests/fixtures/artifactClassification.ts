@@ -9,9 +9,10 @@ export const classifyArtifactBytesAtPath = (
 ) => {
   const probe = createAsarHeaderSignatureProbe();
   probe.write(bytes);
-  return classifyArtifactContent(
+  const { kind, format } = classifyArtifactContent(
     path,
     { prefix: bytes, asarHeader: probe.finish(fileSize) },
     fileSize,
   );
+  return { kind, format };
 };

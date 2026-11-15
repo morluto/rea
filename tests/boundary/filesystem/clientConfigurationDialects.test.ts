@@ -1,3 +1,8 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import {
+  currentClientRegistrationCommand,
+  classifyClientRegistrationCommand,
+} from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
@@ -14,25 +19,21 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
-import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
 } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 
 afterEach(() => vi.unstubAllEnvs());
 
 const getClients = (home: string) =>
-  supportedClients(home).filter(({ name }) =>
+  supportedClients(home, HOST_PLATFORM.platform).filter(({ name }) =>
     [
       "opencode",
       "antigravity",
@@ -45,12 +46,20 @@ const getClients = (home: string) =>
     ].includes(name),
   );
 
+/** Read registrations under this host's client layout. */
+const hostRegistrationStatuses = (home: string) =>
+  readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
+  });
+
 describe("additional client configuration dialects", () => {
   it("does not uninstall a Node registration whose relative script only matches this process cwd", async () => {
     if (CURRENT_ENTRYPOINT_PATH === undefined)
       throw new Error("test runner entrypoint is unavailable");
     const home = await createTestTempDirectory("rea-relative-uninstall-");
-    const cursor = supportedClients(home).find(({ name }) => name === "cursor");
+    const cursor = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "cursor",
+    );
     if (cursor === undefined) throw new Error("missing Cursor client");
     await mkdir(cursor.markerPath ?? home, { recursive: true });
     const relativeScript = relative(process.cwd(), CURRENT_ENTRYPOINT_PATH);
@@ -64,7 +73,9 @@ describe("additional client configuration dialects", () => {
     );
 
     expect(
-      await readClientRegistrationStatuses(home, CURRENT_ENTRYPOINT_PATH),
+      await readClientRegistrationStatuses(home, CURRENT_ENTRYPOINT_PATH, {
+        platform: HOST_PLATFORM.platform,
+      }),
     ).toContainEqual(
       expect.objectContaining({
         client: "cursor",
@@ -141,7 +152,7 @@ describe("additional client configuration dialects", () => {
     if (name === "vscode" || name === "omp" || name === "pi")
       expect(registration).toMatchObject({
         type: "stdio",
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
     if (name === "copilot_cli")
@@ -150,11 +161,11 @@ describe("additional client configuration dialects", () => {
       expect(registration).toMatchObject({
         transport: "stdio",
         enabled: true,
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
 
-    const statuses = await readClientRegistrationStatuses(home);
+    const statuses = await hostRegistrationStatuses(home);
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ client: name, state: "aligned", command }),
@@ -238,6 +249,9 @@ describe("OpenCode JSONC registration edits", () => {
       reason: "readback",
     });
     expect(await readFile(client.configPath, "utf8")).toBe(invalid);
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -311,7 +325,9 @@ it.each([
     expectedComment,
   }) => {
     const home = await createTestTempDirectory("rea-cursor-jsonc-remove-");
-    const client = supportedClients(home).find(({ name }) => name === "cursor");
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "cursor",
+    );
     if (client === undefined) throw new Error("missing Cursor client");
     await mkdir(client.markerPath ?? home, { recursive: true });
 
@@ -458,10 +474,10 @@ describe("OpenCode V2 native server table", () => {
       timeout: { catalog: 30000 },
       servers: {
         other: { type: "local", command: ["node", "other.js"] },
-        rea: { type: "local", command: [...command] },
+        rea: { type: "local", command: [...command], disabled: false },
       },
     });
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",
@@ -490,7 +506,7 @@ describe("OpenCode V2 native server table", () => {
       `${JSON.stringify({ mcp: { servers: { rea: { type: "local", command: stale } } } })}\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ client: "opencode", command: stale }),
       ]),
@@ -501,7 +517,9 @@ describe("OpenCode V2 native server table", () => {
     expect(
       parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
     ).toEqual({
-      servers: { rea: { type: "local", command: [...command] } },
+      servers: {
+        rea: { type: "local", command: [...command], disabled: false },
+      },
     });
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
@@ -520,7 +538,7 @@ describe("OpenCode V2 native server table", () => {
       `{ "mcp": { "servers": {}, "rea": ${legacyEntry} } }\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",
@@ -547,7 +565,7 @@ describe("OpenCode V2 native server table", () => {
       `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",
@@ -788,6 +806,12 @@ describe("client launcher traversal semantics", () => {
       const candidate = `${root}/link/../entry.mjs`;
       expect(await readFile(candidate, "utf8")).toBe("// foreign dispatcher\n");
       expect(
+        await readFile(normalizeEntrypointPath(candidate, "node")!, "utf8"),
+      ).toBe("// current dispatcher\n");
+      expect(
+        await readFile(normalizeEntrypointPath(candidate, "bun")!, "utf8"),
+      ).toBe("// foreign dispatcher\n");
+      expect(
         classifyClientRegistrationCommand([candidate, "mcp"], current),
       ).toBe("unknown");
       expect(
@@ -800,6 +824,9 @@ describe("client launcher traversal semantics", () => {
         ),
       ).toBe("owned");
       const unresolvable = `${root}/missing/../entry.mjs`;
+      await expect(
+        readFile(normalizeEntrypointPath(unresolvable, "bun")!, "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
       expect(
         classifyClientRegistrationCommand([unresolvable, "mcp"], current),
       ).toBe("unknown");

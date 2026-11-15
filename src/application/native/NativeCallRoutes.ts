@@ -1,13 +1,13 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { z } from "zod";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
-import {
-  parseRelatedAddresses,
-  referenceKindSchema,
-} from "../../domain/hopperValues.js";
+import { parseRelatedAddresses } from "../../domain/native/nativeObservation.js";
+import { referenceKindSchema } from "../../domain/native/nativeReference.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -16,6 +16,7 @@ import {
   nativeCallClassificationSchema,
   type NativeCallReference,
 } from "../../domain/native/nativeCallReference.js";
+import { appendAll } from "../../domain/appendAll.js";
 
 /** Detailed or partial observations and the untyped fallback share one owner. */
 export const NATIVE_CALL_ROUTE_SOURCES = {
@@ -154,26 +155,35 @@ export const readNativeCallRoutes = async (
           new AnalysisOutputError(
             NATIVE_CALL_ROUTE_SOURCES.references,
             "Invalid typed call references",
+            { cause: parsed.error },
+          ).retainPartialObservation(
+            createAnalysisExecutionEvidence(
+              NATIVE_CALL_ROUTE_SOURCES.references,
+              { procedure, direction: "outgoing" },
+              execution.value,
+              "observed",
+            ),
           ),
         ),
       );
     // Missing detailed reference flags do not invalidate observed targetless
     // calls. Keep their producing provider even if another provider supplies
     // the fallback callee inventory.
-    unknowns.push(
-      ...parsed.data.unresolved_calls.map((call) => ({
+    appendAll(
+      unknowns,
+      parsed.data.unresolved_calls.map((call) => ({
         ...call,
         provider: execution.value.provider,
       })),
     );
     const references = parsed.data.references;
-    routes.push(...observedCallRoutes(references, execution.value.provider));
+    appendAll(routes, observedCallRoutes(references, execution.value.provider));
     if (
       references.every(({ kind }) => kind.available) &&
       (parsed.data.reference_kinds_available || references.length > 0)
     )
       return finish(ok(undefined));
-  } else if (execution.error._tag !== "AnalysisCapabilityUnavailableError")
+  } else if (!permitsCapabilityFallback(execution.error))
     return finish(err(execution.error));
   const callees = await analysis.execute(
     NATIVE_CALL_ROUTE_SOURCES.callees,
@@ -189,7 +199,17 @@ export const readNativeCallRoutes = async (
     ),
   );
   const parsed = parseRelatedAddresses(callees.value.result, "callees");
-  if (!parsed.ok) return finish(err(parsed.error));
+  if (!parsed.ok) {
+    parsed.error.retainPartialObservation(
+      createAnalysisExecutionEvidence(
+        NATIVE_CALL_ROUTE_SOURCES.callees,
+        { procedure },
+        callees.value,
+        "observed",
+      ),
+    );
+    return finish(err(parsed.error));
+  }
   // Keep every observed call site. A target-only fallback cannot replace one,
   // and repeated fallback targets add no new observation.
   const targets = new Set(routes.map(({ address }) => address));

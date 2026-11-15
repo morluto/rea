@@ -212,10 +212,13 @@ describe("logical primitive unions", () => {
     '"one" ?? missing',
   ];
 
-  it("does not introduce short-circuit evaluation", () => {
-    expect(valuesOf(unevaluatedCases)).toEqual(
-      unevaluatedCases.map(() => incompatibleValue),
-    );
+  it("selects an established branch without evaluating an unreachable operand", () => {
+    expect(valuesOf(unevaluatedCases)).toEqual([
+      { status: "literal", value: "one" },
+      { status: "literal", value: "one" },
+      { status: "literal", value: false },
+      { status: "literal", value: "one" },
+    ]);
   });
 });
 
@@ -500,6 +503,37 @@ describe("semantic expression depth bounds", () => {
       reason: expect.stringMatching(
         /semantic expression depth budget exceeded/i,
       ),
+    });
+  });
+
+  it("counts erased TypeScript wrappers on a return against expression depth", () => {
+    const source = "function answer() { return true; }";
+    const parsed = parseJavaScriptSource(source);
+    const declaration = parsed?.program.body[0];
+    const statement = t.isFunctionDeclaration(declaration)
+      ? declaration.body.body[0]
+      : undefined;
+    const argument = t.isReturnStatement(statement)
+      ? statement.argument
+      : undefined;
+    if (parsed === null || !t.isReturnStatement(statement) || argument == null)
+      throw new Error("Expected a returned value");
+    let expression = argument;
+    for (let index = 0; index < 300; index += 1)
+      expression = t.tsAsExpression(expression, t.tsBooleanKeyword());
+    statement.argument = expression;
+
+    const ir = analyzeParsedJavaScriptSemantics(parsed);
+    const site = ir.callables.find((item) => item.name === "answer")
+      ?.returnSites[0];
+    expect(site?.value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "expression-depth",
+    });
+    const literalStart = source.indexOf("true");
+    expect(site?.valueExpressionLocation).toEqual({
+      start: { line: 1, column: literalStart },
+      end: { line: 1, column: literalStart + "true".length },
     });
   });
 

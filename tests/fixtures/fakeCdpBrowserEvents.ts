@@ -67,7 +67,7 @@ const emitMainWebMcpTools = (
         description: "Search orders; authorization=Bearer tool-secret",
         frameId: "frame-main",
         backendNodeId: 42,
-        inputSchema: options.webMcpInputSchema ?? {
+        inputSchema: {
           type: "object",
           properties: inputSchemaProperties,
           required: ["orderId"],
@@ -78,15 +78,18 @@ const emitMainWebMcpTools = (
             ? options.webMcpConsequential
             : true,
         },
-        stackTrace: {
-          callFrames: [
-            {
-              url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
-              lineNumber: 12,
-              columnNumber: 4,
-            },
-          ],
-        },
+        stackTrace:
+          options.webMcpStackTrace !== undefined
+            ? options.webMcpStackTrace(`http://127.0.0.1:${String(port)}`)
+            : {
+                callFrames: [
+                  {
+                    url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
+                    lineNumber: 12,
+                    columnNumber: 4,
+                  },
+                ],
+              },
       },
       {
         name: "private_tool",
@@ -273,13 +276,21 @@ const emitSessionTimeline = (
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
       initiator: { type: "other" },
-      redirectResponse: { status: 302 },
+      redirectResponse: { url: allowed, status: 302 },
       timestamp: 13,
+    });
+    event(socket, "Network.requestWillBeSent", command.sessionId, {
+      requestId: "failed-request",
+      type: "Document",
+      frameId: "frame-main",
+      loaderId: "loader-reload",
+      request: { url: allowed, method: "GET" },
+      initiator: { type: "other" },
+      timestamp: 13.5,
     });
     event(socket, "Network.loadingFailed", command.sessionId, {
       requestId: "failed-request",
-      frameId: "frame-main",
-      loaderId: "loader-reload",
+      type: "Document",
       errorText: "net::ERR_CONNECTION_REFUSED",
       timestamp: 14,
     });
@@ -305,6 +316,8 @@ const emitSessionTimeline = (
         sessionId: command.sessionId,
         targetId: "allowed-page",
       });
+    if (options.sessionTimeline === "target_crashed")
+      event(socket, "Inspector.targetCrashed", command.sessionId, {});
   }
 };
 
@@ -669,6 +682,9 @@ const emitRuntimeEvents = (
             },
           ]
         : []),
+      ...(options.nullConsoleArgument === true
+        ? [{ type: "object", subtype: "null", value: null }]
+        : []),
     ],
     stackTrace: {
       callFrames: [
@@ -710,9 +726,17 @@ const emitCaptureNavigation = (
       : command.method === "Page.captureScreenshot"
         ? options.navigateDuringScreenshotUrl
         : undefined;
+  // Page capture navigation reports its new document's loader, as Chrome
+  // does; the screenshot one omits it, leaving the document unproven.
   if (navigationUrl !== undefined)
     event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: { id: "frame-main", url: navigationUrl },
+      frame: {
+        id: "frame-main",
+        ...(command.method === "DOMSnapshot.captureSnapshot"
+          ? { loaderId: "loader-navigated" }
+          : {}),
+        url: navigationUrl,
+      },
     });
 };
 

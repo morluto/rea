@@ -1,16 +1,23 @@
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { randomUUID } from "node:crypto";
-import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -20,14 +27,20 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import {
+  retainOwnedCommandCleanup,
+  processInspectionCancellationError,
+  processInspectionFailure,
+  bindProcessInspectionCancellations,
+} from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
 const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
 const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 export interface JadxJavaProbeOptions {
-  readonly resourceOwner: FileCloseResourceOwner;
+  readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal | undefined;
   readonly operation?: string;
   /** The Android operation owns this deadline; the probe also has its own bound. */
@@ -42,6 +55,8 @@ export interface JadxJavaProbeOptions {
 }
 
 export interface JadxJavaProbeRefusal {
+  /** Actual preparation record; retained without changing timeout or fallback policy. */
+  readonly inspectionFailure?: ProcessInspectionFailure;
   readonly code:
     | "runtime_missing"
     | "runtime_unavailable"
@@ -134,21 +149,26 @@ export const inspectJadxJava = async (
               : { launcher: options.launcher }),
           },
         );
+        // runOwnedCommand observes every completed run before it resolves.
         if (observed === undefined)
-          throw new Error("Java probe completed without an observation");
+          throw invariantViolation(
+            "Java probe completed without an observation",
+          );
         return observed;
       } catch (cause: unknown) {
         const command =
           cause instanceof OwnedCommandFailure ? cause : undefined;
-        const preparation =
-          command?.preparationFailure ??
-          (cause instanceof DarwinProcessOwnershipInspectionError
-            ? cause
-            : undefined);
+        const preparation = processInspectionFailure(cause);
         const output =
           command?.snapshot == null
-            ? preparation?.capturedOutput
+            ? preparation instanceof DarwinProcessOwnershipInspectionError
+              ? preparation.capturedOutput
+              : undefined
             : capturedOutput(command.snapshot);
+        const inspectionCancellation =
+          command === undefined || command.preparationFailure !== undefined
+            ? processInspectionCancellationError(cause, operation)
+            : undefined;
         const cleanups = retainOwnedCommandCleanup(
           cause,
           options.resourceOwner,
@@ -165,7 +185,6 @@ export const inspectJadxJava = async (
         ) {
           const reason = command.cancellation.reason;
           const errorOptions = {
-            cause: reason,
             ...(output === undefined ? {} : { capturedOutput: output }),
             ...(observed?.ok === true
               ? {
@@ -184,9 +203,18 @@ export const inspectJadxJava = async (
               ? new AnalysisTimeoutError(
                   operation,
                   options.operationDeadline.timeoutMs,
-                  errorOptions,
+                  {
+                    ...errorOptions,
+                    cause: reason,
+                    ...jadxOperationTimeoutGuidance(
+                      options.operationDeadline.timeoutMs,
+                    ),
+                  },
                 )
-              : new AnalysisCancelledError(operation, errorOptions);
+              : (inspectionCancellation ??
+                cancelledBy(operation, carriedReason(reason), errorOptions));
+        } else if (inspectionCancellation !== undefined) {
+          primary = inspectionCancellation;
         } else if (
           observed?.ok === true &&
           command?.cleanupOwner !== undefined
@@ -202,13 +230,15 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined) {
+        } else if (preparation !== undefined && command?.reason !== "timeout") {
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
             diagnostics: {
               stage: "ownership_preparation",
-              ...(preparation.compilerOutcome === undefined
+              ...(!(
+                preparation instanceof DarwinProcessOwnershipInspectionError
+              ) || preparation.compilerOutcome === undefined
                 ? {}
                 : {
                     compiler_outcome: jsonValueSchema.parse(
@@ -219,6 +249,12 @@ export const inspectJadxJava = async (
           });
         } else if (cause instanceof AnalysisError) {
           primary = cause;
+        } else if (cause instanceof InternalInvariantError) {
+          // A REA defect says nothing about the selected Java runtime.
+          primary = new ProviderAdapterError("jadx", operation, {
+            cause,
+            ...(output === undefined ? {} : { capturedOutput: output }),
+          });
         } else {
           const failure = commandProbeRefusal(
             java,
@@ -226,16 +262,20 @@ export const inspectJadxJava = async (
             cause,
             options.timeoutMs ?? JAVA_MODULE_LISTING_TIMEOUT_MS,
           );
+          if (preparation !== undefined)
+            Object.defineProperty(failure, "inspectionFailure", {
+              value: preparation,
+            });
           if (cleanups.length === 0) return err(failure);
           primary = projectRefusal(failure, operation, cause, output);
         }
         for (const cleanup of cleanups)
-          primary = analysisErrorWithCleanupFailure(
+          primary = analysisErrorWithCleanupDependencies(
             primary,
             cleanup,
             operation,
-          ).bindCleanupDependencies([primary, cleanup]);
-        throw primary;
+          );
+        throw bindProcessInspectionCancellations(cause, primary, operation);
       }
     });
   } catch (cause: unknown) {
@@ -258,21 +298,21 @@ const commandProbeRefusal = (
     command?.processError ?? (cause instanceof Error ? cause : undefined);
   const systemCode =
     processError === undefined ? undefined : Reflect.get(processError, "code");
+  const missing = classifyLaunchFailureCode(systemCode)?.kind === "missing";
   const limited = command?.reason === "output-limit";
   const timedOut = command?.reason === "timeout";
   return {
-    code:
-      systemCode === "ENOENT"
-        ? "runtime_missing"
-        : limited || timedOut
-          ? "version_unresolved"
-          : "runtime_unavailable",
-    kind: systemCode === "ENOENT" ? "java_runtime" : "java_probe",
+    code: missing
+      ? "runtime_missing"
+      : limited || timedOut
+        ? "version_unresolved"
+        : "runtime_unavailable",
+    kind: missing ? "java_runtime" : "java_probe",
     message: limited
-      ? `The selected Java launcher ${java} exceeded the ${JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES / (1024 * 1024)} MiB output budget while listing modules. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing.`
+      ? `The selected Java launcher ${java} exceeded the ${String(JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES)}-byte module-listing output budget. This release has no runtime override. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
       : timedOut
-        ? `The selected Java launcher ${java} did not finish the module-listing probe within ${timeoutMs / 1000} seconds. Inspect its startup responsiveness and verify it with java --list-modules.`
-        : `Cannot inspect selected Java runtime ${java}: ${systemCode === "ENOENT" ? "spawn java ENOENT" : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
+        ? `The selected Java launcher ${java} did not finish the module-listing probe within ${String(timeoutMs)} ms. This release has no runtime override. Inspect its startup responsiveness and verify it with java --list-modules. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
+        : `Cannot inspect selected Java runtime ${java}: ${missing ? `spawn java ${String(systemCode)}` : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
     diagnostics: {
       java_executable: java,
       phase: "module-inspection",

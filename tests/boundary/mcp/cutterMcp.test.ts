@@ -47,12 +47,20 @@ const assertUncertainEvidence = async (
     execution_state: "unknown",
     error: "transport-response-missing",
     message: expect.stringContaining("do not retry automatically"),
-    document_generation: 3,
+    // No reply was read, so the generation after the command is unknown.
+    document_generation: null,
+    output_truncated: null,
   });
-  expect(uncertainEvidence.limitations).toContain(
-    "Command completion or its output could not be confirmed; " +
-      "do not retry automatically because the command may have produced " +
-      "partial or persistent effects.",
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(/did not report the document generation/u),
+  );
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(/did not declare whether output was omitted/u),
+  );
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(
+      /completion.*could not be confirmed.*not retry.*effects/iu,
+    ),
   );
 };
 
@@ -148,7 +156,9 @@ const createMcpBridge = async (
                     execution_state: "not_started",
                     error: "session-poisoned-after-ui-timeout",
                   }
-                : {}),
+                : status
+                  ? {}
+                  : { execution_state: "complete" }),
               session_id: request.session_id,
               output: status ? undefined : "synthetic Cutter command output",
               current_file: "/fixtures/sample.bin",

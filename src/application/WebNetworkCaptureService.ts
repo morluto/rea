@@ -1,17 +1,20 @@
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -23,7 +26,7 @@ import {
   type WebNetworkCapture,
 } from "../domain/webNetworkCapture.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -40,13 +43,10 @@ export class WebNetworkCaptureService {
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
+    callerPaths?: { readonly capture: string; readonly descriptor?: string },
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const failure = (error: AnalysisError): Result<never, AnalysisError> =>
       err(redactExplicitFailure(error, captureSensitiveValues(rawInput)));
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
@@ -57,16 +57,6 @@ export class WebNetworkCaptureService {
         }),
       );
     const input = parsed.data;
-    if (!isAbsolute(input.capture_path))
-      return failure(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["capture_path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     if (
       input.record_ordinals !== undefined &&
       new Set(input.record_ordinals).size !== input.record_ordinals.length
@@ -80,6 +70,17 @@ export class WebNetworkCaptureService {
           },
         ]),
       );
+    if (input.protobuf !== undefined && input.record_ordinals === undefined)
+      return failure(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["record_ordinals"],
+            reason: "invalid_format",
+            message:
+              "Protobuf options require explicit producer record ordinals.",
+          },
+        ]),
+      );
     const loaded = await this.port.inspect(input, options);
     if (!loaded.ok) {
       const partial = webNetworkCaptureSchema.safeParse(
@@ -87,7 +88,11 @@ export class WebNetworkCaptureService {
       );
       let partialFailure: AnalysisError | undefined;
       if (partial.success) {
-        const projected = this.#projectCapture(input, partial.data);
+        const projected = this.#projectCapture(
+          input,
+          partial.data,
+          callerPaths,
+        );
         if (projected.ok) loaded.error.partialObservation = projected.value;
         else partialFailure = projected.error;
       } else if (isCapturePartialCandidate(loaded.error.partialObservation)) {
@@ -98,15 +103,23 @@ export class WebNetworkCaptureService {
         );
       }
       if (partialFailure !== undefined) {
-        loaded.error.partialObservation = undefined;
+        const rejected = loaded.error.partialObservation;
+        for (
+          let owner: AnalysisError | undefined = loaded.error;
+          owner !== undefined;
+          owner = owner.cleanupPrimary
+        ) {
+          if (owner.partialObservation === rejected)
+            owner.partialObservation = undefined;
+        }
         partialFailure.retainSecondaryFailure(loaded.error);
         return failure(
           loaded.error.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
+            ? analysisErrorWithCleanupDependencies(
                 partialFailure,
                 loaded.error,
                 OPERATION,
-              ).bindCleanupDependencies([partialFailure, loaded.error])
+              )
             : partialFailure,
         );
       }
@@ -120,7 +133,7 @@ export class WebNetworkCaptureService {
           "Capture adapter returned malformed historical evidence.",
         ),
       );
-    const projected = this.#projectCapture(input, report.data);
+    const projected = this.#projectCapture(input, report.data, callerPaths);
     if (!projected.ok) return failure(projected.error);
     return completeProviderEvidence(projected.value, options?.signal);
   }
@@ -128,6 +141,7 @@ export class WebNetworkCaptureService {
   #projectCapture(
     input: InspectWebNetworkCaptureInput,
     value: WebNetworkCapture,
+    callerPaths?: { readonly capture: string; readonly descriptor?: string },
   ): Result<Evidence, AnalysisError> {
     const artifactSha256 = value.artifact.sha256;
     if (artifactSha256 === null)
@@ -152,19 +166,30 @@ export class WebNetworkCaptureService {
     const safeValue = excludeCaptureCoordinates(value, input.sensitive_values);
     const redactText = (text: string): string =>
       redactExplicitText(text, input.sensitive_values);
+    const isSensitive = (text: string): boolean =>
+      input.sensitive_values.some((literal) => text.includes(literal));
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
-    for (const ordinal of selected) {
+    for (const [index, ordinal] of selected.entries()) {
       const record = safeValue.records[ordinal];
+      // A selection past the capture's records is a caller range fault.
       if (record === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["record_ordinals"],
-              reason: "invalid_format",
-              message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
-            },
+            value.total_records === 0
+              ? {
+                  path: ["record_ordinals", index],
+                  reason: "invalid_value",
+                  message: "The selected capture contains no records.",
+                }
+              : {
+                  path: ["record_ordinals", index],
+                  reason: "out_of_range",
+                  minimum: 0,
+                  maximum: value.total_records - 1,
+                  message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
+                },
           ]),
         );
       records.push({
@@ -172,16 +197,8 @@ export class WebNetworkCaptureService {
         limitations: record.limitations.map(redactText),
       });
     }
-    const safePath = input.sensitive_values.some((literal) =>
-      input.capture_path.includes(literal),
-    )
-      ? ""
-      : input.capture_path;
-    const safeSha256 = input.sensitive_values.some((literal) =>
-      artifactSha256.includes(literal),
-    )
-      ? null
-      : artifactSha256;
+    const safePath = isSensitive(input.capture_path) ? "" : input.capture_path;
+    const safeSha256 = isSensitive(artifactSha256) ? null : artifactSha256;
     const subjectUnavailableReason = redactText(
       "The explicitly sensitive artifact digest is excluded; its cryptographic identity is unknown in this Evidence.",
     );
@@ -195,56 +212,100 @@ export class WebNetworkCaptureService {
     ].map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
-      ...(input.sensitive_values.some((literal) =>
-        input.format.includes(literal),
-      )
-        ? {}
-        : { format: input.format }),
+      ...(isSensitive(input.format) ? {} : { format: input.format }),
       record_ordinals: selected,
+      ...(input.protobuf === undefined
+        ? {}
+        : {
+            protobuf: {
+              framing: input.protobuf.framing,
+              ...(input.protobuf.body_pointers === undefined
+                ? {}
+                : {
+                    body_pointers: input.protobuf.body_pointers.map(redactText),
+                  }),
+              ...(input.protobuf.schema === undefined
+                ? {}
+                : {
+                    schema: {
+                      descriptor_set_path: redactText(
+                        input.protobuf.schema.descriptor_set_path,
+                      ),
+                      message_type: redactText(
+                        input.protobuf.schema.message_type,
+                      ),
+                    },
+                  }),
+            },
+          }),
       sensitive_value_count: input.sensitive_values.length,
+      ...(input.max_input_bytes === undefined
+        ? {}
+        : { max_input_bytes: input.max_input_bytes }),
+      ...(input.max_reply_bytes === undefined
+        ? {}
+        : { max_reply_bytes: input.max_reply_bytes }),
+      ...(input.max_nesting_depth === undefined
+        ? {}
+        : { max_nesting_depth: input.max_nesting_depth }),
+      ...(input.capture_timeout_ms === undefined
+        ? {}
+        : { capture_timeout_ms: input.capture_timeout_ms }),
     });
-    return ok(
-      createEvidence(
-        safeSha256 === null
-          ? undefined
-          : {
-              path: safePath,
-              sha256: safeSha256,
-              format: "file",
-            },
-        value.decoder,
-        {
-          operation: OPERATION,
-          parameters,
-          result: {
-            ...safeValue,
-            artifact: {
-              ...value.artifact,
-              path: safePath,
-              sha256: safeSha256,
-            },
-            records,
-            limitations:
-              safeSha256 === null
-                ? [...limitations, subjectUnavailableReason]
-                : limitations,
+    const evidence = createEvidence(
+      safeSha256 === null
+        ? undefined
+        : {
+            path: safePath,
+            sha256: safeSha256,
+            format: "file",
           },
-          ...(safeValue.format !== "qlog"
-            ? {}
-            : {
-                analysisProfile: createAnalysisProfile(value.decoder, {
-                  qlog_profile: safeValue.qlog.profile,
-                  clock: safeValue.qlog.clock,
-                  scope: safeValue.qlog.scope,
-                }),
-              }),
-          confidence: "observed",
-          authority: "historical-reference",
-          limitations,
-          ...(safeSha256 === null ? { subjectUnavailableReason } : {}),
-          locations:
-            safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
+      value.decoder,
+      {
+        operation: OPERATION,
+        parameters,
+        result: {
+          ...safeValue,
+          artifact: {
+            ...value.artifact,
+            path: safePath,
+            sha256: safeSha256,
+          },
+          records,
+          limitations:
+            safeSha256 === null
+              ? [...limitations, subjectUnavailableReason]
+              : limitations,
         },
+        ...(safeValue.format !== "qlog"
+          ? {}
+          : {
+              analysisProfile: createAnalysisProfile(value.decoder, {
+                qlog_profile: safeValue.qlog.profile,
+                clock: safeValue.qlog.clock,
+                scope: safeValue.qlog.scope,
+              }),
+            }),
+        confidence: "observed",
+        authority: "historical-reference",
+        limitations,
+        ...(safeSha256 === null ? { subjectUnavailableReason } : {}),
+        locations:
+          safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
+      },
+    );
+    if (callerPaths === undefined) return ok(evidence);
+    const safeCallerPath = (path: string | undefined) =>
+      path === undefined || isSensitive(path) ? undefined : path;
+    const callerPath = safeCallerPath(callerPaths.capture);
+    const descriptor = safeCallerPath(callerPaths.descriptor);
+    return ok(
+      withEvidenceCallerInputPath(
+        evidence,
+        callerPath,
+        descriptor === undefined
+          ? undefined
+          : { descriptor_set_path: descriptor },
       ),
     );
   }

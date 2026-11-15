@@ -49,6 +49,12 @@ it("requires transaction IDs and explicit unknown redirect predecessors", () => 
       redirected_from_transaction_state: "unknown",
     }).success,
   ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...request,
+      redirected_from_transaction_state: undefined,
+    }).success,
+  ).toBe(false);
 });
 
 it("parses each network outcome without contradictory status or failure data", () => {
@@ -66,6 +72,33 @@ it("parses each network outcome without contradictory status or failure data", (
       kind: "request-failed",
       status: 500,
       failure: "connection reset",
+    }).success,
+  ).toBe(false);
+});
+
+it("accepts three-digit HTTP response status codes including statuses above 599", () => {
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 999,
+      failure: null,
+    }).success,
+  ).toBe(true);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 1000,
+      failure: null,
+    }).success,
+  ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...networkEvent,
+      kind: "response",
+      status: 99,
+      failure: null,
     }).success,
   ).toBe(false);
 });

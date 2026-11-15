@@ -1,9 +1,8 @@
 import { z } from "zod";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
-const boundedTextSchema = z.string().min(1);
-const boundedKeySchema = z.string().min(1);
 const unsafePathSegments = new Set(["", ".", ".."]);
 const isSafeRelativePath = (path: string): boolean => {
   if (path.startsWith("/")) return false;
@@ -63,7 +62,7 @@ const applicationUnavailableReasonSchema = z.enum([
 const unavailableFactSchema = z.strictObject({
   available: z.literal(false),
   reason: applicationUnavailableReasonSchema,
-  detail: boundedTextSchema,
+  detail: nonEmptyTextSchema,
 });
 
 const availableArtifactSchema = z
@@ -87,37 +86,16 @@ const applicationArtifactReferenceSchema = z.discriminatedUnion("available", [
   unavailableFactSchema,
 ]);
 
-const sourceRangeSchema = z
-  .strictObject({
-    kind: z.literal("source-range"),
-    source: boundedTextSchema,
-    start: z.strictObject({
-      line: z.number().int().min(1),
-      column: z.number().int().min(0),
-    }),
-    end: z.strictObject({
-      line: z.number().int().min(1),
-      column: z.number().int().min(0),
-    }),
-  })
-  .superRefine((location, context) => {
-    if (
-      location.end.line < location.start.line ||
-      (location.end.line === location.start.line &&
-        location.end.column < location.start.column)
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["end"],
-        message: "Source range end must not precede its start",
-      });
-  });
+const sourceRangeSchema = javascriptSourceRangeSchema.safeExtend({
+  kind: z.literal("source-range"),
+  source: nonEmptyTextSchema,
+});
 
 const fileOffsetRangeSchema = z
   .strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    end: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    start: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+    end: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((location, context) => {
     if (location.end < location.start)
@@ -143,30 +121,33 @@ const applicationLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("runtime"),
     capture_sha256: digestSchema,
-    target_key: boundedKeySchema,
-    frame_key: boundedKeySchema.nullable(),
-    script_key: boundedKeySchema.nullable(),
+    target_key: nonEmptyTextSchema,
+    frame_key: nonEmptyTextSchema.nullable(),
+    script_key: nonEmptyTextSchema.nullable(),
   }),
   z.strictObject({
     kind: z.literal("native-address"),
-    address: boundedKeySchema,
-    symbol: boundedTextSchema.nullable(),
+    address: nonEmptyTextSchema,
+    symbol: nonEmptyTextSchema.nullable(),
   }),
   z.strictObject({
     kind: z.literal("package-export"),
-    package_name: boundedKeySchema,
-    export_path: boundedTextSchema,
+    package_name: nonEmptyTextSchema,
+    export_path: nonEmptyTextSchema,
   }),
 ]);
 
-/** Explicit source-location availability for one graph fact. */
-const applicationLocationReferenceSchema = z.discriminatedUnion("available", [
-  z.strictObject({
-    available: z.literal(true),
-    value: applicationLocationSchema,
-  }),
-  unavailableFactSchema,
-]);
+/** Source-location availability and coordinates retained on each graph fact. */
+export const applicationGraphEvidenceLocationSchema = z.discriminatedUnion(
+  "available",
+  [
+    z.strictObject({
+      available: z.literal(true),
+      value: applicationLocationSchema,
+    }),
+    unavailableFactSchema,
+  ],
+);
 
 /** Versioned extractor coordinates attached to every graph fact. */
 const applicationExtractorSchema = z.strictObject({
@@ -178,7 +159,7 @@ const applicationExtractorSchema = z.strictObject({
 
 const applicationLimitSchema = z.strictObject({
   name: z.string().min(1),
-  value: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  value: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   unit: z.enum([
     "items",
     "bytes",
@@ -192,7 +173,7 @@ const applicationLimitSchema = z.strictObject({
 
 /** Bounded collection coverage without treating omission as absence. */
 const coverageLimitsSchema = z.array(applicationLimitSchema);
-const omittedCountSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const omittedCountSchema = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 export const applicationCoverageSchema = z.union([
   z.strictObject({
@@ -262,20 +243,16 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
   state: applicationFactStateSchema,
   confidence: applicationConfidenceSchema,
   artifact: applicationArtifactReferenceSchema,
-  location: applicationLocationReferenceSchema,
+  location: applicationGraphEvidenceLocationSchema,
   extractor: applicationExtractorSchema,
   coverage: applicationCoverageSchema,
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
   evidence_ids: z.array(prefixedDigestSchema("ev")),
 });
 
 /** Shared provenance fields apart from the fact-specific evidence location. */
 export const applicationGraphEvidenceContextSchema =
   applicationGraphEvidenceBaseSchema.omit({ location: true });
-
-/** Exact coordinates retained on each graph fact. */
-export const applicationGraphEvidenceLocationSchema =
-  applicationLocationReferenceSchema;
 
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;
 
@@ -461,21 +438,22 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
     strategy: z.literal("artifact-local-key"),
     stability: z.literal("artifact-version"),
     artifact_sha256: digestSchema,
-    namespace: boundedKeySchema,
+    namespace: nonEmptyTextSchema,
     // The exact artifact-local value, such as `""` from `fetch("")`.
     key: z.string(),
   }),
   z.strictObject({
     strategy: z.literal("runtime-instance"),
     stability: z.literal("capture-only"),
+    capture_evidence_id: prefixedDigestSchema("ev"),
     capture_sha256: digestSchema,
-    runtime_key: boundedTextSchema,
+    runtime_key: nonEmptyTextSchema,
   }),
   z.strictObject({
     strategy: z.literal("observation-fingerprint"),
     stability: z.literal("observation-only"),
     observation_sha256: digestSchema,
-    scope: boundedTextSchema,
+    scope: nonEmptyTextSchema,
   }),
 ]);
 

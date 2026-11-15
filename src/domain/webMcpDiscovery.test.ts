@@ -6,7 +6,6 @@ import {
   parseEvidenceBundle,
   serializeEvidenceBundle,
 } from "./evidenceBundle.js";
-import { jsonValueSchema } from "./jsonValue.js";
 import {
   webMcpDiscoverySchema,
   type WebMcpDiscovery,
@@ -106,7 +105,7 @@ describe("WebMCP discovery consequential annotation", () => {
       predicateType: "rea.webmcp-discovery",
       operation: "discover_webmcp_tools",
       parameters: {},
-      result: jsonValueSchema.parse(result),
+      result,
     });
     const bundle = createEvidenceBundle([evidence]);
     const reread = parseEvidenceBundle(

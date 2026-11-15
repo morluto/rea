@@ -1,3 +1,9 @@
+import { malformedInput } from "../../domain/parseFailure.js";
+import {
+  WEB_SOURCE_MAP_LIMITS,
+  sourceMapLimitRecovery,
+  type SourceMapLimits,
+} from "../../domain/sourceMapLimits.js";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { getHeapStatistics } from "node:v8";
@@ -11,44 +17,35 @@ import { z } from "zod";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { webSourceOffset } from "../../domain/webSourcePosition.js";
+import { resolveJavaScriptSourceMapUrl } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import {
   webSourceMapReportSchema,
   type WebSourceMapReport,
-  WEB_SOURCE_MAP_LIMITS,
 } from "../../domain/webSourceLocation.js";
 import type { WebSourcePosition } from "../../domain/webSourcePosition.js";
 import {
   inspectSourceMap,
-  SourceMapFormatFailure,
+  SOURCE_MAP_FORMAT,
+  sourceMapLimitFailure,
   type SourceMapSourceDeclaration,
 } from "./SourceMapFormat.js";
-import {
-  decodeValidatedSourceMapLeaves,
-  isBeforeSourceMapLeafStop,
-} from "./DecodedSourceMap.js";
+import { decodeValidatedSourceMapLeaves } from "./DecodedSourceMap.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */
 export const traceSourceMap = (
   text: string,
   url: string,
   position: WebSourcePosition,
+  limits: SourceMapLimits = WEB_SOURCE_MAP_LIMITS,
 ): WebSourceMapReport => {
-  const inspected = inspectSourceMap(text);
+  const inspected = inspectSourceMap(text, { limits });
   const decodedLeaves = decodeValidatedSourceMapLeaves(inspected.leaves, url);
-  for (const { leaf, rows } of decodedLeaves)
-    for (const [line, row] of rows.entries())
-      for (const segment of row)
-        if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
-          throw new SourceMapFormatFailure(
-            "format",
-            "Embedded source-map mappings overlap the following section boundary.",
-          );
   let map: TraceMap;
   if (inspected.format === "regular") {
     const decoded = decodedLeaves[0];
     if (decoded === undefined)
-      throw new SourceMapFormatFailure(
-        "format",
+      throw malformedInput(
+        SOURCE_MAP_FORMAT,
         "Regular source map has no validated leaf.",
       );
     map = decoded.map;
@@ -79,12 +76,13 @@ export const traceSourceMap = (
   let bytes = 0;
   const matches: WebSourceMapReport["matches"] = [];
   for (const segment of segments) {
-    const match = originalMatch(segment, map, inspected.declarations);
+    const match = originalMatch(segment, map, url, inspected.declarations);
     bytes += Buffer.byteLength(JSON.stringify(match)) + 1;
-    if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes)
-      throw new SourceMapFormatFailure(
-        "limit",
-        "Complete source-map point evidence exceeds the 32 MiB output budget; no partial evidence was returned.",
+    if (bytes > limits.outputBytes)
+      throw sourceMapLimitFailure(
+        `Complete source-map point evidence exceeds output admission; no partial evidence was returned.`,
+        "output_bytes",
+        limits.outputBytes,
       );
     matches.push(match);
   }
@@ -114,7 +112,7 @@ export const traceSourceMap = (
             node_compatibility_version: runtime.nodeCompatibilityVersion,
             v8_heap_limit_bytes: null,
             process_memory_limit_bytes: javaScriptWorkerMemoryLimitBytes(
-              WEB_SOURCE_MAP_LIMITS.codecHeapMiB,
+              limits.codecHeapMiB,
             ),
           },
     format: inspected.format,
@@ -142,8 +140,8 @@ const validateFlattenedRows = (
         (segment.length !== 1 && segment[1] >= inspected.declarations.length) ||
         (segment.length === 5 && segment[4] >= map.names.length)
       )
-        throw new SourceMapFormatFailure(
-          "format",
+        throw malformedInput(
+          SOURCE_MAP_FORMAT,
           "Decoded mapping has invalid component count, position, source index or name index.",
         );
     }
@@ -169,13 +167,14 @@ const greatestPosition = (
 const originalMatch = (
   segment: Readonly<SourceMapSegment>,
   map: TraceMap,
+  mapUrl: string,
   declarations: readonly SourceMapSourceDeclaration[],
 ): WebSourceMapReport["matches"][number] => {
   if (segment.length === 1) return { state: "generated-only" };
   const declaration = declarations[segment[1]];
   if (declaration === undefined)
-    throw new SourceMapFormatFailure(
-      "format",
+    throw malformedInput(
+      SOURCE_MAP_FORMAT,
       "Mapping references an absent source declaration.",
     );
   const original = { line: segment[2] + 1, column: segment[3] };
@@ -190,10 +189,11 @@ const originalMatch = (
     source_index: declaration.sourceIndex,
     reported_source: declaration.source,
     reported_source_root: declaration.root,
-    resolved_url:
-      declaration.source === null
-        ? null
-        : (map.resolvedSources[segment[1]] ?? null),
+    resolved_url: resolveJavaScriptSourceMapUrl(
+      declaration.source,
+      declaration.root,
+      mapUrl,
+    ),
     ignored: declaration.ignored,
     content:
       declaration.content === null

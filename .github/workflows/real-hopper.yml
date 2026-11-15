@@ -5,6 +5,11 @@ on:
 
 env:
   HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
 
 permissions:
   contents: read

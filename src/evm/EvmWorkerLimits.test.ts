@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { selectEvmWorkerLimits } from "./EvmWorkerLimits.js";
+import { selectedEvmProducerLimits } from "../domain/evm/evmInterface.js";
 
 const limits = (
   soft = "unlimited",
@@ -43,13 +44,74 @@ it("independently preserves CPU and file output restrictions", () => {
   ).toMatchObject({ ok: true, value: { cpuSeconds: 5, fileSizeBytes: 4096 } });
 });
 it.each([
-  ["not-text", null],
-  ["soft-unlimited-hard-finite", limits("unlimited", "2147483648")],
-  ["soft-exceeds-hard", limits("3", "2")],
-  ["missing-row", limits().replace("Max file size", "Max other size")],
-  ["duplicate-row", limits() + "Max cpu time 1 1 seconds\n"],
-  ["wrong-unit", limits().replace("bytes", "pages")],
-  ["oversized", "x".repeat(65537)],
-])("rejects malformed/ambiguous resource observations: %s", (_label, input) => {
-  expect(selectEvmWorkerLimits(input).ok).toBe(false);
+  [
+    "not-text",
+    null,
+    "Linux resource limits must be text within the 64 KiB parsing budget.",
+  ],
+  [
+    "soft-unlimited-hard-finite",
+    limits("unlimited", "2147483648"),
+    "Inherited Max address space soft limit exceeds its hard limit.",
+  ],
+  [
+    "soft-exceeds-hard",
+    limits("3", "2"),
+    "Inherited Max address space soft limit exceeds its hard limit.",
+  ],
+  [
+    "missing-row",
+    limits().replace("Max file size", "Max other size"),
+    "Linux resource limits must report exactly one Max file size row.",
+  ],
+  [
+    "duplicate-row",
+    limits() + "Max cpu time 1 1 seconds\n",
+    "Linux resource limits must report exactly one Max cpu time row.",
+  ],
+  [
+    "wrong-unit",
+    limits().replace("bytes", "pages"),
+    "Malformed inherited Linux resource limit: Max address space.",
+  ],
+  [
+    "oversized",
+    "x".repeat(65537),
+    "Linux resource limits must be text within the 64 KiB parsing budget.",
+  ],
+])(
+  "rejects malformed/ambiguous resource observations: %s",
+  (_label, input, error) => {
+    expect(selectEvmWorkerLimits(input)).toEqual({ ok: false, error });
+  },
+);
+
+it("applies requested producer budgets and retains narrower inherited limits", () => {
+  const requested = selectedEvmProducerLimits({
+    output_bytes: 64,
+    address_space_bytes: 4096,
+    cpu_seconds: 2,
+  });
+  expect(selectEvmWorkerLimits(limits(), requested)).toEqual({
+    ok: true,
+    value: {
+      addressSpaceBytes: 4096,
+      cpuSeconds: 2,
+      fileSizeBytes: 64,
+    },
+  });
+  const tighter = limits("1024", "2048")
+    .replace("time unlimited unlimited", "time 1 1")
+    .replace("size unlimited unlimited", "size 32 32");
+  expect(selectEvmWorkerLimits(tighter, requested)).toEqual({
+    ok: true,
+    value: {
+      addressSpaceBytes: 1024,
+      cpuSeconds: 1,
+      fileSizeBytes: 32,
+    },
+  });
+  expect(
+    selectedEvmProducerLimits({ output_bytes: 64, file_bytes: 128 }).file_bytes,
+  ).toBe(128);
 });

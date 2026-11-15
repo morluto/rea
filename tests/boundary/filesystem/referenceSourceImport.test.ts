@@ -1,5 +1,15 @@
+import { createHash } from "node:crypto";
+import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
-import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { add, commit, init } from "isomorphic-git";
@@ -8,13 +18,18 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { normalizeHistoricalSourceParseFailures } from "../../../src/application/ReferenceSourceImport.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { prepareReferenceSourceImport } from "../../../src/application/ReferenceSourceImportPolicy.js";
 import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
+  readRegularFileText,
+  RegularFileReadFailure,
+} from "../../../src/application/RegularFileRead.js";
+import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 
 const fixture = async (parent: string, name: string): Promise<string> => {
   const root = join(parent, name);
@@ -44,6 +59,32 @@ const importTree = (
   });
 
 describe("reference source import projections", () => {
+  it.skipIf(process.platform === "win32")(
+    "imports the physical source selected through a symlink and ..",
+    async () => {
+      const root = await createTestTempDirectory("rea-reference-parent-");
+      await mkdir(join(root, "physical", "inner"), { recursive: true });
+      await mkdir(join(root, "physical", "source"));
+      await mkdir(join(root, "source"));
+      await writeFile(
+        join(root, "physical", "source", "intended.js"),
+        "export const intended = 1;\n",
+      );
+      await writeFile(
+        join(root, "source", "other.js"),
+        "export const other = 1;\n",
+      );
+      await symlink(join(root, "physical", "inner"), join(root, "link"));
+      const selected = `${root}/link/../source`;
+      const result = await importTree(selected);
+      const control = await importTree(await realpath(selected));
+      expect(result).toEqual(control);
+      expect(result.ok && result.value.entries.map(({ path }) => path)).toEqual(
+        ["intended.js"],
+      );
+    },
+  );
+
   it("deduplicates exact parse failures without collapsing distinct reasons", () => {
     const malformed = {
       path: "src/main.ts",
@@ -73,17 +114,279 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );
       expect(message).toMatch(/Check|try again|when ready|Exclude/u);
+    }
+  });
+});
+
+describe("reference source ignore policy read failures", () => {
+  it("preserves a late-aborted physical admission failure identical to the reason", async () => {
+    const root = await createTestTempDirectory("rea-reference-admission-read-");
+    const path = join(root, "input.txt");
+    await writeFile(path, "source\n");
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("controlled admission failure"), {
+      code: "EIO",
+    });
+    const result = readRegularFileText(path, {
+      signal: controller.signal,
+      cancellationFailure: (reason) =>
+        new Error("owned cancellation checkpoint", { cause: reason }),
+      admit: () => {
+        controller.abort(physical);
+        throw physical;
+      },
+    });
+
+    await expect(result).rejects.toMatchObject({
+      _tag: new RegularFileReadFailure(physical)._tag,
+      operationCause: physical,
+      cause: physical,
+    });
+  });
+
+  it.each([
+    {
+      name: "distinct physical I/O failure",
+      physical: "error" as const,
+      sameAsAbortReason: false,
+      expected: "io",
+    },
+    {
+      name: "physical failure identical to the abort reason",
+      physical: "error" as const,
+      sameAsAbortReason: true,
+      expected: "io",
+    },
+    {
+      name: "non-Error physical failure",
+      physical: "string" as const,
+      sameAsAbortReason: false,
+      expected: "io",
+    },
+    {
+      name: "cancellation after a successful physical read",
+      physical: "cancel-after-read" as const,
+      sameAsAbortReason: false,
+      expected: "cancelled",
+    },
+  ])(
+    "preserves $name when the signal is aborted",
+    async ({ physical, sameAsAbortReason, expected }) => {
+      const root = await createTestTempDirectory("rea-reference-ignore-read-");
+      const path = join(root, ".gitignore");
+      await writeFile(path, "ignored/\n");
+      const controller = new AbortController();
+      const abortReason = new Error("caller cancelled");
+      const readFailure: unknown =
+        physical === "string"
+          ? "controlled non-Error read failure"
+          : Object.assign(new Error("controlled read failure"), {
+              code: "EIO",
+            });
+      const probe = await open(path, "r");
+      const identity = await probe.stat();
+      const prototype = probe.constructor.prototype as {
+        read: (...arguments_: never[]) => Promise<unknown>;
+      };
+      await probe.close();
+      const originalRead = prototype.read;
+      let intercepted = false;
+      const read = async function (
+        this: typeof probe,
+        ...arguments_: never[]
+      ): Promise<unknown> {
+        if (!intercepted) {
+          const state = await this.stat();
+          if (state.dev === identity.dev && state.ino === identity.ino) {
+            intercepted = true;
+            if (physical === "cancel-after-read") {
+              controller.abort(abortReason);
+              return originalRead.apply(this, arguments_);
+            }
+            controller.abort(sameAsAbortReason ? readFailure : abortReason);
+            throw readFailure;
+          }
+        }
+        return originalRead.apply(this, arguments_);
+      };
+      prototype.read = read;
+      try {
+        const result = await prepareReferenceSourceImport(
+          {
+            root,
+            caller: "reference-import-test",
+            policy: { secretPatterns: [] },
+            signal: controller.signal,
+          },
+          new ArtifactResourceScope(),
+        );
+        expect(intercepted).toBe(true);
+        if (result.ok) throw new Error("Expected ignore policy read failure");
+        expect(result.error.code).toBe(expected);
+        expect(result.error.cause).toBe(
+          physical === "cancel-after-read" ? abortReason : readFailure,
+        );
+      } finally {
+        prototype.read = originalRead;
+      }
+    },
+  );
+});
+
+describe("reference source ignore policy cleanup ownership", () => {
+  it("keeps a physical read primary when ignore-file cleanup remains pending", async () => {
+    const root = await createTestTempDirectory("rea-reference-ignore-cleanup-");
+    const path = join(root, ".gitignore");
+    await writeFile(path, "ignored/\n");
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("controlled read failure"), {
+      code: "EIO",
+    });
+    const probe = await open(path, "r");
+    const identity = await probe.stat();
+    const prototype = probe.constructor.prototype as {
+      read: (...arguments_: never[]) => Promise<unknown>;
+    };
+    await probe.close();
+    const originalRead = prototype.read;
+    const ownerPrototype = OwnedFileHandle.prototype;
+    const originalClose = ownerPrototype.close;
+    let interceptedRead = false;
+    let closeFailures = 0;
+    prototype.read = async function (
+      this: typeof probe,
+      ...arguments_: never[]
+    ): Promise<unknown> {
+      const state = await this.stat();
+      if (
+        !interceptedRead &&
+        state.dev === identity.dev &&
+        state.ino === identity.ino
+      ) {
+        interceptedRead = true;
+        controller.abort(physical);
+        throw physical;
+      }
+      return originalRead.apply(this, arguments_);
+    };
+    ownerPrototype.close = async function (
+      this: OwnedFileHandle,
+    ): Promise<void> {
+      const state = await this.handle.stat();
+      if (
+        state.dev === identity.dev &&
+        state.ino === identity.ino &&
+        closeFailures < 2
+      ) {
+        closeFailures += 1;
+        throw new Error(`controlled close failure ${closeFailures}`);
+      }
+      return originalClose.call(this);
+    };
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await prepareReferenceSourceImport(
+        {
+          root,
+          caller: "reference-import-test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(interceptedRead).toBe(true);
+      if (result.ok) throw new Error("Expected ignore policy read failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(physical);
+      expect(closeFailures).toBe(2);
+      expect(result.error.cleanup?.resources).toContain(path);
+      expect(resources.hasPending).toBe(true);
+    } finally {
+      await resources.retryCleanup();
+      prototype.read = originalRead;
+      ownerPrototype.close = originalClose;
+    }
+    expect(resources.hasPending).toBe(false);
+  });
+
+  it("does not transfer cleanup ownership for a physical read shaped like a foreign cleanup failure", async () => {
+    const root = await createTestTempDirectory("rea-reference-ignore-opaque-");
+    const path = join(root, ".gitignore");
+    const foreignPath = join(root, "foreign.txt");
+    await writeFile(path, "ignored/\n");
+    await writeFile(foreignPath, "foreign bytes");
+    const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
+    const reason = new RegularFileCleanupFailure({
+      path: foreignPath,
+      owner: foreignOwner,
+      outcome: { kind: "completed", value: "foreign value" },
+      cleanupCause: new Error("foreign cleanup failure"),
+    });
+    const controller = new AbortController();
+    const probe = await open(path, "r");
+    const identity = await probe.stat();
+    const prototype = probe.constructor.prototype as {
+      read: (...arguments_: never[]) => Promise<unknown>;
+    };
+    await probe.close();
+    const originalRead = prototype.read;
+    let intercepted = false;
+    prototype.read = async function (
+      this: typeof probe,
+      ...arguments_: never[]
+    ): Promise<unknown> {
+      const state = await this.stat();
+      if (
+        !intercepted &&
+        state.dev === identity.dev &&
+        state.ino === identity.ino
+      ) {
+        intercepted = true;
+        controller.abort(reason);
+        throw reason;
+      }
+      return originalRead.apply(this, arguments_);
+    };
+    try {
+      const result = await prepareReferenceSourceImport(
+        {
+          root,
+          caller: "reference-import-test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        new ArtifactResourceScope(),
+      );
+      expect(intercepted).toBe(true);
+      if (result.ok) throw new Error("Expected ignore policy read failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(reason);
+      expect(foreignOwner.handle.fd).toBeGreaterThanOrEqual(0);
+    } finally {
+      prototype.read = originalRead;
+      await foreignOwner.close();
     }
   });
 });
@@ -200,7 +503,7 @@ describe("reference source symlink import", () => {
       limitations: [],
     };
 
-    const parsed = parseReferenceSourceEntries(read, new Set());
+    const parsed = parseReferenceSourceEntries(read, []);
     expect(parsed.entries).toContainEqual(
       expect.objectContaining({
         kind: "symlink",
@@ -305,6 +608,94 @@ describe("reference source manifest inventory", () => {
   });
 });
 
+const registerReferenceRelocationTests = (): void => {
+  it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
+    const parent = await createTestTempDirectory("rea-reference-import-");
+    try {
+      const leftRoot = await fixture(parent, "left");
+      const rightRoot = await fixture(parent, "right");
+      const [left, right] = await Promise.all([
+        importTree(leftRoot),
+        importTree(rightRoot),
+      ]);
+      if (!left.ok || !right.ok) throw new Error("expected imports to pass");
+      expect(createHistoricalSourceManifest(left.value)).toEqual(
+        createHistoricalSourceManifest(right.value),
+      );
+      expect(left.value.relationships).toContainEqual(
+        expect.objectContaining({
+          from_path: "src/main.ts",
+          to: "src/dep.ts",
+          resolution: "internal",
+        }),
+      );
+      expect(left.value.parse_failures).toHaveLength(1);
+      expect(left.value.exclusions).toContainEqual({
+        path: ".env",
+        entry_kind: "file",
+        reason: "configured-secret",
+        pattern: ".env",
+      });
+      expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
+      expect(JSON.stringify(left.value)).not.toContain(leftRoot);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it
+    .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+    .each(["file", "directory"] as const)(
+    "commits equivalent unreadable %s inventories independently of relocation and retains exact local diagnostics",
+    async (kind) => {
+      const parent = await createTestTempDirectory(
+        "rea-reference-failure-relocation-",
+      );
+      const roots = [join(parent, "left"), join(parent, "right")];
+      const denied: string[] = [];
+      try {
+        for (const root of roots) {
+          await mkdir(root);
+          const path = join(root, kind === "file" ? "blocked.ts" : "blocked");
+          if (kind === "file")
+            await writeFile(path, "export const answer = 42;\n");
+          else await mkdir(path);
+          denied.push(path);
+          await chmod(path, 0);
+        }
+        const [left, right] = await Promise.all(
+          roots.map((root) => importTree(root)),
+        );
+        if (left === undefined || right === undefined || !left.ok || !right.ok)
+          throw new Error("Expected partial imports");
+        expect(left.value.inventory_state).toBe("partial");
+        expect(createHistoricalSourceManifest(left.value)).toEqual(
+          createHistoricalSourceManifest(right.value),
+        );
+        for (const [index, graph] of [left.value, right.value].entries()) {
+          const entry = graph.entries[0];
+          const root = roots[index];
+          if (entry === undefined || root === undefined)
+            throw new Error("Expected failed entry");
+          expect(entry.limitations.join(" ")).toContain("EACCES");
+          expect(entry.limitations.join(" ")).toMatch(/Check.*permissions/u);
+          expect(entry.limitations.join(" ")).not.toContain(root);
+          expect(entry.local_diagnostics).toEqual([
+            expect.stringContaining(await realpath(root)),
+          ]);
+          expect(
+            createHistoricalSourceSummary(graph, 2).outline.entries[0],
+          ).toMatchObject({ local_diagnostics: entry.local_diagnostics });
+        }
+      } finally {
+        for (const path of denied)
+          await chmod(path, kind === "file" ? 0o600 : 0o700);
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+  );
+};
+
 describe("reference source import behavior", () => {
   // The importer declares no byte ceiling and no entry-count ceiling. Scale
   // independence cannot be asserted as a relationship over a bounded fixture,
@@ -361,6 +752,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }
@@ -400,39 +792,7 @@ describe("reference source import behavior", () => {
     }
   });
 
-  it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
-    const parent = await createTestTempDirectory("rea-reference-import-");
-    try {
-      const leftRoot = await fixture(parent, "left");
-      const rightRoot = await fixture(parent, "right");
-      const [left, right] = await Promise.all([
-        importTree(leftRoot),
-        importTree(rightRoot),
-      ]);
-      if (!left.ok || !right.ok) throw new Error("expected imports to pass");
-      expect(createHistoricalSourceManifest(left.value)).toEqual(
-        createHistoricalSourceManifest(right.value),
-      );
-      expect(left.value.relationships).toContainEqual(
-        expect.objectContaining({
-          from_path: "src/main.ts",
-          to: "src/dep.ts",
-          resolution: "internal",
-        }),
-      );
-      expect(left.value.parse_failures).toHaveLength(1);
-      expect(left.value.exclusions).toContainEqual({
-        path: ".env",
-        entry_kind: "file",
-        reason: "configured-secret",
-        pattern: ".env",
-      });
-      expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
-      expect(JSON.stringify(left.value)).not.toContain(leftRoot);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
-  });
+  registerReferenceRelocationTests();
 
   it("imports the caller-selected directory and honors cancellation", async () => {
     const outside = await createTestTempDirectory("rea-reference-outside-");
@@ -450,6 +810,18 @@ describe("reference source import behavior", () => {
       await rm(outside, { recursive: true, force: true });
     }
   });
+
+  it.each([null, "stop import", { requested: "stop import" }])(
+    "preserves the caller's pre-admission cancellation reason %j",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const result = await importTree("unopened-source", controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    },
+  );
 
   it("records bounded local Git state without invoking Git", async () => {
     const parent = await createTestTempDirectory("rea-reference-git-");
@@ -502,8 +874,9 @@ describe("reference source rooted module specifiers", () => {
     await Promise.all([
       writeFile(
         join(root, "main.js"),
-        'import ".hidden.js"; import "..pkg.js"; import "./.hidden.js"; require(".hidden.js");\n',
+        'import ".hidden.js"; import "..pkg.js"; import "./.hidden.js";\n',
       ),
+      writeFile(join(root, "common.cjs"), 'require(".hidden.js");\n'),
       writeFile(join(root, ".hidden.js"), "export {};\n"),
       writeFile(join(root, "..pkg.js"), "export {};\n"),
     ]);

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -11,6 +12,10 @@ import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  minimalElfImage,
+  minimalMachoImage,
+} from "../../fixtures/nativeHeaders.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const android = {
@@ -18,7 +23,7 @@ const android = {
   operation: "project_android_application_graph",
   command: "project-android-application-graph",
   scripts: ["classes.dex", "extra.dex"],
-  nativeBytes: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
+  nativeBytes: minimalElfImage(),
   libraries: {
     "lib/arm64-v8a/libcommunity.so": "jni-library-convention",
     "lib/arm64-v8a/libpreact.so": "jni-library-convention",
@@ -38,7 +43,7 @@ const apple = {
   operation: "project_apple_application_graph",
   command: "project-apple-application-graph",
   scripts: ["Payload/Fixture.app/main.js", "Payload/Fixture.app/extra.js"],
-  nativeBytes: Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
+  nativeBytes: minimalMachoImage(),
   libraries: {
     "Payload/Fixture.app/Frameworks/App.framework/App":
       "javascript-and-native-content",
@@ -89,7 +94,9 @@ cliTest(
           await writer.add(name, new Uint8ArrayReader(fixture.nativeBytes));
         await writeFile(path, await writer.close());
         const inventory = parseEvidence(
-          await runProviderAnalysis(path, "inventory_artifact", {}),
+          await runProviderAnalysis(path, "inventory_artifact", {}).then(
+            projectCliAnalysisResult,
+          ),
         );
         const input = { inventory_evidence: [inventory] };
         const result = await cli.run({
@@ -114,7 +121,9 @@ cliTest(
             inventory_complete: true,
           },
           limitations: expect.arrayContaining([
-            "A bridge basis is inferred from the native path and is repeated for every managed component.",
+            expect.stringMatching(
+              /bridge basis.*inferred.*native path.*every managed component/iu,
+            ),
           ]),
           bridge_candidates: expect.arrayContaining(
             Object.entries(libraries).flatMap(([native_path, basis]) =>
@@ -133,5 +142,4 @@ cliTest(
       }
     }
   },
-  30_000,
 );

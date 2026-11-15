@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -57,11 +58,13 @@ it.each([
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, "toy.ldefs"), bytes);
     if (expectedError === null)
-      expect(await readGhidraLanguageCatalog(root)).toEqual([
-        { id: "toy:LE:32:default", compilerSpecIds: ["default"] },
-      ]);
+      expect(
+        await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
+      ).toEqual([{ id: "toy:LE:32:default", compilerSpecIds: ["default"] }]);
     else
-      await expect(readGhidraLanguageCatalog(root)).rejects.toMatchObject({
+      await expect(
+        readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
+      ).rejects.toMatchObject({
         reason: expectedError,
       });
   },

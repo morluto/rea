@@ -1,4 +1,7 @@
-import { requireMcpToolError } from "./mcp-verifier-results.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -95,10 +98,11 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       { timeout: 60000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));
-    const mcpEvidence = parseEvidence(captured.structuredContent);
-    const mcpScreenshot = webScreenshotSchema.parse(
-      mcpEvidence.normalized_result,
+    assert.notEqual(captured.structuredContent, undefined);
+    const mcpEvidence = parseEvidence(
+      requireMcpOutput(captured, "capture_web_screenshot"),
     );
+    const mcpScreenshot = mcpEvidence.normalized_result;
     assert.deepEqual(mcpScreenshot.artifact, screenshot.artifact);
     const compared = comparePngScreenshots({
       before: screenshot.artifact,

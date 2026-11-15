@@ -37,6 +37,8 @@ except ImportError:
 class ReaLldbSessionDaemon:
     """Manages one persistent LLDB debugging session over stdio JSON-RPC."""
 
+    MAX_OUTPUT_CHARS = 2 * 1024 * 1024
+
     def __init__(self):
         if "lldb" not in sys.modules or not hasattr(lldb, "SBDebugger"):
             raise RuntimeError("LLDB Python framework is unavailable.")
@@ -45,6 +47,7 @@ class ReaLldbSessionDaemon:
         self.debugger.SetAsync(False)
         self.target = None
         self.process = None
+        self.is_attached = False
 
     def _process_state_report(self) -> str:
         """Safe human-readable process state description."""
@@ -59,6 +62,21 @@ class ReaLldbSessionDaemon:
         except Exception:
             return "process state unavailable"
 
+    def _get_live_info(self) -> tuple:
+        """Helper to get current live target and pid."""
+        try:
+            if self.target and self.target.IsValid():
+                self.process = self.target.GetProcess()
+            live_pid = self.process.GetProcessID() if (self.process and self.process.IsValid()) else None
+            live_target = None
+            if self.target and self.target.IsValid():
+                exe = self.target.GetExecutable()
+                if exe and exe.IsValid():
+                    live_target = exe.GetFilename()
+            return live_pid, live_target
+        except Exception:
+            return None, None
+
     def execute_command(self, cmd_str: str, timeout_sec: float = 15.0) -> dict:
         """Executes one LLDB command with thread timeout containment."""
         if not self.debugger.IsValid():
@@ -66,6 +84,7 @@ class ReaLldbSessionDaemon:
                 "command": cmd_str,
                 "output": "Error: Debugger is not valid",
                 "process_state": "unavailable",
+                "output_truncated": False,
                 "completion_status": "unknown",
             }
 
@@ -81,27 +100,45 @@ class ReaLldbSessionDaemon:
         t.start()
         t.join(timeout=timeout_sec)
 
+        live_pid, live_target = self._get_live_info()
+
         if not t.is_alive():
             out = res.GetOutput() or ""
             err = res.GetError() or ""
             combined = f"{out}\n{err}".strip() if (err and out) else (out or err).strip()
+            truncated = False
+            if len(combined) > self.MAX_OUTPUT_CHARS:
+                combined = combined[:self.MAX_OUTPUT_CHARS]
+                truncated = True
             state_desc = self._process_state_report()
             return {
                 "command": cmd_str,
                 "output": combined,
                 "process_state": state_desc,
+                "output_truncated": truncated,
                 "completion_status": "complete",
+                "pid": live_pid,
+                "target": live_target,
             }
 
-        # Timed out
-        if self.target and self.target.IsValid():
-            self.process = self.target.GetProcess()
+        # Timed out - interrupt execution safely so command thread does not run unbounded
+        try:
+            if self.process and self.process.IsValid() and self.process.GetState() == lldb.eStateRunning:
+                self.process.Stop()
+            self.debugger.DispatchInputInterrupt()
+        except Exception:
+            pass
+        t.join(timeout=0.5)
 
+        live_pid, live_target = self._get_live_info()
         return {
             "command": cmd_str,
             "output": f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}",
             "process_state": self._process_state_report(),
+            "output_truncated": False,
             "completion_status": "unknown",
+            "pid": live_pid,
+            "target": live_target,
         }
 
     def launch(
@@ -193,6 +230,7 @@ class ReaLldbSessionDaemon:
             err_msg = launch_err.GetCString() if launch_err else "unknown launch error"
             return {"error": f"Launch failed: {err_msg}", "status": "failed"}
 
+        self.is_attached = False
         pid = self.process.GetProcessID()
         state = lldb.SBDebugger.StateAsCString(self.process.GetState())
 
@@ -224,6 +262,7 @@ class ReaLldbSessionDaemon:
         if not error.Success() or not self.process or not self.process.IsValid():
             return {"error": f"Attach failed: {error.GetCString()}", "status": "failed"}
 
+        self.is_attached = True
         attached_pid = self.process.GetProcessID()
         state = lldb.SBDebugger.StateAsCString(self.process.GetState())
 
@@ -236,7 +275,10 @@ class ReaLldbSessionDaemon:
     def status(self) -> dict:
         """Queries current process and debugger lifecycle state."""
         if not self.debugger.IsValid():
-            return {"state": "closed", "process_state": "unavailable", "pid": None}
+            return {"state": "closed", "process_state": "unavailable", "pid": None, "target": None}
+
+        if self.target and self.target.IsValid():
+            self.process = self.target.GetProcess()
 
         pid = None
         state_str = "no_process"
@@ -266,8 +308,12 @@ class ReaLldbSessionDaemon:
             if self.process and self.process.IsValid():
                 state = self.process.GetState()
                 if state not in (lldb.eStateExited, lldb.eStateDetached):
-                    self.process.Kill()
-                    target_state = "terminated"
+                    if self.is_attached:
+                        self.process.Detach()
+                        target_state = "detached"
+                    else:
+                        self.process.Kill()
+                        target_state = "terminated"
                 else:
                     target_state = "exited"
         except Exception:

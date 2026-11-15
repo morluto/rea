@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { artifactCliEvidence } from "./artifact-e2e.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify real V8 source labels, which retain spelling that navigation normalizes. */
 export async function verifyBrowserUrlUserInfo(endpoint, origin) {
@@ -30,17 +30,15 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
   let connection;
   let transport;
   let client;
-  let verificationError;
-  try {
+  return withVerifierCleanup(async () => {
     connection = await CdpConnection.connect(
       target.webSocketDebuggerUrl,
       "inspect_web_page",
     );
     await loadFixturePage(connection, `${origin}/app?userinfo-probe`);
     const producerUrls = [];
-    connection.onEvent((event) => {
-      if (event.method === "Debugger.scriptParsed")
-        producerUrls.push(event.params.url);
+    connection.onRegisteredEvent("Debugger.scriptParsed", (registered) => {
+      producerUrls.push(registered.payload.facts.url);
     });
     await connection.send("Debugger.enable");
     const browserUrl = await connection.send("Runtime.evaluate", {
@@ -120,27 +118,19 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
       original_source_digest: true,
       browser_url_parser_normalizes_backslash_and_dot_segments: true,
     };
-  } catch (cause) {
-    verificationError = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [
-        async () => client?.close(),
-        async () => transport?.close(),
-        async () => connection?.close(),
-        async () => {
-          const closed = await fetch(`${endpoint}/json/close/${target.id}`);
-          assert.equal(
-            closed.ok,
-            true,
-            "Browser retained the owned URL fixture target",
-          );
-        },
-      ],
-      verificationError,
-    );
-  }
+  }, [
+    async () => client?.close(),
+    async () => transport?.close(),
+    async () => connection?.close(),
+    async () => {
+      const closed = await fetch(`${endpoint}/json/close/${target.id}`);
+      assert.equal(
+        closed.ok,
+        true,
+        "Browser retained the owned URL fixture target",
+      );
+    },
+  ]);
 }
 
 async function loadFixturePage(connection, url) {
@@ -151,12 +141,14 @@ async function loadFixturePage(connection, url) {
   const load = new Promise((resolve) => {
     resolveLoaded = resolve;
   });
-  const unsubscribe = connection.onEvent((event) => {
-    if (event.method !== "Page.lifecycleEvent" || event.params.name !== "load")
-      return;
-    loaded.add(event.params.loaderId);
-    if (event.params.loaderId === loaderId) resolveLoaded();
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Page.lifecycleEvent",
+    (registered) => {
+      if (registered.payload.name !== "load") return;
+      loaded.add(registered.payload.loaderId);
+      if (registered.payload.loaderId === loaderId) resolveLoaded();
+    },
+  );
   try {
     await connection.send("Page.enable");
     await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });
@@ -175,7 +167,7 @@ async function loadFixturePage(connection, url) {
         }),
       ]);
     assert.equal(
-      (await connection.send("Page.getFrameTree")).frameTree.frame.url,
+      (await connection.send("Page.getFrameTree")).root.url.url,
       url,
     );
   } finally {
