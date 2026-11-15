@@ -613,21 +613,28 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
 /**
- * Whether a chain of `-`, `+` or `~` ends on a BigInt literal, such as `-0n`.
- * The chain is read to the same depth as `unaryOperandNumber`.
+ * Whether a chain of `-`, `+` or `~` ends on a BigInt literal, such as `-0n`,
+ * and whether any link in the chain is `+`. The chain is read to the same depth
+ * as `unaryOperandNumber`.
  */
-const isNumericUnaryOverBigInt = (value: t.Node, depth: number): boolean => {
-  if (depth > 8 || !t.isUnaryExpression(value)) return false;
+const bigIntUnaryChain = (
+  value: t.Node,
+  depth: number,
+): { readonly plus: boolean } | undefined => {
+  if (depth > 8 || !t.isUnaryExpression(value)) return undefined;
   if (
     value.operator !== "-" &&
     value.operator !== "+" &&
     value.operator !== "~"
   )
-    return false;
+    return undefined;
   const operand = unwrapJavaScriptExpression(value.argument).node;
-  return (
-    t.isBigIntLiteral(operand) || isNumericUnaryOverBigInt(operand, depth + 1)
-  );
+  const inner = t.isBigIntLiteral(operand)
+    ? { plus: false }
+    : bigIntUnaryChain(operand, depth + 1);
+  return inner === undefined
+    ? undefined
+    : { plus: inner.plus || value.operator === "+" };
 };
 
 /**
@@ -679,9 +686,12 @@ const rejectsSocketLiteralArguments = (
   // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
   if (t.isUnaryExpression(value)) {
     if (value.operator === "!" || value.operator === "delete") return true;
-    // `-0n` and `~0n` are still BigInts, which Node rejects as a port, and `+0n`
-    // throws before the call. Either way no socket exists.
-    if (isNumericUnaryOverBigInt(value, 0)) return true;
+    // `+0n` throws before the call, so no socket exists. `-0n` and `~0n` are
+    // BigInts, which Node rejects as a port, but `tls` merges later options
+    // first, so `tls.connect(-0n, { port: 443 })` still returns a socket.
+    const bigInt = bigIntUnaryChain(value, 0);
+    if (bigInt !== undefined)
+      return bigInt.plus || specifier !== "tls" || node.arguments.length === 1;
     const number = unaryOperandNumber(value, context, 0);
     return (
       number !== undefined &&
