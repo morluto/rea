@@ -1,5 +1,6 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
+import { listNamesFact } from "../domain/native/nativeOperationFacts.js";
+import { executeFact } from "./AnalysisOperationFacts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -47,8 +48,9 @@ export const resolveXrefsName = async (
   operation: "xrefs" | "find_xrefs_to_name" = "xrefs",
 ): Promise<Result<string | null, AnalysisError>> => {
   if (signal?.aborted) return err(cancelledBy(operation, signal));
-  const inventory = await analysis.execute(
-    "list_names",
+  const inventory = await executeFact(
+    analysis,
+    listNamesFact,
     {},
     signal === undefined ? {} : { signal },
   );
@@ -73,25 +75,17 @@ export const resolveXrefsName = async (
     return inventory;
   }
   if (signal?.aborted) return err(cancelledBy(operation, signal));
-  if (!Array.isArray(inventory.value.result))
-    return err(
-      new AnalysisOutputError(
-        "list_names",
-        "Expected a symbol inventory array",
-      ),
-    );
-
   const addresses = new Set<string>();
-  for (const [index, item] of inventory.value.result.entries()) {
-    const parsed = addressedValueSchema.safeParse(item);
-    if (!parsed.success || parsed.data.address.length === 0)
+  for (const [index, row] of inventory.value.fact.entries()) {
+    // An empty address cannot be passed back to xrefs.
+    if (row.address.length === 0)
       return err(
         new AnalysisOutputError(
           "list_names",
           `Invalid symbol inventory entry at index ${index}`,
         ),
       );
-    if (parsed.data.value === selector) addresses.add(parsed.data.address);
+    if (row.value === selector) addresses.add(row.address);
   }
   const [address] = addresses;
   if (addresses.size <= 1) return ok(address ?? null);
