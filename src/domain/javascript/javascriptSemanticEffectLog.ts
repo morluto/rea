@@ -441,12 +441,17 @@ export const ambientBindingMayObserveWriteAt = (
   );
 
 /**
- * A count that grows whenever an ambient write is recorded. A cache that
- * depends on ambient writes stores it and recomputes when it differs.
+ * A count that grows whenever an ambient write is recorded, or with
+ * `"contents"` also an ambient escape: the effects `ambientPathMayObserveAt`
+ * reads with the same argument. A cache that depends on them stores it and
+ * recomputes when it differs.
  */
-export const semanticAmbientWriteGeneration = (
+export const semanticAmbientEffectGeneration = (
   state: JavaScriptSemanticAnalysisState,
-): number => state.ambientWriteEffects.length;
+  observes: "value" | "contents" = "value",
+): number =>
+  state.ambientWriteEffects.length +
+  (observes === "contents" ? state.ambientEscapeEffects.length : 0);
 
 /**
  * A count that grows whenever a member write or escape is recorded on
