@@ -281,17 +281,14 @@
   },
   "ambient-host-platform": {
     "src/captures/TsharkCaptureProvider.ts": 1,
-    "src/config/parseConfig.ts": 2,
     "src/cutter/CutterBridgeClient.ts": 1,
     "src/domain/localPath.ts": 1,
     "src/electron/ElectronFusePath.ts": 1,
     "src/firmware/FirmwareCommand.ts": 1,
-    "src/gdb/GdbSessionManager.ts": 2,
     "src/ida/IdaWorkspace.ts": 1,
     "src/inspector/JavaScriptRuntimeScope.ts": 1,
     "src/javascript/analysis/JavaScriptAnalysisSourceTransfer.ts": 1,
     "src/javascript/recovery/WakaruCommand.ts": 1,
-    "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/serverIdentity.ts": 1,
     "src/wasm/WabtArtifactProvider.ts": 1
   },

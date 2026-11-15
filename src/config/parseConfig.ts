@@ -1,4 +1,5 @@
 import { accessSync, constants, statSync } from "node:fs";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import {
   ConfigurationError,
@@ -115,6 +116,8 @@ export const inspectNativeAnalysisConfiguration = (
 /** Parse provider configuration and runtime prerequisites at the composition root. */
 export const parseConfig = (
   environment: Readonly<Record<string, string | undefined>>,
+  /** The host whose default install locations apply; the running host unless a caller describes another. */
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Result<AppConfig, ConfigurationError> => {
   const parsed = parseEnvironment(nativeAnalysisEnvironment(environment));
   if (!parsed.ok) return parsed;
@@ -216,8 +219,8 @@ export const parseConfig = (
     hopperLauncherPath:
       env.HOPPER_LAUNCHER_PATH ??
       defaultHopperLauncherPath(
-        process.platform,
-        homeDirectoryFromEnvironment(environment, process.platform),
+        platform,
+        homeDirectoryFromEnvironment(environment, platform),
       ),
     hopperStartupTimeoutMs: hopperStartup ?? DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
     hopperStartupTimeoutSource:
