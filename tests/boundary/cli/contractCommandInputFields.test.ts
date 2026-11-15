@@ -63,15 +63,23 @@ const harness = () => {
     (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
       value,
     );
-  return (address: string) =>
-    execute({
-      args: parse("args", { address }),
-      options: parse("options", {}),
-    });
+  // A failed command sets the shared worker's exit status; restore it.
+  return async (address: string) => {
+    const exitCode = process.exitCode;
+    try {
+      return await execute({
+        args: parse("args", { address }),
+        options: parse("options", {}),
+      });
+    } finally {
+      process.exitCode = exitCode;
+    }
+  };
 };
 
 it("names a delivered provider failure's input field by its CLI key", async () => {
   const invoke = harness();
+  const exitCode = process.exitCode;
   await expect(invoke("missing")).resolves.toMatchObject({
     code: "invalid_request",
     details: {
@@ -79,4 +87,5 @@ it("names a delivered provider failure's input field by its CLI key", async () =
       issues: [{ path: ["address"], reason: "invalid_value" }],
     },
   });
+  expect(process.exitCode).toBe(exitCode);
 });

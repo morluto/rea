@@ -65,11 +65,21 @@ const harness = () => {
     (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
       value,
     );
-  const invoke = (path: string, options: Record<string, unknown> = {}) =>
-    execute({
-      args: parse("args", { path }),
-      options: parse("options", options),
-    });
+  // A refused command sets the shared worker's exit status; restore it.
+  const invoke = async (
+    path: string,
+    options: Record<string, unknown> = {},
+  ) => {
+    const exitCode = process.exitCode;
+    try {
+      return await execute({
+        args: parse("args", { path }),
+        options: parse("options", options),
+      });
+    } finally {
+      process.exitCode = exitCode;
+    }
+  };
   return { calls, invoke };
 };
 
