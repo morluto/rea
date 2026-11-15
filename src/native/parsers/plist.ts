@@ -40,8 +40,8 @@ import {
 } from "../../artifacts/apple/PlistScalars.js";
 import {
   estimateBinaryPlistExpansion,
+  isPlistDecodeBudgetFailure,
   preflightPropertyListDecode,
-  PropertyListDecodeBudgetFailure,
 } from "../../artifacts/apple/PropertyListDecodeBudget.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
@@ -111,6 +111,24 @@ const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
       cause,
       ...fixedAllowanceOptions(
         `The ${String(MAX_NATIVE_PLIST_NESTING_DEPTH)}-level native plist nesting allowance (no runtime override)`,
+        "parser",
+      ),
+    },
+  );
+
+const plistDecodeBudgetError = (
+  cause: Error,
+  encoding: "XML" | "binary",
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    "inspect_plist",
+    "memory",
+    cause.message,
+    { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
+    {
+      cause,
+      ...fixedAllowanceOptions(
+        `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native ${encoding} plist decode allowance (no runtime override)`,
         "parser",
       ),
     },
@@ -293,22 +311,8 @@ export const parsePlistXmlSource = (
     return projectPlistXml(text);
   } catch (cause: unknown) {
     if (cause instanceof XmlPlistTextDecodeError) return err(cause);
-    if (cause instanceof PropertyListDecodeBudgetFailure)
-      return err(
-        new AnalysisResourceConstraintError(
-          "inspect_plist",
-          "memory",
-          cause.message,
-          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
-          {
-            cause,
-            ...fixedAllowanceOptions(
-              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native XML plist decode allowance (no runtime override)`,
-              "parser",
-            ),
-          },
-        ),
-      );
+    if (isPlistDecodeBudgetFailure(cause))
+      return err(plistDecodeBudgetError(cause, "XML"));
     return err(plistOutputError(cause));
   }
 };
@@ -381,12 +385,6 @@ export const parsePlistBinary = (
         numberProjection: true,
         uidProjection: true,
         maximumDepth: MAX_NATIVE_PLIST_NESTING_DEPTH,
-        fail: (kind, message) =>
-          kind === "cycle"
-            ? new TypeError(
-                "binary plist object references form a cycle, which a property list cannot represent",
-              )
-            : new PropertyListDecodeBudgetFailure(kind, message),
       },
     );
     const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
@@ -417,28 +415,10 @@ export const parsePlistBinary = (
     });
   } catch (cause: unknown) {
     if (cause instanceof UnsupportedBinaryPlistUidError) return err(cause);
-    if (
-      cause instanceof PlistNestingLimitError ||
-      (cause instanceof PropertyListDecodeBudgetFailure &&
-        cause.kind === "depth")
-    )
+    if (cause instanceof PlistNestingLimitError)
       return err(plistNestingError(cause));
-    if (cause instanceof PropertyListDecodeBudgetFailure)
-      return err(
-        new AnalysisResourceConstraintError(
-          "inspect_plist",
-          "memory",
-          cause.message,
-          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
-          {
-            cause,
-            ...fixedAllowanceOptions(
-              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native binary plist decode allowance (no runtime override)`,
-              "parser",
-            ),
-          },
-        ),
-      );
+    if (isPlistDecodeBudgetFailure(cause))
+      return err(plistDecodeBudgetError(cause, "binary"));
     return err(
       new AnalysisOutputError(
         "inspect_plist",

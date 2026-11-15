@@ -91,16 +91,10 @@ export const decodeKeyedArchiveBytes = (
   const xmlText = binary ? undefined : decodeXmlPlistText(bytes);
   // Scalar decoding and source container materialization expand shared references,
   // so a few hundred bytes can exhaust memory or the stack without preflight.
-  // RangeError reports a resource limit; a reference cycle is malformed.
+  // A budget is a `limit` parse failure; a reference cycle is malformed.
   const binaryExpansion = binary
     ? estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
         budget: "the keyed archive decode budget",
-        fail: (kind, message) =>
-          kind === "cycle"
-            ? new TypeError(
-                "binary plist object references form a cycle, which a property list cannot represent",
-              )
-            : new RangeError(message),
         bounds: "decoder",
         numberProjection: true,
         uidProjection: true,
