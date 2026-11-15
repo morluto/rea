@@ -1,4 +1,5 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
@@ -125,6 +126,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -137,6 +139,9 @@ const clientFor = (
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.bridgeMaxReplyBytes === undefined
+      ? {}
+      : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
     ...(options.onDiagnostic === undefined
       ? {}
       : { onDiagnostic: options.onDiagnostic }),
@@ -2713,3 +2718,26 @@ it.each(["search_procedures", "search_strings"] as const)(
     ).toBe(4);
   },
 );
+
+describe("GhidraClient reply ceiling", () => {
+  it("refuses a reply above bridge.max_reply_bytes with a typed limit", async () => {
+    const client = clientFor(new FixtureLauncher("oversized_result"), {
+      bridgeMaxReplyBytes: { maximumBytes: 1024 * 1024, source: "setting" },
+    });
+
+    const result = await client.callTool("list_strings", { document: null });
+
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "protocol",
+      cause: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "transport",
+        limit: {
+          setting: "bridge.max_reply_bytes",
+          effective_value: 1024 * 1024,
+          source: "setting",
+        },
+      },
+    });
+  });
+});

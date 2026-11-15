@@ -30,9 +30,9 @@ import {
 } from "../process/LinuxCgroupMemory.js";
 import { PendingOperations } from "../process/PendingOperations.js";
 import {
-  Utf8NdjsonLineBuffer,
-  Utf8NdjsonDecodingError,
-} from "../process/Utf8NdjsonLineBuffer.js";
+  JsonLineBridgeReader,
+  type JsonLineBridgeFailure,
+} from "../process/JsonLineBridgeReader.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   SharedStartupAttempt,
@@ -49,6 +49,10 @@ import {
 } from "../process/ProviderProcess.js";
 import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "../config/bridgeMaxRequestBytes.js";
+import {
+  bridgeReplyOversizeError,
+  DEFAULT_BRIDGE_MAX_REPLY,
+} from "../config/bridgeMaxReplyBytes.js";
 import type {
   GhidraClientOptions,
   GhidraRequestOptions,
@@ -64,7 +68,6 @@ import {
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
-import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
   bindGhidraSessionFailure,
@@ -114,6 +117,12 @@ import {
   type GhidraEndpoint,
 } from "./GhidraTransport.js";
 import { GhidraWire } from "./GhidraClientWire.js";
+import {
+  ghidraRemoteError,
+  ghidraReplyEnvelope,
+  GhidraRemoteError,
+  type GhidraBridgeResponse,
+} from "./protocol.js";
 import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 import {
@@ -186,32 +195,35 @@ export class GhidraClient {
   );
   readonly #wire: GhidraWire;
   readonly #requestQueue: GhidraRequestQueue;
-  readonly #responseRouter = new GhidraResponseRouter({
-    pending: this.#pending,
-    nextId: () => this.#nextId,
-    remoteFailure: (failure) =>
-      this.#failure("remote", failure.message, failure, {
-        remoteCode: failure.code,
-      }),
-    protocolFailure: (message, cause) => this.#abortProtocol(message, cause),
+  readonly #replies = new JsonLineBridgeReader<
+    GhidraBridgeResponse,
+    GhidraRemoteError
+  >({
+    envelope: ghidraReplyEnvelope,
+    maxReplyBytes: () => this.#wire.replyLimit().maximumBytes,
+    deliver: (response) => {
+      if (!this.#pending.has(response.id)) return false;
+      this.#pending.settle(
+        response.id,
+        response.ok
+          ? ok(response.result)
+          : err(this.#remoteFailure(ghidraRemoteError(response.error))),
+      );
+      return true;
+    },
+    wasSent: (id) => id < this.#nextId,
+    rejectInFlight: (cause) => {
+      if (this.#pending.size === 0) return false;
+      this.#failAll(this.#remoteFailure(cause));
+      return true;
+    },
+    fail: (failure) => this.#abortReplyStream(failure),
   });
-  readonly #responseLines = new Utf8NdjsonLineBuffer();
   readonly #onSocketData = (chunk: Buffer): void => {
-    try {
-      for (const line of this.#responseLines.push(chunk))
-        this.#responseRouter.route(line);
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
-    }
+    this.#replies.push(chunk);
   };
   readonly #onSocketEnd = (): void => {
-    try {
-      this.#responseLines.finish();
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
-    }
+    this.#replies.finish();
   };
   readonly #onSocketError = (): void => {
     this.#failAll(this.#failure("process", "Ghidra bridge socket failed"));
@@ -242,6 +254,8 @@ export class GhidraClient {
       failure: this.#failure,
       bridgeMaxRequestBytes:
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
+      bridgeMaxReplyBytes:
+        options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
     });
     this.#requestQueue = new GhidraRequestQueue(
       async (method, parameters, requestOptions) => {
@@ -1265,7 +1279,7 @@ export class GhidraClient {
       this.#detachSocket = undefined;
       this.#socket?.destroy();
       this.#socket = undefined;
-      this.#responseLines.reset();
+      this.#replies.reset();
     }
   }
 
@@ -1434,7 +1448,7 @@ export class GhidraClient {
       this.#endpointPath = undefined;
       this.#token = undefined;
       this.#runId = undefined;
-      this.#responseLines.reset();
+      this.#replies.reset();
       if (forcedStopFailure !== undefined) throw forcedStopFailure.cause;
       for (const failure of this.#cleanupFailures) failure.resolveCleanup();
       this.#cleanupFailures.clear();
@@ -1525,6 +1539,43 @@ export class GhidraClient {
     });
     if (!this.#closing)
       this.#failAll(this.#failure("process", "Ghidra process exited"));
+  }
+
+  #remoteFailure(failure: GhidraRemoteError): GhidraSessionError {
+    return this.#failure("remote", failure.message, failure, {
+      remoteCode: failure.code,
+    });
+  }
+
+  #abortReplyStream(failure: JsonLineBridgeFailure): void {
+    switch (failure.kind) {
+      case "reply_oversize": {
+        const oversize = bridgeReplyOversizeError(
+          "Ghidra",
+          this.#wire.replyLimit(),
+          failure.observedBytes,
+        );
+        this.#abortProtocol(oversize.message, oversize);
+        return;
+      }
+      case "utf8":
+        this.#abortProtocol(
+          "Ghidra bridge response is not valid UTF-8",
+          failure.cause,
+        );
+        return;
+      case "envelope":
+        this.#abortProtocol(failure.cause.message, failure.cause);
+        return;
+      case "unknown_id":
+        this.#abortProtocol("Ghidra returned an unknown response id");
+        return;
+      case "connection_rejected":
+        this.#abortProtocol(
+          `Ghidra rejected the connection: ${failure.cause.message}`,
+          failure.cause,
+        );
+    }
   }
 
   #abortProtocol(message: string, cause?: Error): void {

@@ -38,6 +38,7 @@ export const runtimeAnalysisConfig = (
   const heap = config.regexWorkerHeapRequest;
   const scan = config.hopperCallerScanBudget;
   const bridge = config.bridgeMaxRequestBytes;
+  const bridgeReply = config.bridgeMaxReplyBytes;
   const overrides = () =>
     (read === undefined
       ? currentAnalysisOperationSnapshot()?.overrides
@@ -156,6 +157,20 @@ export const runtimeAnalysisConfig = (
           return "runtime";
         admit("bridge.max_request_bytes");
         return bridge.source;
+      },
+    },
+    bridgeMaxReplyBytes: {
+      get maximumBytes() {
+        return (
+          overrides()["bridge.max_reply_bytes"] ??
+          (admit("bridge.max_reply_bytes"), bridgeReply.maximumBytes)
+        );
+      },
+      get source() {
+        if (overrides()["bridge.max_reply_bytes"] !== undefined)
+          return "runtime";
+        admit("bridge.max_reply_bytes");
+        return bridgeReply.source;
       },
     },
   };

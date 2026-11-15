@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
@@ -60,4 +61,6 @@ export interface GhidraClientOptions {
   readonly readMemoryCgroup?: () => Promise<LinuxCgroupMemoryState | undefined>;
   /** Effective request ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling; defaults to the configured bridge ceiling. */
+  readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
 }

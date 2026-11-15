@@ -637,6 +637,7 @@ export const createGhidraProviderClient = (input: {
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
+    bridgeMaxReplyBytes: config.bridgeMaxReplyBytes,
     platform: installation.platform,
     ...(project === undefined ? {} : { existingProject: true }),
     launcher: new GhidraHeadlessLauncher({

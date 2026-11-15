@@ -15,6 +15,8 @@ import {
 } from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
+const MIB = 1024 * 1024;
+
 describe("HopperClient protocol", () => {
   it("does not start cold and preserves normal dispatch once ready", async () => {
     const launcher = new FixtureLauncher();
@@ -245,6 +247,53 @@ describe("HopperClient response lifecycle", () => {
       message: "safe fake failure",
     });
   });
+});
+
+describe("HopperClient reply framing", () => {
+  it("delivers a rejection on the reserved id to the request in flight", async () => {
+    const client = await startClient();
+
+    const result = await client.callTool(
+      "unattributed_invalid_request",
+      {},
+      { timeoutMs: 5_000 },
+    );
+
+    expect(
+      result.ok ? undefined : result.error,
+      "an unattributable rejection reaches the caller instead of being dropped",
+    ).toMatchObject({
+      _tag: "HopperRemoteError",
+      diagnosticType: "invalid_request",
+      message: expect.stringContaining("Invalid bridge request JSON"),
+    });
+  });
+
+  it.each([
+    ["an unterminated reply", "unterminated_reply", { bytes: 2 * MIB }],
+    ["a complete reply line", "echo", { label: "x".repeat(2 * MIB) }],
+  ] as const)(
+    "refuses %s above bridge.max_reply_bytes and names the setting",
+    async (_case, method, parameters) => {
+      const client = await startClient(undefined, {
+        bridgeMaxReplyBytes: { maximumBytes: MIB, source: "setting" },
+      });
+
+      const result = await client.callTool(method, parameters, {
+        timeoutMs: 10_000,
+      });
+
+      expect(result.ok ? undefined : result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "transport",
+        limit: {
+          setting: "bridge.max_reply_bytes",
+          effective_value: MIB,
+          source: "setting",
+        },
+      });
+    },
+  );
 });
 
 it("preserves caller cancellation while a late valid UTF-8 reply drains", async () => {

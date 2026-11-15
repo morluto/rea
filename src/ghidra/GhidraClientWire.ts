@@ -4,6 +4,11 @@ import {
   bridgeRequestOversizeError,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
+import {
+  admitBridgeReplyLimit,
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { err, type Result } from "../domain/result.js";
@@ -28,14 +33,22 @@ export interface GhidraWireOptions {
   readonly failure: GhidraSessionFailureFactory;
   /** Effective Ghidra request ceiling; the bridge itself enforces none. */
   readonly bridgeMaxRequestBytes: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling, admitted with each request. */
+  readonly bridgeMaxReplyBytes: BridgeMaxReplyBytes;
 }
 
 /** Owns the socket write and pending-reply lifecycle for one bridge session. */
 export class GhidraWire {
   readonly #options: GhidraWireOptions;
+  #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
 
   constructor(options: GhidraWireOptions) {
     this.#options = options;
+  }
+
+  /** Reply ceiling admitted with the latest request; the default before any. */
+  replyLimit(): BridgeMaxReplyBytes {
+    return this.#replyLimit;
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -79,6 +92,7 @@ export class GhidraWire {
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
     };
     const payloadBytes = jsonValueByteLength(payloadValue);
+    this.#replyLimit = admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
     if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
