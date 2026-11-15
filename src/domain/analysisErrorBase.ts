@@ -375,6 +375,9 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
+    // Settle the dependencies already bound before adding more: completion is
+    // monotonic, so a dependency bound after they released cannot reopen it.
+    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
