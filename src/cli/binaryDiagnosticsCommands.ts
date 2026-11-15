@@ -1,7 +1,3 @@
-import { z } from "incur";
-import { cliDecimalField } from "./options.js";
-import { producerLimitsOption } from "./producerLimitsOption.js";
-import { pwntoolsProducerLimitsSchema } from "../domain/native/pwntoolsResourceLimits.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -22,17 +18,11 @@ import {
   createNativeExportsService,
 } from "../composition/binaryDiagnostics.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
-import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
@@ -319,81 +309,64 @@ export const registerBinaryDiagnosticsCommands = (
     },
     deliverWithService(createNativeExportsService, "rea-native-exports"),
   );
-  const service = createBinaryLayoutService(environment);
-  cli.command(CLI_COMMANDS.inspectBinaryLayout, {
-    description:
-      "Inspect binary file/linked layout without executing the selected object",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local ELF binary or relocatable object",
-      ),
-    }),
-    options: z.object({
-      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
-      pwntoolsTimeoutMs: cliDecimalField(
-        inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
-          const result = await service.inspectAndClose(
-            {
-              path: absoluteCallerPath(args.path),
-              ...(options.producerLimits === undefined
-                ? {}
-                : { producer_limits: options.producerLimits }),
-              ...(options.pwntoolsTimeoutMs === undefined
-                ? {}
-                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
-            },
-            { signal },
-          );
-          return result.ok
-            ? withEvidenceCallerInputPath(result.value, args.path)
-            : projectAnalysisError(result.error);
-        }),
-      ),
-  });
+  const producerLimitsHelp =
+    "JSON producer budget overrides. Keys and units follow this operation's producer_limits contract; changes apply on this call without restart and preserve tighter inherited OS limits.";
+  const layout = createBinaryLayoutService(environment);
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_binary_layout"),
+    {
+      command: CLI_COMMANDS.inspectBinaryLayout,
+      description:
+        "Inspect binary file/linked layout without executing the selected object",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: { description: "Local ELF binary or relocatable object" },
+        producer_limits: { description: producerLimitsHelp },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    async (input, { signal, callerInputs }) => {
+      const result = await layout.inspectAndClose(input, { signal });
+      return result.ok
+        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        : projectAnalysisError(result.error);
+    },
+  );
   const recorded = createRecordedCrashService(environment);
-  cli.command(CLI_COMMANDS.inspectRecordedCrash, {
-    description:
-      "Inspect supplied core registers/signals and optional debugger mapping evidence",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local Linux ELF64 amd64 or AArch64 little-endian core",
-      ),
-    }),
-    options: z.object({
-      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
-      debuggerContext: z
-        .boolean()
-        .default(false)
-        .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
-      pwntoolsTimeoutMs: cliDecimalField(
-        inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectRecordedCrash, async () => {
-          const result = await recorded.inspectAndClose(
-            {
-              path: absoluteCallerPath(args.path),
-              include_debugger_context: options.debuggerContext,
-              ...(options.producerLimits === undefined
-                ? {}
-                : { producer_limits: options.producerLimits }),
-              ...(options.pwntoolsTimeoutMs === undefined
-                ? {}
-                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
-            },
-            { signal },
-          );
-          return result.ok
-            ? withEvidenceCallerInputPath(result.value, args.path)
-            : projectAnalysisError(result.error);
-        }),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_recorded_crash"),
+    {
+      command: CLI_COMMANDS.inspectRecordedCrash,
+      description:
+        "Inspect supplied core registers/signals and optional debugger mapping evidence",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: {
+          description: "Local Linux ELF64 amd64 or AArch64 little-endian core",
+        },
+        producer_limits: { description: producerLimitsHelp },
+        include_debugger_context: {
+          name: "debuggerContext",
+          description: "Add BYO core-only GDB/pwndbg mapping candidates",
+        },
+      },
+    },
+    async (input, { signal, callerInputs }) => {
+      const result = await recorded.inspectAndClose(input, { signal });
+      return result.ok
+        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        : projectAnalysisError(result.error);
+    },
+  );
 };

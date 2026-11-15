@@ -7,6 +7,5 @@
   "src/model/ModelArtifactProvider.ts": 1,
   "src/native/NativeMacOSProvider.ts": 1,
   "src/native/NativePlistSource.ts": 1,
-  "src/server/http/NodeHttpRequestOwner.ts": 1,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }
