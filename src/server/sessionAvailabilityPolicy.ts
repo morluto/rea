@@ -1,8 +1,8 @@
+import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import {
   HOST_RESTRICTED_FEATURES,
-  type AvailabilityPolicy,
   type HostRestrictedFeature,
-} from "../application/CapabilityInventory.js";
+} from "../contracts/toolAvailability.js";
 import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 
 /** Either the caller or the observed host can mark an integration unsupported. */

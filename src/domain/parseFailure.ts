@@ -25,6 +25,17 @@ interface ParseFailureFacts {
   readonly field?: string;
 }
 
+/**
+ * The limit a parse stopped at: its stable name, the maximum in force, and,
+ * when the parser measured it, the smallest value that would admit the input.
+ * `required` is a bigint when the measured size exceeds a safe integer.
+ */
+export interface LimitRef {
+  readonly name: string;
+  readonly maximum: number;
+  readonly required?: number | bigint;
+}
+
 /** A parse outcome the parser established, carried with its facts. */
 export type ParseFailure = ParseFailureFacts &
   (
@@ -37,7 +48,7 @@ export type ParseFailure = ParseFailureFacts &
       }
     | {
         readonly kind: "limit";
-        readonly limit: { readonly name: string; readonly maximum: number };
+        readonly limit: LimitRef;
       }
   );
 
@@ -106,7 +117,7 @@ export const unsupportedInput = (
 export const decodeLimit = (
   format: string,
   detail: string,
-  limit: { readonly name: string; readonly maximum: number },
+  limit: LimitRef,
   { cause, ...at }: ParseFailureSite = {},
 ): ParseFailureError<"limit"> =>
   failureWith({ kind: "limit", format, detail, ...at, limit }, cause);
