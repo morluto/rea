@@ -369,7 +369,6 @@
     "src/application/frida/FridaInstrumentationService.ts": 3,
     "src/application/il2cpp/Il2cppMetadataService.ts": 1,
     "src/application/javascript/JavaScriptArtifactReconstruction.ts": 1,
-    "src/application/managed/ManagedMemberComparisonService.ts": 1,
     "src/application/native/NativeUiActionTrace.ts": 1,
     "src/application/process/ProcessCli.ts": 1,
     "src/application/releaseExposure/ReleaseExposureService.ts": 1,
