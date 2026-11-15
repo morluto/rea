@@ -5,6 +5,7 @@ import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancell
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
@@ -344,6 +345,8 @@ const readJson = async (
         : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
+    // Read and parse failures share one issue reason; name which one occurred.
+    { file_reason: loaded.error.reason },
   );
 };
 
@@ -352,9 +355,15 @@ const processInputFailure = (
   userMessage: string,
   path: readonly (string | number)[],
   reason: "invalid_value" | "missing_argument",
+  observed?: AnalysisInputIssue["observed"],
 ): AnalysisInputError =>
   new AnalysisInputError(operation, { userMessage }, [
-    { path, reason, message: userMessage },
+    {
+      path,
+      reason,
+      message: userMessage,
+      ...(observed === undefined ? {} : { observed }),
+    },
   ]);
 
 const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({

@@ -267,14 +267,14 @@ const findingSchema = z.object({
 });
 
 const originalSourceSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
-  // Historical observations omit this link to original_sources declarations.
-  declaration_index: z.int().min(0).optional(),
+  /** The original_sources declaration this edge was read from. */
+  declaration_index: z.int().min(0),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),

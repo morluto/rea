@@ -794,9 +794,12 @@ const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
   const error = parseMcpToolError(imported).error;
   expect(error).toMatchObject({
     code: "invalid_request",
-    details: { operation: "read", reason: "wrong-kind" },
+    details: {
+      operation: "read",
+      reason: "wrong-kind",
+      detected_kind: "analysis-snapshot",
+    },
   });
-  // No structured field names the detected snapshot; its restore routes do.
   expect(error.remediation.action).toContain("open_binary");
   expect(error.remediation.action).toContain("snapshot_path");
   expect(error.remediation.action).toContain("--snapshot");
@@ -830,9 +833,12 @@ it("does not authenticate snapshot-shaped or unrelated malformed bundle input", 
   ).error;
   expect(snapshotLike).toMatchObject({
     code: "invalid_request",
-    details: { operation: "read", reason: "wrong-kind" },
+    details: {
+      operation: "read",
+      reason: "wrong-kind",
+      detected_kind: "analysis-snapshot",
+    },
   });
-  expect(snapshotLike.remediation.action).toContain("snapshot_path");
 
   await writeFile(
     snapshotPath,

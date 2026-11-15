@@ -2,6 +2,7 @@ import {
   createCapabilityServices,
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -174,7 +175,10 @@ export const createServer = (
 ): EvidenceMcpServer => {
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
-  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const environment = snapshotEnvironment(
+    options.environment ?? process.env,
+    HOST_PLATFORM.platform,
+  );
   const analysisSettings =
     options.analysisSettings ?? new AnalysisSettings(environment);
   const compactInputPresentation =

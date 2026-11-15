@@ -37,7 +37,6 @@ import {
   fxLocation,
   gooseLocation,
   junieLocation,
-  mcporterLocation,
   type McpRegistrationLocationContext,
   type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
@@ -90,39 +89,6 @@ interface ClientDescriptor {
   readonly registrationProfile: ClientRegistrationProfile;
   readonly setupName?: SupportedClientName;
 }
-
-/** mcporter getUrl's native nullish priority; an empty first value suppresses later aliases. */
-const MCPORTER_URL_FIELDS = [
-  "baseUrl",
-  "base_url",
-  "url",
-  "serverUrl",
-  "server_url",
-] as const;
-const MCPORTER_STDIO_INCOMPATIBILITIES: readonly NativeStdioIncompatibility[] =
-  [
-    // RawEntrySchema admits only optional strings, including an empty string.
-    ...MCPORTER_URL_FIELDS.map((field): NativeStdioIncompatibility => ({
-      kind: "invalid-string",
-      field,
-    })),
-    ...MCPORTER_URL_FIELDS.map((field, index): NativeStdioIncompatibility =>
-      index === 0
-        ? { kind: "truthy", field }
-        : {
-            kind: "all",
-            conditions: [
-              ...MCPORTER_URL_FIELDS.slice(0, index).map(
-                (prior): NativeStdioIncompatibility => ({
-                  kind: "nullish",
-                  field: prior,
-                }),
-              ),
-              { kind: "truthy", field },
-            ],
-          },
-    ),
-  ];
 
 /**
  * Reviewed add-mcp 2.6.1 agent ids plus Incur's separate Amp contract, in
@@ -201,18 +167,7 @@ export const MCP_REGISTRATION_CLIENTS = {
   "kimi-code": tableClient("kimi"),
   "kiro-cli": tableClient("kiro"),
   mastracode: tableClient("mastracode"),
-  mcporter: {
-    kind: "registration-only",
-    displayName: "MCPorter",
-    format: "json",
-    globalLocation: mcporterLocation,
-    projectLocation: fixedProjectLocation(["config/mcporter.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: [...MCPORTER_URL_FIELDS, "executable"],
-      stdio: MCPORTER_STDIO_INCOMPATIBILITIES,
-    },
-  },
+  mcporter: tableClient("mcporter"),
   opencode: tableClient("opencode"),
   pi: tableClient("pi"),
   vscode: tableClient("vscode"),
@@ -281,7 +236,11 @@ export interface McpRegistrationClient {
   readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
   readonly scope: "global" | "project";
   readonly format: ClientConfigurationFormat;
-  readonly privateProfile?: true;
+  /**
+   * fx keeps a profile only its owner may read. `home` is the caller's home
+   * folder, which the private folder mode must never reach through a link.
+   */
+  readonly privateProfile?: { readonly home: string };
   /**
    * The table row resolved for this user-scope registration. Its read-scope
    * facts (Gemini settings policy, MSIX package storage) govern the write.
@@ -373,7 +332,7 @@ const globalTarget = async (
       ...(resolved.inlineConfiguration === undefined
         ? {}
         : { inlineConfiguration: resolved.inlineConfiguration }),
-      ...(id === "fx" ? { privateProfile: true } : {}),
+      ...(id === "fx" ? { privateProfile: { home: context.home } } : {}),
       ...(setupClient === undefined ? {} : { setupClient }),
     },
     markers: resolved.markers.map((marker) => selectedPath(marker, context)),

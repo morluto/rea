@@ -144,10 +144,10 @@ export class MachoLoadCommandCursor {
 // Fields with fixed uint32 layouts in mach-o/loader.h. This table is the single
 // owner of those layouts; consumers read decoded fields rather than offsets.
 const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
-  [0x2, ["symoff", "nsyms", "stroff", "strsize"]],
-  [0x3, ["offset", "size"]],
+  [LC.SYMTAB, ["symoff", "nsyms", "stroff", "strsize"]],
+  [LC.SYMSEG, ["offset", "size"]],
   [
-    0xb,
+    LC.DYSYMTAB,
     [
       "ilocalsym",
       "nlocalsym",
@@ -169,13 +169,13 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
       "nlocrel",
     ],
   ],
-  [0x16, ["offset", "nhints"]],
-  [0x17, ["cksum"]],
-  [0x1d, ["dataoff", "datasize"]],
-  [0x1e, ["dataoff", "datasize"]],
-  [0x21, ["cryptoff", "cryptsize", "cryptid"]],
+  [LC.TWOLEVEL_HINTS, ["offset", "nhints"]],
+  [LC.PREBIND_CKSUM, ["cksum"]],
+  [LC.CODE_SIGNATURE, ["dataoff", "datasize"]],
+  [LC.SEGMENT_SPLIT_INFO, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO, ["cryptoff", "cryptsize", "cryptid"]],
   [
-    0x22,
+    LC.DYLD_INFO,
     [
       "rebase_off",
       "rebase_size",
@@ -190,7 +190,7 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
     ],
   ],
   [
-    0x80000022,
+    LC.DYLD_INFO_ONLY,
     [
       "rebase_off",
       "rebase_size",
@@ -204,16 +204,16 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
       "export_size",
     ],
   ],
-  [0x26, ["dataoff", "datasize"]],
-  [0x29, ["dataoff", "datasize"]],
-  [0x2b, ["dataoff", "datasize"]],
-  [0x2c, ["cryptoff", "cryptsize", "cryptid", "pad"]],
-  [0x2e, ["dataoff", "datasize"]],
-  [0x80000033, ["dataoff", "datasize"]],
-  [0x80000034, ["dataoff", "datasize"]],
-  [0x36, ["dataoff", "datasize"]],
-  [0x37, ["dataoff", "datasize"]],
-  [0x38, ["dataoff", "datasize"]],
+  [LC.FUNCTION_STARTS, ["dataoff", "datasize"]],
+  [LC.DATA_IN_CODE, ["dataoff", "datasize"]],
+  [LC.DYLIB_CODE_SIGN_DRS, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO_64, ["cryptoff", "cryptsize", "cryptid", "pad"]],
+  [LC.LINKER_OPTIMIZATION_HINT, ["dataoff", "datasize"]],
+  [LC.DYLD_EXPORTS_TRIE, ["dataoff", "datasize"]],
+  [LC.DYLD_CHAINED_FIXUPS, ["dataoff", "datasize"]],
+  [LC.ATOM_INFO, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
 ]);
 
 /** Names of a command's fixed uint32 fields, or undefined for other layouts. */

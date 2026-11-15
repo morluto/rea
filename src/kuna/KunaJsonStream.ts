@@ -255,7 +255,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         : cause instanceof KunaDocumentError
           ? new AnalysisOutputError(this.producer, cause.code, {
               cause,
-              diagnostics: { code: cause.code, ...cause.detail },
+              diagnostics: { code: cause.code, ...cause.facts },
               userMessage: `${this.label} cannot be used`,
             })
           : this.unusable(describe(cause));
