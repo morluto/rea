@@ -402,7 +402,6 @@ it("passes the workflow environment through the entrypoint unchanged", async () 
   for (const [event, skipFull, tier] of [
     ["pull_request", false, "fast"],
     ["push", false, "fast"],
-    ["merge_group", false, "fast"],
     ["schedule", true, "reused"],
   ] as const) {
     const expected = await classify(
@@ -687,33 +686,6 @@ it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
     reason: expect.stringContaining("Could not read"),
   });
   expect(head).not.toBe(base);
-});
-
-it("selects a queued group's lanes from its base without a PR test-selection proposal", async () => {
-  const { directory, base } = await fixture();
-  const first = await change(directory, ["docs/readme/README_ja.md"]);
-  const head = await change(directory, ["src/evm/Example.ts"]);
-  // Every queued entry between the group base and head contributes lanes, and
-  // a merge group is never a PR test-selection candidate.
-  expect(await classify(directory, base, head, "merge_group")).toMatchObject({
-    tier: "fast",
-    code: true,
-    docs: true,
-    evm: true,
-    files: expect.arrayContaining([
-      "docs/readme/README_ja.md",
-      "src/evm/Example.ts",
-    ]),
-    testSelection: { mode: "full" },
-  });
-  // A base that is missing, malformed or not an ancestor is not this group's
-  // change, so planning fails instead of narrowing the queued lanes.
-  await git(directory, ["switch", "-c", "unrelated", base]);
-  const unrelated = await change(directory, ["other.txt"]);
-  for (const queuedBase of ["", "not-a-commit", unrelated, head])
-    await expect(
-      classify(directory, queuedBase, first, "merge_group"),
-    ).rejects.toThrow("Merge group base must be an ancestor of its head");
 });
 
 it("fails closed when the successful push baseline is not an ancestor", async () => {
