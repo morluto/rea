@@ -503,7 +503,15 @@ export const browserScenarioSecretSchema = z.strictObject({
     .refine(
       (name) => !name.includes("=") && !name.includes("\0"),
       "Environment variable names cannot contain '=' or NUL",
-    ),
+    )
+    // A `.refine` states a refusal a caller reads only after sending a request.
+    // Both characters break the child process's environment before any action
+    // runs, so the refusal is advertised too: unanchored `pattern` under `not`
+    // reads as "contains none of", and `\x2d`-style escapes are what this
+    // repository's advertised patterns already use.
+    .meta({
+      allOf: [{ not: { pattern: "=" } }, { not: { pattern: "\\x00" } }],
+    }),
 });
 
 const snapshotKindSchema = z.enum([
