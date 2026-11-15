@@ -9,7 +9,7 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
@@ -339,22 +339,8 @@ it.for([
   async ([phase, route]) => {
     const { client, path, prototype, runner } = await fixture();
     if (route !== "source") await writeFile(path, "{ name = value; }");
-    let enter!: () => void;
-    let resume!: () => void;
-    let enterValidation!: () => void;
-    let resumeValidation!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
-    const validationEntered = new Promise<void>((resolve) => {
-      enterValidation = resolve;
-    });
-    const validationGate = new Promise<void>((resolve) => {
-      resumeValidation = resolve;
-    });
+    const plistFileRead = phaseGate();
+    const plistValidation = phaseGate();
     const original = prototype.read;
     let reads = 0;
     const read = vi.spyOn(prototype, "read").mockImplementation(async function (
@@ -363,8 +349,7 @@ it.for([
     ) {
       reads += 1;
       if (reads === (phase === "prefix" ? 1 : 2)) {
-        enter();
-        await gate;
+        await plistFileRead.hold();
       }
       return Reflect.apply(original, this, args);
     });
@@ -375,8 +360,7 @@ it.for([
       .mockImplementation(async (tool, args, options) => {
         if (tool === "plutil" && (route !== "xml" || args[1] === "xml1")) {
           validationStarted = true;
-          enterValidation();
-          await validationGate;
+          await plistValidation.hold();
         }
         const result = await run(tool, args, options);
         if (route !== "xml" || tool !== "plutil" || !result.ok) return result;
@@ -390,8 +374,8 @@ it.for([
         });
       });
     onTestFinished(async () => {
-      resume();
-      resumeValidation();
+      plistFileRead.release();
+      plistValidation.release();
       try {
         await inspecting;
       } finally {
@@ -404,7 +388,7 @@ it.for([
       path,
       native_command_timeout_ms: 1500,
     });
-    await awaitAcknowledgement(entered, inspecting, "plist file read");
+    await plistFileRead.reached(inspecting, "plist file read");
     let finished = false;
     const closing = client.close().then((result) => {
       finished = true;
@@ -416,16 +400,12 @@ it.for([
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
-    resume();
-    await awaitAcknowledgement(
-      validationEntered,
-      inspecting,
-      "plist validation",
-    );
+    plistFileRead.release();
+    await plistValidation.reached(inspecting, "plist validation");
     expect(validationStarted).toBe(true);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(finished).toBe(false);
-    resumeValidation();
+    plistValidation.release();
     const inspected = await inspecting;
     if (!inspected.ok) throw inspected.error;
     expect((await closing).ok).toBe(true);
