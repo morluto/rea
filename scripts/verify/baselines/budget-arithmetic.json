@@ -1,11 +1,3 @@
 {
-  "src/application/investigation/EvidenceLedger.ts": 1,
-  "src/artifacts/bun/BunModuleGraphLayout.ts": 2,
-  "src/browser/PlaywrightScenarioEvents.ts": 3,
-  "src/browser/WebBundleAnalysisWorker.ts": 2,
-  "src/domain/analysisView/WebNetworkProjectionAccumulator.ts": 1,
-  "src/domain/firmware/hexRecords.ts": 1,
-  "src/domain/firmware/uf2.ts": 1,
-  "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 4,
-  "src/python/PythonPycParser.ts": 2
+  "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 4
 }

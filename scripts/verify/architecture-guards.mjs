@@ -9,6 +9,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -367,7 +368,7 @@ checkCounted(
   "hand-written budget arithmetic (use Budget from src/domain/budget)",
   "budget-arithmetic",
   files,
-  /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu,
+  budgetArithmeticCount,
   ["src/domain/budget.ts"],
 );
 
