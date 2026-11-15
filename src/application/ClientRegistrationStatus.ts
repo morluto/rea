@@ -1,6 +1,9 @@
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
-import { readEffectiveClientRegistrationConfiguration } from "./ClientConfigurationFiles.js";
+import {
+  inlineRegistrationOrigins,
+  readEffectiveClientRegistrationConfiguration,
+} from "./ClientConfigurationFiles.js";
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
@@ -28,7 +31,7 @@ import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
   manualRegistrationRemediation,
-  supportedClients,
+  resolveSupportedClients,
 } from "./SupportedClients.js";
 import type { ClientSystemPaths, SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -135,11 +138,10 @@ export interface ClientRegistrationInspection {
   readonly status: ClientRegistrationStatus;
   readonly activation: "enabled" | "disabled" | "unknown";
   /**
-   * The client policy reason setup refuses to write this registration (for
-   * example Junie's disabled default locations). Maintenance must leave such a
-   * client to the user instead of asking setup for a write it will reject.
+   * The resolved client row this registration was read from, so maintenance
+   * can ask setup's own preflight whether it would refresh it.
    */
-  readonly setupBlocker?: string;
+  readonly client: SetupClient;
 }
 
 /** Project diagnostics from the same inspection used to select maintenance. */
@@ -161,23 +163,18 @@ export const readClientRegistrationInspections = async (
   options: ClientRegistrationReadOptions = {},
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
-  const record = (
-    status: ClientRegistrationStatus,
-    activation: ClientRegistrationInspection["activation"] = "unknown",
-    setupBlocker?: string,
-  ): void => {
-    inspections.push({
-      status,
-      activation,
-      ...(setupBlocker === undefined ? {} : { setupBlocker }),
-    });
-  };
-  for (const client of supportedClients(
+  for (const client of await resolveSupportedClients(
     home,
     options.platform,
     options.environment,
     options.systemPaths,
   )) {
+    const record = (
+      status: ClientRegistrationStatus,
+      activation: ClientRegistrationInspection["activation"] = "unknown",
+    ): void => {
+      inspections.push({ status, activation, client });
+    };
     const selected = options.selectedClientIds?.includes(client.name) === true;
     // An unresolved location leaves this client's registration unknown, never
     // absent; diagnostics and maintenance still cover every other client.
@@ -428,6 +425,7 @@ export const readClientRegistrationInspections = async (
         (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
           ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
               configPath,
+              ...inlineRegistrationOrigins(client),
             ])
           : undefined) ??
           (!nativeApplicability.ok
@@ -469,7 +467,6 @@ export const readClientRegistrationInspections = async (
           ? { ...status, manual_conflict: "shared_disabled_activation" }
           : status,
         activation,
-        policyBlock,
       );
     } catch (cause: unknown) {
       if (
@@ -572,10 +569,20 @@ const registrationAligned = ({
 
 /** A client that rewrites its file from memory must be quit before setup. */
 const remediation = (client: SetupClient): string => {
+  const inline = inlineRegistrationRemediation(client);
   if (client.quitBeforeSetup !== true)
-    return "Run rea setup to refresh this registration, then restart the client.";
+    return `Run rea setup to refresh this registration, then restart the client.${inline}`;
   const name = client.displayName ?? client.name;
-  return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.`;
+  return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.${inline}`;
+};
+
+/** Setup cannot repair what a read-only inline layer sets for REA's entry. */
+const inlineRegistrationRemediation = (client: SetupClient): string => {
+  const origins = inlineRegistrationOrigins(client);
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  return origins.length === 0
+    ? ""
+    : ` ${origins.join(", ")} also sets the ${name} entry and overrides the client's files; REA does not edit it, so change or remove ${name} there if setup reports that it overrides the registration.`;
 };
 
 const unknownEntryPointRemediation = (): string =>
@@ -691,6 +698,9 @@ const clientEvidencePresent = async (
   // client, so an unreadable config must surface as unreadable instead of
   // collapsing to absence. The probes below serve automatic discovery only.
   if (evidence.selected) return ok(true);
+  // A read-only inline layer (KILO_CONFIG_CONTENT) that sets REA's entry is
+  // parsed evidence on its own, even when none of the client's folders exist.
+  if (inlineRegistrationOrigins(client).length > 0) return ok(true);
   const discoveryPaths = new Set(client.discoveryPaths ?? []);
   const paths = [
     // Only the registration file can hold what REA wrote.

@@ -727,6 +727,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | fx                        | `fx`                    |
 | Junie                     | `junie`                 |
 | Goose                     | `goose`                 |
+| Kilo Code                 | `kilo`                  |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -744,7 +745,7 @@ not see those registrations. Current releases inspect, refresh and remove them
 like any other setup client. `mcporter` also requires a release after 6.9.0;
 setup never selects it from detection, because MCPorter already imports the
 registrations setup writes for other clients. Select it with
-`--client mcporter`. `fx`, `junie` and `goose` also require a release after 6.9.0.
+`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1307,9 +1308,15 @@ status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
-update and uninstall inspect, refresh and remove what it wrote. Kilo Code is
-registered only by `rea mcp add` until its native layers are modeled; doctor,
-update and uninstall do not yet see that registration. Gemini CLI
+update and uninstall inspect, refresh and remove what it wrote. For Kilo Code
+that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
+`~/.kilocode`, `~/.kilo`, then `KILO_CONFIG_DIR`); a relative Kilo path is
+reported as unresolved because Kilo's working directory is unknown.
+`KILO_CONFIG_CONTENT` is read as Kilo's highest layer and never edited: setup
+reports Kilo as needing manual repair when that value changes the `rea` entry,
+and doctor reports the registration Kilo actually loads. Uninstall changes no
+Kilo file when another layer or that value would keep a `rea` entry in effect,
+or expose a different one, after removal. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
