@@ -553,18 +553,20 @@ const parseHeader = (
     });
   const indexEntries = reader.u32(start + 8);
   const storeBytes = reader.u32(start + 12);
+  const indexBytes = indexEntries * 16;
+  // A declared extent past the end of the file is truncation that no budget
+  // can supply, so it is checked before the entry budget.
+  reader.range(
+    start + 16,
+    indexBytes + storeBytes,
+    `RPM ${label} header index and data store`,
+  );
   if (indexEntries > maxIndex)
     throw new RpmPackageCapacityFailure(
       "max_header_index_entries",
       maxIndex,
       `RPM ${label} header declares ${String(indexEntries)} index entries, above the ${String(maxIndex)}-entry budget.`,
     );
-  const indexBytes = indexEntries * 16;
-  reader.range(
-    start + 16,
-    indexBytes + storeBytes,
-    `RPM ${label} header index and data store`,
-  );
   const storeOffset = start + 16 + indexBytes;
   const store = new BinaryReader(
     reader.range(storeOffset, storeBytes, `RPM ${label} data store`),

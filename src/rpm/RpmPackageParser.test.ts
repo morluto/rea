@@ -529,6 +529,20 @@ it("refuses header index counts above the caller budget", () => {
   }
 });
 
+it("refuses a header index that runs past the file as truncation, not a budget", () => {
+  const bytes = Buffer.from(rpmBinaryPackageFixture().subarray(0, 96 + 64));
+  // Signature header index count, 8 bytes after the 96-byte lead.
+  bytes.writeUInt32BE(0xffffffff, 96 + 8);
+  try {
+    parse(bytes);
+    throw new Error("expected truncation refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.kind).toBe("truncated");
+  }
+});
+
 it("refuses file inventories above the caller budget", () => {
   try {
     parse(
