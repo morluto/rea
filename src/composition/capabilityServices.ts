@@ -488,8 +488,8 @@ const modules = {
     }),
   ),
   pcap: service(
-    ({ environment, options }) =>
-      options.pcapAnalysis ?? createPcapAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.pcapAnalysis ?? createPcapAnalysisProvider(environment, platform),
     ({ options, platform }) => ({
       hostUnsupported: {
         pcapCapture: outsideHost(
@@ -558,9 +558,9 @@ const modules = {
     (value) => value.provider.close?.() ?? Promise.resolve(),
   ),
   apktool: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform }) =>
       options.apktoolAnalysis ??
-      createApktoolResourceAnalysisProvider(environment),
+      createApktoolResourceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         apktoolAnalysisAvailability: (signal: AbortSignal) =>
@@ -579,8 +579,9 @@ const modules = {
     }),
   ),
   adbDevice: service(
-    ({ environment, options }) =>
-      options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.adbDeviceAnalysis ??
+      createAdbDeviceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         adbAnalysisAvailability: (signal: AbortSignal) =>
