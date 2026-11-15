@@ -308,10 +308,6 @@
     "src/kuna/KunaConfiguration.ts": 1,
     "src/kuna/KunaDoctor.ts": 1,
     "src/kuna/KunaProvider.ts": 1,
-    "src/native/NativeMacOSProvider.ts": 1,
-    "src/native/NativeMacOSProviderMetadata.ts": 1,
-    "src/native/pwntools/PwntoolsDecoder.ts": 2,
-    "src/native/windows/WindowsShortcutProvider.ts": 1,
     "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/server/createServer.ts": 1,
     "src/server/registerSessionTools.ts": 3,
@@ -322,7 +318,6 @@
   "ambient-host-architecture": {
     "src/evm/EvmoleInterfaceProvider.ts": 2,
     "src/javascript/recovery/WakaruCommand.ts": 1,
-    "src/native/pwntools/PwntoolsDecoder.ts": 2,
     "src/server/createServer.ts": 1
   },
   "hand-caught-configuration-error": {
@@ -390,14 +385,9 @@
     "tests/boundary/cli/debuggerOneShotExit.test.ts": 1,
     "tests/boundary/evm/evmCleanupRetry.test.ts": 52,
     "tests/boundary/filesystem/webScriptExport.test.ts": 2,
-    "tests/boundary/native/pwntoolsArtifactCleanup.test.ts": 4,
     "tests/boundary/process/artifactSelectedCommand.test.ts": 4,
     "tests/boundary/process/nativeUiVerifierActions.test.ts": 1,
-    "tests/process-global/hostRestrictedAvailabilityMcp.test.ts": 4,
-    "tests/process-global/pwntoolsCleanup.test.ts": 4,
-    "tests/process-global/pwntoolsCliFinalization.test.ts": 4,
-    "tests/process-global/pwntoolsCliRemediation.test.ts": 4,
-    "tests/process-global/pwntoolsStageRetirement.test.ts": 4
+    "tests/process-global/hostRestrictedAvailabilityMcp.test.ts": 4
   },
   "local-completeness-enum": {
     "src/contracts/cutterToolContracts.ts": 1,

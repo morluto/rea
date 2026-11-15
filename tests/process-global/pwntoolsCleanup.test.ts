@@ -1,3 +1,4 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -22,8 +23,6 @@ import {
   removeTestWorkspace,
 } from "../support/workspace/workspaceFixture.js";
 
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const supportedHost = process.platform !== "win32";
 
 beforeAll(() =>
@@ -33,17 +32,9 @@ beforeAll(() =>
 // Only the decoder's availability gate is simulated. The module-owned process
 // inspector was created and prepared for the real host before these overrides;
 // every fixture launch, output stream, cleanup signal and filesystem is real.
-beforeEach(() => {
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
-});
+beforeEach(() => {});
 
-afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
-});
+afterEach(() => {});
 
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-pwntools-cleanup-");
@@ -102,6 +93,7 @@ it.runIf(supportedHost)(
           },
         };
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -202,6 +194,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -258,6 +251,7 @@ it.runIf(supportedHost)(
       },
       () =>
         PrivateRuntimeRoot.create({ parent: workspace.root, prefix: "owned-" }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       release?.();

@@ -1,3 +1,4 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import { z } from "zod";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -34,8 +35,6 @@ import {
 } from "../support/workspace/workspaceFixture.js";
 
 const supportedHost = process.platform !== "win32";
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const exitCode = process.exitCode;
 
 beforeAll(() =>
@@ -43,14 +42,8 @@ beforeAll(() =>
 );
 beforeEach(() => {
   // Prepare the real host inspector first; only decoder availability is simulated.
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
 });
 afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
   process.exitCode = exitCode;
   vi.restoreAllMocks();
 });
@@ -127,6 +120,7 @@ it.runIf(supportedHost).each(["decoded", "failed"] as const)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const output = await runCli(provider, path);
@@ -175,6 +169,7 @@ it.runIf(supportedHost)(
         };
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     expect(await runCli(provider, path)).toMatchObject({
@@ -214,6 +209,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -252,6 +248,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -293,6 +290,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose(
@@ -319,7 +317,12 @@ it.runIf(supportedHost).each(["inspect", "inspectAndClose"] as const)(
     const reason = { stage: "pre-admission" };
     const controller = new AbortController();
     controller.abort(reason);
-    const provider = new PwntoolsLayoutProvider({});
+    const provider = new PwntoolsLayoutProvider(
+      {},
+      undefined,
+      undefined,
+      SIMULATED_LINUX_X64,
+    );
     onTestFinished(() => provider.close());
     const result = await provider[method](
       { path: "/not-acquired" },
@@ -347,6 +350,7 @@ it.runIf(supportedHost)(
         controller.abort(reason);
         return root;
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspect(
@@ -379,6 +383,7 @@ it.runIf(supportedHost).each(["AbortError-name", "same-as-reason"])(
         );
         throw physical;
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspect(
@@ -416,6 +421,7 @@ it.runIf(supportedHost)(
         return launched;
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       try {
@@ -457,6 +463,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;

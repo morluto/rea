@@ -1,3 +1,4 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import {
   access,
   lstat,
@@ -45,8 +46,6 @@ import {
 } from "../support/workspace/workspaceFixture.js";
 
 const supportedHost = process.platform !== "win32";
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const worker = fileURLToPath(
   new URL("../fixtures/pwntoolsChangingArtifact.mjs", import.meta.url),
 );
@@ -55,14 +54,8 @@ beforeAll(() =>
 );
 beforeEach(() => {
   // Use the actual host inspector; simulate only the decoder availability gate.
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
 });
 afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
   vi.restoreAllMocks();
 });
 
@@ -177,6 +170,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose({
@@ -219,6 +213,7 @@ it.runIf(supportedHost)(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose({
@@ -265,6 +260,7 @@ it.runIf(supportedHost).each([
         return launched;
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -349,6 +345,7 @@ it.runIf(supportedHost)(
         };
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -453,6 +450,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       releaseAllowed = true;
@@ -591,6 +589,7 @@ it.runIf(supportedHost).each(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       releaseAllowed = true;
@@ -699,6 +698,7 @@ it.runIf(supportedHost)(
           prefix: "operation-",
         });
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       await provider.close();
