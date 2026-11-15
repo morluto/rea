@@ -7,8 +7,8 @@ import {
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,

@@ -17,17 +17,17 @@ import {
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../AppleMachoFixups.js";
-import { parseMachoLayout } from "../AppleMachoSelection.js";
-import { selectMachoSlice } from "../metadata/MachoSliceSelection.js";
-import { decodeMachoName } from "../AppleMachoNames.js";
+} from "../../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../../domain/apple/appleMachoSelection.js";
+import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
+import { decodeMachoName } from "../../domain/apple/appleMachoNames.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   createFileMappingIndex,
   type ImageSection,
 } from "../../domain/binaryContainer.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   finishInitializerReport,
   type CollectedInitializer,

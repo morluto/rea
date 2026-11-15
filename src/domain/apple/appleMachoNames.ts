@@ -1,4 +1,4 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 /** A dyld byte name projected losslessly as UTF-8, or retained exactly. */
 export type MachoName = string | { readonly bytes_base64: string };
 

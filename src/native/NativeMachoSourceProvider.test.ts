@@ -9,7 +9,7 @@ import { NativeCommandFailure, XcrunCommandRunner } from "./CommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { err } from "../domain/result.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
-import { MachoCommandNamesLimitError } from "./MachoCommandNames.js";
+import { MachoCommandNamesLimitError } from "../domain/apple/machoCommandNames.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
@@ -198,9 +198,11 @@ it.each(
     expect((await client.close()).ok).toBe(true);
   },
 );
-vi.mock("./MachoCommandNames.js", async (importOriginal) => {
+vi.mock("../domain/apple/machoCommandNames.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("./MachoCommandNames.js")>();
+    await importOriginal<
+      typeof import("../domain/apple/machoCommandNames.js")
+    >();
   return {
     ...actual,
     readMachoCommandNames: (

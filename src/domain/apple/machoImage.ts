@@ -1,18 +1,15 @@
-import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import type {
-  FileMapping,
-  ZeroFillMapping,
-} from "../../domain/virtualFileMapping.js";
-import { decodeMachoFixedName } from "../AppleMachoNames.js";
+import { LC } from "./machoLoadCommandCodes.js";
+import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
+import { decodeMachoFixedName } from "./appleMachoNames.js";
 import {
   isMachoZeroFillSection,
   readMachoSectionHeader,
   type MachoSectionHeader,
-} from "../../domain/apple/machoSectionHeader.js";
+} from "./machoSectionHeader.js";
 import {
   admitMachoSegmentCommand,
   readMachoSegmentHeader,
-} from "../../domain/apple/machoSegmentHeader.js";
+} from "./machoSegmentHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -20,11 +17,11 @@ import {
   type BinaryContainer,
   type ImageSection,
   type LoadRegion,
-} from "../../domain/binaryContainer.js";
+} from "../binaryContainer.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,
-} from "../../domain/apple/machoLoadCommands.js";
+} from "./machoLoadCommands.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (bytes: Buffer): BinaryContainer => {
