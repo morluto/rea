@@ -85,7 +85,12 @@ with tempfile.TemporaryDirectory(prefix='rea-fit-producer-') as directory:
 result = {'producer_versions': versions, 'source_date_epoch': env['SOURCE_DATE_EPOCH'], 'samples': samples}
 path = Path(__file__).with_name('oracle.json')
 if args.check:
-    assert json.loads(path.read_text()) == result, 'producer bytes or independent facts changed'
+    committed = json.loads(path.read_text())
+    for expected, actual in zip(committed['samples'], result['samples'], strict=True):
+        expected_bytes = zlib.decompress(base64.b64decode(expected.pop('deflate_base64'), validate=True))
+        actual_bytes = zlib.decompress(base64.b64decode(actual.pop('deflate_base64'), validate=True))
+        assert expected_bytes == actual_bytes, 'producer bytes changed'
+    assert committed == result, 'producer metadata or independent facts changed'
     print('All 3 complete FIT carriers and 9 image/address facts reproduced exactly')
 else:
     path.write_text(json.dumps(result, indent=2) + '\n')
