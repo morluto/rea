@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **evidence:** JavaScript runtime observations without scripts.parse_failed_total, and active Electron Evidence without parameters.resolved_paths, are refused as malformed; recreate the observation.
 * **javascript:** managed records missing these fields are refused as malformed; recreate the observation.
 * **process:** managed records missing these fields are refused as malformed; recreate the observation.
 * **managed:** managed records missing these fields are refused as malformed; recreate the observation.
@@ -18,6 +19,8 @@
 
 ### Features
 
+* **artifacts:** name which ASAR integrity check failed on the reader failure ([#11021](https://github.com/morluto/rea/issues/11021)) ([d8c0a71](https://github.com/morluto/rea/commit/d8c0a71c532bbfb85b48f29550ed3ee91a870565))
+* **artifacts:** surface the named integrity check in public artifact errors ([#11052](https://github.com/morluto/rea/issues/11052)) ([5d1a477](https://github.com/morluto/rea/commit/5d1a47768aa0ff43077758db57f9e99e9f3034a9))
 * **cli:** warn after mcp add writes Claude Desktop's configuration ([#10696](https://github.com/morluto/rea/issues/10696)) ([b0e3257](https://github.com/morluto/rea/commit/b0e32578ae2cd01e704cce8ac20c7ee3a332d719))
 * **cutter:** identify the running plugin's source and refuse a modified one ([#10731](https://github.com/morluto/rea/issues/10731)) ([0c38229](https://github.com/morluto/rea/commit/0c38229dd3534f62a0f6c5d3fe4e6ca3bc9e940d))
 * **cutter:** name the plugin re-copy recovery for sessions whose plugin source is unknown or modified ([#10950](https://github.com/morluto/rea/issues/10950)) ([f8e8dc3](https://github.com/morluto/rea/commit/f8e8dc3e7a6b67a67b912ecfb6f0774572ae13ee))
@@ -26,6 +29,7 @@
 * **evidence:** mark a snapshot supplied to import_evidence_bundle with detected_kind ([#11010](https://github.com/morluto/rea/issues/11010)) ([e0249db](https://github.com/morluto/rea/commit/e0249db65c40c333756103336f25453917af4b46))
 * **evidence:** name a standalone Evidence record with detected_kind on every bundle refusal ([#11039](https://github.com/morluto/rea/issues/11039)) ([0d86953](https://github.com/morluto/rea/commit/0d86953c3253ec9cc55adb59b842f1e097057331))
 * **evidence:** name the side and issue path of comparison source integrity failures ([#11049](https://github.com/morluto/rea/issues/11049)) ([423489a](https://github.com/morluto/rea/commit/423489a76108471fa065023383ad6df1a29da6ed))
+* **evidence:** require JavaScript, browser, managed and reference-source facts their producers always write ([#10990](https://github.com/morluto/rea/issues/10990)) ([15de1d4](https://github.com/morluto/rea/commit/15de1d4dce9d94ec71924004c0c38782069c8479))
 * **ida:** require an explicit protocol for attached IDA registrations ([#10846](https://github.com/morluto/rea/issues/10846)) ([8428de1](https://github.com/morluto/rea/commit/8428de13d3e9b2faadfeac8bca0e60eb28d7b674))
 * **javascript:** require JavaScript application and source-map fields that were optional only for historical Evidence ([#10958](https://github.com/morluto/rea/issues/10958)) ([6597729](https://github.com/morluto/rea/commit/659772952ded743c637b8ea8ef2db0ad0ec4597a))
 * **managed:** require managed Evidence fields that were defaulted only for historical Evidence ([#10952](https://github.com/morluto/rea/issues/10952)) ([c36649a](https://github.com/morluto/rea/commit/c36649a674b72705f31248a888778dfee859901c))
@@ -33,9 +37,11 @@
 * **mcp:** project compact input schemas into the portable advertised dialect ([#10632](https://github.com/morluto/rea/issues/10632)) ([4126698](https://github.com/morluto/rea/commit/412669840751ebb420d04f19938b70274bee7d71))
 * **pcap:** read tshark JSON packets through one envelope owner with an adjustable expansion bound ([#10788](https://github.com/morluto/rea/issues/10788)) ([c06a0b9](https://github.com/morluto/rea/commit/c06a0b9ee8ae379e361a4d65100ab0ed15f91857))
 * **process:** name whether a process input file failed to read or to parse ([#11008](https://github.com/morluto/rea/issues/11008)) ([536c54c](https://github.com/morluto/rea/commit/536c54ca1fb362f3fee9d8df8bb14296ce53517c))
+* **providers:** bound runOwned work and close by one deadline ([#10996](https://github.com/morluto/rea/issues/10996)) ([a6cbe8b](https://github.com/morluto/rea/commit/a6cbe8b12a76e8626ad8a5aaf59ee40a005214b0))
 * **python:** decode CPython 3.14 and 3.15 pyc code objects ([1d08253](https://github.com/morluto/rea/commit/1d08253ff2cb68838b93cf9275000c39bf1f507a)), closes [#8206](https://github.com/morluto/rea/issues/8206)
 * **setup:** expose explicit MCP catalog profile selection ([#9354](https://github.com/morluto/rea/issues/9354)) ([edc9304](https://github.com/morluto/rea/commit/edc93046692c120567553fb68390db6ec5bc98c7))
 * **setup:** inspect, refresh and remove five mcp-add-only clients ([#10694](https://github.com/morluto/rea/issues/10694)) ([d044f44](https://github.com/morluto/rea/commit/d044f44d91a55d11ac81b060a47b6fdbcf364e34))
+* **setup:** manage fx, Junie, Goose and Kilo registrations through the client table ([#10709](https://github.com/morluto/rea/issues/10709)) ([fd2eabb](https://github.com/morluto/rea/commit/fd2eabb12ab8f35e9d8946057dac86e863f711c4))
 * **setup:** mark a shared enable:false registration as a manual conflict in doctor status ([#11019](https://github.com/morluto/rea/issues/11019)) ([b572dba](https://github.com/morluto/rea/commit/b572dbaf25ee388c7305d4e60b9c607ad38e1182))
 
 
@@ -120,6 +126,7 @@
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **environment:** admit the output root before creating its parents ([5e1d504](https://github.com/morluto/rea/commit/5e1d504664362649aec19c03f768d0bbf939b482))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
+* **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
 * **evidence:** name the noncanonical bundle sections ([3ae21f9](https://github.com/morluto/rea/commit/3ae21f9ff8af38611adc796bd180c917f082ea42))
 * **filesystem:** close file handles only through the owned-handle owners ([#10578](https://github.com/morluto/rea/issues/10578)) ([428e006](https://github.com/morluto/rea/commit/428e006f66a0417b28c4f40c865c819d23edaf4a))
 * **filesystem:** remove the unresolved-path predicate the launch-refusal owner superseded ([8292f33](https://github.com/morluto/rea/commit/8292f332384a239556d5dfbf8787faaaca5c6210))
@@ -143,7 +150,9 @@
 * **hopper:** name the unconfirmed shutdown step in retained cleanup ([#10594](https://github.com/morluto/rea/issues/10594)) ([e939cd0](https://github.com/morluto/rea/commit/e939cd04feae51ed4670f3068c8a32e0038ef8e2))
 * **hopper:** type the Apple Events authorization denial ([fd97d09](https://github.com/morluto/rea/commit/fd97d0926c6ecd6a97075d587fb8669fac3b29cd))
 * **hopper:** validate every bridge reply against one contract table ([#10662](https://github.com/morluto/rea/issues/10662)) ([f88d896](https://github.com/morluto/rea/commit/f88d8964f9e781c9aa0c08eaf5405879174083e9))
+* **il2cpp:** read ELF hash-table words through BinaryReader ([#11083](https://github.com/morluto/rea/issues/11083)) ([12a0f4a](https://github.com/morluto/rea/commit/12a0f4a94f1fac557f539c2921cc7a8775a37e81))
 * **il2cpp:** report the exceeded native-link maximum in the public refusal ([#10741](https://github.com/morluto/rea/issues/10741)) ([a090fa7](https://github.com/morluto/rea/commit/a090fa70983839e223cdd1e2949ecbd06d5bfa98))
+* **il2cpp:** resolve ELF ABS64 and GLOB_DAT image definitions ([#11075](https://github.com/morluto/rea/issues/11075)) ([29dd58c](https://github.com/morluto/rea/commit/29dd58c96de309965e83f11495acd9372849872a)), closes [#10478](https://github.com/morluto/rea/issues/10478) [#10495](https://github.com/morluto/rea/issues/10495)
 * **il2cpp:** select universal binary slices through the shared Mach-O selection ([#10661](https://github.com/morluto/rea/issues/10661)) ([2705aad](https://github.com/morluto/rea/commit/2705aad3654d143562fa29ca20f3cb991308c044))
 * **javascript:** decide a socket host member by its string type ([91297ca](https://github.com/morluto/rea/commit/91297ca74542c3133799706acf5f52e10edc27dc)), closes [#10002](https://github.com/morluto/rea/issues/10002)
 * **javascript:** expose operands of unmodelled implicit execution ([#10631](https://github.com/morluto/rea/issues/10631)) ([f56b417](https://github.com/morluto/rea/commit/f56b417a58b478b7f325d42a6dc337a045d43c44))
@@ -187,6 +196,7 @@
 * **native:** correct Mach-O command completeness ([364432d](https://github.com/morluto/rea/commit/364432d6c9d5b52c766950176b1309e81c22b86b))
 * **native:** name chained imports from the binary's import table ([4bdd6d1](https://github.com/morluto/rea/commit/4bdd6d10c98896571d089c7d9ee62dbad2c7aeab))
 * **native:** name the exhausted native export allowance by its units ([8e5e23c](https://github.com/morluto/rea/commit/8e5e23c21ebf9a7834db38c13adc2a7aac3adf85)), closes [#7628](https://github.com/morluto/rea/issues/7628) [#7754](https://github.com/morluto/rea/issues/7754)
+* **native:** report a signature inspection defect as an adapter failure ([#11069](https://github.com/morluto/rea/issues/11069)) ([ecab89f](https://github.com/morluto/rea/commit/ecab89f3e6e956dacf7759de7382748e81bd0f85))
 * **native:** report an ownership-helper compile timeout as retryable ([ba32cd3](https://github.com/morluto/rea/commit/ba32cd3c287eb41782a9667762db7ac81696c219))
 * **native:** report an unexamined thunk target in value traces ([8578daf](https://github.com/morluto/rea/commit/8578daf8b7f3ee7caf9a3b897501835e0a1573d3))
 * **native:** retain the dispatch reader failure when the symbol fallback fails ([3a1db29](https://github.com/morluto/rea/commit/3a1db29166ec459b0172028d1ed4c63f61a436af)), closes [#8036](https://github.com/morluto/rea/issues/8036)
@@ -271,6 +281,7 @@
 
 ### Code Refactoring
 
+* **adb:** report a pulled file's digest failure from its own type ([#10848](https://github.com/morluto/rea/issues/10848)) ([d22da73](https://github.com/morluto/rea/commit/d22da738d5bf9c12c3be3a30c79a0714534a96a9))
 * **android:** build mobile-provider cancellations with a required reason ([#10590](https://github.com/morluto/rea/issues/10590)) ([ef15353](https://github.com/morluto/rea/commit/ef15353c69109f4eda522aed013242229663e4b5))
 * **apple-ips:** report crash-report format failures through ParseFailure ([#10665](https://github.com/morluto/rea/issues/10665)) ([d482bb9](https://github.com/morluto/rea/commit/d482bb936946e3cc36cc750dc7d12c6926fd8cb1))
 * **application:** build application cancellations with a required reason ([#10574](https://github.com/morluto/rea/issues/10574)) ([2826592](https://github.com/morluto/rea/commit/28265927594d6929f6c84d6c65ddd6d72a0b6ee6))
@@ -279,6 +290,8 @@
 * **browser:** bind a capture decoder's reported cleanup to its process lease ([#10998](https://github.com/morluto/rea/issues/10998)) ([acbbbaa](https://github.com/morluto/rea/commit/acbbbaa346ccc4bf4c92699df9bade15f8fc4481))
 * **browser:** build browser cancellations with a required reason ([#10581](https://github.com/morluto/rea/issues/10581)) ([b3cdbb9](https://github.com/morluto/rea/commit/b3cdbb92ee81d00787dd87aefa43c1cdacbe779c))
 * **browser:** decide target_changed from one document identity owner ([#10703](https://github.com/morluto/rea/issues/10703)) ([cc4f00d](https://github.com/morluto/rea/commit/cc4f00d6cae663f7fd8862ae0c9e6496a96f03b6))
+* **browser:** parse frame lifecycle events once by a registered event schema ([#10730](https://github.com/morluto/rea/issues/10730)) ([025d1b3](https://github.com/morluto/rea/commit/025d1b365ff8b6b2b5376d232ddb21917c8b0912))
+* **browser:** parse Runtime and Debugger events once by registered schemas ([#10742](https://github.com/morluto/rea/issues/10742)) ([abd36dd](https://github.com/morluto/rea/commit/abd36dd25027e88fb54aa0b97dd0d173c7025977))
 * **browser:** register target, storage and acknowledgement CDP replies ([#10630](https://github.com/morluto/rea/issues/10630)) ([3e94008](https://github.com/morluto/rea/commit/3e9400873eb9d66d9b41248e52128595d0dd7cd3))
 * **browser:** send only CDP commands with registered result schemas ([#10666](https://github.com/morluto/rea/issues/10666)) ([254bb21](https://github.com/morluto/rea/commit/254bb218579148df8d899843329e29180464eab9))
 * **capture:** report decoder failures through ParseFailure with named limits ([#10708](https://github.com/morluto/rea/issues/10708)) ([d9daf09](https://github.com/morluto/rea/commit/d9daf09ea558094d0629d2a33420d0c9ec52dff9))
@@ -287,13 +300,16 @@
 * **cli:** project Go, V8 and delivery inspectors from their contracts ([#10576](https://github.com/morluto/rea/issues/10576)) ([da53dce](https://github.com/morluto/rea/commit/da53dce1f729d33abe0d269061412af7662f2a09))
 * **cli:** project JSON-document workflow commands from their contracts ([#10668](https://github.com/morluto/rea/issues/10668)) ([fc6a960](https://github.com/morluto/rea/commit/fc6a9604a175f3456c99025e142817fdc70d3961))
 * **cli:** project JSON-text options and pwntools inspectors from contracts ([#10589](https://github.com/morluto/rea/issues/10589)) ([79cc07e](https://github.com/morluto/rea/commit/79cc07ecf191e44ff4e280fa843e11a574e20f77))
+* **cli:** project reconstruction and source-to-bundle documents from their contracts ([#10697](https://github.com/morluto/rea/issues/10697)) ([9be6a96](https://github.com/morluto/rea/commit/9be6a96fd645cf7ab418398b9922c9b27966422e))
 * **cli:** project view-delivery inspectors from their contracts ([#10600](https://github.com/morluto/rea/issues/10600)) ([fa53f70](https://github.com/morluto/rea/commit/fa53f7070ae2fb89cfdebfd7c4332e6dab39231c))
 * **cli:** project WASM inspection and firmware commands from their contracts ([#10648](https://github.com/morluto/rea/issues/10648)) ([a761efd](https://github.com/morluto/rea/commit/a761efda70272fe9d70d0fe6d67531a773ebcdcf))
 * **cli:** run one-shot commands through one shared owner ([#10405](https://github.com/morluto/rea/issues/10405)) ([bddbd80](https://github.com/morluto/rea/commit/bddbd80afb8e5e2c5b5d7a0f3906497b5be7e9b5))
 * consolidate shared analysis boundaries ([#10293](https://github.com/morluto/rea/issues/10293)) ([c836f57](https://github.com/morluto/rea/commit/c836f57b7d72e6843c160e32afd6f7e14be70fdf))
 * **contracts:** derive the public tool catalog from one contract-group list ([#10564](https://github.com/morluto/rea/issues/10564)) ([e532126](https://github.com/morluto/rea/commit/e53212655baa6b81f98005d9a636f7d914b7686f))
 * **contracts:** key the tool effect audit by public tool name ([#10579](https://github.com/morluto/rea/issues/10579)) ([764203c](https://github.com/morluto/rea/commit/764203cf4a3a3f4ec3c34ebe7049bbd9a04adca9))
+* **desktop:** let build-computer and agentenv cleanup errors read their owner's release ([#10855](https://github.com/morluto/rea/issues/10855)) ([df1e647](https://github.com/morluto/rea/commit/df1e647266a91fb15e3b6e92e7ac5eaf92d7d0b8))
 * **desktop:** release retained screen-judge cleanup through its lease ([#10809](https://github.com/morluto/rea/issues/10809)) ([af5c89a](https://github.com/morluto/rea/commit/af5c89a85713e4438159caf355ec2c525ff45430))
+* **domain:** give strict UTF-8 decoding one owner with an explicit BOM policy ([#10728](https://github.com/morluto/rea/issues/10728)) ([cabd56e](https://github.com/morluto/rea/commit/cabd56ea71d73dfca35c8733b95dddc11720e9ce))
 * **domain:** one owner each for non-empty text schemas and UTF-8 head excerpts ([#10569](https://github.com/morluto/rea/issues/10569)) ([eead7a5](https://github.com/morluto/rea/commit/eead7a5815fc67c40586a6b8204efffa595c43e7))
 * **domain:** one owner for the non-array record predicate ([#10588](https://github.com/morluto/rea/issues/10588)) ([5bf66f7](https://github.com/morluto/rea/commit/5bf66f75008a6ffa1353779442703e6de45c9143))
 * **errors:** give caller aborts a typed reason at the adapters ([#10633](https://github.com/morluto/rea/issues/10633)) ([b655645](https://github.com/morluto/rea/commit/b655645608aeb68cf17a8632927e646b2e52a221))
@@ -309,9 +325,13 @@
 * **hopper:** build Hopper cancellations with a required reason ([#10601](https://github.com/morluto/rea/issues/10601)) ([61fd633](https://github.com/morluto/rea/commit/61fd6336bf31741a77f51e8ef84a596ce8d94d41))
 * **hopper:** read shutdown replies through the bridge reply contract ([#10901](https://github.com/morluto/rea/issues/10901)) ([6d40eb9](https://github.com/morluto/rea/commit/6d40eb943b01d82ba191ed6f74447c66582a872b))
 * **ida:** decide IDA admission once for doctor and provider readiness ([#10926](https://github.com/morluto/rea/issues/10926)) ([7fe4c3d](https://github.com/morluto/rea/commit/7fe4c3ded5dc0c2255fd9b8c80398df7de861c6c))
+* **ida:** launch stdio registrations through the owned MCP transport ([#10739](https://github.com/morluto/rea/issues/10739)) ([998faa4](https://github.com/morluto/rea/commit/998faa41189c6924bdb42d18dc584ec5a8775d71))
+* **ida:** let IDA close failures read the session's later close ([#10811](https://github.com/morluto/rea/issues/10811)) ([b98fbdc](https://github.com/morluto/rea/commit/b98fbdc44212c860fbbd929393d74981ec946be8))
+* **ida:** require the host platform for IDA MCP connections and snapshot the child environment with it ([#11073](https://github.com/morluto/rea/issues/11073)) ([bae5d74](https://github.com/morluto/rea/commit/bae5d74eb034668bfbd81a9af8fb400ad7e4942c))
 * **il2cpp:** report format failures through ParseFailure ([#10701](https://github.com/morluto/rea/issues/10701)) ([3a29b6b](https://github.com/morluto/rea/commit/3a29b6b8eac4d958ade8cffce3f7d53fcf7052b1))
 * **jadx:** read the bridge identity from the bridge source it launches ([#10720](https://github.com/morluto/rea/issues/10720)) ([da3541b](https://github.com/morluto/rea/commit/da3541bae3c21441339df62c215db45eb2345d23))
 * **javascript:** classify implicit execution in one owner ([#10605](https://github.com/morluto/rea/issues/10605)) ([a874fcc](https://github.com/morluto/rea/commit/a874fcc4e340ab27543fef63ab4494b8fd296047))
+* **jeb:** classify JEB failures through the shared provider classifier ([#10831](https://github.com/morluto/rea/issues/10831)) ([607a787](https://github.com/morluto/rea/commit/607a7872bbc5e6ac67713481cd2cce0f4098440a))
 * **kuna:** decide Kuna readiness once for doctor and runtime ([#10997](https://github.com/morluto/rea/issues/10997)) ([27b732e](https://github.com/morluto/rea/commit/27b732e957ae55827c46157ed667b13a13894cde))
 * **limits:** declare the Node timer bound and duration schema once ([#10640](https://github.com/morluto/rea/issues/10640)) ([8443930](https://github.com/morluto/rea/commit/8443930bd33c58514138cd23c95fb9ce9e8f4860))
 * **macho:** name load-command codes through the shared LC table ([#10714](https://github.com/morluto/rea/issues/10714)) ([78fd365](https://github.com/morluto/rea/commit/78fd365bddcf33f86853a97874ed0a5c3e0184e7))
@@ -334,6 +354,7 @@
 * **process:** own deadlines as one monotonic type with a finalize budget ([#10723](https://github.com/morluto/rea/issues/10723)) ([a67dbe0](https://github.com/morluto/rea/commit/a67dbe07a4afcb4b23826c63d20005ce939dabe7))
 * **process:** own gdb and rizin debugger sessions in one registry ([#10735](https://github.com/morluto/rea/issues/10735)) ([e93dada](https://github.com/morluto/rea/commit/e93dada664d36f6e186508c5c177a35e09a13bd7))
 * **process:** require the platform for environment snapshots instead of reading the host ([#11028](https://github.com/morluto/rea/issues/11028)) ([5cfaac0](https://github.com/morluto/rea/commit/5cfaac0834b5cd474801809652778598c788041b))
+* **process:** take the host from HOST_PLATFORM and require the platform in process helpers ([#11038](https://github.com/morluto/rea/issues/11038)) ([530faf4](https://github.com/morluto/rea/commit/530faf43bd83db72d1475986f8023abe4ee50a22))
 * **providers:** classify raw provider failures through one owner ([#10757](https://github.com/morluto/rea/issues/10757)) ([6a4caa0](https://github.com/morluto/rea/commit/6a4caa065b8934863b0d49ef8764751bd6456c5b))
 * **providers:** finalize apktool and shared artifact resources through runOwned ([#10653](https://github.com/morluto/rea/issues/10653)) ([26520bd](https://github.com/morluto/rea/commit/26520bd29095bd3a57b4919aeba41392d673d4ff))
 * prune internal seams and preserve configuration ownership ([#10430](https://github.com/morluto/rea/issues/10430)) ([b138f52](https://github.com/morluto/rea/commit/b138f52e12fdda3942855232a2a5bb3ed50d0943))
@@ -342,11 +363,14 @@
 * **python:** report pyc format failures through ParseFailure ([#10664](https://github.com/morluto/rea/issues/10664)) ([b33e5c4](https://github.com/morluto/rea/commit/b33e5c486703d450ffcf75ff2a231087df66ed63))
 * remove legacy seams and consolidate resource ownership ([#10349](https://github.com/morluto/rea/issues/10349)) ([bbe2bcc](https://github.com/morluto/rea/commit/bbe2bcc979be747698d9ad9ce87af017b92e0f10))
 * remove redundant seams and preserve cleanup ownership ([#10375](https://github.com/morluto/rea/issues/10375)) ([cdc4541](https://github.com/morluto/rea/commit/cdc4541ef707f256f83abe5018df01a25182cf0b))
+* **reverse:** fake objdump and Rizin commands only through the owned supervisor ([#11076](https://github.com/morluto/rea/issues/11076)) ([7826e96](https://github.com/morluto/rea/commit/7826e9688d9846c8fa1d93356ea5afe4d0b0b099))
 * **rust:** report cargo-auditable section failures through ParseFailure ([#10652](https://github.com/morluto/rea/issues/10652)) ([29fb608](https://github.com/morluto/rea/commit/29fb608559f4ad76f48feed54a0484cd02754784))
 * **setup:** require the platform for skill destinations instead of reading the host ([#11006](https://github.com/morluto/rea/issues/11006)) ([54230c2](https://github.com/morluto/rea/commit/54230c2e7b84879490b1722654cdbdbf4ed79b13))
 * **source-maps:** report decoder failures through ParseFailure ([#10690](https://github.com/morluto/rea/issues/10690)) ([133e776](https://github.com/morluto/rea/commit/133e7762b618900b65512fe9237029ef03f6346f))
+* **verify:** count plain throws in parser-folder process-lifecycle owners ([#11071](https://github.com/morluto/rea/issues/11071)) ([1b8dc20](https://github.com/morluto/rea/commit/1b8dc202d16cf222b9d96e3b843cb30502b1472c))
 * **verify:** give seven verifier directories' fixture roots to VerifierFixture ([#11055](https://github.com/morluto/rea/issues/11055)) ([c0dd084](https://github.com/morluto/rea/commit/c0dd0843769560975bade4001e3661089c060392))
 * **verify:** give the Apple verifiers' fixture roots to VerifierFixture ([#11024](https://github.com/morluto/rea/issues/11024)) ([53f1b62](https://github.com/morluto/rea/commit/53f1b626e64338b881843f2ce51435223d9d757d))
+* **verify:** give the javascript verifiers' roots to VerifierFixture ([#11068](https://github.com/morluto/rea/issues/11068)) ([47d14d0](https://github.com/morluto/rea/commit/47d14d0fb837543d0faf09a7147952676e7dd73e))
 * **verify:** give verifier fixture roots one lease on src/process ([#10988](https://github.com/morluto/rea/issues/10988)) ([add15d6](https://github.com/morluto/rea/commit/add15d65b3c08e2216c7779948e7eb3af22a444b))
 * **wasm:** leave WABT cancellation to the shared owners ([#10796](https://github.com/morluto/rea/issues/10796)) ([b87b318](https://github.com/morluto/rea/commit/b87b318ae7e0ee69d204d8777b36c152702abbe2))
 
