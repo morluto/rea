@@ -509,6 +509,15 @@ checkCounted(
   ["src/kernel/errorMessage.ts"],
 );
 
+// Two hexadecimal digits for one byte have one owner, src/kernel/byteToHex.ts.
+checkCounted(
+  "inline byte-to-hex formatting (use byteToHex from src/kernel/byteToHex)",
+  "inline-byte-hex",
+  files,
+  /\.toString\(16\)\s*\.padStart\(\s*2\s*,\s*"0"\s*\)/gu,
+  ["src/kernel/byteToHex.ts"],
+);
+
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
 // each site state its byte-order-mark policy. A local fatal decoder silently
 // strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
