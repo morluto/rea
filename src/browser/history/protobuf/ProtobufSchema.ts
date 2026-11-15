@@ -1,4 +1,5 @@
 import { captureBudgets } from "../CaptureBudgets.js";
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import {
   createFileRegistry,
@@ -65,10 +66,7 @@ const floatingValue = (value: number): string =>
 const descriptorEquality = { registry: createRegistry(), unknown: true };
 
 /** Descriptor strings are protobuf field data, including any initial U+FEFF. */
-const descriptorUtf8 = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
+const descriptorUtf8 = strictUtf8Decoder("preserve");
 const readDescriptorSet = (bytes: Uint8Array): FileDescriptorSet => {
   const encoding = getTextEncoding();
   // The SDK has no per-fromBinary text-decoder option. Scope its encoding
