@@ -9,6 +9,7 @@ import noLocaleCompare from "./rules/no-locale-compare.mjs";
 import noBabelVisitorKeys from "./rules/no-babel-visitor-keys.mjs";
 import projectWaitDeadline from "./rules/project-wait-deadline.mjs";
 import providerFailureClassifier from "./rules/provider-failure-classifier.mjs";
+import typedResourceRefusal from "./rules/typed-resource-refusal.mjs";
 
 export default {
   meta: { name: "rea" },
@@ -23,5 +24,6 @@ export default {
     "no-babel-visitor-keys": noBabelVisitorKeys,
     "project-wait-deadline": projectWaitDeadline,
     "provider-failure-classifier": providerFailureClassifier,
+    "typed-resource-refusal": typedResourceRefusal,
   },
 };

@@ -13,6 +13,7 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
+import { CdpMalformedReply } from "../../../src/browser/protocol/CdpCommands.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
@@ -107,8 +108,70 @@ describe("CDP connection admission cancellation", () => {
 });
 
 describe("CDP connection response correlation", () => {
+  it("preserves the remote value of a debugger evaluation", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Debugger.evaluateOnCallFrame"
+          ? { result: { type: "boolean", value: false } }
+          : undefined,
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      await expect(
+        connection.send("Debugger.evaluateOnCallFrame", {
+          callFrameId: "frame-1",
+          expression: "false",
+          returnByValue: true,
+        }),
+      ).resolves.toEqual({ result: { type: "boolean", value: false } });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("rejects one malformed registered reply without poisoning the connection", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Page.getFrameTree"
+          ? { frameTree: "not a tree" }
+          : undefined,
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    const protocolFailures: unknown[] = [];
+    connection.onProtocolFailure((error) => protocolFailures.push(error));
+    try {
+      const rejection = await connection
+        .send("Page.getFrameTree")
+        .catch((cause: unknown) => cause);
+      expect(rejection).toBeInstanceOf(CdpMalformedReply);
+      expect(rejection).toMatchObject({
+        reason: "protocol_error",
+        command: "Page.getFrameTree",
+        pointer: "/frameTree",
+      });
+      expect(String((rejection as CdpMalformedReply).detail)).not.toContain(
+        "not a tree",
+      );
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      expect(connection.isReusable()).toBe(true);
+      expect(protocolFailures).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("correlates concurrent command responses over a real WebSocket", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Runtime.evaluate",
+    });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
@@ -120,13 +183,14 @@ describe("CDP connection response correlation", () => {
         connection.send("Page.getFrameTree"),
       ]);
       expect(attached).toMatchObject({ sessionId: "session-1" });
-      expect(frames).toMatchObject({
-        frameTree: { frame: { id: "frame-main" } },
-      });
+      expect(frames.root.facts.frameId).toBe("frame-main");
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
-      const first = connection.send("Page.enable", { selected: "first" });
-      const second = connection.send("Page.enable", { selected: "second" });
+      // Runtime.evaluate has no result schema yet, so raw replies return.
+      const first = connection.send("Runtime.evaluate", { selected: "first" });
+      const second = connection.send("Runtime.evaluate", {
+        selected: "second",
+      });
       const replies = Promise.all([first, second]);
       await waitFor(() => expect(browser.commands).toHaveLength(5));
       const firstCommand = browser.commands[3];
@@ -361,14 +425,16 @@ describe("CDP transport failure precedence", () => {
 
 describe("CDP connection command responses", () => {
   it("rejects invalid UTF-8 replies without aliasing a literal replacement character", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Runtime.evaluate",
+    });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
       "inspect_web_page",
     );
     try {
-      const control = connection.send("Page.enable");
+      const control = connection.send("Runtime.evaluate");
       await waitFor(() => expect(browser.commands).toHaveLength(1));
       browser.emitRawMessage(
         Buffer.from(
@@ -379,7 +445,7 @@ describe("CDP connection command responses", () => {
         ),
       );
       await expect(control).resolves.toEqual({ value: "�" });
-      const pending = connection.send("Page.enable");
+      const pending = connection.send("Runtime.evaluate");
       const rejected = expect(pending).rejects.toMatchObject({
         reason: "protocol_error",
       });
@@ -507,7 +573,7 @@ describe("CDP connection payload budgets", () => {
         undefined,
         { maxPayloadBytes },
       );
-      await expect(connection.send("Runtime.enable")).resolves.toEqual(
+      await expect(connection.send("Runtime.evaluate")).resolves.toEqual(
         exactResult,
       );
       await connection.close();

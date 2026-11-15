@@ -172,57 +172,146 @@ const parseClientToml = (text: string): Record<string, unknown> => {
   return parsed;
 };
 
-const parseDocument = (
-  text: string,
-  format: ClientConfigurationFormat,
-): Record<string, unknown> => {
-  if (format === "toml" || format === "grok")
-    return requireObject(parseClientToml(text), "The configuration root");
+/**
+ * How a client's own loader reads its configuration file: the syntax and the
+ * strictness, byte-order-mark and empty-file rules REA must match so it never
+ * accepts or writes a document the client rejects. This is the only owner of
+ * those facts; the registration dialect (server table, entry shape) is separate.
+ */
+type ClientConfigurationReader =
+  | { readonly syntax: "toml" }
+  | {
+      readonly syntax: "yaml";
+      readonly parse?: (text: string) => unknown;
+    }
+  | {
+      readonly syntax: "json";
+      /** What the client's loader accepts: strict `JSON.parse` or JSONC. */
+      readonly native: "json" | "jsonc";
+      /**
+       * REA admits JSONC for a strict client only when it rewrites the whole
+       * file as strict JSON before the client reads it again.
+       */
+      readonly repairsJsonc?: true;
+      /** Whether a leading UTF-8 byte-order mark is accepted. */
+      readonly bom: "accept" | "reject";
+      /** An empty (blank or BOM-only) file holds no settings, or is invalid. */
+      readonly emptyFile: "no-settings" | "reject";
+    };
+
+const JSONC_READER = {
+  syntax: "json",
+  native: "jsonc",
+  bom: "accept",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+const STRICT_JSON_REPAIRED_READER = {
+  syntax: "json",
+  native: "json",
+  repairsJsonc: true,
+  bom: "accept",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+/** Strict `JSON.parse` without BOM tolerance; an empty file holds no settings. */
+const STRICT_JSON_READER = {
+  syntax: "json",
+  native: "json",
+  bom: "reject",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+
+const CLIENT_CONFIGURATION_READERS = {
+  json: JSONC_READER,
+  vscode: JSONC_READER,
+  opencode: JSONC_READER,
+  commandcode: JSONC_READER,
+  omp: JSONC_READER,
+  amp: JSONC_READER,
+  zed: JSONC_READER,
+  kilo: JSONC_READER,
+  // Copilot CLI and fx load strict JSON; admitted JSONC is rewritten.
+  copilot_cli: STRICT_JSON_REPAIRED_READER,
+  copilot_cli_project: STRICT_JSON_REPAIRED_READER,
+  fx: STRICT_JSON_REPAIRED_READER,
+  // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
+  // so comments and trailing commas it rejects must not be admitted as JSONC.
+  claude_code: { ...STRICT_JSON_READER, bom: "accept" },
+  // Kimi, LM Studio and ZCode read their files with JSON.parse; an empty
+  // file holds nothing to preserve.
+  kimi: STRICT_JSON_READER,
+  lm_studio: STRICT_JSON_READER,
+  zcode: STRICT_JSON_READER,
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
-  // Kimi and LM Studio also read mcp.json with JSON.parse; an empty file holds
-  // nothing to preserve.
-  if (format === "pi" || format === "kimi" || format === "lm_studio") {
-    if (format !== "pi" && text.trim().length === 0) return {};
-    return requireObject(JSON.parse(text), "The configuration root");
-  }
+  pi: { ...STRICT_JSON_READER, emptyFile: "reject" },
+  zcode_fallback: { ...STRICT_JSON_READER, emptyFile: "reject" },
+  toml: { syntax: "toml" },
+  grok: { syntax: "toml" },
+  goose: { syntax: "yaml", parse: parseGooseConfigurationYaml },
+  // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
+  hermes: { syntax: "yaml", parse: parseHermesConfigurationYaml },
+  // DeepSeek Harness reads a Cordis patch list; its own parser owns the shape.
+  dsh: { syntax: "yaml" },
+} as const satisfies Record<
+  Exclude<ClientConfigurationFormat, "unsupported">,
+  ClientConfigurationReader
+>;
+
+/** The client loader's reader for one configuration format. */
+const clientConfigurationReader = (
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+): ClientConfigurationReader => CLIENT_CONFIGURATION_READERS[format];
+
+/** The syntax name REA's reader admits for a format, for diagnostics. */
+export const clientConfigurationSyntaxName = (
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+): "JSON" | "JSONC" | "TOML" | "YAML" => {
+  const reader = clientConfigurationReader(format);
+  if (reader.syntax === "toml") return "TOML";
+  if (reader.syntax === "yaml") return "YAML";
+  return reader.native === "json" && reader.repairsJsonc !== true
+    ? "JSON"
+    : "JSONC";
+};
+
+const parseDocument = (
+  text: string,
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+  root = "The configuration root",
+): Record<string, unknown> => {
+  const reader = clientConfigurationReader(format);
+  if (reader.syntax === "toml")
+    return requireObject(parseClientToml(text), root);
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
-  if (isEmptyClientConfigurationText(text)) return {};
-  // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
-  if (format === "goose")
+  if (
+    (reader.syntax === "yaml" || reader.emptyFile === "no-settings") &&
+    isEmptyClientConfigurationText(text)
+  )
+    return {};
+  if (reader.syntax === "yaml") {
+    if (reader.parse === undefined)
+      throw new TypeError(`${format} configuration has a dedicated parser`);
+    return requireObject(reader.parse(text), root);
+  }
+  if (reader.native === "json" && reader.repairsJsonc !== true)
     return requireObject(
-      parseGooseConfigurationYaml(text),
-      "The configuration root",
-    );
-  if (format === "hermes")
-    return requireObject(
-      parseHermesConfigurationYaml(text),
-      "The configuration root",
-    );
-  // ZCode loads nonempty native files with strict JSON.parse.
-  if (format === "zcode")
-    return requireObject(JSON.parse(text), "The configuration root");
-  // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
-  // so comments and trailing commas it rejects must not be admitted as JSONC.
-  if (format === "claude_code")
-    return requireObject(
-      JSON.parse(text.replace(/^\uFEFF/, "")),
-      "The configuration root",
+      JSON.parse(reader.bom === "accept" ? text.replace(/^\uFEFF/, "") : text),
+      root,
     );
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
-  const root = parseTree(jsonText, errors, { allowTrailingComma: true });
+  const tree = parseTree(jsonText, errors, { allowTrailingComma: true });
   const firstError = errors[0];
   if (firstError !== undefined)
     throw new SyntaxError(
       `Invalid JSON/JSONC at offset ${firstError.offset}: ${printParseErrorCode(firstError.error)}`,
     );
   return requireObject(
-    root === undefined ? undefined : getNodeValue(root),
-    "The configuration root",
+    tree === undefined ? undefined : getNodeValue(tree),
+    root,
   );
 };
 
@@ -245,7 +334,7 @@ const requireObject = (
 export const parseZcodeFallbackConfiguration = (
   text: string,
 ): ClientConfigurationDocument => {
-  const document = requireObject(JSON.parse(text), "ZCode fallback root");
+  const document = parseDocument(text, "zcode_fallback", "ZCode fallback root");
   return {
     document,
     servers:
@@ -294,10 +383,10 @@ export const parseClientConfiguration = (
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
+  const reader = clientConfigurationReader(format);
   const requiresRewrite: true | undefined =
-    (format === "copilot_cli_project" ||
-      format === "copilot_cli" ||
-      format === "fx") &&
+    reader.syntax === "json" &&
+    reader.repairsJsonc === true &&
     strictJsonNeedsRewrite(text)
       ? true
       : undefined;
@@ -1927,10 +2016,9 @@ export const serializeClientConfiguration = (
     if (!edited.ok) return edited;
     text = edited.value;
   }
+  const reader = clientConfigurationReader(format);
   return ok(
-    format === "copilot_cli_project" ||
-      format === "copilot_cli" ||
-      format === "fx"
+    reader.syntax === "json" && reader.repairsJsonc === true
       ? strictJsonSyntax(text)
       : text,
   );

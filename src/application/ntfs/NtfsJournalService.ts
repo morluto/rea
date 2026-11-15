@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { BigIntStats } from "node:fs";
 import {
   ntfsJournalCacheFor,
@@ -90,7 +91,13 @@ const readFailure = (
         {
           maximum_file_bytes: NTFS_JOURNAL_FILE_BYTES,
         },
-        { cause, retryable: false },
+        {
+          cause,
+          ...fixedAllowanceOptions("The NTFS journal file allowance", "input", {
+            limit: NTFS_JOURNAL_FILE_BYTES,
+            unit: "bytes",
+          }),
+        },
       );
   }
   if (
@@ -231,7 +238,7 @@ export const inspectNtfsJournalEvidence = async (
         "capacity",
         "One NTFS inspection is already active in this scope; retry after it completes.",
         { maximum_concurrent_inspections: 1 },
-        { retryable: true },
+        { retryable: true, measuredExhaustion: true },
       ),
     );
   try {

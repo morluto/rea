@@ -33,7 +33,12 @@ import {
   primaryAnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  isAborted,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -41,7 +46,7 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import {
   cleanupOwnedProcessGroup,
@@ -283,11 +288,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     },
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const paths = ghidraRuntimePaths(session.runtimeRoot);
     const platform = this.options.platform ?? process.platform;
     const existingProject = this.options.existingProject;
@@ -422,11 +423,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         );
       }
       if (isAborted(options.signal))
-        return err(
-          new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
-          }),
-        );
+        return err(cancelledBy("open_binary", options.signal));
       const headlessArguments = ghidraHeadlessArguments({
         platform,
         ...(psp === undefined ? {} : { psp: true as const }),
@@ -522,7 +519,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
             session.token,
             "[REDACTED]",
           );
-          const bounded = boundedUtf8Text(
+          const bounded = utf8HeadExcerpt(
             redacted,
             GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
           );
@@ -593,9 +590,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
       );
       if (isAborted(options.signal)) {
-        throw new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        });
+        throw cancelledBy("open_binary", options.signal);
       }
       return ok(partialLaunch);
     } catch (cause: unknown) {
@@ -605,9 +600,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ? cause
           : cause instanceof GhidraLaunchSupportError &&
               cause.cancellation !== undefined
-            ? new AnalysisCancelledError("open_binary", {
-                cause: cause.cancellation.reason,
-              })
+            ? cancelledBy(
+                "open_binary",
+                carriedReason(cause.cancellation.reason),
+              )
             : undefined);
       const capturedOutput = ghidraLaunchCommandOutput(cause);
       const primary =
@@ -1199,5 +1195,3 @@ export const ghidraHeadlessJavaOptions = (
   // argv items instead of the shell-split analyzeHeadless option list.
   return { JDK_JAVA_OPTIONS: "", GHIDRA_HEADLESS_JAVA_OPTIONS: "" };
 };
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

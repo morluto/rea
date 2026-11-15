@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalyzeWebBundleInput,
@@ -265,6 +266,26 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
       }),
     ]),
   });
+});
+
+it("refuses work after close with REA's own cancellation reason, not an absent one", async () => {
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script) => ok(analyzeCapturedWebScript(script)),
+    close: async () => {},
+  }));
+  await analyzer.close();
+  const captured = inspection(["fetch('/one');"]);
+
+  const reserved = await analyzer.reserve();
+  const analyzed = await analyzer.analyze(captured, noSourceMaps, input);
+
+  for (const result of [reserved, analyzed]) {
+    if (result.ok) throw new Error("Closed analyzer accepted work");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(OwnerCancellation.ownerClosed);
+  }
+  if (analyzed.ok) throw new Error("Closed analyzer accepted work");
+  expect(analyzed.error.partialObservation).toBe(captured);
 });
 
 it("retains all completed facts when cancellation arrives during worker close", async () => {

@@ -53,7 +53,7 @@ export function* readCudaInfo(
   little: boolean,
   budget = new CudaMetadataBudget(),
 ): Generator<CudaInfoRecord> {
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "cuda-nv-info");
   for (let offset = 0; offset < bytes.length;) {
     budget.visit();
     const head = reader.range(offset, 4, "CUDA nv.info record");
@@ -98,7 +98,7 @@ export const readCudaParameters = (
       complete = false;
       continue;
     }
-    const r = new BinaryReader(record.data, little);
+    const r = new BinaryReader(record.data, little, "cuda-nv-info");
     if (r.u32(0) !== 0) complete = false;
     const parameter = {
       ordinal: r.u16(4),
