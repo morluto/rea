@@ -190,7 +190,7 @@ against the canonical contracts. See [output schemas](../reference/mcp-contracts
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
-The settings above delivered all 240 tools in 611,305 bytes and a
+The settings above delivered every tool of that catalog in 611,305 bytes and a
 `binary_session` call succeeded. These are measured SSE response sizes for
 that catalog, not a size guarantee for future catalogs or other profiles.
 
@@ -339,8 +339,8 @@ when `ANTHROPIC_BASE_URL` points to a non-first-party host, such as DeepSeek's
 Anthropic-compatible endpoint. It then sends every REA tool's name, description
 and input schema with every request
 ([#2019](https://github.com/morluto/rea/issues/2019)). On main at 04089d5be,
-with 172 tools, that payload measured about 496 KB with the default profile and
-about 290 KB with `compact`. By the o200k and cl100k tokenizers, that is roughly
+that payload measured about 496 KB with the default profile and about 290 KB
+with `compact`. By the o200k and cl100k tokenizers, that is roughly
 120k and 68k tokens. Compaction cannot remove tool definitions. If they nearly
 fill the window Claude Code assumes, the context refills after every compaction
 and Claude Code reports that autocompact is thrashing. To avoid this:
