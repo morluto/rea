@@ -8,8 +8,7 @@ import {
   indexSemanticOpaqueEffects,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
-  semanticOpaqueBindingReadMayHaveChanged,
-  semanticBindingMayHaveOpaqueEffect,
+  opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -916,7 +915,7 @@ export function* indexJavaScriptElectronIdentitySteps(
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (
         binding !== undefined &&
-        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+        (opaqueCodeMayRebindBinding(binding, state, root) ||
           interop.aliasMayHaveChanged(binding))
       )
         return undefined;
@@ -939,7 +938,7 @@ export function* indexJavaScriptElectronIdentitySteps(
       }
       if (
         state.opaqueEffects.byScope.size > 0 &&
-        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+        (opaqueCodeMayRebindBinding(binding, state, root) ||
           interop.aliasMayHaveChanged(binding))
       )
         return undefined;
@@ -1182,11 +1181,7 @@ const bindingOrigin = (
       : visited.has(alias.bindingId) ||
           exhausted ||
           !originAvailableAt(alias, source, state) ||
-          [binding, alias].some(
-            (hop) =>
-              semanticBindingCanBeRebound(hop) &&
-              semanticBindingMayHaveOpaqueEffect(hop, state),
-          )
+          [binding, alias].some((hop) => opaqueCodeMayRebindBinding(hop, state))
         ? undefined
         : bindingOrigin(alias, state, visited.add(binding.bindingId));
   const projection = initializer.projection;

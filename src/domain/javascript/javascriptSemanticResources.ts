@@ -21,7 +21,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayRebindBinding } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -457,10 +457,10 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+    const opaqueReceiver = opaqueCodeMayRebindBinding(
       binding,
-      member.object,
       context.state,
+      member.object,
     );
     const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
       ? semanticBindingAtRead(binding, member.object, context.state).binding
