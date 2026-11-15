@@ -526,6 +526,33 @@ checkCounted(
   [],
 );
 
+// A verifier fixture root is removed only after the MCP clients, sessions and
+// processes that may still use it confirm cleanup; otherwise it is retained
+// and named. scripts/lib/verifier-fixture.mjs owns that ordering on a
+// src/process PrivateRuntimeRoot, so verifiers allocate roots through it.
+const verifierScripts = await Promise.all(
+  (await readdir(join(root, "scripts"), { recursive: true }))
+    .map((path) => path.split(sep).join("/"))
+    .filter(
+      (path) =>
+        /^(?:verify-[^/]+|verify\/.+)\.mjs$/u.test(path) &&
+        path !== "verify/architecture-guards.mjs",
+    )
+    .map(async (path) => ({
+      path: `scripts/${path}`,
+      content: stripComments(
+        await readFile(join(root, "scripts", path), "utf8"),
+      ),
+    })),
+);
+checkCounted(
+  "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
+  "verifier-fixture-root",
+  verifierScripts,
+  /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
+  [],
+);
+
 if (baselinesShrunk) {
   const sorted = Object.fromEntries(
     Object.entries(baselines).map(([key, counts]) => [

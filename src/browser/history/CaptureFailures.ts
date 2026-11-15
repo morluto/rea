@@ -2,6 +2,10 @@ import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorker
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
@@ -89,13 +93,18 @@ export const protobufCaptureFailure = (
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
   "The capture decoder reached its Windows Job Object memory limit";
 
-/** Preserve the origin and typed cause of a historical capture failure. */
+/**
+ * Preserve the origin and typed cause of a historical capture failure.
+ * `cleanupLease` is the decoder's lease on `rawCause`'s retained process
+ * owner; its confirmed release resolves the cleanup this failure reports.
+ */
 export const historicalCaptureFailure = (
   input: InspectWebNetworkCaptureInput,
   rawCause: unknown,
   phase: "capture-read" | "descriptor-read" | "decoder",
   options?: ExecutionOptions,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
+  cleanupLease?: AnalysisCleanupLease,
 ): AnalysisError => {
   const { cause, origin } = artifactFilePrimaryFacts(rawCause);
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -130,6 +139,8 @@ export const historicalCaptureFailure = (
         },
         { operation: OPERATION, cause },
       );
+      if (cleanupLease !== undefined)
+        new AnalysisCleanupLeaseGroup(cleanup, [cleanupLease]);
       return cause.cause instanceof OwnedCommandFailure
         ? analysisErrorWithCleanupFailure(
             historicalCaptureFailure(input, cause.cause, phase, options, heap),

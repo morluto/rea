@@ -26,9 +26,11 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  COMPUTER_START_TIMING,
   AppDataRefusal,
   ComputerStartFailure,
   computerFailedOnReadiness,
+  type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
 import {
@@ -408,6 +410,7 @@ export class DesktopBuildComputers {
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
+    private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
     this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
     this.#shared = { settle, secrets: this.#secrets };
@@ -505,6 +508,7 @@ export class DesktopBuildComputers {
                 .report({ phase: START, completed: 0, total: null, message })
                 .catch(() => undefined);
             },
+        this.startTiming,
       );
       computer = connected.computer;
       const shot = driverCall("screenshot", input.screenshot ?? {});

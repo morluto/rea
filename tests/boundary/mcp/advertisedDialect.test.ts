@@ -88,6 +88,35 @@ const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   return (await client.listTools()).tools;
 };
 
+it("presents transport discovery through the selected input profile", async () => {
+  const discovery = async (profile: "compact" | "full") =>
+    (
+      await listTools({
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+      })
+    ).find(({ name }) => name === "discover_tools")?.inputSchema;
+  const full = await discovery("full");
+  // The canonical page defaults remain declared in the full profile only.
+  expect(full?.properties).toMatchObject({
+    offset: { default: 0 },
+    limit: { default: 3 },
+  });
+  const compact = await discovery("compact");
+  expect(compact?.properties).toEqual({
+    query: { type: "string" },
+    names: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      minItems: 1,
+      maxItems: 20,
+    },
+    offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+    limit: { type: "integer", minimum: 1, maximum: 20 },
+  });
+});
+
 const distinct = (
   into: Map<string, AdvertisedToolDefinition>,
   definition: AdvertisedToolDefinition,

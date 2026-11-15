@@ -6,7 +6,10 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import { readKunaConfiguration } from "./KunaConfiguration.js";
+import {
+  admitKunaCommand,
+  type KunaAdmissionRefusal,
+} from "./KunaAdmission.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
@@ -19,7 +22,6 @@ import {
 import {
   KUNA_COMMAND_REMEDIATION,
   KUNA_PROVIDER_ID,
-  KUNA_UNSUPPORTED_HOST_REMEDIATION,
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
@@ -52,7 +54,13 @@ export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
     name !== "HOME" && name !== "USERPROFILE" && name !== "XDG_CACHE_HOME",
 );
 
-/** Project Kuna readiness into the doctor contract without writing anything. */
+/**
+ * Project Kuna readiness into the doctor contract without writing anything.
+ * Readiness is the admission runtime uses (settings and a runnable command),
+ * reported as the `installation` check. The `version` probe and the `cache`
+ * inspection are health checks reported beside it; they do not decide
+ * availability.
+ */
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
@@ -61,109 +69,26 @@ export const inspectKunaProvider = async (
     readonly signal?: AbortSignal;
   },
 ): Promise<DoctorProviderInspection> => {
-  const kunaResources = createKunaResourceScope(options.resourceScope);
-  let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
-  try {
-    installation = await inspectKunaInstallation(environment, {
-      platform,
-      resourceScope: kunaResources.owner,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  } catch (cause: unknown) {
-    const retainedCleanup = kunaRetainedResourceCleanupError(cause, "doctor");
-    if (retainedCleanup !== undefined)
-      return {
-        id: KUNA_PROVIDER_ID,
-        configured: environment.REA_KUNA_COMMAND !== undefined,
-        available: false,
-        providerVersion: null,
-        registrationEnvironment: {},
-        checks: [
-          {
-            name: "installation",
-            ok: false,
-            code: "cleanup_incomplete",
-            detail: retainedCleanup.message,
-            remediation: null,
-            classification: "config_drift",
-            details: {
-              cleanup_incomplete: true,
-              cleanup_resources: [...retainedCleanup.cleanupResources],
-            },
-          },
-        ],
-      };
-    if (!(cause instanceof RegularFileCleanupFailure)) {
-      const cancellation = kunaResources.installationCancellationError(
-        cause,
-        "doctor",
-      );
-      if (cancellation !== undefined) throw cancellation;
-      throw cause;
-    }
-    return {
-      id: KUNA_PROVIDER_ID,
-      configured: environment.REA_KUNA_COMMAND !== undefined,
-      available: false,
-      providerVersion: null,
-      registrationEnvironment: {},
-      checks: [
-        {
-          name: "installation",
-          ok: false,
-          code: "cleanup_incomplete",
-          detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
-          remediation: null,
-          classification: "config_drift",
-          details: {
-            cleanup_incomplete: true,
-            ...kunaInstallationFailureDiagnostics(cause),
-          },
-        },
-      ],
-    };
-  }
   const configured =
     environment.REA_KUNA_COMMAND !== undefined &&
     environment.REA_KUNA_COMMAND.length > 0;
-  const base = {
-    id: KUNA_PROVIDER_ID,
-    configured,
-    available: false,
-    providerVersion: null,
-    registrationEnvironment: {},
-  } as const;
-  if (!installation.ok) {
-    const check = installationFailure(installation.error, configured);
-    const cleanupResources = kunaResources.cleanupResources;
-    if (!kunaResources.hasPending) return { ...base, checks: [check] };
+  const admission = admitKunaCommand(environment, platform);
+  if (!admission.ok)
     return {
-      ...base,
-      checks: [
-        {
-          ...check,
-          code: "cleanup_incomplete",
-          details: {
-            ...installation.error.diagnostics,
-            cleanup_incomplete: true,
-            ...(cleanupResources === undefined
-              ? {}
-              : { cleanup_resources: [...cleanupResources] }),
-          },
-        },
-      ],
+      id: KUNA_PROVIDER_ID,
+      configured,
+      available: false,
+      providerVersion: null,
+      registrationEnvironment: {},
+      checks: [admissionFailure(admission.error, configured)],
     };
-  }
-  const { value } = installation;
-  const cache = await cacheCheck(environment, platform);
-  const versionGuidance = value.verified
-    ? null
-    : KUNA_UNVERIFIED_VERSION_REMEDIATION;
+  const { command, cacheRoot, cacheMaxBytes } = admission.value;
+  const version = await versionCheck(environment, platform, options);
   return {
     id: KUNA_PROVIDER_ID,
     configured,
-    available: cache.ok,
-    providerVersion: value.version,
+    available: true,
+    providerVersion: version.version,
     registrationEnvironment: Object.fromEntries(
       KUNA_REGISTRATION_SETTINGS.flatMap((name) => {
         const setting = environment[name];
@@ -175,65 +100,167 @@ export const inspectKunaProvider = async (
         name: "installation",
         ok: true,
         code: null,
-        detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
-          value.verified
-            ? "."
-            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
-        }`,
-        remediation: versionGuidance,
+        detail: `REA_KUNA_COMMAND ${command} is an executable regular file.`,
+        remediation: null,
         classification: "config_drift",
-        details: {
-          executable: value.executable,
-          version: value.version,
-          verified_version: KUNA_VERIFIED_VERSION,
-          sha256: value.sha256,
-        },
+        details: { command },
       },
-      cache,
+      version.check,
+      await cacheCheck(cacheRoot, cacheMaxBytes, platform),
     ],
   };
 };
 
-const installationFailure = (
-  failure: KunaReadinessFailure,
+/** Health check: run `kuna --version` and fingerprint the executable. */
+const versionCheck = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+  options: {
+    readonly resourceScope: RetainedResourceScope;
+    readonly signal?: AbortSignal;
+  },
+): Promise<{
+  readonly version: string | null;
+  readonly check: DoctorProviderCheck;
+}> => {
+  const kunaResources = createKunaResourceScope(options.resourceScope);
+  let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
+  try {
+    installation = await inspectKunaInstallation(environment, {
+      platform,
+      resourceScope: kunaResources.owner,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (cause: unknown) {
+    return { version: null, check: probeCleanupFailure(cause, kunaResources) };
+  }
+  if (!installation.ok) {
+    const check = probeFailure(installation.error);
+    const cleanupResources = kunaResources.cleanupResources;
+    if (!kunaResources.hasPending) return { version: null, check };
+    return {
+      version: null,
+      check: {
+        ...check,
+        code: "cleanup_incomplete",
+        details: {
+          ...installation.error.diagnostics,
+          cleanup_incomplete: true,
+          ...(cleanupResources === undefined
+            ? {}
+            : { cleanup_resources: [...cleanupResources] }),
+        },
+      },
+    };
+  }
+  const { value } = installation;
+  const versionGuidance = value.verified
+    ? null
+    : KUNA_UNVERIFIED_VERSION_REMEDIATION;
+  return {
+    version: value.version,
+    check: {
+      name: "version",
+      ok: true,
+      code: null,
+      detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
+        value.verified
+          ? "."
+          : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
+      }`,
+      remediation: versionGuidance,
+      classification: "config_drift",
+      details: {
+        executable: value.executable,
+        version: value.version,
+        verified_version: KUNA_VERIFIED_VERSION,
+        sha256: value.sha256,
+      },
+    },
+  };
+};
+
+/** The admission refusal runtime reports, as doctor's readiness check. */
+const admissionFailure = (
+  refusal: KunaAdmissionRefusal,
   configured: boolean,
 ): DoctorProviderCheck => ({
   name: "installation",
+  ok: false,
+  code: refusal.code,
+  detail: refusal.reason,
+  remediation: refusal.remediation,
+  classification:
+    refusal.code === "unsupported_host"
+      ? "unsupported_host"
+      : configured
+        ? "config_drift"
+        : "missing_analysis_engine",
+  details: refusal.diagnostics,
+});
+
+/** A probe that threw: retained or unconfirmed cleanup, else rethrown. */
+const probeCleanupFailure = (
+  cause: unknown,
+  kunaResources: ReturnType<typeof createKunaResourceScope>,
+): DoctorProviderCheck => {
+  const retainedCleanup = kunaRetainedResourceCleanupError(cause, "doctor");
+  if (retainedCleanup !== undefined)
+    return {
+      name: "version",
+      ok: false,
+      code: "cleanup_incomplete",
+      detail: retainedCleanup.message,
+      remediation: null,
+      classification: "config_drift",
+      details: {
+        cleanup_incomplete: true,
+        cleanup_resources: [...retainedCleanup.cleanupResources],
+      },
+    };
+  if (!(cause instanceof RegularFileCleanupFailure)) {
+    const cancellation = kunaResources.installationCancellationError(
+      cause,
+      "doctor",
+    );
+    if (cancellation !== undefined) throw cancellation;
+    throw cause;
+  }
+  return {
+    name: "version",
+    ok: false,
+    code: "cleanup_incomplete",
+    detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
+    remediation: null,
+    classification: "config_drift",
+    details: {
+      cleanup_incomplete: true,
+      ...kunaInstallationFailureDiagnostics(cause),
+    },
+  };
+};
+
+/** A failed version probe of an admitted command. */
+const probeFailure = (failure: KunaReadinessFailure): DoctorProviderCheck => ({
+  name: "version",
   ok: false,
   code: failure.code,
   detail: failure.reason,
   remediation:
     failure.remediation ??
-    (failure.code === "unsupported_host"
-      ? KUNA_UNSUPPORTED_HOST_REMEDIATION
-      : failure.code === "version_unresolved"
-        ? KUNA_VERSION_PROBE_REMEDIATION
-        : KUNA_COMMAND_REMEDIATION),
-  classification:
-    failure.code === "unsupported_host"
-      ? "unsupported_host"
-      : configured
-        ? "config_drift"
-        : "missing_analysis_engine",
+    (failure.code === "version_unresolved"
+      ? KUNA_VERSION_PROBE_REMEDIATION
+      : KUNA_COMMAND_REMEDIATION),
+  classification: "config_drift",
   details: failure.diagnostics,
 });
 
-/** The cache root may not exist yet; doctor reports it without creating it. */
+/** Health check: the cache root may not exist yet; doctor reports it without creating it. */
 const cacheCheck = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
+  cacheRoot: string,
+  cacheMaxBytes: number,
   platform: NodeJS.Platform,
 ): Promise<DoctorProviderCheck> => {
-  const configuration = readKunaConfiguration(environment, platform);
-  if (!configuration.ok)
-    return {
-      name: "cache",
-      ok: false,
-      code: configuration.error.code,
-      detail: configuration.error.reason,
-      remediation: KUNA_COMMAND_REMEDIATION,
-      classification: "config_drift",
-    };
-  const { cacheRoot, cacheMaxBytes } = configuration.value;
   const details = { cache_root: cacheRoot, cache_max_bytes: cacheMaxBytes };
   // A trailing separator makes lstat follow a dangling link and report ENOENT.
   const inspected = cacheRootWithoutTrailingSeparator(cacheRoot, platform);

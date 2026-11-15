@@ -1667,8 +1667,23 @@ export class GhidraClient {
     });
   }
 
+  /**
+   * Optional diagnostic sampling, outside the scope's admission gate: a
+   * pending owner must not mask the provider failure being explained. The
+   * scope still tracks the read, so session cleanup joins it and reports a
+   * failed close it retains.
+   */
   #readMemoryCgroup(): Promise<LinuxCgroupMemoryState | undefined> {
-    return (this.#options.readMemoryCgroup ?? readLinuxCgroupMemoryState)();
+    return this.#fileResources.track(() =>
+      (this.#options.readMemoryCgroup ?? readLinuxCgroupMemoryState)({
+        retainFailedClose: (path, handle) =>
+          this.#fileResources.retain({
+            kind: "file-handle",
+            resource: path,
+            handle,
+          }),
+      }),
+    );
   }
 
   /**
