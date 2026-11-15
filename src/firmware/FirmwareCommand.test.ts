@@ -218,6 +218,7 @@ test("names the host and tool requirement of an unconfigured engine", async () =
     "binwalk",
     "inspect_firmware_regions",
     new FirmwareFileAccess(),
+    "linux",
   ).catch((cause: unknown) => cause);
 
   expect(refusal).toMatchObject({
@@ -248,6 +249,7 @@ it("rejects a directory configured as the firmware engine executable", async () 
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
@@ -272,6 +274,7 @@ it("classifies an unusable firmware engine as an unavailable capability", async 
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
@@ -294,6 +297,7 @@ it("rejects a directory configured as the resource limiter executable", async ()
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",

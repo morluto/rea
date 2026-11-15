@@ -257,8 +257,9 @@ const modules = {
     apkSignatureModule.create(environment, options.apkSignature),
   ),
   evmInterface: service(
-    ({ environment, options }) =>
-      options.evmInterface ?? evmInterfaceModule.create(environment),
+    ({ environment, options, platform, arch }) =>
+      options.evmInterface ??
+      evmInterfaceModule.create(environment, { platform, architecture: arch }),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
         evmInterface: outsideHost(
@@ -277,7 +278,7 @@ const modules = {
         : {
             probes: {
               evmLimiterAvailability: (signal: AbortSignal) =>
-                evmLimiterAvailability(environment, { signal }),
+                evmLimiterAvailability(environment, { platform, arch, signal }),
             },
           }),
     }),
@@ -397,9 +398,12 @@ const modules = {
       createWebNetworkCaptureService(environment, settings),
   ),
   javascriptRecovery: capability(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       options.javascriptRecovery ??
-      createJavaScriptRecoveryProvider(environment),
+      createJavaScriptRecoveryProvider(environment, undefined, {
+        platform,
+        architecture: arch,
+      }),
     (value) => value.close?.() ?? Promise.resolve(),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
@@ -426,9 +430,13 @@ const modules = {
     }),
   ),
   firmwareAnalysis: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       new FirmwareAnalysisService(
-        options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+        options.firmwareAnalysis ??
+          createFirmwareAnalysisProvider(environment, undefined, {
+            platform,
+            architecture: arch,
+          }),
       ),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
@@ -454,7 +462,8 @@ const modules = {
     }),
   ),
   gdbSessions: capability(
-    ({ providerEnvironment }) => createGdbSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createGdbSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
     ({ platform }) => ({
       hostUnsupported: {
@@ -463,8 +472,8 @@ const modules = {
     }),
   ),
   rizinDebugSessions: capability(
-    ({ providerEnvironment }) =>
-      createRizinDebugSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createRizinDebugSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
   ),
   android: service(
@@ -508,8 +517,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
@@ -525,8 +535,9 @@ const modules = {
     }),
   ),
   signalRecording: service(
-    ({ environment, options }) =>
-      options.signalRecording ?? createSignalRecordingService(environment),
+    ({ environment, options, platform }) =>
+      options.signalRecording ??
+      createSignalRecordingService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         signalRecording: outsideHost(
