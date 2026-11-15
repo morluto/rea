@@ -21,15 +21,21 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 
-/** A reader's integrity failure as a selected-artifact change, keeping the check it named. */
+/**
+ * A reader's integrity failure as a selected-artifact change, keeping the
+ * check it named. `options` replaces the default cause (the failure itself),
+ * for example with a cleanup wrapper around it.
+ */
 export const readerIntegrityFailure = (
   operation: string,
   path: string,
-  cause: ArtifactReaderFailure,
+  failure: ArtifactReaderFailure,
+  options: AnalysisErrorOptions = {},
 ): AnalysisArtifactChangedError =>
-  new AnalysisArtifactChangedError(operation, path, cause.message, {
-    cause,
-    integrityCheck: cause.integrityCheck,
+  new AnalysisArtifactChangedError(operation, path, failure.message, {
+    cause: failure,
+    ...options,
+    integrityCheck: failure.integrityCheck,
   });
 
 /** Preserve ownership classification for stable-file identity and cancellation. */
