@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
@@ -8,7 +10,41 @@ import {
   type ToolEffects,
 } from "./toolEffects.js";
 
+/**
+ * Reviewed tools whose audited effects make them destructive. The derived set
+ * may grow without an edit here, but a tool leaves only by removing its name
+ * from this sorted file, so a dropped destructive effect is a deliberate,
+ * reviewed change rather than a silent loss of the client's confirmation.
+ */
+const REVIEWED_DESTRUCTIVE_TOOLS = JSON.parse(
+  readFileSync(
+    new URL("./destructiveTools.baseline.json", import.meta.url),
+    "utf8",
+  ),
+) as readonly string[];
+
 describe("tool effects", () => {
+  it("keeps every reviewed destructive tool destructive", () => {
+    expect(REVIEWED_DESTRUCTIVE_TOOLS).toEqual(
+      [...new Set(REVIEWED_DESTRUCTIVE_TOOLS)].sort(),
+    );
+    const contracts = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
+      TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
+    );
+    for (const name of REVIEWED_DESTRUCTIVE_TOOLS) {
+      const contract = contracts.get(name);
+      expect(contract, `${name} has no contract`).toBeDefined();
+      expect(annotationsFromEffects(TOOL_EFFECTS[name]!), name).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+      });
+      expect(contract!.annotations, name).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+      });
+    }
+  });
+
   it("declares the web bundle worker's private file and child process effects", () => {
     const contract = TOOL_CONTRACTS.find(
       ({ name }) => name === "analyze_web_bundle",
