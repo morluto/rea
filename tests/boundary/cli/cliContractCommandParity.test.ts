@@ -295,6 +295,7 @@ const MIGRATED_COMMANDS = [
   "trace",
   "function",
   "instructions",
+  "decompile",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -338,7 +339,9 @@ describe("CLI commands projected from tool contracts", () => {
           ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
           ...description.parameters.flatMap(({ selectorOption }) =>
-            selectorOption === undefined ? [] : [selectorOption.key],
+            [selectorOption, selectorOption?.alternative].flatMap((option) =>
+              option === undefined ? [] : [option.key],
+            ),
           ),
         ].toSorted(),
       );
@@ -1260,6 +1263,59 @@ describe("Positional selectors with a named option", () => {
         ).toBe("0x1A");
     },
   );
+
+  const alternatives = selecting.flatMap(
+    ([command, description, parameter, option]) =>
+      option.alternative === undefined
+        ? []
+        : [[command, description, parameter, option.alternative] as const],
+  );
+  it.each(alternatives)(
+    "%s maps its alternative selector option onto the same field",
+    (_command, description, parameter, alternative) => {
+      const option = parameter.selectorOption!;
+      const admit = (values: Record<string, unknown>) =>
+        description.admit({
+          [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...values,
+        });
+      const alone = admit({ [alternative.valueKey]: "0x10" });
+      expect(alone.ok && alone.value.input[parameter.field]).toBe(
+        alternative.selects("0x10"),
+      );
+      const agreeing = admit({
+        [alternative.valueKey]: "0x10",
+        [option.valueKey]: alternative.selects("0x10"),
+      });
+      expect(agreeing.ok).toBe(true);
+      for (const conflicting of [
+        { [alternative.valueKey]: "0x10", [parameter.key]: "main" },
+        { [alternative.valueKey]: "0x10", [option.valueKey]: "main" },
+      ]) {
+        const result = admit(conflicting);
+        expect(result.ok ? [] : result.error.issues).toEqual([
+          expect.objectContaining({
+            path: [alternative.key],
+            reason: "invalid_value",
+          }),
+        ]);
+      }
+    },
+  );
+
+  it("refuses a selector whose contract admits an empty value", () => {
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ text: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["text"],
+          selectorOptions: { text: { name: "text", description: "Text" } },
+        },
+      ),
+    ).toThrow("probe.text admits an empty selector");
+  });
 
   it("refuses a selector option on a field that is not a positional text selector", () => {
     const describeSelector = (

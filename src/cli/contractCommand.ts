@@ -346,9 +346,9 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
         ({ key, schema }) => [key, schema] as const,
       ),
       ...description.parameters.flatMap(({ selectorOption }) =>
-        selectorOption === undefined
-          ? []
-          : [[selectorOption.key, selectorOption.schema] as const],
+        [selectorOption, selectorOption?.alternative].flatMap((option) =>
+          option === undefined ? [] : [[option.key, option.schema] as const],
+        ),
       ),
     ]),
   );
@@ -420,7 +420,9 @@ export const registerContractCommand = <
       for (const { key, selectorOption } of description.parameters)
         if (selectorOption !== undefined) {
           values[key] = args?.[key];
-          values[selectorOption.valueKey] = options[selectorOption.key];
+          for (const option of [selectorOption, selectorOption.alternative])
+            if (option !== undefined)
+              values[option.valueKey] = options[option.key];
         }
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
