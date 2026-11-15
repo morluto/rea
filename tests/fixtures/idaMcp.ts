@@ -115,7 +115,8 @@ export class RecordingIdaMcp implements IdaMcpConnection {
     options?.signal?.throwIfAborted();
     if (uri !== "ida://idb/metadata")
       throw new Error(`Unimplemented producer resource ${uri}`);
-    return this.overrideCall?.(uri, {}) ?? this.metadata();
+    const overridden = this.overrideCall?.(uri, {});
+    return overridden === undefined ? this.metadata() : overridden;
   };
   async connect() {
     this.connects += 1;

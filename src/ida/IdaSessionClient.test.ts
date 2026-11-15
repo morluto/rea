@@ -2244,6 +2244,21 @@ it.each(["before", "during"] as const)(
   },
 );
 
+it("refuses null native IDA metadata before any analysis tool runs", async () => {
+  const { producer, client } = await fixture("attached");
+  producer.tools = [...nativeTools];
+  producer.overrideCall = (name) =>
+    name === "ida://idb/metadata" ? null : undefined;
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected null metadata to be refused");
+  expect(result.error._tag).toBe("AnalysisOutputError");
+  expect(producer.resources).toEqual(["ida://idb/metadata"]);
+  expect(producer.calls).toEqual([]);
+  await expectCleanClose(producer, client);
+});
+
 it("attributes native IDA metadata timeout to the requested analysis operation", async () => {
   const { producer, client } = await fixture("attached");
   producer.tools = [...nativeTools];

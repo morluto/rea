@@ -64,7 +64,7 @@ const common = {
     .optional(),
 };
 /** Refusal for a stored registration that still selects the removed 1.4 proxy. */
-const LEGACY_PROTOCOL_REMOVED =
+export const LEGACY_PROTOCOL_REMOVED =
   'the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
 const registrationSchema = z
   .union([

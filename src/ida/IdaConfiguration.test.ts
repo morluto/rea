@@ -3,7 +3,10 @@ import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
+import {
+  LEGACY_PROTOCOL_REMOVED,
+  readIdaConfiguration,
+} from "./IdaConfiguration.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import * as regularFile from "../filesystem/RegularFile.js";
@@ -335,13 +338,18 @@ it.each([
   await writeFile(path, JSON.stringify(input));
   const parsed = await read(path);
   if (parsed.ok) throw new Error("Expected the legacy protocol to fail");
-  const constraint =
-    'protocol: the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
+  // The refusal names the protocol setting and delivers the owner's guidance.
+  const constraint = `protocol: ${LEGACY_PROTOCOL_REMOVED}`;
   expect(parsed.error.settings).toEqual([
     { setting: "REA_IDA_MCP_CONFIG", constraint },
   ]);
-  expect(parsed.error.message).toBe(
-    `REA_IDA_MCP_CONFIG: ${constraint}. See docs/providers/ida-provider.md.`,
+  expect(parsed.error.message).toContain(constraint);
+  // The guidance names a migration target the provider guide documents.
+  expect(LEGACY_PROTOCOL_REMOVED).toContain('"protocol": "native"');
+  const guide = await fs.readFile("docs/providers/ida-provider.md", "utf8");
+  expect(guide).toMatch(/^### Migrate a legacy attached registration$/mu);
+  expect(LEGACY_PROTOCOL_REMOVED).toContain(
+    '"Migrate a legacy attached registration"',
   );
 });
 
