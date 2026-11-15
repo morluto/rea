@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { digestSchema } from "../digests.js";
-import { coverageStatusSchema } from "../coverage.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
@@ -12,8 +12,6 @@ const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
  * producers derive `partial` from the gaps they recorded, so they never
  * report `unknown`.
  */
-export const gpuCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
-export type GpuCoverage = z.infer<typeof gpuCoverageSchema>;
 export const gpuLocationSchema = z.strictObject({
   container_id: z.string().nullable(),
   offset: count,
@@ -48,7 +46,7 @@ export const gpuObjectSchema = z.strictObject({
       flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
       processor: z.string().nullable(),
       header_location: gpuLocationSchema,
-      note_coverage: gpuCoverageSchema.describe(
+      note_coverage: knownCoverageStatusSchema.describe(
         "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
       ),
       notes: z.array(
@@ -181,8 +179,8 @@ export const gpuCodeObjectsObjectSchema = z.strictObject({
     discovery_scope: z.literal(
       "supported-section-names-and-standalone-formats",
     ),
-    discovery: gpuCoverageSchema,
-    payloads: z.enum(["not-requested", ...gpuCoverageSchema.options]),
+    discovery: knownCoverageStatusSchema,
+    payloads: z.enum(["not-requested", ...knownCoverageStatusSchema.options]),
     examined_sections: count,
     unknown_section_names: count,
   }),
@@ -367,7 +365,10 @@ export const gpuTargetSchema = z.strictObject({
     .string()
     .regex(/^(?:0|[1-9][0-9]*)$/u)
     .nullable(),
-  kernel_coverage: z.enum(["not-requested", ...gpuCoverageSchema.options]),
+  kernel_coverage: z.enum([
+    "not-requested",
+    ...knownCoverageStatusSchema.options,
+  ]),
   by_kind: z.strictObject({
     ptx: count,
     cubin: count,

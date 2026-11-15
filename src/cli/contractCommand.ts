@@ -384,7 +384,11 @@ export const runOnEvidenceTargets =
             error: "Analysis failed",
             ...projectAnalysisError(retainSources(source.error), "invocation"),
           },
-          { operation: evidenceTargets.source, fields: { path: key } },
+          {
+            operation: evidenceTargets.source,
+            fields: { path: key },
+            flags: {},
+          },
         );
       sources[field] = source.value;
     }

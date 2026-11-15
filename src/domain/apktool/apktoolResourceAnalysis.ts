@@ -1,5 +1,6 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
@@ -229,7 +230,7 @@ export const stringTableSchema = z.strictObject({
     .describe(
       "Selected valid-entry page, present for explicit string selection/budgets when the table was examined. next_offset is null at the end; otherwise retry that offset against the same APK digest and locale. If next_offset equals offset, raise max_total_strings or use string_tables_only before retrying. Table coverage still describes the entire table.",
     ),
-  coverage: z.enum(["complete", "partial"]),
+  coverage: knownCoverageStatusSchema,
 });
 
 export type StringTable = z.infer<typeof stringTableSchema>;
@@ -278,7 +279,7 @@ export const apktoolResultSchemas = {
         "Selected decoded table facts, included when locales is supplied, string_tables_only is true, or an explicit string page or budget is requested. Empty when included with include_strings false.",
       ),
     decoded_file_count: z.int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
 } as const;
 

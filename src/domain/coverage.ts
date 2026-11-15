@@ -10,6 +10,15 @@ export const coverageStatusSchema = z.enum(["complete", "partial", "unknown"]);
 export type CoverageStatus = z.infer<typeof coverageStatusSchema>;
 
 /**
+ * Coverage of a producer that always decides it from what it examined, so it
+ * never reports `unknown`.
+ */
+export const knownCoverageStatusSchema = coverageStatusSchema.exclude([
+  "unknown",
+]);
+export type KnownCoverageStatus = z.infer<typeof knownCoverageStatusSchema>;
+
+/**
  * Fold the coverage of the inputs a result depends on. Unknown wins: one input
  * that cannot tell makes the whole unknown, even beside a known gap. Otherwise
  * any partial input makes the whole partial. Only all-complete inputs are

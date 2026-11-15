@@ -1,23 +1,23 @@
-import { invariantViolation } from "../../domain/internalInvariant.js";
-import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
+import { invariantViolation } from "../internalInvariant.js";
+import { readBinaryPlistLayout } from "./binaryPlistLayout.js";
 import { parseBinary } from "plist";
-import { markPlistDictionary } from "../../domain/apple/plistUid.js";
+import { markPlistDictionary } from "./plistUid.js";
 import {
   createPlistDuplicateKeyCollector,
   type PlistDuplicateKeys,
-} from "../../domain/apple/plistDuplicateKeys.js";
-import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
-import type { ParsedPropertyList } from "../../domain/propertyListKeys.js";
+} from "./plistDuplicateKeys.js";
+import { byteOrderMarkEncoding } from "../textByteOrderMark.js";
+import type { ParsedPropertyList } from "../propertyListKeys.js";
 import {
   binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   type BinaryPlistScalarMetadata,
-} from "./PlistScalars.js";
+} from "./plistScalars.js";
 import {
   preflightPropertyListDecode,
   type PlistDecodePreflight,
-} from "./PropertyListDecodeBudget.js";
+} from "./propertyListDecodeBudget.js";
 
 /** Build one array of source scalar references; upstream never constructs a dictionary. */
 const scalarArrayInput = (
