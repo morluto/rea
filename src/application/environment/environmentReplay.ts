@@ -377,29 +377,28 @@ export const replayAnswer = (
   const recordedPath = utf8HeadExcerpt(
     exchange.path,
     REPLAY_METADATA_LIMIT_BYTES,
-  ).text;
+  );
   const recordedQuery =
     exchange.query === null
       ? null
-      : utf8HeadExcerpt(exchange.query, REPLAY_METADATA_LIMIT_BYTES).text;
+      : utf8HeadExcerpt(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
   const contentType =
     exchange.contentType === null
       ? null
-      : utf8HeadExcerpt(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES).text;
+      : utf8HeadExcerpt(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES);
   return {
     status: exchange.status,
-    content_type: contentType,
+    content_type: contentType?.text ?? null,
     body,
     replay: {
       record_ordinal: exchange.ordinal,
       evidence_id: source.evidenceId,
       exact_match: exact,
-      recorded_path: recordedPath,
-      recorded_query: recordedQuery,
+      recorded_path: recordedPath.text,
+      recorded_query: recordedQuery?.text ?? null,
       recorded_line_truncated:
-        recordedPath.length < exchange.path.length ||
-        (recordedQuery?.length ?? 0) < (exchange.query?.length ?? 0),
-      content_type_truncated: contentType !== exchange.contentType,
+        recordedPath.truncated || recordedQuery?.truncated === true,
+      content_type_truncated: contentType?.truncated === true,
       body_recorded: exchange.bodyText !== null,
       body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,

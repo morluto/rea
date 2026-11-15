@@ -28,7 +28,7 @@ import {
 import { readElfImage } from "../metadata/ElfImage.js";
 import {
   assertElfSectionNameBudget,
-  ElfNoteSectionNameBudgetFailure,
+  elfNoteSectionNameBudget,
   parseElfNotes,
 } from "./ElfNoteParser.js";
 
@@ -106,7 +106,7 @@ export const gnuDebuglinkCrc32Hex = (bytes: Buffer): string =>
   crc32Hex(gnuDebuglinkCrc32(bytes));
 
 const isRethrownBudget = (cause: unknown): boolean =>
-  cause instanceof ElfNoteSectionNameBudgetFailure ||
+  elfNoteSectionNameBudget(cause) !== undefined ||
   cause instanceof BinaryResourceFailure ||
   (cause instanceof ArtifactReaderFailure && cause.reason === "limit");
 

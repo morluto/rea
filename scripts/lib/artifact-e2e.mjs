@@ -119,6 +119,30 @@ export async function artifactCli(
     .normalized_result;
 }
 
+const executeArtifactCli = (
+  owner,
+  command,
+  target,
+  arguments_,
+  { timeoutMs, signal },
+) =>
+  owner.exec(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../rea.mjs", import.meta.url)),
+      command,
+      target,
+      ...arguments_,
+      "--json",
+    ],
+    {
+      env: environment(),
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+      signal,
+    },
+  );
+
 /** Execute the compiled CLI and return its complete Evidence record. */
 export async function artifactCliEvidence(
   command,
@@ -129,22 +153,10 @@ export async function artifactCliEvidence(
   signal?.throwIfAborted();
   const owner = commands ?? (await createVerifierCommands());
   const execute = () =>
-    owner.exec(
-      process.execPath,
-      [
-        fileURLToPath(new URL("../rea.mjs", import.meta.url)),
-        command,
-        target,
-        ...arguments_,
-        "--json",
-      ],
-      {
-        env: environment(),
-        timeout: timeoutMs,
-        maxBuffer: 16 * 1024 * 1024,
-        signal,
-      },
-    );
+    executeArtifactCli(owner, command, target, arguments_, {
+      timeoutMs,
+      signal,
+    });
   const { stdout } =
     commands === undefined
       ? await withVerifierCleanup(execute, [() => closeOwnedCommands(owner)])
@@ -154,6 +166,44 @@ export async function artifactCliEvidence(
   assert.equal(evidence.error, undefined, stdout);
   assert.ok(evidence.normalized_result, "CLI omitted normalized result");
   return evidence;
+}
+
+/**
+ * Execute the compiled CLI in the same environment as `artifactCliEvidence`
+ * for a run that must fail, and return its JSON error record. A run that
+ * succeeds, or exits without a complete error record, is a failure.
+ */
+export async function artifactCliFailure(
+  command,
+  target,
+  arguments_ = [],
+  { timeoutMs = 60000, signal } = {},
+) {
+  signal?.throwIfAborted();
+  const owner = await createVerifierCommands();
+  const exited = await withVerifierCleanup(async () => {
+    try {
+      const { stdout } = await executeArtifactCli(
+        owner,
+        command,
+        target,
+        arguments_,
+        { timeoutMs, signal },
+      );
+      throw new Error(`${command} unexpectedly succeeded: ${stdout}`);
+    } catch (cause) {
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
+      return cause;
+    }
+  }, [() => closeOwnedCommands(owner)]);
+  const { stdout } = exited.snapshot;
+  assert.ok(
+    stdout.bytes === stdout.observedBytes && stdout.invalidUtf8 !== true,
+    `${command} stdout was not retained completely`,
+  );
+  const record = JSON.parse(stdout.text);
+  assert.equal(typeof record.code, "string", stdout.text);
+  return record;
 }
 
 const withOpenedArtifactMcp = async (

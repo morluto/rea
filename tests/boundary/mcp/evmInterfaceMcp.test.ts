@@ -22,7 +22,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { registerEvmTools } from "../../../src/server/registerEvmTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
@@ -62,10 +62,11 @@ mcpTest(
       undefined,
       createToolResultDelivery(undefined),
     );
-    registerEvmTools(
+    const service = new EvmInterfaceService({ inspect });
+    registerServiceTools(
       server,
-      new EvmInterfaceService({ inspect }),
-      silentLogger,
+      { evmInterface: service },
+      { logger: silentLogger },
     );
     const client = await mcp.connect(server, {
       name: "evm-detail",
@@ -122,9 +123,13 @@ mcpTest(
         approval: true,
       }),
     ).toBe(false);
-    expect(() => registerEvmTools(server, service, silentLogger)).toThrow(
-      /inspect_evm_interface.*already registered/,
-    );
+    expect(() =>
+      registerServiceTools(
+        server,
+        { evmInterface: service },
+        { logger: silentLogger },
+      ),
+    ).toThrow(/inspect_evm_interface.*already registered/);
     expect(inspect).not.toHaveBeenCalled();
     expect(
       (await client.listTools()).tools.filter(

@@ -27,7 +27,7 @@ import {
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
 } from "./ElfDebugLink.fixture.js";
-import { ElfNoteSectionNameBudgetFailure } from "./ElfNoteParser.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const SHF_COMPRESSED = 0x800n;
 const DECODED_NAME_BYTES = 1024 * 1024;
@@ -98,7 +98,7 @@ it("refuses compressed image names above the selected budget before inflating th
       { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
       inputFor(image.length + 1),
     ),
-  ).toThrow(ElfNoteSectionNameBudgetFailure);
+  ).toThrow(ParseFailureError);
   expect(zlib.inflated).toBe(0);
 });
 
@@ -194,7 +194,7 @@ it("refuses compressed image names above the budget when only section zero decla
       { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
       inputFor(image.length + 1),
     ),
-  ).toThrow(ElfNoteSectionNameBudgetFailure);
+  ).toThrow(ParseFailureError);
   expect(zlib.inflated).toBe(0);
 });
 
