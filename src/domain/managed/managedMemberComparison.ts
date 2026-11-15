@@ -23,7 +23,6 @@ import {
   buildMethodItems,
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
 
@@ -289,9 +288,6 @@ export const compareManagedMembers = (
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
     scope,
-    signatureResolutionExamined:
-      hasSignatureResolution(left.result) &&
-      hasSignatureResolution(right.result),
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,
