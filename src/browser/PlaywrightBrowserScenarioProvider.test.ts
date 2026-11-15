@@ -256,6 +256,7 @@ const capturedResponseBodyEvents = (): readonly BrowserScenarioEvent[] => [
     kind: "response",
     transaction_id: "request-1",
     redirected_from_transaction_id: null,
+    redirected_from_transaction_state: "root",
     method: "GET",
     url: sanitizeBrowserUrl("https://app.example.test/main.js"),
     resource_type: "script",

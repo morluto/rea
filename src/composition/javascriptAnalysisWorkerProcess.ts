@@ -48,9 +48,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       ...empty,
       parse_status: facts.parse_status,
       parse_error_count: facts.parse_error_count,
-      ...(facts.analysis_coverage === undefined
-        ? {}
-        : { analysis_coverage: facts.analysis_coverage }),
+      analysis_coverage: facts.analysis_coverage,
       visited_ast_nodes: facts.visited_ast_nodes,
       limitations: facts.limitations,
       electron: {

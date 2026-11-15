@@ -146,8 +146,7 @@ export interface JavaScriptRolePath {
 export interface JavaScriptStaticAnalysis {
   /** Established overall summary; syntax alone is reported in analysis_coverage. */
   readonly parse_status: "complete" | "partial" | "failed";
-  /** Historical facts omit this measurement; consumers must not infer it. */
-  readonly analysis_coverage?: JavaScriptStaticCoverage;
+  readonly analysis_coverage: JavaScriptStaticCoverage;
   readonly parse_error_count: number;
   readonly visited_ast_nodes: number;
   readonly references: readonly JavaScriptStaticReference[];

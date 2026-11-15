@@ -136,7 +136,7 @@ it("binds a repeated sloppy parameter name to its last argument", () => {
     ": function (e, t, e) { e.exports = {ghost: 1}; t.second = 1; }";
   const analysis = analyzeJavaScriptStaticSource(webpackChunk(factory));
   // Module source is strict, so the parser recovers from the name clash.
-  expect(analysis.analysis_coverage?.syntax.status).toBe("recovered");
+  expect(analysis.analysis_coverage.syntax.status).toBe("recovered");
   expect(analysis.bundler_registrations[0]?.modules[0]).toMatchObject({
     exports: conventionExports(factory),
     factory_require_name: "e",
@@ -198,7 +198,7 @@ it.each([
   const analysis = analyzeJavaScriptStaticSource(webpackChunk(factory));
   expect(analysis.bundler_registrations[0]?.modules).toHaveLength(1);
   expect(analysis.parse_status).toBe("partial");
-  expect(analysis.analysis_coverage?.semantics.unknown_findings).toBe(1);
+  expect(analysis.analysis_coverage.semantics.unknown_findings).toBe(1);
 });
 
 /** Exports plus every loader call made under Webpack's calling convention. */
