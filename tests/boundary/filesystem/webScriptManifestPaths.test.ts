@@ -208,22 +208,19 @@ it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
   "refuses Windows backslash source interpretation for %s",
   async (operation) => {
     const fixture = await literalManifest();
-    const originalPlatform = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
+    // Exercise the Windows admission branch; this is not native Windows IO.
+    const artifacts = new LocalWebScriptArtifacts(
+      operation,
+      undefined,
+      "win32",
     );
-    const artifacts = new LocalWebScriptArtifacts(operation);
     let response;
     try {
-      // Exercise the Windows admission branch; this is not native Windows IO.
-      Object.defineProperty(process, "platform", { value: "win32" });
       response = await artifacts.load({
         manifest_path: fixture.manifestPath,
         script_index: 0,
       });
     } finally {
-      if (originalPlatform !== undefined)
-        Object.defineProperty(process, "platform", originalPlatform);
       await artifacts.close();
     }
     if (response.ok) throw new Error("Expected Windows source path refusal");

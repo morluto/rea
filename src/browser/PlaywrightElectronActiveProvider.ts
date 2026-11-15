@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -94,6 +95,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
+    // The host the application launches and is cleaned up on.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -191,7 +194,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executablePath: paths.executable,
         cwd: paths.root,
         env: {
-          ...safeElectronEnvironment(this.environment, runId),
+          ...safeElectronEnvironment(this.environment, runId, this.platform),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
             sha256: createHash("sha256")
@@ -292,7 +295,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       outcome = err(error);
     }
     if (application !== undefined) {
-      const owner = new ElectronCaptureCleanup(application, ownership, lineage);
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        this.platform,
+      );
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
       outcome = captureOutcomeWithCancellation(outcome, options.signal);
@@ -437,7 +445,7 @@ const cancelledCapture = (
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[

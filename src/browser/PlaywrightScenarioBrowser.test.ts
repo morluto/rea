@@ -25,11 +25,8 @@ import {
   PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
 
-const hostPlatform = process.platform;
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  Object.defineProperty(process, "platform", { value: hostPlatform });
 });
 
 it("locks one attached browser for spellings that discover the same endpoint", () => {
@@ -143,7 +140,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
-  Object.defineProperty(process, "platform", { value: "android" });
   vi.stubEnv("PREFIX", "/data/data/com.termux/files/usr");
   const selected = { LANG: "selected-language", PREFIX: process.env.PREFIX };
   let launchOptions: Parameters<
@@ -159,6 +155,7 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
 
   await expect(
     openPlaywrightScenarioBrowser(scenario, selected, {
+      platform: "android",
       launcher: {
         connectOverCDP: async () => {
           throw new Error("Unexpected connection");
@@ -290,13 +287,13 @@ it.each([
 ])(
   "launches Chromium with sandbox $sandbox for $environment",
   async ({ environment, sandbox }) => {
-    Object.defineProperty(process, "platform", { value: "linux" });
     let launchOptions: Parameters<
       typeof import("playwright-core").chromium.launchPersistentContext
     >[1];
 
     await expect(
       openPlaywrightScenarioBrowser(launchScenario, environment, {
+        platform: "linux",
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
