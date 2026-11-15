@@ -62,6 +62,14 @@ import {
   findChangedBehaviorEvidence,
   verifyReconstructionEvidence,
 } from "../application/investigation/InvestigationWorkflows.js";
+import {
+  artifactComparisonExecution,
+  resolveArtifactComparisonSources,
+} from "../application/artifacts/ArtifactComparisonEvidence.js";
+import {
+  bundleComparisonExecution,
+  readBundleComparisonSources,
+} from "../application/investigation/BundleComparisonEvidence.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -96,6 +104,15 @@ import {
 export interface AnalysisSettingsToolOptions {
   readonly settings: AnalysisSettings;
   readonly delivery: ToolResultDelivery;
+}
+
+/**
+ * The session that admits and records derived Evidence, and the artifact
+ * resource scope its comparisons of caller-named files read under.
+ */
+export interface SessionDerivedToolOptions {
+  readonly session: BinarySessionPort;
+  readonly resources: ArtifactResourceScope;
 }
 
 /** Artifact resources a selected view may read, when the server owns them. */
@@ -573,7 +590,7 @@ const SERVICE_TOOL_BINDINGS = {
         }),
     },
   })) satisfies Bind<AnalysisViewToolOptions>,
-  sessionDerived: ((session) => ({
+  sessionDerived: (({ session, resources }) => ({
     compare_functions: {
       admission: "sdk",
       session,
@@ -615,7 +632,38 @@ const SERVICE_TOOL_BINDINGS = {
       session,
       derive: (input) => verifyReconstructionEvidence(input, session),
     },
-  })) satisfies Bind<BinarySessionPort>,
+    // Comparisons of caller-named files read them under the server's
+    // artifact resource scope before deriving.
+    compare_artifacts: {
+      admission: "application",
+      session,
+      resources,
+      acquire: async (input, { evidenceForAnalysis, signal, resources }) => {
+        const sources = await resolveArtifactComparisonSources(
+          input,
+          evidenceForAnalysis,
+          { signal, resources },
+        );
+        return sources.ok
+          ? ok(() => artifactComparisonExecution(sources.value))
+          : sources;
+      },
+    },
+    compare_bundles: {
+      admission: "sdk",
+      session,
+      resources,
+      acquire: async (input, { signal, resources }) => {
+        const sources = await readBundleComparisonSources(input, {
+          signal,
+          resources,
+        });
+        return sources.ok
+          ? ok(() => bundleComparisonExecution(sources.value))
+          : sources;
+      },
+    },
+  })) satisfies Bind<SessionDerivedToolOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
