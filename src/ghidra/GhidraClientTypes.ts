@@ -22,12 +22,18 @@ export interface GhidraRequestOptions {
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
   /**
-   * Reply ceiling admitted when the request entered the FIFO. The wire
-   * activates it only when this request is written, because the queue may
-   * drain it outside the caller's settings context. Omitted reads the ceiling
-   * at write time, for requests the caller writes directly.
+   * Ceilings admitted when the request entered the FIFO. The wire applies
+   * them only when this request is written, because the queue may drain it
+   * outside the caller's settings context. Omitted admits them at write time,
+   * for requests the caller writes directly.
    */
-  readonly replyLimit?: BridgeMaxReplyBytes;
+  readonly limits?: GhidraAdmittedLimits;
+}
+
+/** Bridge ceilings copied from the settings when one request was admitted. */
+export interface GhidraAdmittedLimits {
+  readonly requestLimit: BridgeMaxRequestBytes;
+  readonly replyLimit: BridgeMaxReplyBytes;
 }
 
 /** Safe lifecycle telemetry for one isolated Ghidra headless process. */

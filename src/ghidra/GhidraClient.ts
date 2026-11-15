@@ -1,5 +1,4 @@
 import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   fileSnapshotPartialObservationSchema,
   type FileSnapshotPartialObservation,
@@ -456,15 +455,17 @@ export class GhidraClient {
     return this.#callTool(operation, parameters, options);
   }
 
-  /** Queue one request with the reply ceiling admitted in the caller's context. */
+  /** Queue one request with the ceilings admitted in the caller's context. */
   #enqueue(
     method: string,
     parameters: JsonValue,
     options: GhidraRequestOptions,
   ): Promise<Result<JsonValue, GhidraSessionError>> {
+    const limits = this.#wire.admitLimits();
+    if (!limits.ok) return Promise.resolve(limits);
     return this.#requestQueue.run(method, parameters, {
       ...options,
-      replyLimit: this.#wire.admitReplyLimit(),
+      limits: limits.value,
     });
   }
 
@@ -1003,14 +1004,10 @@ export class GhidraClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
-    // Admit the reply ceiling before acquiring anything: an invalid launch
+    // Admit the bridge ceilings before acquiring anything: an invalid launch
     // seed is a configuration refusal, not a failure after Ghidra started.
-    try {
-      this.#wire.admitReplyLimit();
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(this.#failure("admission", cause.message, cause));
-    }
+    const limits = this.#wire.admitLimits();
+    if (!limits.ok) return limits;
     let packedProgram: GhidraPackedProgram | undefined;
     try {
       packedProgram = await this.#checkpoint?.acquire(

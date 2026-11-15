@@ -317,6 +317,43 @@ describe("HopperClient reply framing", () => {
     expect((await client.close()).ok).toBe(true);
   });
 
+  it("returns a ceiling seed refused after startup as a configuration error", async () => {
+    // A malformed seed covered by an override at startup is refused by the
+    // runtime view once that override is reset.
+    const refusal = new ConfigurationError("invalid bridge ceiling seed");
+    let seedRefused = false;
+    const setting = (value: number) => ({
+      get maximumBytes(): number {
+        if (seedRefused) throw refusal;
+        return value;
+      },
+      source: "runtime" as const,
+    });
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, {
+      bridgeMaxRequestBytes: setting(16 * MIB),
+      bridgeMaxReplyBytes: setting(4 * MIB),
+    });
+    // The gate holds the active reply, so the second request stays queued
+    // until the seed is refused and is written outside its caller's context.
+    const active = client.callTool("echo", { label: "active", gate: "held" });
+    const held = await launcher.waitForRequest("echo", "held");
+    const queued = client.callTool("echo", { label: "queued" });
+    await waitFor(() =>
+      expect(client.requestActivity()).toMatchObject({ queuedRequests: 1 }),
+    );
+    seedRefused = true;
+
+    const refused = await client.callTool("echo", { label: "late" });
+    expect(refused.ok ? undefined : refused.error).toBe(refusal);
+    await launcher.release(held);
+    expect((await active).ok).toBe(true);
+    expect(
+      (await queued).ok,
+      "a queued request is written under the ceilings it was admitted with",
+    ).toBe(true);
+  });
+
   it("bounds each reply by the ceiling its own request admitted", async () => {
     // The getter-backed runtime setting reads whichever caller admits next.
     const limit = { maximumBytes: 4 * MIB, source: "runtime" as const };
