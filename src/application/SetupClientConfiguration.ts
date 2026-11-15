@@ -280,7 +280,7 @@ const configureClientDocument = async (
     return { status: "failed", reason: "read_only_override", detail: override };
   if (
     registrationCurrent(parsed, desired) &&
-    (await privateProfileCurrent(client, original, platform))
+    (await privateProfileCurrent(client, original))
   )
     return { status: "unchanged" };
   return persistClientConfiguration({
@@ -428,7 +428,11 @@ const persistClientConfiguration = async ({
         ? { mode: PRIVATE_PROFILE_MODES.directory }
         : {}),
     });
-    if (client.privateProfile !== undefined && platform !== "win32")
+    // File modes are this host's, whatever platform the registration targets.
+    if (
+      client.privateProfile !== undefined &&
+      HOST_PLATFORM.platform !== "win32"
+    )
       await securePrivateDirectory(
         dirname(transactionPath),
         client.privateProfile.home,
@@ -665,7 +669,7 @@ export const clientConfigurationAligned = async (
       refresh.value.parsed !== undefined &&
       refresh.value.refusal === undefined &&
       registrationCurrent(refresh.value.parsed, refresh.value.desired) &&
-      (await privateProfileCurrent(client, refresh.value.original, platform))
+      (await privateProfileCurrent(client, refresh.value.original))
     );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
@@ -985,7 +989,7 @@ const inspectClientDocument = async (
       return { status: "invalid", remediation: policy.value };
     if (
       registrationCurrent(parsed, desired) &&
-      (await privateProfileCurrent(client, original, platform))
+      (await privateProfileCurrent(client, original))
     )
       return { status: "already_current" };
     const fallback = await readZcodeFallbackServers(client, platform, parsed);
@@ -1308,15 +1312,21 @@ const registrationCurrent = (
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
-/** A private profile with the wrong modes needs publication even when its row is current. */
+/**
+ * A private profile with the wrong modes needs publication even when its row
+ * is current. Modes belong to the host holding the file, not to the platform
+ * the registration is written for.
+ */
 const privateProfileCurrent = async (
   client: SetupClient,
   original: string | undefined,
-  platform: NodeJS.Platform,
 ): Promise<boolean> =>
   client.privateProfile === undefined ||
   (original !== undefined &&
-    (await privateProfileModesCurrent(client.configPath, platform)));
+    (await privateProfileModesCurrent(
+      client.configPath,
+      HOST_PLATFORM.platform,
+    )));
 
 const clientConfigurationDesired = async (
   client: SetupClient,
