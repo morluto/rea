@@ -340,7 +340,6 @@
     "src/cutter/CutterBridgeClient.ts": 1,
     "src/desktop/BuildComputerEnvironment.ts": 3,
     "src/desktop/BuildSecretFiles.ts": 1,
-    "src/doctorRuntime.ts": 9,
     "src/domain/localPath.ts": 1,
     "src/electron/ElectronFusePath.ts": 1,
     "src/evm/EvmoleInterfaceProvider.ts": 2,
