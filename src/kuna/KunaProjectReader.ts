@@ -30,7 +30,7 @@ import {
   OwnedRegularFileOperationFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
   scanKunaAssembly,
@@ -448,8 +448,7 @@ export class KunaProjectReader {
       }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
-    if (index === ABORTED)
-      return err(cancelledBy(operation, carriedReason(signal?.reason)));
+    if (index instanceof AbortedWait) return err(cancelledBy(operation, index));
     return index.ok
       ? index
       : err(

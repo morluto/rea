@@ -1,6 +1,7 @@
 import { parseOpenStep } from "plist";
 
 import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
+import { ParseFailureError } from "./parseFailure.js";
 import { markPlistDictionary } from "./apple/plistUid.js";
 import type { PlistDuplicateKeyCollector } from "./apple/plistDuplicateKeys.js";
 
@@ -170,14 +171,12 @@ export const decodeOpenStepQuotedString = (token: string): string => {
 export type OpenStepPropertyListCode = (typeof OPEN_STEP_SYNTAX_CODES)[number];
 
 /** OpenStep syntax refusal. `code` is the contract; `position` is the source offset. */
-class OpenStepPropertyListError extends Error {
-  readonly _tag = "OpenStepPropertyListError";
-
+class OpenStepPropertyListError extends ParseFailureError<"malformed"> {
   constructor(
     readonly code: OpenStepPropertyListCode,
     readonly position?: number,
   ) {
-    super(code);
+    super({ kind: "malformed", format: "openstep-plist", detail: code });
     this.name = "OpenStepPropertyListError";
   }
 }

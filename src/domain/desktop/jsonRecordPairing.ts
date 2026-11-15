@@ -6,6 +6,7 @@ import {
   isPlaceholder,
 } from "./attributeRank.js";
 import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
+import { isRecord } from "../isRecord.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
 const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;
@@ -22,11 +23,6 @@ export const KIND_FIELD = /^(?:type|kind|format|category)$/iu;
 const MAX_NAME = 64;
 /** The most kind fields and paths a version's records are counted by, each a pass over them, so odd records cost no more. */
 const MAX_TALLIES = 64;
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Whether every member holds a string at a key a selector can carry, each its own. */
 const namesEach = (members: readonly JsonValue[], key: string) => {

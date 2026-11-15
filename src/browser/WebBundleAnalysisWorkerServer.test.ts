@@ -151,7 +151,9 @@ const framingServer = async () => {
   return { root, ...server };
 };
 
-it("serves fragmented and coalesced LF/CRLF requests as separate jobs", async () => {
+// Pipe writes do not fix read boundaries: BoundedControlLines.test.ts owns every
+// split-chunk case deterministically. These worker tests prove the server wiring.
+it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
   const server = await framingServer();
   const input = sourceDescriptor(makeScript("fetch('/framed');"));
   const ids = [randomUUID(), randomUUID()];
@@ -164,7 +166,6 @@ it("serves fragmented and coalesced LF/CRLF requests as separate jobs", async ()
   for (const id of ids) await writeSource(server.root, id, input.bytes);
   const first = JSON.stringify(requests[0]);
   await writeInput(server.process, first.slice(0, 17));
-  await new Promise((resolve) => setTimeout(resolve, 50));
   await writeInput(
     server.process,
     `${first.slice(17)}\n${JSON.stringify(requests[1])}\r\n`,
@@ -182,7 +183,7 @@ it.each([
   ["multibyte", Buffer.from("é🙂")],
   ["replacement-decoded", Buffer.from([0xff])],
 ] as const)(
-  "accepts an exact-budget %s JSON request with fragmented UTF-8 and split CRLF",
+  "accepts an exact-budget %s JSON request written in split UTF-8 and CRLF writes",
   async (_name, text) => {
     const server = await framingServer();
     const input = sourceDescriptor(makeScript("fetch('/exact-budget');"));
@@ -211,13 +212,10 @@ it.each([
       WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
     );
     await writeInput(server.process, frame.subarray(0, prefix.length + 1));
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeInput(
       server.process,
       Buffer.concat([frame.subarray(prefix.length + 1), Buffer.from("\r")]),
     );
-    // Let the worker consume the terminal CR before delivering its LF.
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeInput(server.process, "\n");
     expect(await server.next()).toMatchObject({ kind: "phase", id });
     expect(await server.next()).toMatchObject({ kind: "complete", id });

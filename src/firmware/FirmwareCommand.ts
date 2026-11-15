@@ -19,7 +19,9 @@ import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -29,7 +31,7 @@ import type {
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwareLimitRecovery,
   firmwarePhaseInterruption,
   firmwareProcessLimitRecovery,
@@ -211,6 +213,11 @@ export const runFirmwareCommand = async (context: {
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
+  const dialect = firmwareFailureDialect({
+    engine,
+    operation,
+    phase: { signal, deadline: context.deadline },
+  });
   const fileSizeBytes = firmwareFileSizeLimit(
     context.fileSizeCeiling,
     context.outputBudget?.bytes,
@@ -256,10 +263,18 @@ export const runFirmwareCommand = async (context: {
     },
   }).catch((cause: unknown) => {
     const cancellation = processInspectionCancellationError(cause, operation);
+    // The phase deadline reports its own expiry; any other inspection
+    // cancellation keeps its ownership-inspection origin.
+    const interruption =
+      cancellation === undefined
+        ? undefined
+        : firmwarePhaseInterruption(operation, signal, context.deadline);
     const primary =
       cancellation === undefined
-        ? firmwareFailure(cause, context)
-        : firmwareFailure(cancellation, context);
+        ? classifyProviderFailure(cause, dialect)
+        : interruption instanceof AnalysisTimeoutError
+          ? interruption
+          : cancellation;
     throw retainProcessInspectionCleanup(
       cause,
       primary,
@@ -359,12 +374,13 @@ export const runFirmwareCommand = async (context: {
           fileSizeBytes,
           operation,
           signal,
+          context.deadline,
         );
     }
     checkDiagnostics();
     checkInterruption();
   } catch (cause: unknown) {
-    failure ??= firmwareFailure(cause, context);
+    failure ??= classifyProviderFailure(cause, dialect);
   }
   const stopped = await supervisor.stop();
   // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
@@ -432,7 +448,18 @@ export const readFirmwareCommandReport = async (context: {
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) {
       const { engine, operation, execution, deadline } = context;
-      const failure = firmwareFailure(cause, { engine, operation, deadline });
+      const signal = context.signal ?? deadline?.signal;
+      const failure = classifyProviderFailure(
+        cause,
+        firmwareFailureDialect({
+          engine,
+          operation,
+          phase:
+            deadline === undefined || signal === undefined
+              ? undefined
+              : { signal, deadline },
+        }),
+      );
       if (cause.partialObservation !== undefined)
         failure.retainPartialObservation(cause.partialObservation);
       throw failure.retainCapturedOutput({

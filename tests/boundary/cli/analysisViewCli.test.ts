@@ -1100,7 +1100,7 @@ cliTest("rejects malformed JSON before projection", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    details: { operation: "inspect-analysis-view" },
+    details: { operation: "inspect_analysis_view" },
   });
 });
 
