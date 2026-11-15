@@ -11,33 +11,44 @@ import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 /**
  * A phase boundary the test holds open. The code under test calls `hold` at
  * the boundary and waits there; the test waits until the boundary is
- * `reached`, acts (closes, cancels, lets a deadline pass), then `release`s it.
+ * `reached`, acts (closes, cancels, lets a deadline pass), then `release`s it
+ * with the value `hold` returns, or `reject`s it with the failure `hold`
+ * throws (a late module load, a read that fails after cancellation).
  */
-export interface PhaseGate<T = void> {
+export interface PhaseGate<T = void, R = void> {
   /** Called by the code under test: records arrival with `value`, then waits for release. */
-  hold(value: T): Promise<void>;
+  hold(value: T): Promise<R>;
   /**
    * Resolve with the held value once the boundary is reached. Fails if
    * `operation` settles first or the test wait deadline passes.
    */
   reached(operation: Promise<unknown>, boundary: string): Promise<T>;
-  /** Let every current and later `hold` continue. Safe to call more than once. */
-  release(): void;
+  /**
+   * Let every current and later `hold` continue with `value`. Only the first
+   * `release` or `reject` decides the outcome; later calls are ignored.
+   */
+  release(value: R): void;
+  /** Make every current and later `hold` throw `error`. */
+  reject(error: unknown): void;
 }
 
-export const phaseGate = <T = void>(): PhaseGate<T> => {
+export const phaseGate = <T = void, R = void>(): PhaseGate<T, R> => {
   let arrive!: (value: T) => void;
   const arrived = new Promise<T>((resolve) => {
     arrive = resolve;
   });
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
+  let release!: (value: R) => void;
+  let reject!: (error: unknown) => void;
+  const released = new Promise<R>((resolve, refuse) => {
     release = resolve;
+    reject = refuse;
   });
+  // A rejection before any `hold` is observed by that later `hold`, not here.
+  released.catch(() => {});
   return {
-    hold: async (value) => {
+    hold: (value) => {
       arrive(value);
-      await released;
+      return released;
     },
     reached: async (operation, boundary) => {
       await awaitAcknowledgement(
@@ -48,6 +59,7 @@ export const phaseGate = <T = void>(): PhaseGate<T> => {
       return arrived;
     },
     release,
+    reject,
   };
 };
 

@@ -24,6 +24,7 @@ import {
   snapshotBindingMismatch,
   snapshotMatchesProfile,
   snapshotTarget,
+  snapshotTargetIdentity,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
   type AnalysisSnapshot,
@@ -47,6 +48,7 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
+import { sameTargetIdentity } from "../../domain/targetIdentity.js";
 import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
@@ -226,7 +228,10 @@ export class AnalysisSnapshotCache {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
-        JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
+        !sameTargetIdentity(
+          snapshotTargetIdentity(this.#target),
+          snapshotTargetIdentity(snapshot.target),
+        )) ||
       (this.#binding !== undefined &&
         !snapshotMatchesProfile(
           this.#binding,
