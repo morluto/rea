@@ -174,7 +174,7 @@ await withVerifierFixture(workspaceFixture, async () => {
   assert.ok(profile.value.profile);
   assert.equal(
     profile.value.profile.parameters.no_return_repair,
-    "returning-imports-decoded-return-v2",
+    "returning-imports-decoded-return",
   );
   const client = provider.createClient(target.value, profile.value.profile);
   cleaned = false;

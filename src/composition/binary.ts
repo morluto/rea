@@ -17,11 +17,11 @@ import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.j
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { combineBundleResourceClients } from "../application/binary/BundleResourceSession.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  combineBundleResourceClients,
-} from "../application/binary/BundleResourceSession.js";
+} from "../ports/BundleResourceOperations.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.

@@ -1,4 +1,4 @@
-import type { McpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+import type { McpOutputSchemaProfile } from "../mcpSchemaPresentation.js";
 
 /** SHA-256 digests of one catalog profile, as `createCatalogIdentity` reports them. */
 export type CatalogDigests = {

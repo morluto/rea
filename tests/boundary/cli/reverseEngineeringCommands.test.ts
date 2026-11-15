@@ -1,10 +1,14 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
 import { Cli, z } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -38,7 +42,7 @@ afterEach(() => {
 
 const observation = (completionStatus: "complete" | "unknown") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gnu.objdump", name: "GNU objdump", version: null },
     {
       predicateType: "rea.reverse-engineering.command-observation",
@@ -496,7 +500,7 @@ it.each([false, true])(
       },
     } as unknown as CliInstance;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -616,7 +620,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     } as unknown as CliInstance;
     const previous = process.exitCode;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",

@@ -1,3 +1,4 @@
+import { evidenceSubjectDisplay } from "../../domain/evidence.js";
 import { basename } from "node:path";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -21,12 +22,13 @@ export const bindSessionEvidenceExecution = (
   // Semantic IDs intentionally omit display paths and names. A duplicate in
   // the ledger can therefore refer to the same bytes at a different path.
   const selected = execution.subject;
+  const display = evidenceSubjectDisplay(evidence);
   if (
     selected == null
-      ? evidence.subject !== null
-      : evidence.subject === null ||
-        evidence.subject.local_path !== selected.path ||
-        evidence.subject.name !== (basename(selected.path) || "artifact")
+      ? display !== undefined
+      : display === undefined ||
+        display.local_path !== selected.path ||
+        display.name !== (basename(selected.path) || "artifact")
   )
     return execution;
   const subject =

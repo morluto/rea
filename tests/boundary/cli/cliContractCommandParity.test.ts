@@ -24,6 +24,7 @@ import {
   type RegisteredCommand,
 } from "../../../src/cli/visitRegisteredCommands.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+import { presentRootDiscriminator } from "../../../src/domain/schemaAnnotations.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -1116,6 +1117,24 @@ describe("Session targets of contract commands", () => {
         }
     },
   );
+
+  it("refuses a root discriminator the projection neither delivers, omits nor selects", () => {
+    const mode = z.string();
+    const inputSchema = presentRootDiscriminator(
+      z.union([z.strictObject({ mode }), z.strictObject({ mode })]),
+      "mode",
+    );
+    expect(() =>
+      describeContractCommand(
+        // A root union of objects, as delivery-discriminated contracts are.
+        { name: "probe", inputSchema } as never,
+        {
+          command: "probe",
+          description: "Probe",
+        },
+      ),
+    ).toThrow("probe root discriminator mode has no CLI projection");
+  });
 
   it("refuses a session target beside a contract field keyed path", () => {
     expect(() =>

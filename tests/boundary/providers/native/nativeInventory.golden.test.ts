@@ -14,7 +14,7 @@ import {
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   parseDyldExports,

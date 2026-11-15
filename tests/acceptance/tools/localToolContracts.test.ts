@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { execFile } from "node:child_process";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -46,7 +47,7 @@ it("keeps overall replay verification unknown when capture divergence is unknown
       readonly exitCode?: number;
     } = {},
   ) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: { side },

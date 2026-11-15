@@ -13,13 +13,12 @@ import {
   annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../../resources/index.js";
-import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
@@ -50,7 +49,6 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { abortIfNeeded } from "../../resources/index.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;

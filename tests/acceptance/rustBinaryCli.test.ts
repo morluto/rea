@@ -333,8 +333,7 @@ cliTest(
       result.json,
     );
     expect(evidence.subject).toMatchObject({
-      format: "mach-o",
-      architecture: "arm64_32",
+      identity: { format: "mach-o", architecture: "arm64_32" },
     });
     expect(rustBinarySchema.parse(evidence.normalized_result)).toMatchObject({
       architecture: "arm64_32",

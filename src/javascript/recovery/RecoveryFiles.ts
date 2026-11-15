@@ -5,6 +5,7 @@ import {
   withArtifactRegularFile,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  normalizeArtifactPath,
 } from "../../resources/index.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
@@ -18,7 +19,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { normalizeArtifactPath } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

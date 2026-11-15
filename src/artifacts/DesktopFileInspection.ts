@@ -21,13 +21,12 @@ import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
 import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
 import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
   hasUnityFsHeader,
   readUnityFsHeaderFacts,
 } from "../domain/unityfsFormat.js";
-import { abortIfNeeded } from "../resources/index.js";
 
 export interface DesktopReadBudget {
   bytes: number;

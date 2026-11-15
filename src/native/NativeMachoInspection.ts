@@ -16,7 +16,7 @@ import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { MachoSliceSelectionRefusal } from "../domain/apple/machoSliceSelection.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
 import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
 import {
   architectureBaseName,

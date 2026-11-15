@@ -352,7 +352,8 @@ Omit `fields` for complete records; a selected field list always retains
 remain distinguishable. Search tools apply their existing filters before retention.
 Follow `coverage.next_offset`; exhaustion describes the retained list, not
 complete discovery of all code or strings. An unbound source keeps
-`artifact: null` and the derived Evidence keeps `subject: null`.
+`artifact: null`, and the derived Evidence names an unknown subject
+(`subject.identity.kind: "unknown"`).
 
 The CLI uses the same projector. For an original complete Evidence JSON file,
 write `{"source":{"kind":"evidence-file","path":"/absolute/source.json"},"view":{"kind":"native-inventory","limit":32}}`
@@ -1015,11 +1016,24 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
-(currently `1`). Import, comparison and every other bundle reader refuse a
-bundle without it, or with another revision, as an integrity mismatch whose
-recovery is to recreate the observations with the current release;
-re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles and every Evidence record carry
+`evidence_format`, the Evidence format revision (currently `2`). Import,
+comparison and every other Evidence reader refuse a bundle or record without
+it, or with another revision, as an integrity mismatch whose recovery is to
+recreate the observations with the current release; re-exporting an earlier
+bundle does not update its format or identities. Revision 2 names the subject
+by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
+`architecture` and `selection`: the raw or DOL entry point or the ESP flash
+offsets that select what was analysed, otherwise `null`), and the Evidence ID
+commits to that identity; `subject.name` and `subject.local_path` are display
+facts outside the ID. The subject has no separate `digest`, `format` or
+`architecture` members; read them from `subject.identity`. Every record has a
+subject: one whose target REA did not identify names
+`{ "kind": "unknown", "reason": … }`, where the reason is
+`derived-from-linked-evidence` (comparisons and workflows, whose sources are
+committed through `evidence_links`), `not-observed` or `unsupported-subject`,
+and its `name` and `local_path` are `null`. Retention has no
+automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint

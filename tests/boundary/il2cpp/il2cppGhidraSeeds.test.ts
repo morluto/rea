@@ -3,7 +3,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { expect, it } from "vitest";
-import { parseGhidraSeeds } from "../../../src/ghidra/GhidraAnalysisSeeds.js";
 import {
   ghidraDefaultBase,
   il2cppGhidraSeeds,
@@ -14,6 +13,7 @@ import {
   type Il2cppMetadata,
 } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { parseGhidraSeeds } from "../../../src/domain/native/ghidraSeedFile.js";
 
 const type = (
   name: string,

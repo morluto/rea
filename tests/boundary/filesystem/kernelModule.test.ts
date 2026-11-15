@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -76,7 +77,7 @@ describe("kernel module stable filesystem boundary", () => {
     try {
       const result = await service.inspect({ path });
       if (!result.ok) throw result.error;
-      expect(result.value.subject?.format).toBe("file");
+      expect(fileIdentity(result.value.subject).format).toBe("file");
       expect(result.value.normalized_result).toMatchObject({
         applicability: "unsupported",
         compression: { codec: "gzip", status: "unsupported" },

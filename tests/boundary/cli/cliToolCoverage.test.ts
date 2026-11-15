@@ -7,7 +7,7 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   CLI_COMMAND_NAMES,
   cliCommandNames,
-} from "../../../src/catalogIdentity.js";
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { describeContractCommand } from "../../../src/cli/contractCliDescription.js";
 
 import { CLI_COMMAND_TOOL_ALIASES } from "./cliContractAliases.js";

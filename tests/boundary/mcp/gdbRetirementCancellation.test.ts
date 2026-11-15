@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
@@ -44,7 +45,7 @@ it("compares cancellation before dispatch, during retirement, and an uncancelled
     expect((await session.open(target)).ok).toBe(true);
     const id = "00000000-0000-4000-8000-000000000001";
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "gdb", name: "GDB", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -148,7 +149,7 @@ it.each(["completed", "failed"] as const)(
     expect((await session.open(target)).ok).toBe(true);
     const commandFailure = new AnalysisInputError("command");
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "gdb", name: "GDB", version: null },
       {
         operation: "gdb_console",

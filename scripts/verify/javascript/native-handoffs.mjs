@@ -222,7 +222,7 @@ await withVerifierCleanup(async () => {
   const timedOut = preparation.wire_response.isError === true;
   assert.equal(timedOut, values["expect-timeout"]);
   if (!timedOut)
-    assert.equal(preparation.response.subject.digest.sha256, archiveSha256);
+    assert.equal(preparation.response.subject.identity.sha256, archiveSha256);
   const sourceId = timedOut
     ? preparation.response.error.details.partial_observation.evidence_id
     : preparation.response.normalized_result.parent_evidence_id;

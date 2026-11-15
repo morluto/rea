@@ -15,6 +15,10 @@ import {
   cliTextGuardSelects,
   cliTextOutsideCliCount,
 } from "./cli-text-guard.mjs";
+import {
+  TOOL_REGISTRATION_OWNERS,
+  toolRegistrationCount,
+} from "./tool-registration-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -364,14 +368,32 @@ checkCounted(
 
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
-// index itself decides on its own which effect kinds and proofs apply; new
-// readers ask the log instead, and each migrated reader lowers this count.
+// index itself decides on its own which effect kinds and proofs apply; readers
+// ask the log instead. Every reader has moved; the remaining counts are the
+// producers that build these indexes (javascriptSemanticAmbientWrites.ts,
+// javascriptSemanticMemberMutations.ts, and javascriptSemanticAnalysis.ts,
+// which creates and settles them) and the timing-proof owner
+// (javascriptSemanticMutationInitializers.ts), whose position proofs over
+// recorded sites the log delegates to.
 checkCounted(
   "read of a JavaScript effect index outside the effect log (ask javascriptSemanticEffectLog.ts)",
   "javascript-effect-index-read",
   files,
   /\.(?:bindingWrites|memberWrites|escapedPaths|ambientWriteEffects|ambientEscapeEffects|ambientBindingWrites|ambientWrites|ambientEscapes)\b/gu,
   ["src/domain/javascript/javascriptSemanticEffectLog.ts"],
+);
+
+// Effect timing has one owner (javascriptSemanticMutationInitializers.ts) and
+// one consumer, the effect log. Everything else asks the log whether an effect
+// may precede a read, naming the ordering it relies on.
+check(
+  "semanticEffectTiming outside the effect log (ask semanticEffectMayPrecede or a query in javascriptSemanticEffectLog.ts)",
+  files,
+  /\bsemanticEffectTiming\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticMutationInitializers.ts",
+  ],
 );
 
 // Coverage status has one vocabulary, coverageStatusSchema in
@@ -523,6 +545,15 @@ checkCounted(
   [],
 );
 
+// tool-registration-guard.mjs states the rule and its written owners.
+checkCounted(
+  "MCP tool registered outside the shared binding table (bind it in src/server/serviceToolBindings.ts)",
+  "bespoke-mcp-tool-registration",
+  files.filter(({ path }) => path.startsWith("src/")),
+  toolRegistrationCount,
+  [...TOOL_REGISTRATION_OWNERS.keys()],
+);
+
 // A runtime setting view throws the ConfigurationError of a malformed launch
 // seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
 // as a Result. Catching it by hand mixes it into each site's own failures.
@@ -553,6 +584,8 @@ const PARSER_FOLDERS = [
   "src/model/",
   "src/native/",
   "src/python/",
+  // Shared artifact readers (ZIP, directory, ASAR header) live in resources.
+  "src/resources/",
   "src/rust/",
   "src/v8/",
   "src/wasm/",
@@ -571,11 +604,13 @@ const PARSER_FOLDERS = [
     "managed",
     "model",
     "native",
+    "pcap",
     "python",
     "rust",
     "v8",
     "wasm",
     "windows",
+    "zip",
   ].map((folder) => `src/domain/${folder}/`),
 ];
 const parserFiles = files.filter((file) =>
@@ -690,7 +725,7 @@ checkCounted(
 // AnalysisError has no push API. Composing dependency sets with
 // bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies, analysisErrorWithCloseRejection(s) for close rejections whose completion may be unknown, or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
