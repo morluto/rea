@@ -115,6 +115,13 @@ export interface CliContractProjection<
    */
   readonly sessionTarget?: CliSessionTarget;
   /**
+   * Required contract fields that each take the Evidence a source contract
+   * produces for one target, such as the two sides of a comparison. The CLI
+   * takes each target as a positional, in this order, and runs the source on
+   * every target with the same source options before the contract runs.
+   */
+  readonly evidenceTargets?: CliEvidenceTargets<Field>;
+  /**
    * Optional object fields taken as one option per member, keyed by contract
    * field and then member. Any member given supplies the whole object, so the
    * contract reports a missing companion member.
@@ -247,6 +254,48 @@ export interface ContractCliSessionTarget {
 
 /** The CLI key of a session target, which no contract field supplies. */
 const SESSION_TARGET_KEY = "path";
+
+/**
+ * Contract fields each supplied by the source contract's Evidence for one
+ * target. The source fields are its options; each target is admitted by the
+ * source input as its `path`.
+ */
+export interface CliEvidenceTargets<Field extends string> {
+  /** The target positional of each field, in argv order. */
+  readonly fields: {
+    readonly [Key in Field]?: CliFieldProjection & {
+      /** Help for the target positional. */
+      readonly description: string;
+    };
+  };
+  readonly source: CliTargetOpening;
+}
+
+/** One described Evidence target positional. */
+export interface ContractCliEvidenceTarget {
+  /** The contract field its source Evidence supplies. */
+  readonly field: string;
+  readonly key: string;
+  readonly schema: z.ZodType;
+}
+
+/** The described Evidence targets of a contract command. */
+export interface ContractCliEvidenceTargets {
+  /** The source contract each target runs. */
+  readonly source: string;
+  readonly targets: readonly ContractCliEvidenceTarget[];
+  /** Options that supply fields of the source contract. */
+  readonly options: readonly ContractCliOpeningOption[];
+  /**
+   * The source fields the parsed options select, in contract spelling,
+   * admitted by the source input with each target as its `path`. Issues
+   * name CLI keys.
+   */
+  readonly admitSource: (
+    operation: string,
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<Readonly<Record<string, unknown>>, AnalysisInputError>;
+}
 
 /** A bare flag that sets a nullable contract field to null. */
 export interface CliNullFlag {
@@ -443,6 +492,11 @@ export interface ContractCliDescription {
    * when the operation runs on a target the CLI opens; undefined otherwise.
    */
   readonly sessionTarget: ContractCliSessionTarget | undefined;
+  /**
+   * The Evidence target positionals, taken before the contract positionals,
+   * when source Evidence supplies contract fields; undefined otherwise.
+   */
+  readonly evidenceTargets: ContractCliEvidenceTargets | undefined;
   /**
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key.
@@ -867,15 +921,21 @@ const admitDocumentCallerPath = (
 const DOCUMENT_KEY = "inputJson";
 
 /**
- * Describe the target positional and the options that supply fields of its
- * opening contract. Each option admits its field's own schema, narrowed to
- * the projected values.
+ * Describe the options that supply fields of an opening or source contract,
+ * and admit what the caller selected with a target as that contract's
+ * `path`. Each option admits its field's own schema, narrowed to the
+ * projected values.
  */
-const describeSessionTarget = (
-  target: CliSessionTarget | undefined,
-): ContractCliSessionTarget | undefined => {
-  if (target === undefined) return undefined;
-  const opening = target.open;
+const describeTargetOpening = (
+  opening: CliTargetOpening | undefined,
+): {
+  readonly options: readonly ContractCliOpeningOption[];
+  readonly admit: (
+    operation: string,
+    values: Readonly<Record<string, unknown>>,
+    target: string,
+  ) => Result<Readonly<Record<string, unknown>>, AnalysisInputError>;
+} => {
   const opener = opening?.contract.name ?? "";
   const shape = (opening?.contract.inputSchema.shape ?? {}) as Record<
     string,
@@ -914,22 +974,20 @@ const describeSessionTarget = (
     };
   });
   const keyOf = new Map(options.map(({ field, key }) => [field, key]));
+  const callerPaths: ReadonlySet<string> = new Set(
+    options.flatMap(({ field, callerPath }) => (callerPath ? [field] : [])),
+  );
   return {
-    key: SESSION_TARGET_KEY,
-    schema: localPathStringSchema.describe(target.description),
     options,
-    admitOpening: (operation, values) => {
+    admit: (operation, values, target) => {
       if (opening === undefined) return ok({});
       const selected = Object.fromEntries(
         options.flatMap(({ field, key }) =>
           values[key] === undefined ? [] : [[field, values[key]]],
         ),
       );
-      // The target itself was admitted as the positional.
+      // The target itself was admitted as its positional.
       if (Object.keys(selected).length === 0) return ok({});
-      const callerPaths: ReadonlySet<string> = new Set(
-        options.flatMap(({ field, callerPath }) => (callerPath ? [field] : [])),
-      );
       const candidate = {
         ...Object.fromEntries(
           Object.entries(selected).map(([field, value]) => [
@@ -939,9 +997,7 @@ const describeSessionTarget = (
               : value,
           ]),
         ),
-        [SESSION_TARGET_KEY]: absoluteCallerPath(
-          values[SESSION_TARGET_KEY] as string,
-        ),
+        [SESSION_TARGET_KEY]: absoluteCallerPath(target),
       };
       const admitted = opening.contract.inputSchema.safeParse(candidate);
       if (!admitted.success)
@@ -968,6 +1024,70 @@ const describeSessionTarget = (
           ]),
         ),
       );
+    },
+  };
+};
+
+/** Describe the target positional and its opening options. */
+const describeSessionTarget = (
+  target: CliSessionTarget | undefined,
+): ContractCliSessionTarget | undefined => {
+  if (target === undefined) return undefined;
+  const { options, admit } = describeTargetOpening(target.open);
+  return {
+    key: SESSION_TARGET_KEY,
+    schema: localPathStringSchema.describe(target.description),
+    options,
+    admitOpening: (operation, values) =>
+      admit(operation, values, values[SESSION_TARGET_KEY] as string),
+  };
+};
+
+/**
+ * Describe the Evidence target positionals of required contract fields and
+ * the options of their shared source contract. Every target is admitted by
+ * the source input, so a source option holds for each one.
+ */
+const describeEvidenceTargets = (
+  contract: ProjectedContract,
+  shape: Readonly<Record<string, z.ZodType>>,
+  targets: CliEvidenceTargets<string> | undefined,
+): ContractCliEvidenceTargets | undefined => {
+  if (targets === undefined) return undefined;
+  const { options, admit } = describeTargetOpening(targets.source);
+  const described = Object.entries(targets.fields).flatMap(
+    ([field, projected]) => {
+      if (projected === undefined) return [];
+      const declared = shape[field];
+      if (declared === undefined)
+        throw new Error(`${contract.name} has no input field ${field}`);
+      if (admitsOmission(declared))
+        throw new Error(`${contract.name}.${field} is not a required field`);
+      return [
+        {
+          field,
+          key: projected.name ?? camelCase(field),
+          schema: localPathStringSchema.describe(projected.description),
+        },
+      ];
+    },
+  );
+  if (described.length === 0)
+    throw new Error(`${contract.name} declares no Evidence target`);
+  return {
+    source: targets.source.contract.name,
+    targets: described,
+    options,
+    admitSource: (operation, values) => {
+      let admitted: Result<
+        Readonly<Record<string, unknown>>,
+        AnalysisInputError
+      > = ok({});
+      for (const { key } of described) {
+        admitted = admit(operation, values, values[key] as string);
+        if (!admitted.ok) return admitted;
+      }
+      return admitted;
     },
   };
 };
@@ -1203,10 +1323,22 @@ export const describeContractCommand = <
         : ["detail", "view"]
       : [],
   );
-  // Fields the CLI never supplies: the delivery's, and the omitted ones.
+  if (
+    projection.sessionTarget !== undefined &&
+    projection.evidenceTargets !== undefined
+  )
+    throw new Error(
+      `${contract.name} takes both a session target and Evidence targets`,
+    );
+  const targetFields: ReadonlySet<string> = new Set(
+    Object.keys(projection.evidenceTargets?.fields ?? {}),
+  );
+  // Fields argv never supplies: the delivery's, the omitted ones, and those
+  // the handler supplies with each target's source Evidence.
   const unprojectedFields: ReadonlySet<string> = new Set([
     ...deliveryFields,
     ...Object.keys(projection.omit ?? {}),
+    ...targetFields,
   ]);
   const shape = inputFields(contract, unprojectedFields);
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
@@ -1245,9 +1377,12 @@ export const describeContractCommand = <
     ...Object.keys(projection.flatten ?? {}),
     ...Object.keys(fieldProjections),
     ...Object.keys(omitted),
-  ])
+  ]) {
     if (!Object.hasOwn(shape, field))
       throw new Error(`${contract.name} has no input field ${field}`);
+    if (targetFields.has(field))
+      throw new Error(`${contract.name}.${field} is an Evidence target`);
+  }
   for (const field of Object.keys(omitted))
     if (!admitsOmission(shape[field]!))
       throw new Error(`${contract.name}.${field} is required on the CLI`);
@@ -1399,7 +1534,10 @@ export const describeContractCommand = <
   const parameters = [
     ...positionals,
     ...Object.keys(shape).filter(
-      (field) => !positionals.includes(field) && !Object.hasOwn(omitted, field),
+      (field) =>
+        !positionals.includes(field) &&
+        !Object.hasOwn(omitted, field) &&
+        !targetFields.has(field),
     ),
   ].flatMap((field) =>
     flattened[field] === undefined
@@ -1432,10 +1570,23 @@ export const describeContractCommand = <
     schema,
   }));
   const sessionTarget = describeSessionTarget(projection.sessionTarget);
-  const sessionTargetKeys =
-    sessionTarget === undefined
+  const evidenceTargets = describeEvidenceTargets(
+    contract,
+    shape,
+    projection.evidenceTargets,
+  );
+  // Keys the command adds beside the contract parameters.
+  const sessionTargetKeys = [
+    ...(sessionTarget === undefined
       ? []
-      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)];
+      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)]),
+    ...(evidenceTargets === undefined
+      ? []
+      : [
+          ...evidenceTargets.targets.map(({ key }) => key),
+          ...evidenceTargets.options.map(({ key }) => key),
+        ]),
+  ];
   const selectorKeys = parameters.flatMap(({ selectorOption }) =>
     selectorOption === undefined
       ? []
@@ -1615,12 +1766,16 @@ export const describeContractCommand = <
         ),
       ),
     sessionTarget,
+    evidenceTargets,
     inputBinding: {
       operation: contract.name,
       fields: Object.fromEntries(
-        parameters.flatMap(({ field, key, member }) =>
-          member === undefined && key !== field ? [[field, key]] : [],
-        ),
+        [
+          ...parameters.flatMap(({ field, key, member }) =>
+            member === undefined ? [{ field, key }] : [],
+          ),
+          ...(evidenceTargets?.targets ?? []),
+        ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
       ),
     },
     evidenceDelivery,
