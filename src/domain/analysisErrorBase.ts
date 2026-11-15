@@ -5,7 +5,7 @@ import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
-import type { AnalysisSettingLimit } from "./analysisSettings.js";
+import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
 import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
@@ -100,7 +100,7 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly cleanupPrimary?: AnalysisError | undefined;
   /** Producer-owned, caller-safe facts retained through every typed projection. */
   readonly diagnostics?: Readonly<Record<string, JsonValue>> | undefined;
-  readonly limit?: AnalysisSettingLimit | undefined;
+  readonly limit?: AnalysisLimit | undefined;
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
@@ -165,9 +165,9 @@ export interface SourcePublicationRecovery {
 
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
-  limit: Readonly<AnalysisSettingLimit> | undefined;
+  limit: Readonly<AnalysisLimit> | undefined;
   /** Bind the accepted setting at its producing boundary. */
-  bindLimit(limit: AnalysisSettingLimit): this {
+  bindLimit(limit: AnalysisLimit): this {
     this.limit = Object.freeze({ ...limit });
     return this;
   }

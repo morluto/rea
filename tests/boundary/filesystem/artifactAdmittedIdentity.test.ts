@@ -65,9 +65,7 @@ it.skipIf(process.platform === "win32").each(["zip", "asar"])(
           ok: false,
           error: {
             reason: "integrity",
-            detail: expect.stringContaining(
-              "no longer resolves to its admitted source",
-            ),
+            integrityCheck: "container-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -237,9 +235,7 @@ it.skipIf(process.platform === "win32")(
           ok: false,
           error: {
             reason: "integrity",
-            detail: expect.stringContaining(
-              "no longer resolves to its admitted source",
-            ),
+            integrityCheck: "container-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });

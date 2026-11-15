@@ -162,9 +162,9 @@ const readSelectedRegistration = async (
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     client,
+    platform,
     {},
     "effective",
-    platform,
   );
   return details.ok
     ? {

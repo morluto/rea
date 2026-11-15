@@ -513,13 +513,14 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and unresolved edges", () => {
+  it("compares resolved TypeSpec rows locally and keeps cyclic scopes and unresolved edges unknown", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
         { namespace: "", name: "Inner", enclosingRow: 2 },
       ],
     });
+    expect(cyclic.result.call_edges[0]?.target_row_resolved).toBe(false);
     expect(compareManagedMembers(cyclic, cyclic).methods[0]?.status).toBe(
       "unknown",
     );
@@ -527,8 +528,9 @@ describe("managed edge identity resolution", () => {
       memberRefParentRaw: 12,
       typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
     });
+    expect(spec.result.call_edges[0]?.target_row_resolved).toBe(true);
     expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
-      "unknown",
+      "unchanged",
     );
     const source = observeEdgeTarget();
     const unresolved = {

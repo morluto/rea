@@ -34,6 +34,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -59,6 +60,8 @@ if (installation.status !== "available")
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("dol");
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-dol-proof-",
   // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.

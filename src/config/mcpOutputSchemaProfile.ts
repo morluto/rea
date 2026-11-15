@@ -15,8 +15,13 @@ import { err, ok, type Result } from "../domain/result.js";
  */
 export const COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES = 4 * 1024;
 
-/** Select whether tools/list carries the large output contracts. */
-export const mcpOutputSchemaProfileSchema = z.enum(["full", "compact", "off"]);
+const profileConstraint =
+  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "off" (default) or "compact". The off profile omits output schemas; compact advertises every output schema within a 4,096-byte budget. The "full" output profile was removed: remove the setting or select "compact". Both keep canonical server-side validation and complete structured content.';
+
+/** Select whether tools/list carries bounded output contracts. */
+export const mcpOutputSchemaProfileSchema = z.enum(["off", "compact"], {
+  error: profileConstraint,
+});
 
 export type McpOutputSchemaProfile = z.infer<
   typeof mcpOutputSchemaProfileSchema
@@ -26,22 +31,16 @@ export type McpOutputSchemaProfile = z.infer<
  * Resolve the selected advertisement at the configuration boundary. No model
  * API reads an output schema; MCP client validators re-check what REA already
  * validates, and complete output schemas were about 92% of `tools/list`. They
- * are therefore omitted unless a caller selects `compact` or `full`.
+ * are therefore omitted unless a caller selects `compact`.
  */
 export const resolveMcpOutputSchemaProfile = (
   profile: McpOutputSchemaProfile | undefined,
 ): McpOutputSchemaProfile => profile ?? "off";
 
-/** Resolve the compact output advertisement, preserving every other choice. */
-export const compactPresentationForMcpOutputSchemaProfile = (
-  profile: McpOutputSchemaProfile | undefined,
-): { readonly budgetBytes: number } | undefined =>
-  profile === "compact"
-    ? { budgetBytes: COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES }
-    : undefined;
-
-const profileConstraint =
-  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "off" (default), "compact", or "full". The off profile omits output schemas; compact advertises every output schema within a 4,096-byte budget; full advertises complete output schemas. All keep canonical server-side validation and complete structured content.';
+/** The one bounded output advertisement, selected by `compact`. */
+export const COMPACT_OUTPUT_SCHEMA_PRESENTATION: {
+  readonly budgetBytes: number;
+} = Object.freeze({ budgetBytes: COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES });
 
 /** Parse the output schema advertisement selection at server composition. */
 export const parseMcpOutputSchemaProfile = (

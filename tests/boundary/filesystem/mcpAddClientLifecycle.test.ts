@@ -979,3 +979,29 @@ const gooseFixture = async (prefix: string) => {
   if (row === undefined) throw new Error("Goose has no table row");
   return { home, team, row, environment, systemPaths };
 };
+
+it.skipIf(HOST_PLATFORM.platform === "win32")(
+  "secures a private profile on this host when setup targets another platform",
+  async () => {
+    const home = await createTestTempDirectory("rea-private-profile-host-");
+    const row = supportedClients(home, HOST_PLATFORM.platform, {
+      HOME: home,
+    }).find(({ name }) => name === "fx");
+    if (row?.privateProfile === undefined)
+      throw new Error("fx has no private profile row");
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    const directory = dirname(row.configPath);
+    await chmod(row.configPath, 0o644);
+    await chmod(directory, 0o755);
+
+    // The selected platform shapes the registration; the file's modes stay
+    // this host's, so a readable private profile is still repaired.
+    await expect(
+      configureClientConfiguration(row, {}, command, undefined, "win32"),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect((await stat(row.configPath)).mode & 0o777).toBe(0o600);
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+  },
+);

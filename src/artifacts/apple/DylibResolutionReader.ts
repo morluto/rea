@@ -23,6 +23,7 @@ import {
 } from "../ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
 import {
   DylibFileAccess,
@@ -209,9 +210,10 @@ export const traceDylibResolution = async (options: {
         digests.get(target) ??
         (await files.sha256(join(root, target), undefined));
       if (targetDigest !== options.targetSha256)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Active target digest changed: expected ${options.targetSha256}, observed ${targetDigest}`,
+        throw targetDigestChangedFailure(
+          "target",
+          options.targetSha256,
+          targetDigest,
         );
       assertArtifactReadActive(options.signal);
       return dylibResolutionResultSchema.parse({

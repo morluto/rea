@@ -14,7 +14,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -27,6 +26,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -74,7 +74,7 @@ for (const command of [
 }
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-layout-verifier-",
 });
 const environment = Object.fromEntries(
@@ -1120,11 +1120,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const unsupported = Buffer.from(object);
@@ -1224,11 +1224,11 @@ try {
     }
     assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
-    try {
-      await memoryClient.close();
-    } finally {
-      await memoryTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => memoryClient.close(),
+      () => memoryTransport.close(),
+    ]);
   }
   // Extended section numbering keeps this valid while providing enough work
   // to reach the one-second CPU limit even on faster CI runners.
@@ -1269,11 +1269,11 @@ try {
     }
     assert.deepEqual(await readFile(cpuHeavyPath), cpuHeavy);
   } finally {
-    try {
-      await cpuClient.close();
-    } finally {
-      await cpuTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => cpuClient.close(),
+      () => cpuTransport.close(),
+    ]);
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
@@ -1309,11 +1309,11 @@ try {
       }
       assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
     } finally {
-      try {
-        await fileClient.close();
-      } finally {
-        await fileTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => fileClient.close(),
+        () => fileTransport.close(),
+      ]);
     }
   }
   // EM_RISCV: AArch64 (183) is now an admitted profile.
@@ -1424,11 +1424,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const mode of ["cli", "mcp"]) {
@@ -1493,16 +1493,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  root.releaseAfter(() => client.close());
+  root.releaseAfter(() => transport.close());
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -1520,9 +1517,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Offline binary layout verification failed; cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline binary layout verification failed; cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 }
 console.log(

@@ -13,10 +13,6 @@ import {
   renderCliDocument,
 } from "./cliOutput.js";
 import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "./config/mcpInputSchemaProfile.js";
-import {
   parseMcpOutputSchemaProfile,
   resolveMcpOutputSchemaProfile,
 } from "./config/mcpOutputSchemaProfile.js";
@@ -610,9 +606,6 @@ const targetFreeEnvironment = (
 const doctorExpectationForEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): DoctorCatalogExpectation => {
-  const inputProfile = parseMcpInputSchemaProfile(
-    environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-  );
   const outputProfile = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
@@ -631,9 +624,6 @@ const doctorExpectationForEnvironment = (
   );
   const progressive = catalogProfile.ok && catalogProfile.value === "hot-cold";
   const catalog = createCatalogIdentity({
-    compactPresentation: compactPresentationForMcpInputSchemaProfile(
-      inputProfile.ok ? inputProfile.value : undefined,
-    ),
     contracts,
     outputSchemaProfile: resolveMcpOutputSchemaProfile(
       outputProfile.ok ? outputProfile.value : undefined,

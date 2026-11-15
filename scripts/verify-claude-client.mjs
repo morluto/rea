@@ -6,10 +6,6 @@ import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { createCatalogIdentity } from "../dist/catalogIdentity.js";
 import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "../dist/config/mcpInputSchemaProfile.js";
-import {
   parseMcpOutputSchemaProfile,
   resolveMcpOutputSchemaProfile,
 } from "../dist/config/mcpOutputSchemaProfile.js";
@@ -191,26 +187,18 @@ await withVerifierCleanup(async () => {
               ...parsedStatus,
               result: expandMcpSessionStatus(parsedStatus.result),
             };
-            const inputProfile = parseMcpInputSchemaProfile(
-              environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-            );
             const outputProfile = parseMcpOutputSchemaProfile(
               environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
             );
-            assert.ok(inputProfile.ok);
             assert.ok(outputProfile.ok);
             assert.deepEqual(
               status.result.server_identity.catalog,
               createCatalogIdentity({
-                compactPresentation:
-                  compactPresentationForMcpInputSchemaProfile(
-                    inputProfile.value,
-                  ),
                 outputSchemaProfile: resolveMcpOutputSchemaProfile(
                   outputProfile.value,
                 ),
               }),
-              "binary_session must return the selected input/output profile's catalog identity",
+              "binary_session must return the selected output profile's catalog identity",
             );
             assert.equal(
               Object.hasOwn(status.result.server_identity.catalog, "tools"),

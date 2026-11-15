@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -515,15 +516,14 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   const tool = (await client.listTools()).tools.find(
     (item) => item.name === "inspect_web_network_capture",
   );
-  if (tool?.outputSchema === undefined)
-    throw new Error("Missing capture schema");
+  if (tool === undefined) throw new Error("Missing capture schema");
   const args = { capture_path: path, format: "saz", record_ordinals: [1, 0] };
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validate(tool.inputSchema, args)).toBe(true);
   const response = await call("inspect_web_network_capture", args);
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(getValidator).toHaveBeenCalled();
-  const expectedSchema = JSON.stringify(tool.outputSchema);
+  const expectedSchema = JSON.stringify(canonicalOutputSchema(tool.name));
   expect(
     getValidator.mock.calls.some(
       ([schema]) => JSON.stringify(schema) === expectedSchema,

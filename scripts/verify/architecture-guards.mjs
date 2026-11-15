@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +5,9 @@ import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  reconcileBaselineFile,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -60,6 +60,14 @@ const check = (label, selected, pattern, allow = []) => {
       `${label}:\n${offenders.map((file) => `  ${file.path}`).join("\n")}`,
     );
 };
+
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
@@ -262,7 +270,8 @@ const baselinePath = join(
   root,
   "scripts/verify/architecture-guard-baselines.json",
 );
-const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const baselineText = await readFile(baselinePath, "utf8");
+const baselines = JSON.parse(baselineText);
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
@@ -297,6 +306,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
     );
 };
+
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  localCompletenessEnumCount,
+  ["src/domain/coverage.ts"],
+);
 
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
@@ -515,6 +535,20 @@ checkCounted(
   [],
 );
 
+// Raw JSON Schema keywords and `x-rea-*` markers in `.meta()` bypass the
+// canonical Zod checks and reach every JSON Schema projection, including the
+// advertised one. Presentation facts are typed annotations
+// (src/domain/schemaAnnotations); constraints belong in Zod checks, or in a
+// src/domain/schemaConstraints helper that adds the check and its keyword
+// together.
+checkCounted(
+  "raw JSON Schema keyword or x-rea marker in Zod .meta() (use a typed annotation from src/domain/schemaAnnotations, a Zod check, or a src/domain/schemaConstraints helper)",
+  "raw-json-schema-meta",
+  files,
+  /\.meta\(\s*\{\s*"?(?:x-rea-[\w-]+|\$ref|not|allOf|anyOf|oneOf|if|then|else|dependentRequired|dependentSchemas|dependencies|uniqueItems|(?:min|max)(?:Length|Items|Properties|imum)|exclusive(?:Min|Max)imum|multipleOf|type|const|enum|format|pattern|patternProperties|properties|required|additionalProperties|items|prefixItems|contains|content(?:MediaType|Encoding|Schema)|propertyNames)"?\s*:/gu,
+  ["src/domain/schemaConstraints.ts"],
+);
+
 // A RangeError can mean a stack overflow, a host string or buffer limit, a
 // raw read or write past a buffer, or whatever its thrower intended. Only
 // known host limits are classified; parsers throw a ParseFailureError.
@@ -653,42 +687,25 @@ checkCounted(
   [],
 );
 
-if (baselinesShrunk) {
-  const sorted = Object.fromEntries(
-    Object.entries(baselines).map(([key, counts]) => [
-      key,
-      Object.fromEntries(
-        Object.entries(counts).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ]),
+const baselineFile = reconcileBaselineFile(
+  baselineText,
+  baselines,
+  shrinkBaselines,
+);
+if (baselineFile.action === "write") {
+  await writeFile(baselinePath, baselineFile.text);
+  console.log(
+    baselinesShrunk
+      ? `Lowered counted baselines in ${relative(root, baselinePath)}.`
+      : `Rewrote ${relative(root, baselinePath)} in its sorted form.`,
   );
-  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
-}
+} else if (baselineFile.action === "reject")
+  failures.push(
+    `${relative(root, baselinePath)} is not in its written form (each guard's paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+  );
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
-}
-// CI runs this file before `npm ci`. The numeric-limit parser needs
-// typescript6, so that check waits until dependencies exist. `npm run lint`
-// runs it after install.
-const typescript6 = new URL(
-  "../../node_modules/typescript6/package.json",
-  import.meta.url,
-);
-if (!existsSync(typescript6)) {
-  console.log(
-    "Numeric REA_ limit check waits until dependencies are installed.",
-  );
-} else {
-  const numericLimits = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
-    { stdio: "inherit" },
-  );
-  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);

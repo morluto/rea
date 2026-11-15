@@ -359,7 +359,15 @@ const managedNativeImplementationSchema = z.object({
   ]),
 });
 
+const targetRowResolvedSchema = z
+  .boolean()
+  .exactOptional()
+  .describe(
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Omitted by historical observations. Does not establish runtime binding.",
+  );
+
 const managedCallEdgeSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   caller_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
@@ -381,6 +389,7 @@ const managedCallEdgeSchema = z.object({
 });
 
 const managedFieldAccessSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   method_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema

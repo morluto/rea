@@ -188,11 +188,14 @@ export const staticJavaScriptTruthiness = (
     t.isNumericLiteral(value.argument)
   )
     return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
+  // Each of these evaluates to a fresh object, and every object is truthy.
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value)
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value)
   )
     return true;
   return undefined;
