@@ -357,16 +357,15 @@ class CdpTransportCore {
       this.#failPending("protocol_error");
       return;
     }
-    const wireBytes = bytes.byteLength;
-    const params = "params" in message ? message.params : {};
     const event: CdpTransportEvent = {
-      method: message.method,
-      params,
-      registered: registeredCdpEvent(message.method, params),
-      wireBytes,
-      ...(typeof message.sessionId === "string"
-        ? { sessionId: message.sessionId }
-        : {}),
+      ...receiveCdpEvent({
+        method: message.method,
+        params: "params" in message ? message.params : {},
+        ...(typeof message.sessionId === "string"
+          ? { sessionId: message.sessionId }
+          : {}),
+      }),
+      wireBytes: bytes.byteLength,
     };
     for (const listener of this.#listeners) listener(event);
   }
