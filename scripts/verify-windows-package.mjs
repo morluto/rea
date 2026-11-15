@@ -1,14 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { supportedClients } from "../dist/application/SupportedClients.js";
@@ -22,14 +14,18 @@ import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { verifyPackageUpdate } from "./verify-package-update.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
 const root = process.cwd();
-const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
-const workspaceOwner = {
-  path: workspace,
-  close: () => rm(workspace, { recursive: true, force: true }),
-};
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-windows-package-",
+  private: false,
+});
+const workspace = fixture.path;
+// The package command owner releases the fixture after its commands close.
+const workspaceOwner = { path: workspace, close: () => fixture.release() };
 const prefix = join(workspace, "prefix");
 let commands;
 const closeWorkspace = () =>

@@ -402,7 +402,6 @@
     "scripts/verify-native-ui.mjs": 1,
     "scripts/verify-node-sea.mjs": 1,
     "scripts/verify-package.mjs": 1,
-    "scripts/verify-packaged-ghidra-windows.mjs": 1,
     "scripts/verify-packaged-wasm-artifact.mjs": 1,
     "scripts/verify-packet-capture.mjs": 1,
     "scripts/verify-pe-load-config.mjs": 1,
@@ -418,9 +417,7 @@
     "scripts/verify-test-discovery.mjs": 1,
     "scripts/verify-test-temp-hygiene.mjs": 1,
     "scripts/verify-wasm-interface-comparison.mjs": 1,
-    "scripts/verify-windows-native-inspection.mjs": 1,
-    "scripts/verify-windows-native.mjs": 2,
-    "scripts/verify-windows-package.mjs": 1
+    "scripts/verify-windows-native.mjs": 1
   },
   "macho-load-command-literal": {},
   "lifecycle-plain-throw": {
