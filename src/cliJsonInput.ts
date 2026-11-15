@@ -14,9 +14,10 @@ import {
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "./domain/result.js";
@@ -35,7 +36,6 @@ export const parseCliJsonInput = async (
   options?: {
     readonly snapshot?: boolean;
     readonly stdin?: Readable;
-    readonly maxStdinBytes?: number;
   },
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
@@ -45,11 +45,7 @@ export const parseCliJsonInput = async (
     ok: false as const,
     error: {
       error: "Application workflow failed",
-      ...projectAnalysisError(
-        new AnalysisCancelledError(operation, {
-          cause,
-        }),
-      ),
+      ...projectAnalysisError(cancelledBy(operation, carriedReason(cause))),
     },
   });
   if (signal?.aborted) return cancelled(signal.reason);
@@ -132,13 +128,12 @@ const readCliJsonStdin = async (
   options?: {
     readonly snapshot?: boolean;
     readonly stdin?: Readable;
-    readonly maxStdinBytes?: number;
   },
 ): Promise<
   Result<unknown, AnalysisInputError | AnalysisResourceConstraintError>
 > => {
   const stream = options?.stdin ?? process.stdin;
-  const maxBytes = options?.maxStdinBytes ?? DEFAULT_MAX_STDIN_BYTES;
+  const maxBytes = DEFAULT_MAX_STDIN_BYTES;
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   const requireHeadroom = (): void => {

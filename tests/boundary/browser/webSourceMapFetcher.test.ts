@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,21 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
       expectInvalidSourceMaps({
         ...result,
         items: [
@@ -970,7 +983,7 @@ describe("selected source-map fetch deadline", () => {
           );
         });
     }
-  }, 3_000);
+  });
 });
 
 describe("browser map decoded validation", () => {
@@ -1802,7 +1815,7 @@ describe("source-map set output admission", () => {
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
       outputLimitBytes,
     );
-  }, 120_000);
+  });
 
   it("reserves large failure contexts and reports unprocessed requests as unknown", async () => {
     const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024 * 1_024)}`;
@@ -1901,7 +1914,7 @@ describe("expanded source-map evidence budget", () => {
       "included",
     ]);
     expect(result.items[2]?.artifact?.text).toBe(valid);
-  }, 15_000);
+  });
 
   it("bounds expanded evidence across individually valid maps", async () => {
     const expanded = JSON.stringify({

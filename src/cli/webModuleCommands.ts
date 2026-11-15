@@ -6,8 +6,10 @@ import { logCliCommand } from "../cliLogging.js";
 import { webModuleTraceInputSchema } from "../domain/webModuleTrace.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 const importMapInputSchema =
@@ -24,9 +26,13 @@ export const registerWebModuleCommands = (
     description:
       "Trace one captured script's native imports to URLs and captured source candidates",
     args: z.object({
-      manifestPath: webModuleTraceInputSchema.shape.manifest_path,
-      scriptIndex: cliIntegerArgument(0).describe(
-        "Zero-based manifest script index",
+      manifestPath: localPathStringSchema.describe(
+        "export_web_scripts manifest path; a relative path resolves against the current directory",
+      ),
+      scriptIndex: cliDecimalField(
+        webModuleTraceInputSchema.shape.script_index.describe(
+          "Zero-based manifest script index",
+        ),
       ),
     }),
     options: z.object({
@@ -47,7 +53,7 @@ export const registerWebModuleCommands = (
             () =>
               service.trace(
                 {
-                  manifest_path: args.manifestPath,
+                  manifest_path: absoluteCallerPath(args.manifestPath),
                   script_index: args.scriptIndex,
                   ...(options.importerUrl === undefined
                     ? {}

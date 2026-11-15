@@ -103,7 +103,6 @@ processTest(
       expect(observed.bytes).toBeLessThan(4096);
     }
   },
-  90_000,
 );
 
 processTest(
@@ -162,7 +161,6 @@ processTest(
       JSON.stringify(observations),
     );
   },
-  90_000,
 );
 
 processTest(
@@ -225,5 +223,4 @@ processTest(
       }),
     );
   },
-  90_000,
 );

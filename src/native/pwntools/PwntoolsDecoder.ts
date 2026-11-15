@@ -1,3 +1,4 @@
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
@@ -9,7 +10,7 @@ import {
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import {
-  pwntoolsDecoderFailure,
+  pwntoolsFailureDialect,
   pwntoolsUnavailable,
   capturedPwntoolsOutput,
   pwntoolsBudgetRecovery,
@@ -36,12 +37,13 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -213,11 +215,7 @@ export class PwntoolsDecoder<
   ): Promise<Result<Report, AnalysisError>> {
     if (options?.signal?.aborted)
       return Promise.resolve(
-        err(
-          new AnalysisCancelledError(this.profile.operation, {
-            cause: options?.signal?.reason,
-          }),
-        ),
+        err(cancelledBy(this.profile.operation, options?.signal)),
       );
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const key = Symbol();
@@ -228,11 +226,7 @@ export class PwntoolsDecoder<
     const operation = this.#tail.then(() => {
       this.#admissions.settle(key, "admitted");
       if (options?.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(this.profile.operation, {
-            cause: options?.signal?.reason,
-          }),
-        );
+        return err(cancelledBy(this.profile.operation, options?.signal));
       return this.#closing ? err(this.#closedError()) : inspect();
     });
     this.#tail = operation.then(
@@ -242,9 +236,10 @@ export class PwntoolsDecoder<
     return admission.then((state) =>
       state === "cancelled"
         ? err(
-            new AnalysisCancelledError(this.profile.operation, {
-              cause: options?.signal?.reason,
-            }),
+            cancelledBy(
+              this.profile.operation,
+              carriedReason(options?.signal?.reason),
+            ),
           )
         : operation,
     );
@@ -323,21 +318,20 @@ export class PwntoolsDecoder<
     let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
     const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
-    let selectedPath = executablePath;
     const failure = (cause: unknown) =>
-      pwntoolsDecoderFailure(
+      classifyProviderFailure(
         cause,
-        phase,
-        selectedPath,
-        executablePath,
-        {},
-        context,
+        pwntoolsFailureDialect(
+          phase,
+          phase === "configuration" ? executablePath : input.path,
+          executablePath,
+          {},
+          context,
+        ),
       );
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(OPERATION, options.signal);
       if (!pwntoolsHostSupported(process.platform, process.arch)) {
         const requirement = pwntoolsHostRequirement(
           process.platform,
@@ -350,20 +344,20 @@ export class PwntoolsDecoder<
           { userMessage: requirement },
         );
       }
-      if (!isAbsolute(selectedPath))
+      if (!isAbsolute(executablePath))
         throw pwntoolsUnavailable(
           "Set REA_PWNTOOLS_PYTHON to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.",
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           context,
         );
-      await access(selectedPath, constants.X_OK);
-      if (!(await stat(selectedPath)).isFile())
+      await access(executablePath, constants.X_OK);
+      if (!(await stat(executablePath)).isFile())
         throw pwntoolsUnavailable(
           "Selected Python executable must be a regular executable file, not a directory: " +
-            selectedPath,
-          selectedPath,
+            executablePath,
+          executablePath,
           undefined,
           undefined,
           context,
@@ -379,7 +373,7 @@ export class PwntoolsDecoder<
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
           inputLimit.error,
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           {
@@ -393,7 +387,6 @@ export class PwntoolsDecoder<
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),
         command_timeout_ms: timeoutMs,
       };
-      selectedPath = input.path;
       const snapshot = await readStableArtifact(
         input.path,
         inputLimit.bytes,
@@ -429,9 +422,7 @@ export class PwntoolsDecoder<
           cause.code === "ABORT_ERR" &&
           cause.cause === options.signal.reason
         )
-          throw new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          });
+          throw cancelledBy(OPERATION, options.signal);
         throw cause;
       }
       await writeFile(
@@ -500,10 +491,11 @@ export class PwntoolsDecoder<
           if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
           const primary =
             cause.reason === "cancelled"
-              ? new AnalysisCancelledError(OPERATION, {
-                  cause: artifactFileCancellationCause(cause),
-                  capturedOutput,
-                })
+              ? cancelledBy(
+                  OPERATION,
+                  carriedReason(artifactFileCancellationCause(cause)),
+                  { capturedOutput },
+                )
               : (cleanup ??
                 new AnalysisOutputError(OPERATION, cause.message, {
                   cause,
@@ -526,14 +518,17 @@ export class PwntoolsDecoder<
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const error = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            capturedOutput,
-            ...(cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined
-              ? { cleanup: cause.cleanup }
-              : {}),
-          });
+          const error = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            {
+              capturedOutput,
+              ...(cause instanceof ArtifactReaderFailure &&
+              cause.cleanup !== undefined
+                ? { cleanup: cause.cleanup }
+                : {}),
+            },
+          );
           bindArtifactFileCleanup(cause, error);
           throw error;
         }
@@ -651,7 +646,8 @@ export class PwntoolsDecoder<
               }),
         );
       }
-    } catch (cause: unknown) {
+    } catch (caught: unknown) {
+      let cause = caught;
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete
@@ -680,13 +676,15 @@ export class PwntoolsDecoder<
         this.#resources,
         producerLimits,
       );
-      const primary = pwntoolsDecoderFailure(
+      const primary = classifyProviderFailure(
         cause,
-        phase,
-        selectedPath,
-        executablePath,
-        evidence,
-        context,
+        pwntoolsFailureDialect(
+          phase,
+          phase === "configuration" ? executablePath : input.path,
+          executablePath,
+          evidence,
+          context,
+        ),
       );
       result = err(primary);
     }
@@ -702,8 +700,7 @@ export class PwntoolsDecoder<
     const cleanup = await this.#completeCleanup(() => this.#retire());
     if (result.ok && options?.signal?.aborted)
       result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
+        cancelledBy(OPERATION, options.signal, {
           partialObservation: result.value,
           capturedOutput: result.value.diagnostics,
         }),

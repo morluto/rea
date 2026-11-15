@@ -25,11 +25,13 @@ for (const blocked of [false, true]) {
       const handoff = `${receipt}.document-created`;
       await writeFile(mode, "denied-after-handoff");
       if (blocked) await mkdir(handoff);
-      const result = await processes.run(
-        process.execPath,
-        [hopper, mode, receipt, "-Y", "controlled-bootstrap"],
-        { timeoutMs: 5_000 },
-      );
+      const result = await processes.run(process.execPath, [
+        hopper,
+        mode,
+        receipt,
+        "-Y",
+        "controlled-bootstrap",
+      ]);
       expect(result.signal, result.stderr).toBeNull();
       expect(result.exitCode, result.stderr).toBe(blocked ? 1 : 2);
       expect(result.stderr).toContain("Not authorized to send Apple events");
@@ -54,7 +56,6 @@ processTest(
     const pending = `${endpointPath}.pending`;
     await writeFile(pending, "previous selected evidence");
     const result = await processes.run(process.execPath, [ghidra], {
-      timeoutMs: 5_000,
       env: {
         ...process.env,
         REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({

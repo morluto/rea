@@ -46,10 +46,9 @@ export const PROCESS_COMPARISON_DIMENSIONS = [
 export type ProcessComparisonDimension =
   (typeof PROCESS_COMPARISON_DIMENSIONS)[number];
 
-/** Caller-selected comparison policy; the clock is not persisted as policy. */
+/** Caller-selected comparison policy. */
 export interface ProcessCaptureComparisonOptions {
   readonly maxCaptureAgeMs?: number;
-  readonly now?: () => number;
   readonly traceSpecification?: ProcessTraceSpecification;
 }
 
@@ -479,7 +478,7 @@ const explicitlyTimedSources = (
 const assertComparable = (
   left: ProcessCapture,
   right: ProcessCapture,
-  options: { readonly maxCaptureAgeMs?: number; readonly now?: () => number },
+  options: { readonly maxCaptureAgeMs?: number },
 ): void => {
   if (
     left.manifest.comparison_contract_sha256 !==
@@ -500,7 +499,7 @@ const assertComparable = (
   }
   if (options.maxCaptureAgeMs === undefined) return;
   const maxCaptureAgeMs = options.maxCaptureAgeMs;
-  const now = (options.now ?? Date.now)();
+  const now = Date.now();
   const stale = (
     [
       ["left", left],

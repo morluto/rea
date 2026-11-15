@@ -164,6 +164,7 @@ export const authenticateEvidenceBundleValue = (
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
           cause: failure.cause,
+          detectedKind: "analysis-snapshot",
           userMessage:
             "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file, or pass --snapshot to a compatible CLI analysis command (which loads and updates the snapshot). Alternatively, supply a bundle from export_evidence_bundle.",
         }),

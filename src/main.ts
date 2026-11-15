@@ -95,8 +95,11 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const fullOutputCatalog =
+  // The recorded catalog carries complete output schemas, which the deferred
+  // server either lists (full) or omits (off, the default).
+  const recordedOutputCatalog =
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off" ||
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
   // The recorded catalog holds the complete inventory and its full-catalog
   // identity, so only an unscoped registration can be served from it. A
@@ -107,7 +110,7 @@ export const run = async (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
-    fullOutputCatalog &&
+    recordedOutputCatalog &&
     !scopedToolFamilies &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined

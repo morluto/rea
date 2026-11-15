@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 /** Environment variables that redirect where supported clients keep config. */
-export const CLIENT_LOCATION_ENVIRONMENT = [
+const CLIENT_LOCATION_ENVIRONMENT = [
   "HOME",
   "USERPROFILE",
   "HOMEDRIVE",
@@ -16,6 +16,7 @@ export const CLIENT_LOCATION_ENVIRONMENT = [
   "DSH_AGENTS_HOME",
   "COPILOT_HOME",
   "FACTORY_HOME_OVERRIDE",
+  "FLATPAK_XDG_CONFIG_HOME",
   "GROK_HOME",
   "GEMINI_CLI_HOME",
   "GEMINI_CLI_TRUST_WORKSPACE",

@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -13,7 +14,7 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { inspectSolidityMetadata } from "../../../src/evm/SolidityMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -314,7 +315,8 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
       () => "completed",
       (error: unknown) => error,
     );
-  await entered.promise;
+  onTestFinished(() => controller.abort());
+  await awaitAcknowledgement(entered.promise, cancellation, "EVM inspection");
   controller.abort(new Error("SDK EVM cancellation verification"));
   expect(await cancellation).toMatchObject({
     message: expect.stringContaining("SDK EVM cancellation verification"),

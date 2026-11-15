@@ -82,8 +82,23 @@ const cases = [
     client: "cursor",
     path: ".cursor/mcp.json",
     text: "not-json",
-    diagnostic: "Configuration is not valid JSON",
+    diagnostic: "Configuration is not valid JSONC and was not changed",
+    syntax: "JSONC",
+  },
+  {
+    // Pi loads mcp.json with strict JSON.parse, so REA's reader admits JSON only.
+    client: "pi",
+    path: ".pi/agent/mcp.json",
+    text: '{"mcpServers":{},}',
+    diagnostic: "Configuration is not valid JSON and was not changed",
     syntax: "JSON",
+  },
+  {
+    client: "codex",
+    path: ".codex/config.toml",
+    text: "[mcp_servers\n",
+    diagnostic: "Configuration is not valid TOML and was not changed",
+    syntax: "TOML",
   },
   {
     client: "hermes",
@@ -142,7 +157,7 @@ for (const scenario of cases)
         expect(setup.json).toMatchObject({
           remediation: expect.stringMatching(/\S/u),
         });
-        if (scenario.syntax === "JSON")
+        if (scenario.syntax === "JSONC")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
         expect(setup.json).toMatchObject({

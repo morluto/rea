@@ -27,12 +27,10 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();

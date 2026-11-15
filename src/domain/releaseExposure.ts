@@ -733,10 +733,7 @@ const metadataStatus = (
     images.some((image) => image.kind === "failed" || image.kind === "absent")
   )
     return "unknown";
-  if (
-    images.length === 0 ||
-    images.every((image) => image.kind === "unsupported")
-  )
+  if (images.every((image) => image.kind === "unsupported"))
     return "not_applicable";
   return "not_observed";
 };

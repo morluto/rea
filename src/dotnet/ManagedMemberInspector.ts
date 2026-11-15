@@ -85,6 +85,7 @@ const unavailable = (
       },
       types: [],
       signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,

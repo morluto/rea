@@ -9,9 +9,9 @@ import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 
-export const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_VFS_HEADER_JSON_BYTES = 32 * 1024 * 1024;
-export const MAX_DENO_TABLE_COUNT = 100_000;
+const MAX_DENO_TABLE_COUNT = 100_000;
 export const MAX_DENO_SPECIFIER_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_REMOTE_BODY_BYTES = 256 * 1024 * 1024;
 

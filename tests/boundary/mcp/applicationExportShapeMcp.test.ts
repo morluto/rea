@@ -474,7 +474,7 @@ ${returnSites}
       left_omitted_fields: 0,
       right_omitted_fields: 0,
     });
-  }, 30_000);
+  });
 });
 
 const analyzeSourceEvidence = async (source: string) => {

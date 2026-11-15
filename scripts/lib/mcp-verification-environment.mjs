@@ -4,3 +4,9 @@
 export const INLINE_EVIDENCE_MCP_ENVIRONMENT = Object.freeze({
   REA_MCP_MAX_INPUT_ELEMENTS: "65536",
 });
+
+/** Select complete output contracts when validating advertised schemas. */
+export const schemaVerifierEnvironment = (environment) => ({
+  ...environment,
+  REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+});

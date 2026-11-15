@@ -41,7 +41,6 @@ ${mutation}
         REA_KUNA_CACHE_DIR: join(root, "cache"),
         REA_LOG_LEVEL: "silent",
       },
-      timeoutMs: 20_000,
     });
     const after = await readFile(executable);
     const afterHash = createHash("sha256").update(after).digest("hex");

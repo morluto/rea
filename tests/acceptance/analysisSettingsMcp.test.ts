@@ -80,7 +80,7 @@ it("recovers expanded ASAR listing admission on the same MCP connection independ
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
@@ -214,7 +214,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.each(["0", "2147483648"])(
   "keeps invalid JADX launch timeout %s local and repairable through MCP",
@@ -279,7 +279,6 @@ it.each(["0", "2147483648"])(
       await client.close();
     }
   },
-  30000,
 );
 
 it("lowers, restores and seeds the native matching allowance over MCP", async () => {
@@ -427,7 +426,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
   } finally {
     await invalid.client.close();
   }
-}, 30000);
+});
 
 it("starts with invalid runtime seeds and recovers ASAR and capture work on the same connection", async () => {
   const root = await createTestTempDirectory("rea-invalid-runtime-seeds-");
@@ -517,7 +516,7 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.skipIf(process.platform === "win32")(
   "ignores Windows ChangeTime launch settings on other hosts",
@@ -539,5 +538,4 @@ it.skipIf(process.platform === "win32")(
       await client.close();
     }
   },
-  30000,
 );

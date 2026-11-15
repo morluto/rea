@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../../domain/jsonPointer.js";
 import {
   ownMember,
   isObject,
@@ -5,7 +6,6 @@ import {
   isSafeHttpMethod,
   listItems,
   locateList,
-  pointerTokens,
   type JsonObject,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -170,7 +170,7 @@ const describeJson = (value: JsonValue): string => {
   const pointer = locateList(value, undefined);
   const items = pointer === undefined ? [] : (listItems(value, pointer) ?? []);
   if (pointer !== undefined && items.length > 0) {
-    const [member] = pointerTokens(pointer);
+    const [member] = jsonPointerTokens(pointer);
     return member === undefined
       ? `a JSON array of objects ${withFields(items)}`
       : `a JSON object whose ${describeText(member, "member", "capture Evidence", JSON.stringify)} lists objects ${withFields(items)}`;

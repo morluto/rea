@@ -10,10 +10,11 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
@@ -124,7 +125,19 @@ export const translateNativeCommandFailure = (
           })
         : cancellationPrimary && cancelled !== undefined
           ? cancelled
-          : new ProviderAdapterError(IDENTITY.id, operation, options);
+          : // The ownership helper's compiler deadline is a retryable timeout
+            // with its own setting, not a provider failure.
+            darwin?.compileTimeout !== undefined
+            ? new AnalysisTimeoutError(
+                operation,
+                darwin.compileTimeout.timeoutMs,
+                {
+                  ...options,
+                  userMessage: darwin.compileTimeout.userMessage,
+                  remediationAction: darwin.compileTimeout.remediationAction,
+                },
+              )
+            : new ProviderAdapterError(IDENTITY.id, operation, options);
     return retainProcessInspectionCleanup(
       preparation,
       bindCleanup(error),
@@ -151,11 +164,11 @@ export const translateNativeCommandFailure = (
           reason: failure.cleanupFailure,
           resources: [...failure.cleanupResources],
         };
-  const errorOptions = {
-    cause: failure,
+  const errorOptionsWithoutCause = {
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
     ...(cleanup === undefined ? {} : { cleanup }),
   };
+  const errorOptions = { cause: failure, ...errorOptionsWithoutCause };
   if (failure.reason === "unavailable") {
     const reason =
       presentation.unavailableMessage ??
@@ -169,12 +182,17 @@ export const translateNativeCommandFailure = (
   }
   if (failure.reason === "cancelled")
     return bindCleanup(
-      new AnalysisCancelledError(operation, {
-        ...errorOptions,
-        ...(failure.cancellation === undefined
-          ? {}
-          : { cause: failure.cancellation.reason }),
-      }),
+      cancelledBy(
+        operation,
+        carriedReason(
+          failure.cancellation === undefined
+            ? failure
+            : failure.cancellation.reason,
+        ),
+        {
+          ...errorOptionsWithoutCause,
+        },
+      ),
     );
   if (failure.reason === "timeout")
     return bindCleanup(

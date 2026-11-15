@@ -8,10 +8,8 @@ import { ok } from "../../../src/domain/result.js";
 import { z } from "zod";
 import { afterAll, expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/native/nativeObservation.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -151,7 +149,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
   } finally {
     await harness.close();
   }
-}, 90_000);
+});
 
 it("follows native overflow continuations through MCP without repeating provider work", async () => {
   let reads = 0;
@@ -267,4 +265,4 @@ it("follows native overflow continuations through MCP without repeating provider
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

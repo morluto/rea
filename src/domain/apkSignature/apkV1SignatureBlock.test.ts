@@ -19,12 +19,12 @@ import {
   signerInfo,
   tlv,
 } from "../../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import {
-  decodeV1SignatureBlock,
-  MAX_ASN1_ELEMENTS,
-  MAX_V1_BLOCK_CERTIFICATES,
-  MAX_V1_SIGNER_INFOS,
-} from "./apkV1SignatureBlock.js";
+import { decodeV1SignatureBlock } from "./apkV1SignatureBlock.js";
+
+// Fixed input boundaries exercise the decoder without importing its internal limits.
+const MAX_V1_BLOCK_CERTIFICATES = 32;
+const MAX_V1_SIGNER_INFOS = 32;
+const MAX_ASN1_ELEMENTS = 65_536;
 
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");

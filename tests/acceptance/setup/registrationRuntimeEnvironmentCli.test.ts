@@ -139,7 +139,6 @@ cliTest(
     });
     expect(await readFile(config, "utf8")).toBe(updatedConfiguration);
   },
-  120_000,
 );
 
 cliTest(
@@ -767,7 +766,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -789,6 +787,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
+            protocol: "legacy",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -903,7 +902,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -955,7 +953,6 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
 
 cliTest(
@@ -1018,5 +1015,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

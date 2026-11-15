@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  decodeLimit,
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { readStableArtifact } from "../readStableArtifact.js";
@@ -6,7 +11,8 @@ import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
-import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -80,7 +86,10 @@ export const decodeKeyedArchiveBytes = (
   selection: { root?: string | undefined; offset: number; limit: number },
 ) => {
   if (bytes.length > MAX_BYTES)
-    throw new RangeError("Keyed archive exceeds 64 MiB");
+    throw decodeLimit("keyed-archive", "Keyed archive exceeds 64 MiB", {
+      name: "keyed-archive-bytes",
+      maximum: MAX_BYTES,
+    });
   if (hasNibArchiveSignature(bytes))
     throw new KeyedArchiveKindError(
       "Selected file is a compiled NIBArchive, not a Foundation plist archive; decode it with decode_interface_builder",
@@ -90,16 +99,10 @@ export const decodeKeyedArchiveBytes = (
   const xmlText = binary ? undefined : decodeXmlPlistText(bytes);
   // Scalar decoding and source container materialization expand shared references,
   // so a few hundred bytes can exhaust memory or the stack without preflight.
-  // RangeError reports a resource limit; a reference cycle is malformed.
+  // A budget is a `limit` parse failure; a reference cycle is malformed.
   const binaryExpansion = binary
     ? estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
         budget: "the keyed archive decode budget",
-        fail: (kind, message) =>
-          kind === "cycle"
-            ? new TypeError(
-                "binary plist object references form a cycle, which a property list cannot represent",
-              )
-            : new RangeError(message),
         bounds: "decoder",
         numberProjection: true,
         uidProjection: true,
@@ -110,14 +113,7 @@ export const decodeKeyedArchiveBytes = (
     : undefined;
   const parsed =
     binaryExpansion !== undefined
-      ? {
-          value: decodeBinaryPlistValue(
-            bytes,
-            binaryExpansion,
-            binaryScalarMetadata,
-          ),
-          numberLiterals: binaryScalarMetadata!.literals,
-        }
+      ? decodeBinaryPropertyList(bytes, binaryExpansion, binaryScalarMetadata)
       : parseXmlPropertyList(xmlText ?? "");
   const {
     nonFiniteRealCount,
@@ -147,6 +143,7 @@ export const decodeKeyedArchiveBytes = (
     limitations: [
       ...graph.limitations,
       ...numbers.limitations(),
+      ...plistDuplicateKeyLimitations(parsed.duplicateKeys),
       ...(nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(nonFiniteRealCount)]),
@@ -176,7 +173,7 @@ export const decodeKeyedArchiveBytes = (
  * decode_interface_builder is portable; inspect_plist requires macOS.
  */
 const keyedArchiveKindRemediation = (
-  kind: KeyedArchiveKindError["kind"],
+  kind: KeyedArchiveKindError["fileKind"],
   platform: NodeJS.Platform,
 ): string => {
   if (kind === "nib-archive")
@@ -474,13 +471,16 @@ const decodeSelectedArchive = (
         {
           cause,
           remediationAction: keyedArchiveKindRemediation(
-            cause.kind,
+            cause.fileKind,
             input.platform ?? process.platform,
           ),
         },
       );
     throw new ArtifactReaderFailure(
-      cause instanceof RangeError ? "limit" : "format",
+      (cause instanceof ParseFailureError && cause.kind === "limit") ||
+        isHostLimitFailure(cause)
+        ? "limit"
+        : "format",
       `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
       { cause },
     );

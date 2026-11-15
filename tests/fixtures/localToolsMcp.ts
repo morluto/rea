@@ -9,7 +9,7 @@ import {
 } from "@modelcontextprotocol/client/stdio";
 import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { fileURLToPath } from "node:url";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, beforeAll, expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
@@ -20,6 +20,8 @@ export const localToolsMcpEnvironment = (
   REA_LOG_LEVEL: "silent",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   GHIDRA_INSTALL_DIR: process.execPath,
+  // Validate each result against its complete advertised output contract.
+  REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   ...environment,
 });
 
@@ -89,3 +91,33 @@ export async function connectLocalToolsMcp(
   };
   return { client, call };
 }
+
+/**
+ * One production stdio MCP client for the calling test file. It connects
+ * before the file's tests. Teardown removes each cleanup only after it
+ * succeeds, so a failed cleanup stays owned.
+ */
+export const fileLocalToolsMcp = (
+  environment: Readonly<Record<string, string>> = {},
+) => {
+  let connected: Awaited<ReturnType<typeof connectLocalToolsMcp>> | undefined;
+  const cleanups: Array<() => Promise<void>> = [];
+  beforeAll(async () => {
+    connected = await connectLocalToolsMcp(environment, (cleanup) => {
+      cleanups.push(cleanup);
+    });
+  });
+  afterAll(async () => {
+    for (let cleanup = cleanups.at(-1); cleanup; cleanup = cleanups.at(-1)) {
+      await cleanup();
+      cleanups.pop();
+    }
+  });
+  return {
+    get client() {
+      if (connected === undefined)
+        throw new Error("The file's MCP client is not connected");
+      return connected.client;
+    },
+  };
+};

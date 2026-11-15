@@ -12,6 +12,7 @@ import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ok } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 let resources: ArtifactResourceScope;
@@ -20,6 +21,7 @@ beforeEach(() => {
 });
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
+  mcpClientRegistrationWritten,
   registerMcpClient,
   registerMcpClients,
 } from "./McpClientRegistration.js";
@@ -245,7 +247,7 @@ it("uses Cline's literal fallback for an empty POSIX HOME and refuses unknown sy
   );
 });
 
-it("selects Goose and Zed native settings paths for their platforms and overrides", async () => {
+it("selects Goose, Zed and Cline extension native settings paths for their platforms and overrides", async () => {
   const cases = [
     {
       agent: "goose",
@@ -276,6 +278,28 @@ it("selects Goose and Zed native settings paths for their platforms and override
       platform: "linux" as const,
       environment: { XDG_CONFIG_HOME: "/custom" },
       expected: "/custom/zed/settings.json",
+    },
+    // Zed's dirs::config_dir ignores a relative XDG_CONFIG_HOME.
+    {
+      agent: "zed",
+      platform: "linux" as const,
+      environment: { XDG_CONFIG_HOME: "relative" },
+      expected: "/home/user/.config/zed/settings.json",
+    },
+    // The Cline extension stores settings in VS Code's selected user data.
+    {
+      agent: "cline",
+      platform: "linux" as const,
+      environment: { VSCODE_APPDATA: "/vscode-data" },
+      expected:
+        "/vscode-data/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+    },
+    {
+      agent: "cline",
+      platform: "darwin" as const,
+      environment: { VSCODE_PORTABLE: "/portable" },
+      expected:
+        "/portable/user-data/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
     },
   ];
   for (const { agent, platform, environment, expected } of cases) {
@@ -511,6 +535,13 @@ describe("Registration cancellation and mixed outcomes", () => {
       _tag: "AnalysisCancelledError",
       diagnostics: { configured: true },
     });
+    // Callers that warn about written settings still see this write.
+    expect(mcpClientRegistrationWritten(result)).toBe(true);
+    expect(
+      mcpClientRegistrationWritten(
+        await register(path, launcher, before.signal),
+      ),
+    ).toBe(false);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       "amp.mcpServers": { rea: launcher },
     });
@@ -612,17 +643,22 @@ describe("Registration cancellation and sibling outcomes", () => {
       entered();
       await blocked;
     });
-    await admitted;
-    const controller = new AbortController();
-    const queued = register(path, launcher, controller.signal);
-    controller.abort("queued cancellation");
-    unblock();
-    await first;
-    expect(await queued).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError" },
-    });
-    expect(await readFile(path, "utf8")).toBe("{}");
+    try {
+      await awaitAcknowledgement(admitted, first, "registration transaction");
+      const controller = new AbortController();
+      const queued = register(path, launcher, controller.signal);
+      controller.abort("queued cancellation");
+      unblock();
+      await first;
+      expect(await queued).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
+      expect(await readFile(path, "utf8")).toBe("{}");
+    } finally {
+      unblock();
+      await first;
+    }
   });
 
   it("keeps successful siblings after ordinary failures and marks work not started after cancellation", async () => {

@@ -15,7 +15,7 @@ import {
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -304,9 +304,9 @@ it("summarizes selected members and pages every original collection after the fi
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
-it("keeps collections that historical member Evidence never examined unknown", async () => {
+it("keeps collections that member Evidence never examined unknown", async () => {
   const directory = await createTestTempDirectory("rea-member-historical-");
   const path = join(directory, "fixture.dll");
   await writeFile(path, buildManagedPeFixture());
@@ -319,13 +319,13 @@ it("keeps collections that historical member Evidence never examined unknown", a
       })
     ).structuredContent,
   );
-  const {
-    exported_types: _exported,
-    user_strings: _strings,
-    selection: _selection,
-    signature_resolution: _resolution,
-    ...recorded
-  } = managedMemberInspectionSchema.parse(parent.normalized_result);
+  const recorded = {
+    ...managedMemberInspectionSchema.parse(parent.normalized_result),
+    exported_types: null,
+    user_strings: null,
+    selection: null,
+    signature_resolution: null,
+  };
   const historical = createEvidence(undefined, parent.provider, {
     operation: parent.operation,
     parameters: parent.parameters,
@@ -360,7 +360,7 @@ it("keeps collections that historical member Evidence never examined unknown", a
       view: { kind: "managed", collection: "attributes", offset: 0, limit: 1 },
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-}, 30000);
+});
 
 it("binds managed member views to their recorded token scope", async () => {
   const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;

@@ -2,7 +2,9 @@ import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { WindowsShortcutService } from "./WindowsShortcutService.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
-import type { WindowsShortcut } from "../../domain/native/windowsShortcut.js";
+import { createHash } from "node:crypto";
+import { inspectWindowsShortcutInputSchema } from "../../domain/native/windowsShortcut.js";
+import { parseWindowsShortcut } from "../../native/windows/WindowsShortcutParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -12,64 +14,20 @@ import {
 
 const identity = WINDOWS_SHORTCUT_PROVIDER;
 
-const report: WindowsShortcut = {
-  artifact: {
-    path: "/artifacts/shortcut.lnk",
-    sha256: "a".repeat(64),
-    bytes: 128,
+const path = "/artifacts/shortcut.lnk";
+const bytes = Buffer.alloc(80);
+bytes.writeUInt32LE(76, 0);
+Buffer.from("0114020000000000c000000000000046", "hex").copy(bytes, 4);
+bytes.writeUInt32LE(1, 60);
+const report = await parseWindowsShortcut(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  header: {
-    location: { offset: 0, bytes: 76 },
-    header_size: 76,
-    clsid: "00021401-0000-0000-C000-000000000046",
-    link_flags: { raw: 0, decoded: [] },
-    file_attributes: { raw: 0, decoded: [] },
-    creation_time: { raw: "0", iso8601: null },
-    access_time: { raw: "0", iso8601: null },
-    write_time: { raw: "0", iso8601: null },
-    file_size: 0,
-    icon_index: 0,
-    show_command: { raw: 1, decoded: "normal" },
-    hotkey: {
-      raw: 0,
-      modifiers: [],
-      virtual_key: null,
-      virtual_key_name: null,
-    },
-  },
-  id_list: null,
-  link_info: null,
-  string_data: {
-    name: null,
-    relative_path: null,
-    working_dir: null,
-    arguments: null,
-    icon_location: null,
-  },
-  extra_data: { blocks: [], terminal_offset: null },
-  observations: [
-    { kind: "arguments_present", evidence_kind: "derived", value: false },
-    { kind: "argument_length", evidence_kind: "derived", characters: 0 },
-    { kind: "target_extension", evidence_kind: "derived", extension: null },
-    { kind: "show_command_minimized", evidence_kind: "derived", value: false },
-    {
-      kind: "icon_location_differs_from_target",
-      evidence_kind: "derived",
-      value: null,
-    },
-  ],
-  coverage: {
-    status: "complete",
-    reason: null,
-    examined_id_list_items: 0,
-    examined_extra_data_blocks: 0,
-    failing_offset: null,
-  },
-  issues: [],
-  limitations: [
-    "Rows reproduce the selected Shell Link bytes; they do not resolve, open, or execute the link target.",
-  ],
-};
+  inspectWindowsShortcutInputSchema.parse({ path }),
+);
 
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { userInfo } from "node:os";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { isMap, parse as parseYaml, parseDocument } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 
@@ -42,7 +42,257 @@ const hermesPath = (
     ({ name }) => name === "hermes",
   );
 
+describe("Hermes registration source retention", () => {
+  it("round-trips setup and removal while other servers remain inherited", async () => {
+    const home = await createTestTempDirectory(
+      "rea-hermes-inherited-lifecycle-",
+    );
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "shared: &shared\n  mcp_servers:\n    other: {command: other-server}\n<<: *shared\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({
+      status: "configured",
+    });
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({
+      status: "unchanged",
+    });
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      status: "removed",
+    });
+    const written = await readFile(path, "utf8");
+    const document = parseYaml(written, { version: "1.1" }) as {
+      mcp_servers: Record<string, unknown>;
+    };
+    expect(document.mcp_servers).toEqual({
+      other: { command: "other-server" },
+    });
+    expect(
+      parseYaml(written.replace("other-server", "new-server"), {
+        version: "1.1",
+      }),
+    ).toMatchObject({
+      mcp_servers: { other: { command: "new-server" } },
+    });
+  });
+
+  it("keeps other servers inherited when setup updates REA", async () => {
+    const home = await createTestTempDirectory("rea-hermes-inherited-setup-");
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "shared: &shared\n  mcp_servers:\n    rea: {command: rea, args: [mcp]}\n    other: {command: other-server}\n<<: *shared\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, { CUSTOM: "value" }, command),
+    ).toMatchObject({ status: "configured" });
+    const written = await readFile(path, "utf8");
+    expect(parseYaml(written, { version: "1.1" })).toMatchObject({
+      mcp_servers: {
+        rea: { env: { CUSTOM: "value" } },
+        other: { command: "other-server" },
+      },
+    });
+    expect(
+      parseYaml(written.replace("other-server", "new-server"), {
+        version: "1.1",
+      }),
+    ).toMatchObject({ mcp_servers: { other: { command: "new-server" } } });
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  });
+});
+
+describe("Hermes inherited registration removal", () => {
+  it("does not remove an override if that would reactivate an inherited registration", async () => {
+    const home = await createTestTempDirectory(
+      "rea-hermes-inherited-override-",
+    );
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "shared: &shared\n  mcp_servers:\n    rea: {command: rea, args: [mcp]}\n    other: {command: other-server}\n<<: *shared\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, { CUSTOM: "value" }, command),
+    ).toMatchObject({ status: "configured" });
+    const configured = await readFile(path, "utf8");
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("inherited from a YAML merge"),
+    });
+    expect(await readFile(path, "utf8")).toBe(configured);
+  });
+
+  it.each([
+    "shared: &shared\n  rea: {command: rea, args: [mcp]}\nmcp_servers:\n  <<: *shared\n",
+    "shared: &shared\n  mcp_servers:\n    rea: {command: rea, args: [mcp]}\n<<: *shared\n",
+  ])(
+    "reports an inherited registration without writing its shared source",
+    async (original) => {
+      const home = await createTestTempDirectory(
+        "rea-hermes-inherited-server-",
+      );
+      const directory = join(home, ".hermes");
+      await mkdir(directory);
+      const path = join(directory, "config.yaml");
+      await writeFile(path, original);
+      const client = supportedClients(home, process.platform, {
+        HERMES_HOME: directory,
+      }).find(({ name }) => name === "hermes");
+      if (client === undefined) throw new Error("missing Hermes client");
+      expect(
+        await systemUninstallHost(home).removeClient(client),
+      ).toMatchObject({
+        status: "failed",
+        detail: expect.stringContaining("inherited from a YAML merge"),
+      });
+      expect(await readFile(path, "utf8")).toBe(original);
+      await expect(readFile(`${path}.rea.backup`, "utf8")).rejects.toThrow();
+    },
+  );
+
+  it("updates a registration selected through an aliased YAML key", async () => {
+    const home = await createTestTempDirectory("rea-hermes-key-alias-");
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "server_name: &server_name rea\nmcp_servers:\n  ? *server_name\n  :\n    command: rea\n    args: [mcp]\n    marker: retained\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, { CUSTOM: "value" }, command),
+    ).toMatchObject({ status: "configured" });
+    const written = await readFile(path, "utf8");
+    expect(written).toContain("*server_name");
+    const servers = parseDocument(written, { version: "1.1" }).get(
+      "mcp_servers",
+      true,
+    );
+    expect(isMap(servers) && servers.items).toHaveLength(1);
+    expect(parseYaml(written, { version: "1.1" })).toMatchObject({
+      mcp_servers: { rea: { marker: "retained", env: { CUSTOM: "value" } } },
+    });
+  });
+
+  it("retains inherited registration settings through setup", async () => {
+    const home = await createTestTempDirectory("rea-hermes-merged-fields-");
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "defaults: &defaults\n  metadata: {marker: old}\nmcp_servers:\n  rea:\n    <<: *defaults\n    command: rea\n    args: [mcp]\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, { CUSTOM: "value" }, command),
+    ).toMatchObject({ status: "configured" });
+    const written = await readFile(path, "utf8");
+    expect(written).toContain("<<: *defaults");
+    const changed = written.replace("marker: old", "marker: new");
+    expect(parseYaml(changed, { version: "1.1" })).toMatchObject({
+      mcp_servers: { rea: { metadata: { marker: "new" } } },
+    });
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  });
+
+  it("preserves distinct keys beside a changed launcher field", async () => {
+    const home = await createTestTempDirectory("rea-hermes-mixed-fields-");
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      'mcp_servers:\n  rea:\n    command: rea\n    args: [mcp]\n    1: numeric\n    "1": string\n';
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, { CUSTOM: "value" }, command),
+    ).toMatchObject({ status: "configured" });
+    const written = await readFile(path, "utf8");
+    expect(written).toContain('    1: numeric\n    "1": string');
+  });
+
+  it.each([
+    '      1: numeric\n      "1": string',
+    "      2026-10-14T00:00:00.123456Z: first\n      2026-10-14T00:00:00.123457Z: second",
+  ])(
+    "retains distinct YAML keys in an existing registration: %s",
+    async (keys) => {
+      const home = await createTestTempDirectory("rea-hermes-mixed-keys-");
+      const directory = join(home, ".hermes");
+      await mkdir(directory);
+      const path = join(directory, "config.yaml");
+      const original = `mcp_servers:\n  rea:\n    command: rea\n    args: [mcp]\n    metadata:\n${keys}\n`;
+      await writeFile(path, original);
+      const client = supportedClients(home, process.platform, {
+        HERMES_HOME: directory,
+      }).find(({ name }) => name === "hermes");
+      if (client === undefined) throw new Error("missing Hermes client");
+      const result = await configureClientConfiguration(
+        client,
+        { CUSTOM: "value" },
+        command,
+      );
+      expect(result.status, JSON.stringify(result)).toBe("configured");
+      const written = await readFile(path, "utf8");
+      expect(written).toContain(keys);
+      expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+    },
+  );
+});
+
 describe("Hermes configuration paths", () => {
+  it("preserves unrelated distinct timestamp keys during registration", async () => {
+    const home = await createTestTempDirectory("rea-hermes-timestamp-keys-");
+    const directory = join(home, ".hermes");
+    await mkdir(directory);
+    const path = join(directory, "config.yaml");
+    const original =
+      "history:\n  2026-10-14T00:00:00.123456Z: first\n  2026-10-14T00:00:00.123457Z: second\n";
+    await writeFile(path, original);
+    const client = supportedClients(home, process.platform, {
+      HERMES_HOME: directory,
+    }).find(({ name }) => name === "hermes");
+    if (client === undefined) throw new Error("missing Hermes client");
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({
+      status: "configured",
+    });
+    const written = await readFile(path, "utf8");
+    expect(written).toContain(original.trimEnd());
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  });
+
   it.skipIf(process.platform === "win32")(
     "configures the filesystem-selected Hermes home through symlink parent traversal",
     async () => {

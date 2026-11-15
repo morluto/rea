@@ -23,6 +23,13 @@ import {
   type ResidualUnknown,
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import {
+  admitEvidenceBundleFormat,
+  EVIDENCE_FORMAT_REVISION,
+  evidenceFormatSchema,
+  RECREATE_EVIDENCE_GUIDANCE,
+  UnsupportedEvidenceFormatError,
+} from "./evidenceFormat.js";
 
 const artifactManifestBaseSchema = z.strictObject({
   digest: z.strictObject({ sha256: digestSchema }),
@@ -43,6 +50,7 @@ const captureManifestSchema = z.strictObject({
 });
 
 export const evidenceBundleSchema = z.strictObject({
+  evidence_format: evidenceFormatSchema,
   artifacts: z.array(artifactManifestSchema),
   providers: z.array(providerManifestSchema),
   environments: z.array(environmentManifestSchema),
@@ -63,8 +71,9 @@ export const isImmutableEvidenceBundle = (
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
 class NonCanonicalEvidenceBundleError extends TypeError {
-  constructor() {
-    super("Evidence bundle manifests are not canonical");
+  /** The top-level sections whose content differs from canonical form. */
+  constructor(readonly sections: readonly string[]) {
+    super(`Evidence bundle sections are not canonical: ${sections.join(", ")}`);
     this.name = "NonCanonicalEvidenceBundleError";
   }
 }
@@ -108,6 +117,7 @@ export const createEvidenceBundle = (
     compareUnicodeCodePoints(left.evidence_id, right.evidence_id),
   );
   return {
+    evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: uniqueSorted(
       sortedRecords.flatMap(({ subject }) =>
         subject === null
@@ -256,6 +266,7 @@ export const referencedEvidenceIds = (
 ];
 
 type EvidenceBundleValidationFailure =
+  | UnsupportedEvidenceFormatError
   | z.ZodError
   | DuplicateEvidenceRecordError
   | InvalidResidualUnknownGraphError
@@ -263,7 +274,7 @@ type EvidenceBundleValidationFailure =
 
 /** Expected source rejection, including authenticated standalone Evidence. */
 export type EvidenceBundleFailure = {
-  readonly kind: "single-record" | "invalid-bundle";
+  readonly kind: "single-record" | "unsupported-format" | "invalid-bundle";
   readonly message: string;
   readonly cause: EvidenceBundleValidationFailure;
 };
@@ -281,12 +292,16 @@ const describeEvidenceBundleFailure = (
     };
   } catch (recordFailure: unknown) {
     if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
+    // The format owner decides earlier bundles once; its message carries the
+    // recreate guidance instead of per-field schema failures.
+    if (cause instanceof UnsupportedEvidenceFormatError)
+      return { kind: "unsupported-format", cause, message: cause.message };
     return {
       kind: "invalid-bundle",
       cause,
       message:
         cause instanceof z.ZodError
-          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA identity format. Recreate observations from earlier formats; re-exporting an old bundle does not update its identities.`
+          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA release. ${RECREATE_EVIDENCE_GUIDANCE}`
           : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`,
     };
   }
@@ -316,6 +331,7 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
     const owned = immutableBundles.get(input);
     if (owned !== undefined) return owned;
   }
+  admitEvidenceBundleFormat(input);
   return authenticateBundle(evidenceBundleSchema.parse(input), seal);
 };
 
@@ -356,6 +372,7 @@ const readBundle = (
     );
   } catch (cause: unknown) {
     if (
+      !(cause instanceof UnsupportedEvidenceFormatError) &&
       !(cause instanceof z.ZodError) &&
       !(cause instanceof DuplicateEvidenceRecordError) &&
       !(cause instanceof InvalidResidualUnknownGraphError) &&
@@ -402,7 +419,13 @@ const authenticateBundle = (
     parsed.unknowns,
   );
   if (!equalJsonText(parsed, canonical))
-    throw new NonCanonicalEvidenceBundleError();
+    // Name only the sections that differ, so an unchanged section is not
+    // blamed for another section's ordering or content.
+    throw new NonCanonicalEvidenceBundleError(
+      (Object.keys(canonical) as (keyof EvidenceBundle)[]).filter(
+        (section) => !equalJsonText(parsed[section], canonical[section]),
+      ),
+    );
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);

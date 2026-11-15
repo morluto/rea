@@ -1,10 +1,10 @@
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -21,13 +21,11 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
@@ -43,10 +41,8 @@ import {
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
-import {
-  RustAuditableFormatFailure,
-  RustAuditableResourceFailure,
-} from "./RustAuditableReader.js";
+import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 
 import {
   resolveRustProducerLimits,
@@ -137,6 +133,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           limitations: [
             ...limitationsFor(image),
             `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+            ...selected.limitations,
           ],
         };
         retainCompilerPathsWithinReport(report, limits.output_bytes);
@@ -347,20 +344,10 @@ const failureForPrimary = (
             )),
       },
     );
-  if (cause instanceof RustAuditableFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
-          cause,
-          undecodedContent: cause.undecodedContent,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${cause.message}`,
-          },
-        ]);
-  return artifactFailure(facts, path, limits);
+  return (
+    parseFailureAnalysisError(OPERATION, path, cause) ??
+    artifactFailure(facts, path, limits)
+  );
 };
 
 const failureFor = (
@@ -395,20 +382,13 @@ const artifactFailure = (
     cause instanceof ArtifactReaderFailure
   )
     return artifactReaderFailure(cause, path, limits);
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {
@@ -428,9 +408,10 @@ const artifactReaderFailure = (
       cause,
     });
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (cause.reason === "limit")
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -444,11 +425,7 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(
-      OPERATION,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-    );
+    return stableArtifactInputFailure(cause, OPERATION);
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

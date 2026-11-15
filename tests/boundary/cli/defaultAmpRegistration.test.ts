@@ -49,7 +49,6 @@ cliTest(
           ],
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
       const first = await run();
       expect(first.exitCode, first.stderr).toBe(0);
@@ -107,7 +106,6 @@ cliTest(
           arguments: ["mcp", "add", ...(json ? ["--json"] : [])],
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
         expect(result.exitCode).toBe(1);
         const document = report(result.stdout, json);
@@ -142,7 +140,6 @@ cliTest(
         arguments: arguments_,
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stdout).toBe(0);
       expect(await readFile(f.settings, "utf8")).toBe("broken JSON\n");
@@ -167,7 +164,6 @@ cliTest(
           arguments: arguments_,
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
       const registered = await run();
       expect(registered.exitCode, registered.stdout).toBe(0);
@@ -235,7 +231,6 @@ cliTest(
         ],
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stdout).toBe(0);
       expect(report(result.stdout, true)).toMatchObject({
@@ -265,7 +260,6 @@ cliTest(
         arguments: ["mcp", "add", ...options, "--json"],
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stderr).toBe(1);
       expect(result.json).toMatchObject({
