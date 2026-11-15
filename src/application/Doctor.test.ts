@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { defaultHopperLauncherPath } from "../config/parseConfig.js";
+import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
