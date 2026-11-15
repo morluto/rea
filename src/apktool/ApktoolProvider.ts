@@ -62,6 +62,7 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
+import type { RuntimeExhaustionArea } from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
 import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
@@ -82,6 +83,27 @@ import {
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
 const MAX_DECODED_ENTRIES_VISITED = 100_000;
+/**
+ * Recovery for the JVM memory area Apktool's decoder reported exhausted. REA
+ * does not set the decoder JVM's limits, so each names the launcher setting
+ * that governs that area.
+ */
+const APKTOOL_EXHAUSTION_REMEDIATION: Readonly<
+  Record<RuntimeExhaustionArea | "unknown", string>
+> = {
+  heap: "REA does not set Apktool's Java heap. Raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK.",
+  "gc-overhead":
+    "REA does not set Apktool's Java heap. The decoder JVM spent nearly all its time collecting garbage; raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK.",
+  metaspace:
+    "REA does not set Apktool's class metadata limit. Raise -XX:MaxMetaspaceSize of the selected Apktool launcher's JVM; a larger heap (-Xmx) does not raise it.",
+  "array-size":
+    "The decoder requested an array larger than the JVM allows; a larger heap (-Xmx) does not lift this limit. Decode a smaller APK.",
+  "native-thread":
+    "The decoder JVM could not create a native thread. Check host thread/process limits and available native memory for the selected Apktool launcher; a larger heap (-Xmx) does not help.",
+  unknown:
+    "REA does not set the memory limits of Apktool's JVM. Review the reported out-of-memory line and the selected Apktool launcher's JVM memory settings, or decode a smaller APK.",
+};
+
 const STDERR_EXCERPT_BYTES = 512;
 
 const apktoolDecodeTimeoutGuidance = (
@@ -219,12 +241,11 @@ const apktoolCommandFailure = (
         "capture",
       ),
     },
-    runtimeExhaustion: () => ({
+    runtimeExhaustion: ({ area }) => ({
       limits: null,
       recovery: {
         retryable: false,
-        remediationAction:
-          "REA does not set Apktool's Java heap. Raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK. Repeating the unchanged request is expected to fail the same way.",
+        remediationAction: `${APKTOOL_EXHAUSTION_REMEDIATION[area ?? "unknown"]} Repeating the unchanged request is expected to fail the same way.`,
       },
     }),
     dialect: (exit, details) => {
