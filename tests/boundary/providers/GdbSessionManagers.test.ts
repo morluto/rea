@@ -2,7 +2,10 @@ import {
   createGdbFixtureOwner,
   FAKE_GDB_VERSION,
   fakeGdbStartupPreamble,
+  fakeGdbVersionStream,
 } from "./gdbTestHelpers.js";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -260,4 +263,76 @@ it.each([
   ["no console record", ['&"GNU gdb (GDB) 15.1\\n"'], null],
 ])("reads the -gdb-version banner: %s", (_case, records, version) => {
   expect(gdbReportedVersion(records)).toBe(version);
+});
+
+it("leaves the GDB version unknown when its banner is not strict UTF-8", async () => {
+  const owner = createGdbFixtureOwner();
+  const directory = await mkdtemp(join(tmpdir(), "rea-gdb-version-utf8-"));
+  const provider = join(directory, "fake-gdb.mjs");
+  await writeFile(
+    provider,
+    `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (let end = input.indexOf("\\n"); end >= 0; end = input.indexOf("\\n")) {
+    const [, token = "", command = ""] = /^(\\d+)(.*)$/.exec(input.slice(0, end)) ?? [];
+    input = input.slice(end + 1);
+    if (command === "-gdb-version")
+      process.stdout.write(Buffer.concat([
+        Buffer.from('~"GNU gdb (GDB) 15.'),
+        Buffer.from([0xff]),
+        Buffer.from('\\\\n"\\n' + token + "^done\\n"),
+      ]));
+    else if (command.includes("list-thread-groups"))
+      process.stdout.write(token + "^done,groups=[]\\n");
+    else process.stdout.write(token + "^done\\n");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  const manager = new GdbSessionManager({
+    spawnProcess: owner.spawnProcess,
+    platform: "linux",
+    environment: { REA_GDB_COMMAND: provider },
+  });
+  try {
+    const started = await manager.start();
+    if (!started.ok) throw started.error;
+    const result = await manager.execute(
+      started.value.session_id,
+      "show version",
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence.provider).toEqual({
+      id: "gnu.gdb",
+      name: "GNU GDB",
+      version: null,
+    });
+  } finally {
+    await owner.cleanup([manager], () =>
+      rm(directory, { recursive: true, force: true }),
+    );
+  }
+});
+
+it("answers the fake GDB version query across split chunks and listeners", async () => {
+  const stdin = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+  const written: string[] = [];
+  runInNewContext(fakeGdbStartupPreamble, {
+    process: { stdin, stdout: { write: (text: string) => written.push(text) } },
+    setImmediate,
+  });
+  const received: [string[], string[]] = [[], []];
+  for (const lines of received)
+    stdin.on("data", (chunk: string) => lines.push(chunk));
+  stdin.emit("data", "1-gdb-ver");
+  stdin.emit("data", "sion\n2-ne");
+  stdin.emit("data", "xt\n");
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(written).toEqual([`${fakeGdbVersionStream}1^done\n`]);
+  expect(received).toEqual([["2-next\n"], ["2-next\n"]]);
 });

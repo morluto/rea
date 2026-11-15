@@ -785,9 +785,11 @@ export class GdbSessionManager {
         signal,
         "start_gdb_session",
       );
+      // The version is text: a lossy decode would report replacement text.
       if (
         reported.completion_status === "complete" &&
         !reported.output_truncated &&
+        reported.output_invalid_utf8 !== true &&
         parseGdbMiDoneRecord(reported.mi).ok
       )
         session.provider = {

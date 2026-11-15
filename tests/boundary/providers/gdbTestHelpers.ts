@@ -28,27 +28,42 @@ export const answerFakeGdbStartup = (
 };
 
 /**
- * Startup preamble for a scripted fake GDB, placed after its shebang. It
- * answers the fixed `-gdb-version` startup query before any stdin listener the
- * scenario registers sees it, so a scenario models only its own commands.
+ * Startup preamble for a scripted fake GDB, placed after its shebang. One
+ * buffered reader owns stdin: it answers each complete `-gdb-version` line
+ * once and hands every other complete line to the scenario's `data`
+ * listeners, so a scenario models only its own commands whatever the chunk
+ * boundaries or listener count. Lines that arrive before the scenario
+ * registers a listener wait for it.
  */
 export const fakeGdbStartupPreamble = String.raw`{
   const listen = process.stdin.on.bind(process.stdin);
-  const answerVersion = (chunk) => {
-    if (!String(chunk).includes("-gdb-version")) return chunk;
-    const kept = [];
-    for (const line of String(chunk).split("\n")) {
-      const query = /^(\d+)-gdb-version$/.exec(line);
-      if (query === null) kept.push(line);
+  const listeners = [];
+  let partial = "";
+  let undelivered = "";
+  const deliver = () => {
+    if (undelivered.length === 0 || listeners.length === 0) return;
+    const lines = undelivered;
+    undelivered = "";
+    for (const listener of listeners) listener(lines);
+  };
+  process.stdin.setEncoding("utf8");
+  listen("data", (chunk) => {
+    partial += chunk;
+    const end = partial.lastIndexOf("\n") + 1;
+    for (const line of partial.slice(0, end).split(/(?<=\n)/u)) {
+      const query = /^(\d+)-gdb-version\n$/u.exec(line);
+      if (query === null) undelivered += line;
       else process.stdout.write(${JSON.stringify(fakeGdbVersionStream)} + query[1] + "^done\n");
     }
-    return kept.join("\n");
+    partial = partial.slice(end);
+    deliver();
+  });
+  process.stdin.on = process.stdin.addListener = (event, listener) => {
+    if (event !== "data") return listen(event, listener);
+    listeners.push(listener);
+    setImmediate(deliver);
+    return process.stdin;
   };
-  process.stdin.on = process.stdin.addListener = (event, listener) =>
-    listen(event, event !== "data" ? listener : (chunk) => {
-      const rest = answerVersion(chunk);
-      if (rest.length > 0) listener(rest);
-    });
 }`;
 
 type GdbSessionStart = Awaited<ReturnType<GdbSessionManager["start"]>>;
