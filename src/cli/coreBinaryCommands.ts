@@ -1,3 +1,4 @@
+import { contractNamed } from "./contractCliDescription.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { realpath, stat } from "node:fs/promises";
@@ -16,6 +17,7 @@ import type { Logger } from "pino";
 import {
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
+  nativeTarget,
   snapshotSelectionOption,
 } from "./options.js";
 import type { CliInstance } from "./types.js";
@@ -24,19 +26,21 @@ import {
   runCliJavaScriptApplicationAnalysis,
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  cliEvidenceDeliveryInputError,
-  publishCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
-import { decompileAnalysisSelection } from "../contracts/officialToolContracts.js";
+import {
+  decompileAnalysisSelection,
+  OFFICIAL_TOOL_CONTRACTS,
+} from "../contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import {
+  registerContractCommand,
+  runDirectOnTarget,
+} from "./contractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
@@ -59,11 +63,139 @@ export const registerCoreBinaryCommands = (
   registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
   registerDecompileCommand(cli, logger, runDirectAnalysis);
   registerDecompileDirectoryCommand(cli, logger, runDirectAnalysis);
-  registerFunctionCommand(cli, logger, runDirectAnalysis);
-  registerInstructionsCommand(cli, logger, runDirectAnalysis);
   registerSearchCommand(cli, logger, runDirectAnalysis);
-  registerXrefsCommand(cli, logger, runDirectAnalysis);
-  registerTraceCommand(cli, logger, runDirectAnalysis);
+  registerContractBinaryCommands(
+    cli,
+    logger,
+    runDirectOnTarget(runDirectAnalysis, logger),
+  );
+};
+
+/** The CLI has no Hopper document selection; it opens one target per call. */
+const noDocument = {
+  document:
+    "The CLI opens one target per invocation and selects no Hopper document",
+} as const;
+
+const program = nativeTarget("App or program path", true);
+
+/** The positional procedure, or `--procedure` for a leading dash. */
+const procedureSelector = {
+  positionals: ["procedure"],
+  selectorOptions: {
+    procedure: {
+      name: "procedure",
+      description: `Procedure name or address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
+      kind: "native",
+    },
+  },
+  fields: {
+    procedure: {
+      name: "address",
+      description: `Procedure name or address. ${addressOrProcedureGuidance}`,
+    },
+  },
+} as const;
+
+/** Register the core binary commands derived from their contracts. */
+const registerContractBinaryCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  run: ReturnType<typeof runDirectOnTarget>,
+): void => {
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
+    {
+      command: CLI_COMMANDS.inspect,
+      description: "Inspect an app overview with evidence",
+      sessionTarget: nativeTarget(
+        "App, program, or analysis database path",
+        true,
+      ),
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "xrefs"),
+    {
+      command: CLI_COMMANDS.xrefs,
+      description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      positionals: ["address"],
+      selectorOptions: {
+        address: {
+          name: "address",
+          description: `Address or symbol name; use --address=<value> for leading dashes. ${namedAddressGuidance}`,
+          kind: "native",
+          required: true,
+        },
+      },
+      omit: noDocument,
+      fields: {
+        address: {
+          description: `Address or symbol name. ${namedAddressGuidance}`,
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_feature"),
+    {
+      command: CLI_COMMANDS.trace,
+      description: `Trace a literal feature through analyzed references. ${querySelectorGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      positionals: ["query"],
+      selectorOptions: {
+        query: {
+          name: "query",
+          description: `Complete literal feature query; use --query=<value> for leading dashes. ${querySelectorGuidance}`,
+        },
+      },
+      evidenceDelivery: true,
+      fields: {
+        query: {
+          description: `Literal feature query. ${querySelectorGuidance}`,
+        },
+        case_sensitive: {
+          description: "Match the query with exact letter case",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "analyze_function"),
+    {
+      command: CLI_COMMANDS.function,
+      description: `Analyze one complete function with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      ...procedureSelector,
+      evidenceDelivery: true,
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "read_function_instructions"),
+    {
+      command: CLI_COMMANDS.instructions,
+      description: `Read every raw instruction without decompiling. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      ...procedureSelector,
+      omit: noDocument,
+    },
+    run,
+  );
 };
 
 const registerOverviewCommands = (
@@ -172,24 +304,6 @@ const registerOverviewCommands = (
       });
     },
   });
-  cli.command(CLI_COMMANDS.inspect, {
-    description: "Inspect an app overview with evidence",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "App, program, or analysis database path",
-      ),
-    }),
-    options: overviewOptions,
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect", () =>
-        runDirectAnalysis(
-          args.path,
-          "binary_overview",
-          {},
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
 };
 
 const registerDecompileCommand = (
@@ -288,229 +402,6 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
     void cause;
     return false;
   }
-};
-
-const registerXrefsCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.xrefs, {
-    description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      address: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Address or symbol name. ${namedAddressGuidance}`),
-    }),
-    options: z.object({
-      address: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Address or symbol name; use --address=<value> for leading dashes. ${namedAddressGuidance}`,
-        ),
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "xrefs", () =>
-        runDirectAnalysis(
-          args.path,
-          "xrefs",
-          {
-            address: resolveCliAnalysisSelector(
-              args.address,
-              options.address,
-              "address",
-              "xrefs",
-              "native",
-            ),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-};
-
-const registerTraceCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.trace, {
-    description: `Trace a literal feature through analyzed references. ${querySelectorGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      query: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Literal feature query. ${querySelectorGuidance}`),
-    }),
-    options: z.object({
-      query: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Complete literal feature query; use --query=<value> for leading dashes. ${querySelectorGuidance}`,
-        ),
-      caseSensitive: z
-        .boolean()
-        .default(false)
-        .describe("Match the query with exact letter case"),
-      snapshot: snapshotSelectionOption,
-      ...analysisEvidenceDeliveryOptions,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "trace", async () => {
-          const delivery = {
-            providerId: "auto",
-            operation: "trace_feature",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          const complete = await runDirectAnalysis(
-            args.path,
-            "trace_feature",
-            {
-              query: resolveCliAnalysisSelector(
-                args.query,
-                options.query,
-                "query",
-                "trace_feature",
-              ),
-              case_sensitive: options.caseSensitive,
-            },
-            {
-              ...directAnalysisOptionsFromCli(logger, options),
-              signal,
-              includeEvidenceSources: options.evidence_output !== undefined,
-            },
-          );
-          return publishCliAnalysisEvidence(complete, delivery);
-        }),
-      ),
-  });
-};
-
-const registerFunctionCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.function, {
-    description: `Analyze one complete function with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      address: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Procedure name or address. ${addressOrProcedureGuidance}`),
-    }),
-    options: z.object({
-      procedure: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Procedure name or address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
-        ),
-      snapshot: snapshotSelectionOption,
-      ...analysisEvidenceDeliveryOptions,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "function", async () => {
-          const delivery = {
-            providerId: "auto",
-            operation: "analyze_function",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          // Fail before analysis when summary delivery lacks its Evidence bundle sink.
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          const complete = await runDirectAnalysis(
-            args.path,
-            "analyze_function",
-            {
-              procedure: resolveCliAnalysisSelector(
-                args.address,
-                options.procedure,
-                "procedure",
-                "analyze_function",
-                "native",
-              ),
-            },
-            {
-              ...directAnalysisOptionsFromCli(logger, options),
-              signal,
-              includeEvidenceSources: options.evidence_output !== undefined,
-            },
-          );
-          return publishCliAnalysisEvidence(complete, delivery);
-        }),
-      ),
-  });
-};
-
-const registerInstructionsCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.instructions, {
-    description: `Read every raw instruction without decompiling. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      address: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Procedure name or address. ${addressOrProcedureGuidance}`),
-    }),
-    options: z.object({
-      procedure: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Procedure name or address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
-        ),
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.instructions, () =>
-        runDirectAnalysis(
-          args.path,
-          "read_function_instructions",
-          {
-            procedure: resolveCliAnalysisSelector(
-              args.address,
-              options.procedure,
-              "procedure",
-              "read_function_instructions",
-              "native",
-            ),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
 };
 
 const registerSearchCommand = (

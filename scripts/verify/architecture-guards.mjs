@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +6,7 @@ import {
   compareCountedBaseline,
   recordLoweredBaseline,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -60,6 +59,14 @@ const check = (label, selected, pattern, allow = []) => {
       `${label}:\n${offenders.map((file) => `  ${file.path}`).join("\n")}`,
     );
 };
+
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
@@ -298,6 +305,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  localCompletenessEnumCount,
+  ["src/domain/coverage.ts"],
+);
+
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
 checkCounted(
@@ -375,6 +393,17 @@ checkCounted(
   files,
   /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
   ["src/gdb/GdbMiRecord.ts"],
+);
+
+// A runtime setting view throws the ConfigurationError of a malformed launch
+// seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
+// as a Result. Catching it by hand mixes it into each site's own failures.
+checkCounted(
+  "hand-caught ConfigurationError (read runtime settings with readRuntimeSetting from src/config/runtimeAnalysisSettings)",
+  "hand-caught-configuration-error",
+  files,
+  /\bcause instanceof ConfigurationError\b/gu,
+  ["src/config/runtimeAnalysisSettings.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -556,6 +585,39 @@ checkCounted(
   ["src/platform/HostPlatform.ts"],
 );
 
+// Tests select a platform or architecture by injecting it (a parameter, a
+// `host` option, or a mock of src/platform/HostPlatform). Redefining
+// process.platform or process.arch stops exercising its branch once the module
+// under test takes the host from HostPlatform, and still passes. Each module
+// migration switches its tests to injection and lowers this baseline.
+const listTestFiles = async (dir) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) output.push(...(await listTestFiles(path)));
+    else if (/\.(?:test|spec|fixture)\.ts$/u.test(entry.name))
+      output.push(path);
+  }
+  return output;
+};
+const testFiles = await Promise.all(
+  [
+    ...(await listTestFiles(join(root, "src"))),
+    ...(await listFiles(join(root, "tests"))),
+    ...(await listTestFiles(join(root, "tests"))),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+checkCounted(
+  "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
+  "test-host-platform-stub",
+  testFiles,
+  /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -627,24 +689,5 @@ if (baselinesShrunk) {
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
-}
-// CI runs this file before `npm ci`. The numeric-limit parser needs
-// typescript6, so that check waits until dependencies exist. `npm run lint`
-// runs it after install.
-const typescript6 = new URL(
-  "../../node_modules/typescript6/package.json",
-  import.meta.url,
-);
-if (!existsSync(typescript6)) {
-  console.log(
-    "Numeric REA_ limit check waits until dependencies are installed.",
-  );
-} else {
-  const numericLimits = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
-    { stdio: "inherit" },
-  );
-  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);

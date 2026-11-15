@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -592,9 +593,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "integrity"
         )
-          return new AnalysisArtifactChangedError(operation, path, reason, {
-            cause,
-          });
+          return readerIntegrityFailure(operation, path, cause);
         return new AnalysisOutputError(operation, reason, {
           cause,
           ...(observedOutput === undefined

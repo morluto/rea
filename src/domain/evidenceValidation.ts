@@ -4,7 +4,7 @@ import { parseEvidence, immutableEvidence, type Evidence } from "./evidence.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
   describeValidationFailure,
-  firstValidationIssuePath,
+  firstValidationIssue,
 } from "./validationFailure.js";
 import { err, ok, type Result } from "./result.js";
 
@@ -74,19 +74,36 @@ export const readEvidencePayload = <Output>(
     : err(integrityFailure(parsed.error, location));
 };
 
-/** The issue path is reported only when its position in the record is known. */
+/**
+ * Schema issue facts for an integrity failure. The issue path is reported
+ * only when its position in the record (`within`) is known.
+ */
+export const validationIssueOptions = (
+  cause: unknown,
+  within?: readonly (string | number)[],
+): {
+  readonly issuePath?: readonly (string | number)[];
+  readonly constraint?: string;
+  readonly remainingIssueCount?: number;
+} => {
+  const issue = firstValidationIssue(cause);
+  if (issue === undefined) return {};
+  return {
+    ...(within === undefined ? {} : { issuePath: [...within, ...issue.path] }),
+    ...(issue.constraint === undefined ? {} : { constraint: issue.constraint }),
+    remainingIssueCount: issue.remainingIssueCount,
+  };
+};
+
 const integrityFailure = (
   cause: z.ZodError,
   location: EvidenceSourceLocation | undefined,
 ): EvidenceIntegrityError => {
   const message = `Evidence validation failed ${describeValidationFailure(cause)}`;
-  const issuePath = firstValidationIssuePath(cause);
   return new EvidenceIntegrityError(message, {
     cause,
     userMessage: message,
     ...(location?.side === undefined ? {} : { side: location.side }),
-    ...(location?.within === undefined || issuePath === undefined
-      ? {}
-      : { issuePath: [...location.within, ...issuePath] }),
+    ...validationIssueOptions(cause, location?.within),
   });
 };

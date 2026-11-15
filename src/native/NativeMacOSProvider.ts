@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import {
@@ -74,7 +75,6 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -343,7 +343,7 @@ class NativeMacOSClient implements AnalysisClient {
               signal: options?.signal,
               objcClassImportAddresses: input.data.objc_class_import_addresses,
               objcClassImportAddressesComplete:
-                input.data.objc_class_import_addresses_complete ?? true,
+                input.data.objc_class_import_addresses_complete,
               maxInputBytes: input.data.max_input_bytes,
             },
           ),
@@ -1800,12 +1800,7 @@ const nativeMachoSourcePrimary = (
   if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
     return new AnalysisOutputError(operation, cause.message, options);
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      operation,
-      path,
-      cause.message,
-      options,
-    );
+    return readerIntegrityFailure(operation, path, cause, options);
   return new ProviderAdapterError(IDENTITY.id, operation, {
     ...options,
     userMessage: "The selected Mach-O source could not be read safely.",

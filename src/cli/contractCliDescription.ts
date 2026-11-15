@@ -16,6 +16,10 @@ import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { cliJsonCallerPathSchema } from "../cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalShape } from "./options.js";
+import {
+  selectCliAnalysisSelector,
+  type CliSelectorKind,
+} from "./analysisSelector.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -71,6 +75,14 @@ export interface CliContractProjection<
   readonly description: string;
   /** Fields taken as positional arguments, in argv order. */
   readonly positionals?: readonly Field[];
+  /**
+   * Positional selectors the caller may instead give with a named option,
+   * for values that begin with a dash. The positional becomes optional and
+   * neither spelling may be empty; equal values agree and different ones are
+   * refused before the target is opened, as is neither when the field is
+   * required.
+   */
+  readonly selectorOptions?: { readonly [Key in Field]?: CliSelectorOption };
   /**
    * Absolute-path fields, or lists of them, the caller may spell relative to
    * the working directory. The CLI admits each nonempty, NUL-free,
@@ -162,6 +174,61 @@ export type CliOptionValues<CliOptions extends CliOptionShape> = {
 export interface CliSessionTarget {
   /** Help for the target positional. */
   readonly description: string;
+  /**
+   * Fields of the contract an MCP client opens the target with, taken as
+   * options. They are admitted by that contract's input, with the target as
+   * its `path`, before the target is opened.
+   */
+  readonly open?: CliTargetOpening;
+}
+
+/** The opening contract's fields a command takes as options. */
+export interface CliTargetOpening {
+  readonly contract: {
+    readonly name: string;
+    readonly inputSchema: z.ZodObject;
+  };
+  readonly fields: Readonly<Record<string, CliOpeningFieldProjection>>;
+}
+
+/** How one opening field is spelled on the CLI. */
+export interface CliOpeningFieldProjection extends CliFieldProjection {
+  /** The values this command admits: a subset of the field's enum. */
+  readonly values?: readonly [string, ...string[]];
+  /**
+   * A local path the caller may spell relative to the working directory.
+   * It is admitted resolved and passed on as the caller spelled it, like the
+   * target itself.
+   */
+  readonly callerPath?: true;
+}
+
+/** An option that supplies one field of the opening contract. */
+export interface ContractCliOpeningOption {
+  readonly field: string;
+  readonly key: string;
+  readonly description: string | undefined;
+  readonly schema: z.ZodType;
+  /** Passed on as the caller spelled it once its resolved form is admitted. */
+  readonly callerPath: boolean;
+}
+
+/** The described session target of a contract command. */
+export interface ContractCliSessionTarget {
+  /** The positional key, taken before every other positional. */
+  readonly key: string;
+  readonly schema: z.ZodType;
+  /** Options that supply fields of the opening contract. */
+  readonly options: readonly ContractCliOpeningOption[];
+  /**
+   * The opening fields the parsed options select, in contract spelling,
+   * admitted by the opening contract with the target as its `path`.
+   * Issues name CLI keys.
+   */
+  readonly admitOpening: (
+    operation: string,
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<Readonly<Record<string, unknown>>, AnalysisInputError>;
 }
 
 /** The CLI key of a session target, which no contract field supplies. */
@@ -199,6 +266,35 @@ export interface CliEvidenceDeliveryChoice {
   readonly evidenceOutput: string | undefined;
   /** The admitted view, for a projection with `viewDelivery`. */
   readonly view?: AnalysisViewRequest;
+}
+
+/** The named option of a positional selector. */
+export interface CliSelectorOption {
+  /** The option key; its flag is the kebab-case spelling. */
+  readonly name: string;
+  readonly description: string;
+  /** How the two spellings agree; `text` by default. */
+  readonly kind?: CliSelectorKind;
+  /**
+   * The command needs a selector although the contract admits omission,
+   * such as a one-shot command that has no current position to fall back on.
+   */
+  readonly required?: true;
+}
+
+/** The described named option of a positional selector. */
+export interface ContractCliSelectorOption {
+  readonly key: string;
+  /**
+   * The key of the option's parsed value, beside the positional's own
+   * value, which may share the option's key.
+   */
+  readonly valueKey: string;
+  readonly description: string;
+  readonly schema: z.ZodType;
+  readonly kind: CliSelectorKind;
+  /** Neither spelling may be omitted. */
+  readonly required: boolean;
 }
 
 /** One positional argument or option of a contract command. */
@@ -241,6 +337,8 @@ export interface ContractCliParameter {
   readonly nullFlag: string | undefined;
   /** The member of the object field this option supplies, if flattened. */
   readonly member: string | undefined;
+  /** The named option of a positional selector, if any. */
+  readonly selectorOption: ContractCliSelectorOption | undefined;
 }
 
 /** The contract input and delivery one invocation selected. */
@@ -302,9 +400,7 @@ export interface ContractCliDescription {
    * The session target positional, taken before the contract positionals,
    * when the operation runs on a target the CLI opens; undefined otherwise.
    */
-  readonly sessionTarget:
-    | { readonly key: string; readonly schema: z.ZodType }
-    | undefined;
+  readonly sessionTarget: ContractCliSessionTarget | undefined;
   /**
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key.
@@ -409,11 +505,19 @@ const assertArgvField = (
   schema: z.ZodType,
 ) => {
   const current = core(schema);
+  // A union of text forms, such as `auto` or a provider ID, is one token.
+  const text = (member: z.ZodType): boolean =>
+    member instanceof z.ZodString ||
+    member instanceof z.ZodEnum ||
+    (member instanceof z.ZodLiteral &&
+      [...member.values].every((value) => typeof value === "string"));
   const scalar =
     current instanceof z.ZodString ||
     current instanceof z.ZodNumber ||
     current instanceof z.ZodBoolean ||
-    current instanceof z.ZodEnum;
+    current instanceof z.ZodEnum ||
+    (current instanceof z.ZodUnion &&
+      (current.options as readonly z.ZodType[]).every(text));
   const element =
     current instanceof z.ZodArray ? core(current.element as z.ZodType) : null;
   if (
@@ -585,6 +689,24 @@ export interface CliDocumentProjection<
   readonly omit?: { readonly [Key in Field]?: string };
   /** Options no contract field owns, keyed by their CLI key. */
   readonly cliOptions?: CliOptions;
+  /**
+   * The operation runs on the target an MCP session holds open. The CLI takes
+   * it as the `path` positional before the document.
+   */
+  readonly sessionTarget?: CliSessionTarget;
+  /**
+   * The contract's optional `detail` field is taken as `--detail` beside the
+   * document, with `--evidence_output`: the command delivers complete
+   * Evidence or a summary saved beside a bundle. The document refuses
+   * `detail`.
+   */
+  readonly evidenceDelivery?: true;
+  /**
+   * With `evidenceDelivery`, the contract's optional `view` field is taken as
+   * `--view` JSON text beside the document and admitted by the contract
+   * field's schema before the handler runs. The document refuses `view`.
+   */
+  readonly viewDelivery?: CliViewDelivery;
 }
 
 /** A complete, framework-neutral CLI command whose input is one JSON document. */
@@ -605,6 +727,24 @@ export interface ContractCliDocumentDescription {
   readonly callerPaths: readonly (readonly string[])[];
   /** Contract fields the command does not admit, with the reason. */
   readonly omitted: Readonly<Record<string, string>>;
+  /** Contract fields taken as options beside the document, keyed by field. */
+  readonly flagged: Readonly<Record<string, string>>;
+  /**
+   * The refusal of each top-level document field the command does not take
+   * in the document: omitted fields and fields taken as options.
+   */
+  readonly documentRefusals: Readonly<Record<string, string>>;
+  /** The session target positional, taken before the document, if any. */
+  readonly sessionTarget: ContractCliSessionTarget | undefined;
+  /** Options that select Evidence delivery, for `evidenceDelivery`. */
+  readonly deliveryOptions: readonly CliOnlyOption[];
+  /**
+   * The delivery the parsed options select, admitted before the handler
+   * runs; undefined without `evidenceDelivery`.
+   */
+  readonly admitDelivery: (
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<CliEvidenceDeliveryChoice | undefined, AnalysisInputError>;
   readonly cliOnlyOptions: readonly CliOnlyOption[];
   /** The parsed values of the projection's CLI-only options. */
   readonly cliOptionValues: (
@@ -682,6 +822,180 @@ const admitDocumentCallerPath = (
 const DOCUMENT_KEY = "inputJson";
 
 /**
+ * Describe the target positional and the options that supply fields of its
+ * opening contract. Each option admits its field's own schema, narrowed to
+ * the projected values.
+ */
+const describeSessionTarget = (
+  target: CliSessionTarget | undefined,
+): ContractCliSessionTarget | undefined => {
+  if (target === undefined) return undefined;
+  const opening = target.open;
+  const opener = opening?.contract.name ?? "";
+  const shape = (opening?.contract.inputSchema.shape ?? {}) as Record<
+    string,
+    z.ZodType
+  >;
+  const options: readonly ContractCliOpeningOption[] = Object.entries(
+    opening?.fields ?? {},
+  ).map(([field, projected]) => {
+    const declared = shape[field];
+    if (declared === undefined || field === SESSION_TARGET_KEY)
+      throw new Error(`${opener} has no option field ${field}`);
+    if (!admitsOmission(declared))
+      throw new Error(`${opener}.${field} is required`);
+    let schema: z.ZodType;
+    if (projected.callerPath === true) {
+      if (!(core(declared) instanceof z.ZodString))
+        throw new Error(`${opener}.${field} is not a path`);
+      schema = localPathStringSchema.optional();
+    } else if (projected.values === undefined) {
+      assertArgvField(opener, field, declared);
+      schema = cliDecimalShape({ field: argvOptional(declared) }).field;
+    } else {
+      for (const value of projected.values)
+        if (!declared.safeParse(value).success)
+          throw new Error(`${opener}.${field} does not admit ${value}`);
+      schema = z.enum(projected.values).optional();
+    }
+    const description = projected.description ?? declared.description;
+    if (description !== undefined) schema = schema.describe(description);
+    return {
+      field,
+      key: projected.name ?? camelCase(field),
+      description,
+      schema,
+      callerPath: projected.callerPath === true,
+    };
+  });
+  const keyOf = new Map(options.map(({ field, key }) => [field, key]));
+  return {
+    key: SESSION_TARGET_KEY,
+    schema: localPathStringSchema.describe(target.description),
+    options,
+    admitOpening: (operation, values) => {
+      if (opening === undefined) return ok({});
+      const selected = Object.fromEntries(
+        options.flatMap(({ field, key }) =>
+          values[key] === undefined ? [] : [[field, values[key]]],
+        ),
+      );
+      // The target itself was admitted as the positional.
+      if (Object.keys(selected).length === 0) return ok({});
+      const callerPaths: ReadonlySet<string> = new Set(
+        options.flatMap(({ field, callerPath }) => (callerPath ? [field] : [])),
+      );
+      const candidate = {
+        ...Object.fromEntries(
+          Object.entries(selected).map(([field, value]) => [
+            field,
+            callerPaths.has(field)
+              ? absoluteCallerPath(value as string)
+              : value,
+          ]),
+        ),
+        [SESSION_TARGET_KEY]: absoluteCallerPath(
+          values[SESSION_TARGET_KEY] as string,
+        ),
+      };
+      const admitted = opening.contract.inputSchema.safeParse(candidate);
+      if (!admitted.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            admitted.error.issues.map((issue) => {
+              const [field, ...rest] = issue.path;
+              const key =
+                typeof field === "string" ? keyOf.get(field) : undefined;
+              return key === undefined
+                ? issue
+                : { ...issue, path: [key, ...rest] };
+            }),
+            selected,
+          ),
+        );
+      const data = admitted.data as Readonly<Record<string, unknown>>;
+      return ok(
+        Object.fromEntries(
+          Object.keys(selected).map((field) => [
+            field,
+            callerPaths.has(field) ? selected[field] : data[field],
+          ]),
+        ),
+      );
+    },
+  };
+};
+
+/**
+ * The delivery `--detail`, `--evidence_output` and `--view` select beside a
+ * JSON document. The view is admitted by the contract's own `view` field; a
+ * page is selected from a retained summary, so it needs summary delivery.
+ */
+const admitDocumentDelivery = (
+  operation: string,
+  viewDelivery: (CliViewDelivery & { readonly schema: z.ZodType }) | undefined,
+  values: Readonly<Record<string, unknown>>,
+): Result<CliEvidenceDeliveryChoice, AnalysisInputError> => {
+  let view: AnalysisViewRequest | undefined;
+  if (viewDelivery !== undefined) {
+    const decoded = parseCliJsonOption(
+      operation,
+      "view",
+      values.view as string | undefined,
+      viewDelivery.invalidJson,
+    );
+    if (!decoded.ok) return decoded;
+    if (decoded.value !== undefined) {
+      const candidate = { view: decoded.value };
+      const parsed = z
+        .object({ view: viewDelivery.schema })
+        .safeParse(candidate);
+      if (!parsed.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            parsed.error.issues,
+            candidate,
+          ),
+        );
+      const selected = parsed.data.view as object;
+      view = (
+        viewDelivery.kind === undefined
+          ? selected
+          : { kind: viewDelivery.kind, ...selected }
+      ) as AnalysisViewRequest;
+    }
+  }
+  const detail =
+    (values.detail as "complete" | "summary" | undefined) ??
+    (view === undefined ? "complete" : "summary");
+  if (view !== undefined && detail !== "summary")
+    return err(
+      analysisInputErrorFromIssues(
+        operation,
+        [
+          {
+            code: "custom",
+            path: ["view"],
+            message:
+              "A selected page requires --detail summary and --evidence_output.",
+            input: values.view,
+          },
+        ],
+        { detail, view },
+      ),
+    );
+  const delivery: CliEvidenceDeliveryChoice = {
+    detail,
+    evidenceOutput: values.evidence_output as string | undefined,
+    ...(view === undefined ? {} : { view }),
+  };
+  const refused = cliEvidenceDeliveryInputError({ ...delivery, operation });
+  return refused === undefined ? ok(delivery) : err(refused);
+};
+
+/**
  * Describe a contract command that takes its whole input as one JSON
  * document. The handler admits the decoded document with the contract's
  * owner, which borrows Evidence carriers rather than parsing them here.
@@ -698,27 +1012,96 @@ export const describeContractDocumentCommand = <
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+  const evidenceDelivery = projection.evidenceDelivery === true;
+  const { viewDelivery } = projection;
+  if (viewDelivery !== undefined && !evidenceDelivery)
+    throw new Error(`${contract.name} view delivery requires evidenceDelivery`);
+  // Delivery fields keep their contract names as CLI keys.
+  const flagged: Readonly<Record<string, string>> = Object.fromEntries(
+    (evidenceDelivery
+      ? viewDelivery === undefined
+        ? ["detail"]
+        : ["detail", "view"]
+      : []
+    ).map((field) => [field, field]),
+  );
+  for (const field of Object.keys(flagged))
+    if (Object.hasOwn(omitted, field))
+      throw new Error(
+        `${contract.name}.${field} is both omitted and an option`,
+      );
+  const removed = [...Object.keys(omitted), ...Object.keys(flagged)];
   let admitted: z.ZodType = contract.inputSchema;
-  if (Object.keys(omitted).length > 0) {
+  let viewSchema: z.ZodType = z.never();
+  if (removed.length > 0) {
     const schema = contract.inputSchema;
     if (!(schema instanceof z.ZodObject))
       throw new Error(`${contract.name} omits fields from a union input`);
     const shape = schema.shape as Record<string, z.ZodType>;
-    for (const field of Object.keys(omitted))
+    for (const field of removed)
       if (!Object.hasOwn(shape, field) || !admitsOmission(shape[field]!))
         throw new Error(`${contract.name}.${field} is not an optional field`);
+    if (viewDelivery !== undefined) viewSchema = shape.view!;
     admitted = schema.omit(
-      Object.fromEntries(
-        Object.keys(omitted).map((field) => [field, true]),
-      ) as never,
+      Object.fromEntries(removed.map((field) => [field, true])) as never,
     );
   }
   const callerPaths = projection.callerPaths ?? [];
   for (const path of callerPaths)
     admitted = admitDocumentCallerPath(admitted, path);
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
-  if (Object.hasOwn(cliOptions, DOCUMENT_KEY))
+  const deliveryOptions: readonly CliOnlyOption[] = Object.entries({
+    ...(evidenceDelivery
+      ? {
+          detail:
+            viewDelivery?.viewSelectsSummary === true
+              ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
+              : analysisEvidenceDeliveryOptions.detail,
+          evidence_output: analysisEvidenceDeliveryOptions.evidence_output,
+        }
+      : {}),
+    ...(viewDelivery === undefined
+      ? {}
+      : {
+          view: z
+            .string()
+            .optional()
+            .describe(
+              viewDelivery.viewSelectsSummary === true
+                ? "JSON page selection; selects summary delivery, which requires --evidence_output"
+                : "JSON page selection; requires --detail summary and --evidence_output",
+            ),
+        }),
+  }).map(([key, schema]: [string, z.ZodType]) => ({
+    key,
+    description: schema.description,
+    schema,
+  }));
+  const sessionTarget = describeSessionTarget(projection.sessionTarget);
+  const keys = [
+    DOCUMENT_KEY,
+    ...(sessionTarget === undefined
+      ? []
+      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)]),
+    ...Object.keys(cliOptions),
+    ...deliveryOptions.map(({ key }) => key),
+  ];
+  if (new Set(keys).size !== keys.length)
     throw new Error(`${contract.name} projects two fields to one CLI key`);
+  const documentRefusals: Readonly<Record<string, string>> = {
+    ...Object.fromEntries(
+      Object.entries(omitted).map(([field, reason]) => [
+        field,
+        `${field} is not accepted by this command: ${reason}`,
+      ]),
+    ),
+    ...Object.fromEntries(
+      Object.entries(flagged).map(([field, key]) => [
+        field,
+        `${field} is not accepted in the document: pass --${key} beside it`,
+      ]),
+    ),
+  };
   return {
     command: projection.command,
     description: projection.description,
@@ -728,6 +1111,20 @@ export const describeContractDocumentCommand = <
     content: getEvidenceInputContract(admitted).frameSchema,
     callerPaths,
     omitted,
+    flagged,
+    documentRefusals,
+    deliveryOptions,
+    admitDelivery: (values) =>
+      evidenceDelivery
+        ? admitDocumentDelivery(
+            contract.name,
+            viewDelivery === undefined
+              ? undefined
+              : { ...viewDelivery, schema: viewSchema },
+            values,
+          )
+        : ok(undefined),
+    sessionTarget,
     cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
       key,
       description: schema.description,
@@ -765,6 +1162,12 @@ export const describeContractCommand = <
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
     throw new Error(`${contract.name} has no optional input field view`);
   const positionals: readonly string[] = projection.positionals ?? [];
+  const selectorOptions: Readonly<
+    Record<string, CliSelectorOption | undefined>
+  > = projection.selectorOptions ?? {};
+  for (const field of Object.keys(selectorOptions))
+    if (!positionals.includes(field))
+      throw new Error(`${contract.name}.${field} is not a positional selector`);
   const callerPaths: ReadonlySet<string> = new Set(
     projection.callerPaths ?? [],
   );
@@ -848,6 +1251,25 @@ export const describeContractCommand = <
       schema = schema.describe(projected.description);
     const description = schema.description;
     const value = core(declared);
+    const selector = selectorOptions[field];
+    let selectorOption: ContractCliSelectorOption | undefined;
+    if (selector !== undefined) {
+      if (!(value instanceof z.ZodString))
+        throw new Error(`${contract.name}.${field} is not a text selector`);
+      // Either spelling may supply the selector. A selector names one
+      // object, so an empty one is refused even where the contract's text
+      // admits it.
+      schema = value.min(1).optional();
+      if (description !== undefined) schema = schema.describe(description);
+      selectorOption = {
+        key: selector.name,
+        valueKey: `--${selector.name}`,
+        description: selector.description,
+        schema: schema.describe(selector.description),
+        kind: selector.kind ?? "text",
+        required: selector.required === true || !admitsOmission(declared),
+      };
+    }
     return {
       field,
       key,
@@ -865,6 +1287,7 @@ export const describeContractCommand = <
       runtimeJson,
       nullFlag,
       member: undefined,
+      selectorOption,
     };
   };
   const flattened: Readonly<
@@ -906,6 +1329,7 @@ export const describeContractCommand = <
         runtimeJson: undefined,
         nullFlag: undefined,
         member,
+        selectorOption: undefined,
       };
     });
   };
@@ -944,16 +1368,34 @@ export const describeContractCommand = <
     description: schema.description,
     schema,
   }));
+  const sessionTarget = describeSessionTarget(projection.sessionTarget);
   const sessionTargetKeys =
-    projection.sessionTarget === undefined ? [] : [SESSION_TARGET_KEY];
+    sessionTarget === undefined
+      ? []
+      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)];
+  const selectorKeys = parameters.flatMap(({ selectorOption }) =>
+    selectorOption === undefined ? [] : [selectorOption.key],
+  );
+  // A selector option may share its positional's key: argv keeps them apart.
   const keys = new Set([
     ...sessionTargetKeys,
     ...parameters.map(({ key }) => key),
     ...cliOnlyOptions.map(({ key }) => key),
   ]);
+  const optionKeys = new Set([
+    ...sessionTargetKeys,
+    ...parameters.flatMap(({ key, positional }) => (positional ? [] : [key])),
+    ...cliOnlyOptions.map(({ key }) => key),
+    ...selectorKeys,
+  ]);
   if (
     keys.size !==
-    sessionTargetKeys.length + parameters.length + cliOnlyOptions.length
+      sessionTargetKeys.length + parameters.length + cliOnlyOptions.length ||
+    optionKeys.size !==
+      sessionTargetKeys.length +
+        parameters.filter(({ positional }) => !positional).length +
+        cliOnlyOptions.length +
+        selectorKeys.length
   )
     throw new Error(`${contract.name} projects two fields to one CLI key`);
   const cliOptionDependencies = Object.fromEntries(
@@ -976,8 +1418,19 @@ export const describeContractCommand = <
     values: Readonly<Record<string, unknown>>,
   ): Record<string, unknown> => {
     const input: Record<string, unknown> = {};
-    for (const { field, key, callerPath, delivery, member } of parameters) {
-      const value = values[key];
+    for (const {
+      field,
+      key,
+      callerPath,
+      delivery,
+      member,
+      selectorOption,
+    } of parameters) {
+      // The named spelling is preserved when both agree.
+      const value =
+        (selectorOption === undefined
+          ? undefined
+          : values[selectorOption.valueKey]) ?? values[key];
       if (value === undefined || delivery || member !== undefined) continue;
       input[field] = !callerPath
         ? value
@@ -1091,15 +1544,7 @@ export const describeContractCommand = <
           values[key] === undefined ? [] : [[key, values[key]]],
         ),
       ),
-    sessionTarget:
-      projection.sessionTarget === undefined
-        ? undefined
-        : {
-            key: SESSION_TARGET_KEY,
-            schema: localPathStringSchema.describe(
-              projection.sessionTarget.description,
-            ),
-          },
+    sessionTarget,
     inputBinding: {
       operation: contract.name,
       fields: Object.fromEntries(
@@ -1109,14 +1554,29 @@ export const describeContractCommand = <
       ),
     },
     evidenceDelivery,
-    admit: (values) =>
-      admitInvocation(
+    admit: (values) => {
+      for (const { key, selectorOption } of parameters) {
+        if (selectorOption === undefined) continue;
+        const selected = selectCliAnalysisSelector(
+          values[key] as string | undefined,
+          values[selectorOption.valueKey] as string | undefined,
+          {
+            option: selectorOption.key,
+            operation: contract.name,
+            kind: selectorOption.kind,
+            required: selectorOption.required,
+          },
+        );
+        if (!selected.ok) return selected;
+      }
+      return admitInvocation(
         contract,
         { evidenceDelivery, viewDelivery, parameters, shape },
         values,
         toContractInput,
         rename,
-      ),
+      );
+    },
   };
 };
 

@@ -583,7 +583,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       templated_groups:
         tools.filter((tool) => tool.params.length > 0).length +
         excluded.filter((exclusion) => exclusion.templated).length,
-      coverage: completeWithinViewCoverage(tools.length, tools.length),
+      coverage: completeWithinViewCoverage(tools.length),
       limitations: limitations.value,
     });
   }

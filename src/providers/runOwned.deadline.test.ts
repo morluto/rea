@@ -12,9 +12,11 @@ import {
   cancelledBy,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { Deadline } from "../domain/deadline.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, err, type Result } from "../domain/result.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 import { finalizedResult, runOwned, type Finalized } from "./runOwned.js";
@@ -32,9 +34,14 @@ const failure = <Value>(finalized: Finalized<Value>): AnalysisError => {
   return result.error;
 };
 
-/** Work that runs until its signal aborts, then reports that cancellation. */
+/**
+ * Work that runs until its signal aborts, then reports that cancellation with
+ * any `diagnostics` it observed. A signal that aborted before the work started
+ * is reported at once.
+ */
 const untilAborted = (
   signal: AbortSignal | undefined,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): Promise<Result<{ readonly count: number }, AnalysisError>> =>
   new Promise((resolve) => {
     if (signal === undefined) throw new Error("expected a work signal");
@@ -43,6 +50,7 @@ const untilAborted = (
         err(
           cancelledBy(operation, signal as AbortSignal & { aborted: true }, {
             partialObservation: project({ count: 1 }),
+            ...(diagnostics === undefined ? {} : { diagnostics }),
           }),
         ),
       );
@@ -103,6 +111,97 @@ it("keeps a value that arrived after the work budget as a timeout and does not p
   const error = failure(finalized);
   expect(error).toBeInstanceOf(AnalysisTimeoutError);
   expect(error.partialObservation).toEqual(project({ count: 3 }));
+});
+
+const timeoutRecovery = {
+  userMessage: "fixture did not finish within fixture.timeout_ms (5 ms).",
+  remediationAction: "Raise fixture.timeout_ms with update_analysis_settings.",
+  limit: analysisSettingLimit("kuna.function_timeout_ms", 5, "runtime"),
+  diagnostics: { accepted_deadline_ms: 5 },
+};
+
+it.each([
+  ["the work observes the budget's abort", untilAborted],
+  [
+    "the value arrives after the budget",
+    async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return ok({ count: 3 });
+    },
+  ],
+] as const)(
+  "carries the provider's timeout recovery when %s",
+  async (_case, work) => {
+    const finalized = await runOwned(work, {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5),
+      timeoutRecovery,
+      close: async () => undefined,
+      partial: project,
+    });
+    const error = failure(finalized);
+    expect(error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(error).toMatchObject({
+      operation,
+      timeoutMs: 5,
+      userMessage: timeoutRecovery.userMessage,
+      remediationAction: timeoutRecovery.remediationAction,
+      limit: timeoutRecovery.limit,
+      diagnostics: timeoutRecovery.diagnostics,
+    });
+  },
+);
+
+it("adds the recovery's diagnostics to the replaced outcome's own", async () => {
+  const finalized = await runOwned(
+    (signal) => untilAborted(signal, { observed_frames: 2 }),
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5),
+      timeoutRecovery,
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(failure(finalized).diagnostics).toEqual({
+    observed_frames: 2,
+    accepted_deadline_ms: 5,
+  });
+});
+
+it("keeps the timeout recovery on the primary when close also outlasts the finalize budget, and not on a completed value's retained cleanup", async () => {
+  const timedOut = failure(
+    await runOwned(untilAborted, {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5, { finalizeMs: 5 }),
+      timeoutRecovery,
+      close: () => new Promise<void>(() => undefined),
+      partial: project,
+    }),
+  );
+  expect(timedOut.cleanupIncomplete).toBe(true);
+  expect(primaryAnalysisError(timedOut)).toMatchObject({
+    userMessage: timeoutRecovery.userMessage,
+    remediationAction: timeoutRecovery.remediationAction,
+  });
+
+  const completed = await runOwned(async () => ok({ count: 3 }), {
+    providerId: "fixture",
+    operation,
+    deadline: Deadline.after(1000, { finalizeMs: 5 }),
+    timeoutRecovery,
+    fallbackResource: "fixture runtime",
+    close: () => new Promise<void>(() => undefined),
+    partial: project,
+  });
+  if (completed.kind !== "completed-cleanup-retained")
+    throw new Error(`expected retained cleanup, got ${completed.kind}`);
+  // Cleanup expiry is not a work timeout, so it does not carry that recovery.
+  expect(completed.error).not.toBeInstanceOf(AnalysisTimeoutError);
+  expect(completed.error.userMessage).not.toBe(timeoutRecovery.userMessage);
 });
 
 it("keeps a caller abort a cancellation even when the work budget also elapsed", async () => {

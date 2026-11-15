@@ -99,16 +99,16 @@ const expressionSettings = (
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -117,9 +117,9 @@ export const clientRegistrationEnvironment = (
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
@@ -207,7 +207,7 @@ export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
@@ -219,9 +219,9 @@ export const recordedProviderSettings = (
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     {},
     "fragment",
-    platform,
   );
   if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
   const recorded = snapshotEnvironment(details.value.values, platform);
@@ -273,16 +273,16 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   if (!details.ok) return details;
   const unresolved = [...details.value.unresolvedSettings].filter(

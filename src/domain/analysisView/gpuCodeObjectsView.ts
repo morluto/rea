@@ -258,10 +258,7 @@ export const projectGpuCodeObjectsView = (
       view,
       ...shared,
       summary: { ...summary, limitations: shared.limitations },
-      coverage: completeWithinViewCoverage(
-        report.objects.length,
-        report.objects.length,
-      ),
+      coverage: completeWithinViewCoverage(report.objects.length),
     });
   }
   if (view.collection === "ptx") {

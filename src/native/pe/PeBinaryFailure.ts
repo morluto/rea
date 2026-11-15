@@ -3,6 +3,7 @@ import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
   projectStableArtifactFailure,
+  readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
@@ -13,7 +14,6 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
   type ResourceConstraintRecovery,
   cancelledBy,
@@ -48,12 +48,7 @@ const peBinaryFailurePrimary = <Limit extends string>(
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      operation,
-      input.path,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(operation, input.path, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&

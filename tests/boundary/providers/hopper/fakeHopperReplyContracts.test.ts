@@ -1,13 +1,24 @@
+import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import { expect, it } from "vitest";
 
 import {
-  parseHopperReply,
-  hasHopperReplyContract,
+  parseHopperReply as parseHopperReplyWith,
+  hopperReplySchemas,
+  type HopperReplyMethod,
 } from "../../../../src/hopper/HopperReplyContracts.js";
 import {
   FAKE_HOPPER_REPLY_METHODS,
   fakeHopperReply,
 } from "../../../fixtures/fakeHopperReplies.mjs";
+
+const parseHopperReply = <M extends HopperReplyMethod>(
+  method: M,
+  value: JsonValue,
+  operation: string = method,
+) => parseHopperReplyWith(hopperReplySchemas, method, value, operation);
+
+const isReplyMethod = (method: string): method is HopperReplyMethod =>
+  Object.hasOwn(hopperReplySchemas, method);
 
 // The packaged CLI baseline and provider fixtures run against this fake
 // bridge; a reply outside the real bridge's contract fails them as unreadable
@@ -15,8 +26,8 @@ import {
 it.each(FAKE_HOPPER_REPLY_METHODS)(
   "serves a %s reply the Hopper reply contract admits",
   (method) => {
-    expect(hasHopperReplyContract(method)).toBe(true);
-    if (!hasHopperReplyContract(method)) return;
+    expect(isReplyMethod(method)).toBe(true);
+    if (!isReplyMethod(method)) return;
     const reply = fakeHopperReply(method);
     expect(reply).toBeDefined();
     if (reply === undefined) return;

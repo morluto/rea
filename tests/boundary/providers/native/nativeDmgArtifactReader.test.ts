@@ -1748,6 +1748,7 @@ describe("native DMG real verification diagnostics", () => {
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure)) return;
       expect(failure.reason).toBe("integrity");
+      expect(failure.integrityCheck).toBe("image-checksum");
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
       expect(failure.message).toContain('"arguments":["verify"');
       expect(failure.message).toContain('"exitCode":1');
