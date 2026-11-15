@@ -419,9 +419,10 @@ async function reloadFixture(connection) {
       5000,
     );
     const remove = connection.onEvent((event) => {
+      const registered = event.registered;
       if (
-        event.method === "Page.frameNavigated" &&
-        !event.params.frame?.parentId
+        registered?.method === "Page.frameNavigated" &&
+        registered.payload.facts.parentRelation === "root"
       )
         resolve();
     });
