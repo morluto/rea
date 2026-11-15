@@ -8,7 +8,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -632,11 +632,7 @@ export class FlutterBuildProvider {
     cleanup: AnalysisError,
     operation: string,
   ): AnalysisError {
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
   }
 
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
