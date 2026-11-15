@@ -9,7 +9,7 @@ import { artifactComparisonInputSchema } from "../../../src/contracts/artifactCo
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
-  compareSourceToBundleCliInputSchema,
+  compareSourceToBundleRequestSchema,
   compareStaticObservedEndpointsFactsSchema,
   reconcileJavaScriptRuntimeRequestSchema,
   traceApplicationFeatureRequestSchema,
@@ -70,7 +70,7 @@ const documents = [
   },
   {
     command: CLI_COMMANDS.compareSourceToBundle,
-    schema: frame(compareSourceToBundleCliInputSchema),
+    schema: frame(compareSourceToBundleRequestSchema.omit({ view: true })),
   },
   {
     command: CLI_COMMANDS.compareJavaScriptExportShapes,
