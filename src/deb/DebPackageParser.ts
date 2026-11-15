@@ -88,7 +88,8 @@ const looksLike = (bytes: Uint8Array, magic: Uint8Array): boolean => {
 const parseDecimal = (text: string): number | null => {
   const trimmed = trimField(text);
   if (!/^\d+$/u.test(trimmed)) return null;
-  return Number(trimmed);
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) ? value : null;
 };
 
 const parseOctal = (text: string): number | null => {
@@ -551,6 +552,19 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
   const textField = (name: string): string | null =>
     nonempty(fields?.get(name));
   const versionText = textField("version");
+  let version: DebControl["version"] = null;
+  if (versionText !== null) {
+    const parsed = parseDebianVersion(versionText);
+    if (parsed.upstream.length === 0 || parsed.revision === "")
+      issues.push({
+        kind: "malformed",
+        member: "control.tar",
+        field: "Version",
+        detail: "Version has an empty upstream version or Debian revision.",
+        offset: null,
+      });
+    else version = parsed;
+  }
   const installedText = textField("installed-size");
   let installed_size: number | null = null;
   if (installedText !== null) {
@@ -617,7 +631,7 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
     });
   return {
     package: textField("package"),
-    version: versionText === null ? null : parseDebianVersion(versionText),
+    version,
     architecture: textField("architecture"),
     maintainer: textField("maintainer"),
     installed_size,

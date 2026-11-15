@@ -386,6 +386,34 @@ it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
   );
 });
 
+it.each(["1:", "1:-1", "1.0-"])(
+  "reports a field issue for the malformed Version %s",
+  (version) => {
+    const report = parse(
+      debPackageFixture({
+        controlText: `Package: hello\nVersion: ${version}\nArchitecture: all\n`,
+      }),
+    );
+    expect(report.control?.version).toBeNull();
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ kind: "malformed", field: "Version" }),
+    );
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
+it("reports a field issue for an Installed-Size past the safe integer range", () => {
+  const report = parse(
+    debPackageFixture({
+      controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nInstalled-Size: ${"9".repeat(400)}\n`,
+    }),
+  );
+  expect(report.control?.installed_size).toBeNull();
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ kind: "malformed", field: "Installed-Size" }),
+  );
+});
+
 it("flags extra ar members without treating them as control or data", () => {
   const report = parse(
     debPackageFixture({
