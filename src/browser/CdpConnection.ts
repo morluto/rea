@@ -76,8 +76,14 @@ class CdpTransportCore {
   #nextId = 1;
   #closed = false;
   #closePromise: Promise<void> | undefined;
+  /** The wire itself broke its protocol; no later message is trusted. */
   #protocolFailed = false;
-  /** What a subscriber threw while handling an event; the protocol failure's cause. */
+  /**
+   * A subscriber threw while handling an event. The wire is still sound, so
+   * only cleanup-grace commands (owners restoring what they changed) may run.
+   */
+  #listenerFailed = false;
+  /** What that subscriber threw; the protocol failure's cause. */
   #listenerFailure: unknown;
   #transportFailure: "disconnected" | "payload_limit" = "disconnected";
   root!: CdpConnection;
@@ -102,6 +108,7 @@ class CdpTransportCore {
       !this.#closed &&
       this.#closePromise === undefined &&
       !this.#protocolFailed &&
+      !this.#listenerFailed &&
       this.socket.readyState === WebSocket.OPEN
     );
   }
@@ -130,7 +137,7 @@ class CdpTransportCore {
     operation: BrowserObservationOperation,
     listener: (error: BrowserObservationError) => void,
   ): () => void {
-    if (this.#protocolFailed) {
+    if (this.#protocolFailed || this.#listenerFailed) {
       listener(this.transportError("protocol_error", operation));
       return () => undefined;
     }
@@ -158,7 +165,10 @@ class CdpTransportCore {
     },
   ): Promise<unknown> {
     const { operation } = context;
-    if (this.#protocolFailed)
+    if (
+      this.#protocolFailed ||
+      (this.#listenerFailed && context.deadlineKind() !== "cleanup")
+    )
       throw this.transportError("protocol_error", operation);
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
       throw this.transportError(this.#transportFailure, operation);
@@ -369,18 +379,38 @@ class CdpTransportCore {
       }),
       wireBytes: bytes.byteLength,
     };
+    if (this.#listenerFailed) return;
     for (const listener of this.#listeners) {
       try {
         listener(event);
       } catch (cause: unknown) {
         // A subscriber that cannot consume an event leaves its session's view
-        // of the target incomplete. Fail the connection closed with that cause
-        // instead of letting it escape the socket callback.
-        this.#listenerFailure = cause;
-        this.#failPending("protocol_error");
+        // of the target incomplete. Fail the connection's sessions with that
+        // cause instead of letting it escape the socket callback.
+        this.#failListener(cause);
         return;
       }
     }
+  }
+
+  /**
+   * Reject pending commands and notify protocol-failure subscribers, but keep
+   * reading replies: owners still restore what they changed in cleanup grace.
+   */
+  #failListener(cause: unknown): void {
+    this.#listenerFailed = true;
+    this.#listenerFailure = cause;
+    for (const [id, pending] of this.#pending) {
+      this.#complete(id, pending);
+      pending.reject(this.transportError("protocol_error", pending.operation));
+    }
+    this.#notifyProtocolFailure();
+  }
+
+  #notifyProtocolFailure(): void {
+    const listeners = [...this.#protocolFailureListeners];
+    this.#protocolFailureListeners.clear();
+    for (const listener of listeners) listener();
   }
 
   #receiveResponse(message: Record<string, unknown>, id: number): void {
@@ -445,17 +475,13 @@ class CdpTransportCore {
   #failPending(
     reason: "disconnected" | "protocol_error" | "payload_limit",
   ): void {
-    const wasProtocolFailed = this.#protocolFailed;
     if (reason !== "protocol_error") this.#closed = true;
     else this.#protocolFailed = true;
     for (const [id, pending] of this.#pending) {
       this.#complete(id, pending);
       pending.reject(this.transportError(reason, pending.operation));
     }
-    if (reason === "protocol_error" && !wasProtocolFailed) {
-      for (const listener of this.#protocolFailureListeners) listener();
-      this.#protocolFailureListeners.clear();
-    }
+    if (reason === "protocol_error") this.#notifyProtocolFailure();
   }
 
   #disconnect(reason: "disconnected" | "payload_limit" = "disconnected"): void {
@@ -481,7 +507,7 @@ class CdpTransportCore {
     return new BrowserObservationError(
       operation,
       reason,
-      reason === "protocol_error" && this.#listenerFailure !== undefined
+      reason === "protocol_error" && this.#listenerFailed
         ? { cause: this.#listenerFailure }
         : undefined,
     );

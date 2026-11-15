@@ -104,18 +104,18 @@ it("reports a malformed target event the policy listener rejected at the next po
     commandResult: ({ method }) =>
       method === "Page.addScriptToEvaluateOnNewDocument"
         ? { identifier: "policy-script" }
-        : method === "Target.setAutoAttach" ||
-            method === "Page.removeScriptToEvaluateOnNewDocument"
-          ? {}
-          : undefined,
+        : method === "Runtime.evaluate"
+          ? { result: { type: "object", value: null } }
+          : method === "Target.setAutoAttach" ||
+              method === "Page.removeScriptToEvaluateOnNewDocument"
+            ? {}
+            : undefined,
   });
   const policy = new PlaywrightScenarioServiceWorkers(
     {
       frames: () => [],
       isClosed: () => false,
-      mainFrame: () => {
-        throw new Error("No frame mutation expected");
-      },
+      mainFrame: () => ({}) as never,
     },
     browser.browserWebSocketUrl,
     "allowed-page",
@@ -137,6 +137,16 @@ it("reports a malformed target event the policy listener rejected at the next po
         reason: "protocol_error",
         cause: expect.objectContaining({ reason: "protocol_error" }),
       });
+    // Cleanup still runs on the failed connection in its grace period.
+    await policy.close();
+    expect(browser.commands.map(({ method }) => method)).toEqual(
+      expect.arrayContaining([
+        "Page.removeScriptToEvaluateOnNewDocument",
+        "Runtime.evaluate",
+        "Target.detachFromTarget",
+      ]),
+    );
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   } finally {
     await policy.close().catch(() => undefined);
     await browser.close();

@@ -826,6 +826,10 @@ describe("CDP event subscriber failures", () => {
         cause: listenerFailure,
       });
       expect(later).not.toHaveBeenCalled();
+      expect(connection.isReusable()).toBe(false);
+      // The wire is sound: an owner can still restore what it changed.
+      connection.beginCleanupGrace(1_000);
+      await expect(connection.send("Page.enable")).resolves.toEqual({});
       expect(uncaught).toEqual([]);
     } finally {
       process.off("uncaughtException", onUncaught);
