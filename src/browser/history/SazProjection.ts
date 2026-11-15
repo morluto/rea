@@ -27,7 +27,7 @@ export const projectSazRecord = (
   ): JsonValue => {
     if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `SAZ projection exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
