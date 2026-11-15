@@ -46,9 +46,14 @@ export class GhidraWire {
     this.#options = options;
   }
 
-  /** Reply ceiling admitted with the latest request; the default before any. */
+  /** Reply ceiling of the request last written; the default before any. */
   replyLimit(): BridgeMaxReplyBytes {
     return this.#replyLimit;
+  }
+
+  /** Copy the effective reply ceiling in the admitting caller's context. */
+  admitReplyLimit(): BridgeMaxReplyBytes {
+    return admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -92,7 +97,6 @@ export class GhidraWire {
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
     };
     const payloadBytes = jsonValueByteLength(payloadValue);
-    this.#replyLimit = admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
     if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
@@ -107,6 +111,9 @@ export class GhidraWire {
       );
     }
     const payload = JSON.stringify(payloadValue);
+    // Only the request being written owns the next reply's ceiling; a
+    // refused or still-queued request never changes it.
+    this.#replyLimit = options.replyLimit ?? this.admitReplyLimit();
     const response = this.#options.pending.wait(id, {
       ...(timeoutMs === undefined
         ? {}

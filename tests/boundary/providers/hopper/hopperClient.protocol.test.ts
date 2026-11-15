@@ -294,6 +294,34 @@ describe("HopperClient reply framing", () => {
       });
     },
   );
+
+  it("bounds each reply by the ceiling its own request admitted", async () => {
+    // The getter-backed runtime setting reads whichever caller admits next.
+    const limit = { maximumBytes: 4 * MIB, source: "runtime" as const };
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, { bridgeMaxReplyBytes: limit });
+
+    const large = client.callTool(
+      "echo",
+      { label: "x".repeat(2 * MIB), delay: 100 },
+      { timeoutMs: 10_000 },
+    );
+    await waitFor(() =>
+      expect(launcher.requests.map(({ method }) => method)).toContain("echo"),
+    );
+    limit.maximumBytes = MIB;
+    const queued = client.callTool(
+      "echo",
+      { label: "small" },
+      { timeoutMs: 10_000 },
+    );
+
+    expect(
+      (await large).ok,
+      "a request queued with a lower ceiling does not shrink the active one",
+    ).toBe(true);
+    expect((await queued).ok).toBe(true);
+  });
 });
 
 it("preserves caller cancellation while a late valid UTF-8 reply drains", async () => {

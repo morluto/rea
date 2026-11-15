@@ -21,6 +21,13 @@ export interface GhidraRequestOptions {
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
+  /**
+   * Reply ceiling admitted when the request entered the FIFO. The wire
+   * activates it only when this request is written, because the queue may
+   * drain it outside the caller's settings context. Omitted reads the ceiling
+   * at write time, for requests the caller writes directly.
+   */
+  readonly replyLimit?: BridgeMaxReplyBytes;
 }
 
 /** Safe lifecycle telemetry for one isolated Ghidra headless process. */
