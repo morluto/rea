@@ -3,7 +3,7 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,

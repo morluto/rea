@@ -70,7 +70,7 @@ import { createGhidraTargetSnapshot } from "../../src/ghidra/GhidraTargetSnapsho
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";

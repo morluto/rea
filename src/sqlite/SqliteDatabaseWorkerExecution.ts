@@ -2,7 +2,7 @@ import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,7 +29,7 @@ import {
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   classifyProviderFailure,

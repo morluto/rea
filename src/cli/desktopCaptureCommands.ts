@@ -12,7 +12,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";

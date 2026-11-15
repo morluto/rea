@@ -22,7 +22,7 @@ import {
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 /** Installed processor code and data, distinct from REA's analysis-extension ABI. */
 export const ghidraPspExtensionSchema = z.strictObject({

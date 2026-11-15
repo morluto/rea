@@ -10,11 +10,11 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";

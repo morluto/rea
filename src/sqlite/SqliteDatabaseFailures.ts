@@ -7,7 +7,7 @@ import {
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,

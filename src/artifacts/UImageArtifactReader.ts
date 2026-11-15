@@ -9,7 +9,7 @@ import type {
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,

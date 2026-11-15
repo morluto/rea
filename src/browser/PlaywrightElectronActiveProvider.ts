@@ -4,7 +4,7 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";

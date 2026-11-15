@@ -7,7 +7,7 @@ import {
   ExecFileOutputCancelledError,
 } from "../process/ExecFileOutput.js";
 
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 
 const DCONF_TIMEOUT_MS = 30_000;

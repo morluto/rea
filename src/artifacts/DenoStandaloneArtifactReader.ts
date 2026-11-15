@@ -12,7 +12,7 @@ import type {
 } from "../domain/artifactFormatMetadata.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   ArtifactPathRegistry,

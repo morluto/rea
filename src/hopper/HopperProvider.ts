@@ -1,4 +1,4 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";

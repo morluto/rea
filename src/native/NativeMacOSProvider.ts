@@ -24,7 +24,7 @@ import {
   artifactFileCancellationCause,
   ArtifactFileCleanupFailure,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {

@@ -86,7 +86,7 @@ import {
   mapArtifactFileFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
@@ -97,7 +97,7 @@ import {
 } from "../../src/filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactAnalysisResources } from "../../src/process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../../src/process/LinuxResourceLimits.js";
 import { LocalWebSourceLocationArtifacts } from "../../src/browser/assets/WebSourceLocationArtifacts.js";

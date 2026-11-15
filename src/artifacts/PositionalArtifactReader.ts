@@ -13,7 +13,7 @@ import {
 } from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";

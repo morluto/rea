@@ -75,7 +75,7 @@ import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { observeGhidraEndpoint } from "../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {

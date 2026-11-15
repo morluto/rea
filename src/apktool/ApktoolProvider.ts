@@ -14,7 +14,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   capturedApktoolCommandOutput,

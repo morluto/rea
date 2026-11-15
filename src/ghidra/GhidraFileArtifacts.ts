@@ -10,7 +10,7 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   readStableFileBytes,
   RegularFileCapacityError,

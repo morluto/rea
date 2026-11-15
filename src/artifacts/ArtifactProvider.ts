@@ -7,7 +7,7 @@ import {
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
-import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";

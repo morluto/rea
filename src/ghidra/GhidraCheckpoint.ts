@@ -24,7 +24,7 @@ import {
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,

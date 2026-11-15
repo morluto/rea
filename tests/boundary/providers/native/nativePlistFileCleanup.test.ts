@@ -2,7 +2,7 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi, onTestFinished } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,

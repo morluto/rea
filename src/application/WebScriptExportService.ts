@@ -44,7 +44,7 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,

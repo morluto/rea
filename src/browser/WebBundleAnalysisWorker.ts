@@ -27,12 +27,12 @@ import {
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import type { StableArtifactSnapshot } from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,

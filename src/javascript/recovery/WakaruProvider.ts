@@ -21,7 +21,7 @@ import {
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
+import { artifactFileCancellationCause } from "../../resources/ArtifactFileOperation.js";
 import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,

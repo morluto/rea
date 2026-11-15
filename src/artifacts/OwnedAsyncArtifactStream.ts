@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { artifactReadCancelledBy } from "./ArtifactFileOperation.js";
+import { artifactReadCancelledBy } from "../resources/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 /** Retain a member iterator, including pending reads, until its stream closes. */

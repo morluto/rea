@@ -10,7 +10,7 @@ import {
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
@@ -34,7 +34,7 @@ import type {
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

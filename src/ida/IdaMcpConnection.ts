@@ -3,7 +3,7 @@ import {
   type ArtifactResourceOwner,
 } from "../resources/ArtifactResourceScope.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,

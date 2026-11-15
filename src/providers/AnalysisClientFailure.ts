@@ -23,7 +23,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 
 /** Copy authored outcome facts; semantic attribution never inspects a later signal. */
 export const analysisClientFailureContext = (

@@ -12,7 +12,7 @@ import {
   artifactSelectedPathErrno,
   artifactReadCancelledBy,
   assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { hashReadable } from "./ArtifactHash.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";

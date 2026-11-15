@@ -5,7 +5,7 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "./ArtifactFileOperation.js";
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,

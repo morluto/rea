@@ -7,7 +7,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { getHeapStatistics } from "node:v8";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
-import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactFileHandle } from "../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
@@ -17,7 +17,7 @@ import {
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   WEB_BUNDLE_WORKER_LIMITS as LIMITS,
   includedWebScriptSchema,

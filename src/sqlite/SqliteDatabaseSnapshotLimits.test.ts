@@ -15,7 +15,7 @@ import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
+import type { StableArtifactFileSystem } from "../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";

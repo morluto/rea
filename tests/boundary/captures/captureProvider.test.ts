@@ -4,7 +4,7 @@ import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { packetCaptureSchema } from "../../../src/domain/captures/packetCapture.js";

@@ -13,7 +13,7 @@ import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 /** Read a file digest with bounded memory rather than retaining binary bytes. */
 export const idaFileDigest = async (path: string): Promise<string> => {

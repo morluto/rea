@@ -1,5 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";

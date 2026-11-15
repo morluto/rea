@@ -1,5 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {

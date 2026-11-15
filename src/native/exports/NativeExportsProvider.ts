@@ -11,12 +11,12 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";

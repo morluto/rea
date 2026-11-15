@@ -12,13 +12,13 @@ import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentit
 import {
   withArtifactFileHandle,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
   type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {

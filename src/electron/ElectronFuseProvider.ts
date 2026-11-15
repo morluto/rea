@@ -5,7 +5,7 @@ import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
   artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {

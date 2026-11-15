@@ -17,7 +17,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "../application/ClientRegistrationStatus.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";

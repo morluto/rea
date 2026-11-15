@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 

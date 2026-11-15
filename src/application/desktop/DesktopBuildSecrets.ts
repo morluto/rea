@@ -3,7 +3,7 @@ import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
 } from "../../resources/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   AnalysisInputError,

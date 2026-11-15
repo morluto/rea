@@ -35,7 +35,7 @@ import {
   bindArtifactFileCleanup,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {

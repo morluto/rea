@@ -16,7 +16,7 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,

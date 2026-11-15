@@ -35,7 +35,7 @@ import {
   type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

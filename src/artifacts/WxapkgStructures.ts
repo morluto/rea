@@ -4,7 +4,7 @@ import {
   artifactFixedLimitFailure,
 } from "../resources/ArtifactReader.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {
   hasWxapkgEncryptedMagic,

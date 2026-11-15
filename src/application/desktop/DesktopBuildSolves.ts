@@ -8,7 +8,7 @@ import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js"
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,

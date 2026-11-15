@@ -4,7 +4,7 @@ import {
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";

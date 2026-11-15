@@ -1,5 +1,5 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";

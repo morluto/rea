@@ -28,7 +28,7 @@ import {
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 const OPERATION = "observe_native_calls";
 

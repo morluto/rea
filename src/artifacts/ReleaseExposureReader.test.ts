@@ -64,17 +64,17 @@ const stableRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./readStableArtifact.js").readStableArtifact
+          typeof import("../resources/readStableArtifact.js").readStableArtifact
         >
       ) => ReturnType<
-        typeof import("./readStableArtifact.js").readStableArtifact
+        typeof import("../resources/readStableArtifact.js").readStableArtifact
       >),
 }));
 
-vi.mock("./readStableArtifact.js", async () => {
+vi.mock("../resources/readStableArtifact.js", async () => {
   const actual = await vi.importActual<
-    typeof import("./readStableArtifact.js")
-  >("./readStableArtifact.js");
+    typeof import("../resources/readStableArtifact.js")
+  >("../resources/readStableArtifact.js");
   stableRead.impl = actual.readStableArtifact;
   return {
     ...actual,

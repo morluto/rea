@@ -40,7 +40,7 @@ import { fileSnapshotPartialObservationSchema } from "../../src/domain/fileSnaps
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactOperationError } from "../../src/domain/artifactOperationError.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../../src/domain/analysisErrorCleanup.js";

@@ -9,7 +9,7 @@ import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   locateGodotPck,
   type GodotPckAdmission,

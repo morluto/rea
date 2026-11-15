@@ -6,11 +6,11 @@ import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js"
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
+import { artifactFileCancellationCause } from "../../resources/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   AnalysisOutputError,
   cancelledBy,

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../resources/ArtifactFileOperation.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";

@@ -7,7 +7,7 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   artifactOperationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
   RegularFileCancelled,

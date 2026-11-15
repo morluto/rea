@@ -4,7 +4,7 @@ import type {
   ArtifactTraversalOmission,
 } from "../resources/ArtifactReader.js";
 import { DirectoryArtifactTraversalLimit } from "../artifacts/DirectoryArtifactReader.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { classifyAndroidStringsTable } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 

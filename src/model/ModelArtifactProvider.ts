@@ -33,7 +33,7 @@ import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";

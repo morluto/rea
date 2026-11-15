@@ -9,7 +9,7 @@ import { constants as fsConstants, type Stats } from "node:fs";
 import { isatty } from "node:tty";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,

@@ -17,7 +17,7 @@ import {
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 

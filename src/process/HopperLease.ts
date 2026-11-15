@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import {

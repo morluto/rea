@@ -23,7 +23,7 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
