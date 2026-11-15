@@ -25,8 +25,8 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
+  DirectoryArtifactReader,
 } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   projectPlistValue,

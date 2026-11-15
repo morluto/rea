@@ -1,11 +1,11 @@
-import type { BrowserScenarioCapture } from "../../domain/browserScenarioCapture.js";
-import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
-import type { BrowserNetworkBody } from "../../domain/browserNetworkEvidence.js";
-import type { CapturedWebScript } from "../../domain/webScriptExport.js";
+import type { BrowserScenarioCapture } from "./browserScenarioCapture.js";
+import type { BrowserScenarioEvent } from "./browserScenarioCaptureValues.js";
+import type { BrowserNetworkBody } from "./browserNetworkEvidence.js";
+import type { CapturedWebScript } from "./webScriptExport.js";
 import {
   indexBrowserScenarioTransactions,
   type BrowserScenarioTransactionIndex,
-} from "../../domain/browserScenarioTransactions.js";
+} from "./browserScenarioTransactions.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 

@@ -10,6 +10,8 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  DirectoryArtifactReader,
+  DirectoryArtifactEntryAccessDenied,
   translateArtifactFailure,
 } from "../../resources/index.js";
 import {
@@ -50,10 +52,6 @@ import {
   keyedArchiveResultSchema,
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
-import {
-  DirectoryArtifactReader,
-  DirectoryArtifactEntryAccessDenied,
-} from "../DirectoryArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";

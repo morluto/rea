@@ -32,13 +32,15 @@ import {
   bigLstat,
 } from "./ReferenceSourceReaderValidate.js";
 import type {
-  PendingDirectory,
   ReferenceSourceEntry,
   ReferenceSourceExclusionKind,
   ReferenceSourceFailureCode,
   ReferenceSourceResult,
-  TraversalState,
 } from "./ReferenceSourceReaderTypes.js";
+import type {
+  PendingDirectory,
+  TraversalState,
+} from "./ReferenceSourceReaderTraversal.js";
 
 const recordDirectoryFailure = (
   state: TraversalState,
