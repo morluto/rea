@@ -200,6 +200,14 @@ export const javaScriptApplicationCliProjection = (target: string) =>
         description:
           "Behavior when declared application integrity does not match",
       },
+      semantic_precision: {
+        description:
+          "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
+      },
+    },
+    jsonInputs: {
+      semantic_precision:
+        "semanticPrecision must be inline JSON or a JSON file path",
     },
     cliOptions: {
       sourcePathsJson: z
@@ -209,22 +217,12 @@ export const javaScriptApplicationCliProjection = (target: string) =>
         .describe(
           "Inline JSON array or JSON file path of exact inventoried file paths relative to the application root, selected after any --source-path values. Use a file for selections that exceed the host command-line limit.",
         ),
-      semanticPrecision: z
-        .string()
-        .optional()
-        .describe(
-          "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
-        ),
-    },
-    omit: {
-      semantic_precision:
-        "--semantic-precision takes the evaluator budgets as inline JSON or a JSON file",
     },
   }) as const;
 
 /**
  * Run `analyze_javascript_application` on its admitted contract input,
- * adding the file-backed source selection and evaluator budgets and
+ * adding the file-backed source selection and
  * delivering Evidence as the caller selected.
  */
 export const runJavaScriptApplicationCommand =
@@ -237,7 +235,6 @@ export const runJavaScriptApplicationCommand =
       cliOptions,
     }: ContractCommandContext<{
       readonly sourcePathsJson?: string | undefined;
-      readonly semanticPrecision?: string | undefined;
     }>,
   ): Promise<JsonValue> => {
     const sourcePaths = await cliJavaScriptSourcePaths(
@@ -246,24 +243,12 @@ export const runJavaScriptApplicationCommand =
       signal,
     );
     if (!sourcePaths.ok) return sourcePaths.error;
-    const precision =
-      cliOptions.semanticPrecision === undefined
-        ? undefined
-        : await parseCliJsonInput(
-            cliOptions.semanticPrecision,
-            OPERATION,
-            signal,
-          );
-    if (precision !== undefined && !precision.ok) return precision.error;
     return runCliJavaScriptApplicationAnalysis(
       {
         ...input,
         ...(sourcePaths.value === undefined
           ? {}
           : { source_paths: sourcePaths.value }),
-        ...(precision === undefined
-          ? {}
-          : { semantic_precision: precision.value }),
       },
       environment,
       signal,
