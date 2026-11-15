@@ -864,7 +864,8 @@ Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
 owned cleanup seams while preserving real cleanup where feasible.
 `tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
-holds a late handshake or in-flight work at a boundary, `cancelDuringCleanup`
+holds a late handshake or in-flight work at a boundary and releases it with a
+value or a rejection, `cancelDuringCleanup`
 cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
