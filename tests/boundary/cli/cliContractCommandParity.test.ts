@@ -298,6 +298,7 @@ const MIGRATED_COMMANDS = [
   "instructions",
   "decompile",
   "search",
+  "decompile-all",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -695,7 +696,9 @@ describe("Session targets of contract commands", () => {
       expect(Object.values(description.toContractInput(values))).not.toContain(
         "rel/app",
       );
-      expect(description.callerInputs(values)).toEqual({});
+      expect(
+        Object.values(description.callerInputs(values)).flat(),
+      ).not.toContain("rel/app");
     },
   );
 
