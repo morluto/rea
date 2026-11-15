@@ -22,8 +22,8 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
   isIntrinsicGlobalReference,
   isUnmodifiedGlobalReference,
-  opaqueCodeMayChangeGlobalRead,
 } from "./javascriptSemanticGlobalReference.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticOpaqueEffects.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
