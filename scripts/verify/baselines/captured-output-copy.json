@@ -12,6 +12,5 @@
   "src/native/pwntools/PwntoolsDecoder.ts": 1,
   "src/pcap/PcapCommand.ts": 1,
   "src/signals/SigrokRecordingProvider.ts": 1,
-  "src/wasm/WabtArtifactProvider.ts": 2,
-  "src/wasm/WabtFailures.ts": 1
+  "src/wasm/WabtArtifactProvider.ts": 1
 }

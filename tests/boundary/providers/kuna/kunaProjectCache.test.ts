@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import canonicalize from "canonicalize";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
 import { expect, it as test, vi } from "vitest";
 
@@ -112,8 +113,8 @@ const processGone = (pid: number): boolean => {
   }
 };
 
-it.each([1, 2])(
-  "regenerates layout %i once and retires it without touching unrelated cache resources",
+it.each([1, 2, 3, "release"] as const)(
+  "regenerates layout %s once and retires it without touching unrelated cache resources",
   async (layout) => {
     const { kuna, installation, cacheRoot, cache, target } = await fixture(
       "rea-kuna-cache-format-transition-",
@@ -126,13 +127,21 @@ it.each([1, 2])(
     expect((await cache.close()).ok).toBe(true);
     // Seed the previously shipped manifest and content-key format using a real
     // authored export; omitted launcher identity must never be invented or reused.
+    // "release": the current entry format written by another REA release.
+    const marker =
+      layout === "release"
+        ? { producer: { rea_version: "0.0.0-another-release" } }
+        : { layout };
     const legacyKey = createHash("sha256")
       .update(
         canonicalize({
-          layout,
+          ...marker,
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -151,13 +160,18 @@ it.each([1, 2])(
     await writeFile(
       join(legacyEntry, "manifest.json"),
       JSON.stringify({
-        ...initial.value.manifest,
-        layout,
+        ...(({ producer: _producer, ...manifest }) => manifest)(
+          initial.value.manifest,
+        ),
+        ...marker,
         key: legacyKey,
         inputs: {
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -185,7 +199,7 @@ it.each([1, 2])(
       });
       expect(built.value.key).not.toBe(legacyKey);
       expect(built.value.manifest).toMatchObject({
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           kuna_command: installation.configuration.command,
           kuna_executable: installation.executable,
@@ -256,7 +270,7 @@ it("publishes a verified export and serves later requests from the cache", async
     value: {
       key: keyOf(installation, input),
       manifest: {
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           target_sha256: input.targetSha256,
           kuna_sha256: installation.sha256,

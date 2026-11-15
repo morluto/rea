@@ -1,5 +1,5 @@
 import { registerManagedCommands } from "../../src/cli/managedCommands.js";
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { createDirectAnalysis } from "../../src/composition/directAnalysis.js";
 import type { DirectAnalysis } from "../../src/composition/directAnalysis.js";
 import { silentLogger } from "../../src/logger.js";

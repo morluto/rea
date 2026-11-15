@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
-import { CLI_COMMAND_NAMES } from "../../../src/catalogIdentity.js";
+import { CLI_COMMAND_NAMES } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { createCli } from "../../../src/cli.js";
 import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";

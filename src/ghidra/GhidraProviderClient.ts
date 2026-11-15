@@ -517,7 +517,7 @@ export const createGhidraProviderClient = (input: {
     committedProfile.parameters,
     project !== undefined &&
       committedProfile.parameters.import_mode ===
-        "existing-project-private-copy-v1",
+        "existing-project-private-copy",
   );
   if (mipsProfileMismatch !== null)
     return err(ghidraProfileConflict("open_binary", mipsProfileMismatch));
@@ -586,8 +586,7 @@ export const createGhidraProviderClient = (input: {
         ]
       : []),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
-    ...(committedProfile.parameters.mips_abi_basis ===
-    "inferred-o32-assumption-v1"
+    ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
           "The ELF header declares no ABI field and no ABI flags record was observed; o32 calling conventions are an analysis assumption of this lane, not a declared fact.",
           "Floating-point ABI semantics are unverified for this recordless legacy admission.",
