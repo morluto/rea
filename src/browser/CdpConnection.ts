@@ -7,6 +7,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
   admitCdpReply,
+  assertCdpCommand,
   type CdpCommand,
   type CdpCommandParams,
   type CdpCommandResult,
@@ -667,6 +668,7 @@ export class CdpConnection {
     sessionId?: string,
     signal?: AbortSignal,
   ): Promise<CdpCommandResult<M>> {
+    assertCdpCommand(method, this.operation);
     const reply = await this.core.send(
       method,
       params ?? {},
