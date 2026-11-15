@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -330,6 +331,28 @@ export const contractDocumentCommandDescriptions = (
   documentDescriptions.get(cli) ?? [];
 
 /**
+ * A document field the projection omits is refused with its reason rather
+ * than passed to an owner that would act on it.
+ */
+const omittedDocumentFieldError = (
+  operation: string,
+  omitted: Readonly<Record<string, string>>,
+  document: object,
+): AnalysisError | undefined => {
+  const issues = Object.entries(omitted)
+    .filter(([field]) => Object.hasOwn(document, field))
+    .map(([field, reason]) => ({
+      code: "custom" as const,
+      path: [field],
+      message: `${field} is not accepted by this command: ${reason}`,
+      input: (document as Readonly<Record<string, unknown>>)[field],
+    }));
+  return issues.length === 0
+    ? undefined
+    : analysisInputErrorFromIssues(operation, issues, document);
+};
+
+/**
  * Register one CLI command whose whole contract input is one JSON document.
  * The handler receives the decoded document with its caller paths made
  * absolute, and admits it with the contract's owner.
@@ -378,6 +401,17 @@ export const registerContractDocumentCommand = <
             signal,
           );
           if (!decoded.ok) return decoded.error;
+          // A document that is not an object has no fields to refuse; the
+          // contract refuses it.
+          const refused =
+            typeof decoded.value === "object" && decoded.value !== null
+              ? omittedDocumentFieldError(
+                  contract.name,
+                  description.omitted,
+                  decoded.value,
+                )
+              : undefined;
+          if (refused !== undefined) return projectAnalysisError(refused);
           return run(
             resolveCliJsonPaths(decoded.value, description.callerPaths),
             {

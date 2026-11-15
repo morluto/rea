@@ -67,7 +67,7 @@ const comparisonFailure = (
   input: NativeLoadImageAttestationInput,
   reason: string,
   cause?: unknown,
-): AnalysisError =>
+): ProviderAdapterError =>
   new ProviderAdapterError("ghidra", input.operation, {
     diagnostics: { reason },
     ...(cause === undefined ? {} : { cause }),

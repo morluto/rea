@@ -27,7 +27,7 @@ import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import {
   clientEvidencePaths,
-  supportedClients,
+  resolveSupportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -298,7 +298,7 @@ export const systemSetupHost = (
       }),
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>
-      Promise.resolve(supportedClients(homeDirectory, platform, environment)),
+      resolveSupportedClients(homeDirectory, platform, environment),
     ...clientConfigurationOperations(
       resources,
       doctorHost.resolveProviderRequestBudget,
@@ -470,7 +470,11 @@ export const detectClients = async (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
-  for (const candidate of supportedClients(home, platform, environment)) {
+  for (const candidate of await resolveSupportedClients(
+    home,
+    platform,
+    environment,
+  )) {
     if (
       candidate.configPathError !== undefined ||
       candidate.registrationApplicability === true

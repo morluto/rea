@@ -233,14 +233,14 @@ const hashAdbFile = async (
   }
 };
 
+/** Report a pulled file's digest that was cancelled or whose handle stayed open. */
 const adbDigestError = (
-  cause: unknown,
+  cause: AdbDigestFailure,
   operation: string,
   partialObservation:
     | AdbAcquiredFilePartialObservation
     | AdbPackagePullPartialObservation,
-): AnalysisError | undefined => {
-  if (!(cause instanceof AdbDigestFailure)) return undefined;
+): AnalysisError => {
   const digestFailure = cause.fileFailure;
   const digestOutcome = digestFailure.outcome;
   if (digestOutcome.kind === "completed")
@@ -2164,12 +2164,8 @@ export class AdbProvider {
             coverage: "partial",
           },
         };
-        const cleanupError = adbDigestError(
-          cause,
-          operation,
-          partialObservation,
-        );
-        if (cleanupError !== undefined) return err(cleanupError);
+        if (cause instanceof AdbDigestFailure)
+          return err(adbDigestError(cause, operation, partialObservation));
         if (cause instanceof AnalysisCancelledError)
           return cancelledPackagePull(
             cause,
@@ -2337,8 +2333,8 @@ export class AdbProvider {
           digest_status: "unknown",
         },
       };
-      const cleanupError = adbDigestError(cause, operation, partialObservation);
-      if (cleanupError !== undefined) return err(cleanupError);
+      if (cause instanceof AdbDigestFailure)
+        return err(adbDigestError(cause, operation, partialObservation));
       if (cause instanceof AnalysisCancelledError) {
         cause.retainPartialObservation(partialObservation);
         return err(cause);
@@ -3251,11 +3247,11 @@ export class AdbProvider {
           }),
         );
       } catch (cause) {
-        const cleanupError =
-          retainedObservation === undefined
-            ? undefined
-            : adbDigestError(cause, operation, retainedObservation);
-        if (cleanupError !== undefined) return err(cleanupError);
+        if (
+          retainedObservation !== undefined &&
+          cause instanceof AdbDigestFailure
+        )
+          return err(adbDigestError(cause, operation, retainedObservation));
         if (cause instanceof AnalysisCancelledError) {
           if (retainedObservation !== undefined)
             cause.retainPartialObservation(retainedObservation);

@@ -7,7 +7,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -266,11 +266,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(

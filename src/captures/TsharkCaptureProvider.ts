@@ -44,6 +44,10 @@ import {
   artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
+import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
@@ -105,7 +109,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       TSHARK_PROVIDER_IDENTITY.id,
       OPERATION,
       readArtifact,
@@ -519,6 +523,14 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       operation,
       "producer_limits",
     );
+    // A post-run identity read reports what the resources own about it.
+    if (phase === "integrity")
+      return artifactResourceDialect(this.#resources, {
+        kind: "integrity",
+        operation,
+        path,
+        capturedOutput: observedOutput,
+      });
     return {
       providerId: TSHARK_PROVIDER_IDENTITY.id,
       operation,
@@ -562,13 +574,6 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             operation,
             cause,
             workspacePath,
-          );
-        if (phase === "integrity")
-          return this.#resources.integrityFailure(
-            cause,
-            path,
-            observedOutput,
-            operation,
           );
         if (phase === "configuration")
           return new AnalysisCapabilityUnavailableError(

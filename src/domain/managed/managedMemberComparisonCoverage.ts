@@ -3,7 +3,6 @@ import type {
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
@@ -240,11 +239,7 @@ export const comparisonLimitations = (
         signature.resolved_sha256 !== null &&
         signature.resolved_sha256 !== signature.raw_sha256,
     );
-  if (
-    hasSignatureResolution(left) &&
-    hasSignatureResolution(right) &&
-    (namesTypes(left) || namesTypes(right))
-  )
+  if (namesTypes(left) || namesTypes(right))
     limitations.push(
       "Signature type operands compare by namespace, name, and enclosing names only; defining assemblies and CLR type identity are not established by this comparison.",
     );
@@ -270,10 +265,6 @@ export const comparisonLimitations = (
   if (!hasCompleteMethodRows(left) || !hasCompleteMethodRows(right))
     limitations.push(
       "At least one observation lacks a complete MethodDef row inventory; paged or unrecorded method scope cannot establish cross-build method absence. Row intervals are reported in method_rows and describe build-local selections.",
-    );
-  if (!hasSignatureResolution(left) || !hasSignatureResolution(right))
-    limitations.push(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
     );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(

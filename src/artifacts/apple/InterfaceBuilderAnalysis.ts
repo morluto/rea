@@ -3,7 +3,6 @@ import {
   isHostLimitFailure,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
-import { TextDecoder } from "node:util";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
 import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
@@ -72,6 +71,7 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -730,7 +730,7 @@ const projectNibArchive = (
     try {
       // NSString's NS.bytes representation is UTF-8. A failed conversion
       // does not establish a replacement-character class, title or selector.
-      value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      value = strictUtf8Decoder("preserve").decode(
         Buffer.from(encoded, "base64"),
       );
     } catch {

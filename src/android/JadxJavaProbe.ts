@@ -13,11 +13,11 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   InternalInvariantError,
   invariantViolation,
 } from "../domain/internalInvariant.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -270,11 +270,11 @@ export const inspectJadxJava = async (
           primary = projectRefusal(failure, operation, cause, output);
         }
         for (const cleanup of cleanups)
-          primary = analysisErrorWithCleanupFailure(
+          primary = analysisErrorWithCleanupDependencies(
             primary,
             cleanup,
             operation,
-          ).bindCleanupDependencies([primary, cleanup]);
+          );
         throw bindProcessInspectionCancellations(cause, primary, operation);
       }
     });
