@@ -11,6 +11,7 @@ export const NUGET_NUPKG_TOOL_CONTRACTS = [
   {
     name: "inspect_nuget_nupkg",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_nuget_nupkg"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

@@ -31,6 +31,7 @@ import {
   CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
 
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 
@@ -907,7 +908,7 @@ it.each([
     expect(error.code).toBe("invalid_request");
     expect(error.details.issues).toEqual([
       expect.objectContaining({
-        path: ["capture_path", ""],
+        path: ["capturePath", ""],
         reason: "out_of_range",
         expected: {
           maximum_expanded_capture_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
@@ -922,11 +923,15 @@ it.each([
     });
     expect(response.isError).toBe(true);
     const mcpFailure = parseMcpToolError(response);
+    // The CLI names the capture by its argument, otherwise as MCP does.
+    const cliError = issuesByContractField(error, {
+      capturePath: "capture_path",
+    }) as typeof error;
     expect(mcpFailure).toMatchObject({
       error: {
-        code: error.code,
-        category: error.category,
-        details: error.details,
+        code: cliError.code,
+        category: cliError.category,
+        details: cliError.details,
       },
     });
     expect(error).not.toHaveProperty("normalized_result");

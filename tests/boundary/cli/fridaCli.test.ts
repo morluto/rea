@@ -311,9 +311,54 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
       },
     },
   );
-  expect(exitCode).not.toBe(0);
+  // A remote credential without its address is refused by the contract
+  // before any device is contacted.
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "list_frida_devices",
+      issues: [{ path: ["remote", "address"], reason: "missing_argument" }],
+    },
+  });
   expect(calls).toHaveLength(3);
   expect(stdout).not.toContain("synthetic-secret-token");
+});
+
+it("records only the capture limit the caller selected and returns its Evidence", async () => {
+  const { calls, provider } = createFridaRecorder();
+  const cli = createCli({}, undefined, provider);
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve(
+    [
+      "instrument-with-frida",
+      "attach",
+      "71",
+      "--script",
+      "send(1)",
+      "--capture-json-nodes",
+      "100",
+      "--duration-ms",
+      "0",
+      "--json",
+    ],
+    {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  expect(exitCode, stdout).toBe(0);
+  const result = FRIDA_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "instrument_with_frida",
+  )!.outputSchema.parse(JSON.parse(stdout));
+  // Strict equality: an omitted limit is absent, never undefined.
+  expect(result.parameters.capture_limits).toStrictEqual({ json_nodes: 100 });
+  expect(calls[0]).toMatchObject({ operation: "start" });
 });
 
 it("forwards every selected spawn argument through the CLI and shared service", async () => {

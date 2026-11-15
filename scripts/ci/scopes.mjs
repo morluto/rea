@@ -8,6 +8,13 @@ export const WINDOWS_EXECUTABLE_SELECTION_INPUTS = [
   "tests/boundary/process/windowsExecutableSelection.test.ts",
 ];
 
+// Shared process, contract, CLI, and CI-script edits are not a specific provider.
+// Fast qualification keeps the portable suite and the Linux x64 runtime
+// baseline, and pull requests run the complete portable suite rather than a
+// selected subset. Full qualification still selects every lane.
+export const SHARED_BOUNDARY =
+  /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
+
 // Inputs whose changes must select both real capture lanes, even at shared boundaries.
 const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
@@ -552,7 +559,7 @@ const PATH_SCOPES = {
     "src/application/WebNetworkCapture*",
     "src/composition/webNetworkCaptures.ts",
     "src/cli/webNetworkCaptureCommands.ts",
-    "src/server/registerWebNetworkCaptureTool.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/server/toolRegistrationOptions.ts",
     "src/cli.ts",
@@ -592,7 +599,7 @@ const PATH_SCOPES = {
     "src/composition/webRuntime.ts",
     "src/contracts/webRuntimeToolContracts.ts",
     "src/contracts/toolEffects.ts",
-    "src/server/registerWebRuntimeTools.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webRuntimeCommands.ts",
     "src/cli/commandCancellation.ts",
@@ -625,7 +632,7 @@ const PATH_SCOPES = {
     "src/{application,server}/environment/**",
     "src/application/{JsonInputFile,OwnedJsonInput,RegularFileRead}.ts",
     "src/artifacts/{SafeOutputTree*,ArtifactResourceScope,StreamBytes}.ts",
-    "src/cliJsonInput.ts",
+    "src/cli/cliJsonInput.ts",
     "src/server/http/**",
     "src/{cli,cliCommandNames,cli/environmentCommands}.ts",
     "src/config/{environmentName,mcpHttpEndpoint}.ts",
@@ -679,6 +686,8 @@ export const CI_LANES = {
       fast: ["build", "test-shard", "test-source"],
       full: ["build", "test-shard"],
     },
+    // A selected PR subset runs its source tests in the test-shard groups.
+    selectedTests: ["build", "test-shard"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {

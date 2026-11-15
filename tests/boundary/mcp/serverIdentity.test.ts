@@ -15,9 +15,9 @@ import {
   createCatalogDigestProfiles,
   createCatalogDigests,
   createCatalogIdentity,
+  CLI_COMMAND_NAMES,
 } from "../../../src/catalogIdentity.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";

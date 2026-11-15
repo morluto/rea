@@ -57,6 +57,7 @@ export const wasmInterfaceComparisonSchema = z.object({
 });
 export const COMPARE_WASM_INTERFACES_CONTRACT = {
   name: "compare_wasm_interfaces",
+  cli: true,
   ...toolContractMetadata("compare_wasm_interfaces"),
   kind: "application",
   description:

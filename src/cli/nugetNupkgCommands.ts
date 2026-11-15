@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createNugetNupkgService } from "../composition/nugetNupkg.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../contracts/nuget/nupkgToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -20,7 +19,6 @@ export const registerNugetNupkgCommands = (
     logger,
     contractNamed(NUGET_NUPKG_TOOL_CONTRACTS, "inspect_nuget_nupkg"),
     {
-      command: CLI_COMMANDS.inspectNugetNupkg,
       description:
         "Inspect NuGet .nupkg identity, dependency groups and ZIP contents without restore or network",
       positionals: ["path"],
