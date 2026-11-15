@@ -13,6 +13,12 @@ export interface BinaryPlistScalarMetadata {
   readonly literals: PlistNumberLiterals;
   /** 16-byte integers the pinned plist decoder cannot decode correctly. */
   readonly wideIntegers: readonly { offset: number; value: bigint }[];
+  /**
+   * Reachable integer objects beyond the exact range of a JSON number, keyed by
+   * source offset. The pinned decoder rounds them, and distinct values can
+   * round to the same number, so only the object identifies its exact value.
+   */
+  readonly exactIntegers: readonly { offset: number; value: bigint }[];
   /** Valid date objects, retaining their exact source seconds before Date conversion. */
   readonly dates: readonly {
     readonly offset: number;
@@ -20,6 +26,10 @@ export interface BinaryPlistScalarMetadata {
     readonly secondsSince2001: number;
   }[];
 }
+
+const isSafeIntegerValue = (value: bigint): boolean =>
+  value >= BigInt(Number.MIN_SAFE_INTEGER) &&
+  value <= BigInt(Number.MAX_SAFE_INTEGER);
 
 const containsSortedOffset = (
   offsets: readonly number[],
@@ -237,6 +247,7 @@ export const scanBinaryPlistScalars = (
 ): BinaryPlistScalarMetadata => {
   const output = createPlistNumberCollector();
   const wideIntegers: { offset: number; value: bigint }[] = [];
+  const exactIntegers: { offset: number; value: bigint }[] = [];
   const dates: {
     offset: number;
     payloadOffset: number;
@@ -245,6 +256,7 @@ export const scanBinaryPlistScalars = (
   const result = (incomplete: boolean): BinaryPlistScalarMetadata => ({
     literals: output.result(incomplete),
     wideIntegers,
+    exactIntegers,
     dates,
   });
   if (bytes.length < 40 || !hasBinaryPlistSignature(bytes)) return result(true);
@@ -342,7 +354,10 @@ export const scanBinaryPlistScalars = (
       containsSortedOffset(scalarPlan.reachableNumericOffsets, offset);
     if (type === 1 && width === 8) {
       const value = view.getBigInt64(offset + 1);
-      if (isReachable) output.integer(value);
+      if (isReachable) {
+        output.integer(value);
+        if (!isSafeIntegerValue(value)) exactIntegers.push({ offset, value });
+      }
     } else if (type === 1 && width === 16) {
       const value = BigInt.asIntN(
         128,
@@ -350,6 +365,7 @@ export const scanBinaryPlistScalars = (
       );
       if (isReachable) {
         output.integer(value);
+        if (!isSafeIntegerValue(value)) exactIntegers.push({ offset, value });
         if (
           scalarPlan === undefined ||
           containsSortedOffset(scalarPlan.reachableWideIntegerOffsets, offset)
