@@ -43,6 +43,31 @@ export const absoluteXdgConfigHome = ({
     : join(home, ".config");
 };
 
+/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
+export const mcporterExpandHome = (value: string, home: string): string =>
+  value === "~"
+    ? home
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? join(home, value.slice(2))
+      : value;
+
+/**
+ * MCPorter's XDG folder (`mcporterConfigCandidates`): `XDG_CONFIG_HOME` is
+ * trimmed and `~`-expanded, and only an absolute result counts. Otherwise
+ * MCPorter uses its legacy `~/.mcporter` folder rather than `~/.config`, so
+ * there is no XDG folder and this returns `undefined`.
+ */
+export const mcporterXdgConfigHome = ({
+  home,
+  platform,
+  env,
+}: ClientRootContext): string | undefined => {
+  const value = mcporterExpandHome(env.XDG_CONFIG_HOME?.trim() ?? "", home);
+  return (platform === "win32" ? win32 : posix).isAbsolute(value)
+    ? value
+    : undefined;
+};
+
 /**
  * Code-OSS's `getUserDataPath` for one product's data folder (`Code` for VS
  * Code; `Cursor`, `Windsurf`, `VSCodium` or `Code - Insiders` for builds that
