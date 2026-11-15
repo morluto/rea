@@ -1944,7 +1944,7 @@ describe("analysis error projection: composite argument observations", () => {
       projectAnalysisErrorWithoutPartialObservation(composed).details,
     ).not.toHaveProperty("argument_observations");
 
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(
       projectAnalysisError(composed).details?.argument_observations,
     ).toEqual(expected);
