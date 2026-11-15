@@ -2,6 +2,8 @@ import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
+
+import { HOPPER_BRIDGE_SCRIPT_URL } from "./HopperBridgeSources.js";
 import { accessSync, constants, statSync } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
@@ -320,9 +322,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           this.config.hopperLoaderArgs.length > 0
             ? this.config.hopperLoaderArgs
             : derivedLoaderArgs.value,
-        bridgeScriptPath: fileURLToPath(
-          new URL("../../bridge/hopper_bridge.py", import.meta.url),
-        ),
+        bridgeScriptPath: fileURLToPath(HOPPER_BRIDGE_SCRIPT_URL),
         bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
         ...(this.platform === "linux"
           ? {
