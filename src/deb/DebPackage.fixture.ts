@@ -13,6 +13,8 @@ const octalField = (value: number, width: number): string =>
 
 export type DebTarEntrySpec = {
   readonly name: string;
+  /** Raw name bytes, written in place of `name` when given. */
+  readonly nameBytes?: Uint8Array;
   readonly content?: Uint8Array | string;
   readonly type?: string;
   readonly mode?: number;
@@ -34,7 +36,8 @@ export const tarMember = (entry: DebTarEntrySpec): Buffer => {
   const header = Buffer.alloc(TAR_BLOCK);
   const type =
     entry.type ?? (content.length === 0 && entry.linkname ? "2" : "0");
-  header.write(entry.name.slice(0, 100));
+  if (entry.nameBytes === undefined) header.write(entry.name.slice(0, 100));
+  else header.set(entry.nameBytes.subarray(0, 100));
   header.write(octalField(entry.mode ?? 0o644, 8), 100);
   header.write(octalField(entry.uid ?? 0, 8), 108);
   header.write(octalField(entry.gid ?? 0, 8), 116);

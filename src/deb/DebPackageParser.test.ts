@@ -367,6 +367,67 @@ it("counts a hardlinked md5sums path as present in the inventory", () => {
   });
 });
 
+it("keeps UTF-8, surrounding spaces, and backslashes in tar names", () => {
+  const sum = "d41d8cd98f00b204e9800998ecf8427e";
+  const names = [
+    "usr/share/café",
+    "usr/share/ padded ",
+    "usr/share/back\\slash",
+  ];
+  const report = parse(
+    debPackageFixture({
+      md5sums: names.map((name) => `${sum}  ${name}\n`).join(""),
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/share/", type: "5", mode: 0o755, content: "" },
+        ...names.map((name) => ({ name: `./${name}`, content: "" })),
+        {
+          name: "./usr/share/link",
+          type: "2",
+          linkname: "café ",
+        },
+      ],
+    }),
+  );
+  const paths = report.data_entries.map((entry) => entry.path);
+  for (const name of names) expect(paths).toContain(name);
+  expect(
+    report.data_entries.find((entry) => entry.path === "usr/share/link")
+      ?.link_target,
+  ).toBe("café ");
+  expect(report.md5sums_cross_check).toEqual({
+    listed: 3,
+    present: 3,
+    missing_from_inventory: 0,
+    missing_from_md5sums: 0,
+  });
+  expect(report.limitations.join("\n")).not.toContain("not UTF-8");
+});
+
+it("reports tar names that are not UTF-8 as a limitation", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "",
+          nameBytes: Buffer.concat([
+            Buffer.from("./usr/bin/h", "utf8"),
+            Buffer.from([0xff]),
+          ]),
+          content: "",
+        },
+      ],
+    }),
+  );
+  expect(report.data_entries.map((entry) => entry.path)).toContain(
+    "usr/bin/h\uFFFD",
+  );
+  expect(report.limitations).toContain(
+    "1 tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.",
+  );
+});
+
 it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
   const report = parse(
     debPackageFixture({

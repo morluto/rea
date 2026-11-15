@@ -70,6 +70,24 @@ const nonempty = (value: string | undefined): string | null => {
   return trimmed.length === 0 ? null : trimmed;
 };
 
+const UTF8_LENIENT = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/**
+ * A NUL-terminated tar name field as UTF-8. Names keep surrounding spaces
+ * and backslashes, which are legal in Unix paths; `undecodable` is set when
+ * the bytes are not UTF-8 and the text carries U+FFFD replacements.
+ */
+const tarText = (
+  bytes: Uint8Array,
+): { readonly text: string; readonly undecodable: boolean } => {
+  const end = bytes.indexOf(0);
+  const field = end === -1 ? bytes : bytes.subarray(0, end);
+  const strict = decodeUtf8(field);
+  return strict === null
+    ? { text: UTF8_LENIENT.decode(field), undecodable: true }
+    : { text: strict, undecodable: false };
+};
+
 const decodeUtf8 = (bytes: Uint8Array): string | null => {
   try {
     return UTF8.decode(bytes);
@@ -136,10 +154,7 @@ const pad512 = (size: number): number =>
   Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 
 const logicalTarPath = (name: string): string =>
-  name
-    .replaceAll("\\", "/")
-    .replace(/^(?:\.\/)+/u, "")
-    .replace(/\/+$/u, "");
+  name.replace(/^(?:\.\/)+/u, "").replace(/\/+$/u, "");
 
 const tarChecksum = (header: Uint8Array): number => {
   let sum = 0;
@@ -298,6 +313,8 @@ type TarParse = {
   readonly entries: DebTarEntry[];
   readonly files: ReadonlyMap<string, Uint8Array>;
   readonly error?: DebPackageFormatFailure | DebPackageCapacityFailure;
+  /** Entry names or link targets that are not UTF-8. */
+  readonly undecodableNames: number;
 };
 
 const parsePax = (bytes: Uint8Array): Readonly<Record<string, string>> => {
@@ -331,6 +348,9 @@ const parseTar = (
   const files = new Map<string, Uint8Array>();
   let offset = 0;
   let longname: string | null = null;
+  let longnameUndecodable = false;
+  let longlinkUndecodable = false;
+  let undecodableNames = 0;
   let longlink: string | null = null;
   let pax: Readonly<Record<string, string>> = {};
   while (offset + TAR_BLOCK <= bytes.length) {
@@ -342,6 +362,7 @@ const parseTar = (
       return {
         entries,
         files,
+        undecodableNames,
         error: new DebPackageFormatFailure(
           "malformed",
           `tar header checksum failed in ${memberName} at offset ${String(offset)}.`,
@@ -352,6 +373,7 @@ const parseTar = (
       return {
         entries,
         files,
+        undecodableNames,
         error: new DebPackageFormatFailure(
           "malformed",
           `tar size field is unreadable in ${memberName} at offset ${String(offset)}.`,
@@ -362,6 +384,7 @@ const parseTar = (
       return {
         entries,
         files,
+        undecodableNames,
         error: new DebPackageFormatFailure(
           "truncated",
           `tar member in ${memberName} extends past the end of the archive.`,
@@ -369,16 +392,21 @@ const parseTar = (
       };
     const payload = bytes.subarray(dataStart, dataStart + size);
     const typeFlag = header[156] ?? 0;
-    const prefix = trimField(ascii(header.subarray(345, 500)));
-    const rawName = trimField(ascii(header.subarray(0, 100)));
-    const headerName = prefix.length > 0 ? `${prefix}/${rawName}` : rawName;
+    const prefix = tarText(header.subarray(345, 500));
+    const rawName = tarText(header.subarray(0, 100));
+    const headerName =
+      prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
     if (typeFlag === 76) {
-      longname = decodeUtf8(payload)?.replace(/\0+$/u, "") ?? null;
+      const decoded = tarText(payload);
+      longname = decoded.text;
+      longnameUndecodable = decoded.undecodable;
       offset = dataStart + pad512(size);
       continue;
     }
     if (typeFlag === 75) {
-      longlink = decodeUtf8(payload)?.replace(/\0+$/u, "") ?? null;
+      const decoded = tarText(payload);
+      longlink = decoded.text;
+      longlinkUndecodable = decoded.undecodable;
       offset = dataStart + pad512(size);
       continue;
     }
@@ -391,6 +419,7 @@ const parseTar = (
       return {
         entries,
         files,
+        undecodableNames,
         error: new DebPackageCapacityFailure(
           memberName.startsWith("control")
             ? "max_control_entries"
@@ -400,9 +429,18 @@ const parseTar = (
         ),
       };
     const path = logicalTarPath(pax.path ?? longname ?? headerName);
-    const link = nonempty(
-      pax.linkpath ?? longlink ?? trimField(ascii(header.subarray(157, 257))),
-    );
+    const headerLink = tarText(header.subarray(157, 257));
+    const linkText = pax.linkpath ?? longlink ?? headerLink.text;
+    const link = linkText.length === 0 ? null : linkText;
+    const nameUndecodable =
+      pax.path === undefined &&
+      (longname === null
+        ? rawName.undecodable || prefix.undecodable
+        : longnameUndecodable);
+    const linkUndecodable =
+      pax.linkpath === undefined &&
+      (longlink === null ? headerLink.undecodable : longlinkUndecodable);
+    if (nameUndecodable || linkUndecodable) undecodableNames += 1;
     const mode = parseOctal(ascii(header.subarray(100, 108)));
     const uid = parseTarNumber(header.subarray(108, 116));
     const gid = parseTarNumber(header.subarray(116, 124));
@@ -423,10 +461,12 @@ const parseTar = (
     if (type === "file") files.set(path.length === 0 ? "." : path, payload);
     longname = null;
     longlink = null;
+    longnameUndecodable = false;
+    longlinkUndecodable = false;
     pax = {};
     offset = dataStart + pad512(size);
   }
-  return { entries, files };
+  return { entries, files, undecodableNames };
 };
 
 const detectCompression = (
@@ -654,7 +694,9 @@ const md5Paths = (text: string | null): readonly string[] => {
   if (text === null) return [];
   const paths: string[] = [];
   for (const line of text.split(/\n/u)) {
-    const match = /^[0-9a-f]{32}\s+(.*)$/iu.exec(line.trim());
+    // md5sum separates the digest from the path with a space and a space
+    // or `*`; the path keeps any other spaces it holds.
+    const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(line.replace(/\r$/u, ""));
     if (match?.[1] !== undefined) paths.push(logicalTarPath(match[1]));
   }
   return paths;
@@ -826,6 +868,11 @@ export const parseDebPackage = (
       missing_from_md5sums,
     };
   }
+  for (const tar of [controlTar, dataTar])
+    if (tar !== null && tar.undecodableNames > 0)
+      limitations.push(
+        `${String(tar.undecodableNames)} tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.`,
+      );
   if (controlMember === undefined)
     limitations.push("No control.tar member was present.");
   if (dataMember === undefined)
