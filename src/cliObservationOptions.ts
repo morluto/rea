@@ -47,39 +47,6 @@ export const selectedCommandTimeout = (
     ? {}
     : { command_timeout_ms: commandTimeoutMs };
 
-export const browserPageInspectionOptions = z.object({
-  ...passiveBrowserScopeOptions,
-  observationMs: observationDuration(500),
-  includeAccessibilityText: z
-    .boolean()
-    .default(false)
-    .describe("Include accessibility text"),
-  includeConsoleText: z
-    .boolean()
-    .default(false)
-    .describe("Include console message text"),
-  includeJsonBodyShapes: z
-    .boolean()
-    .default(false)
-    .describe("Include structural shapes of JSON response bodies"),
-  includeWebsocketShapes: z
-    .boolean()
-    .default(false)
-    .describe("Include structural shapes of WebSocket payloads"),
-  includeScriptSources: z
-    .boolean()
-    .default(false)
-    .describe("Include JavaScript source text"),
-  includeStorageKeys: z
-    .boolean()
-    .default(false)
-    .describe("Include storage key names without values"),
-  includeStorageFingerprints: z
-    .boolean()
-    .default(false)
-    .describe("Include content-derived storage fingerprints"),
-});
-
 export const electronPageInspectionOptions = z.object({
   observationMs: observationDuration(100),
   includeScriptSources: z
