@@ -186,9 +186,14 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
 module. Files that still construct one directly are listed with their counts in
-`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
-count, and after removing copies run
+`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
+exceed its count, and after removing copies run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+Each counted guard keeps its baseline in its own
+`scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
+changes to different guards never edit the same file. Resolve a conflict in one
+of these files by keeping both sides' entries (the higher count where they
+differ) and rerunning `--shrink-baselines`.
 
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
@@ -857,7 +862,12 @@ native Windows Job Object behavior.
 
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
-owned cleanup seams while preserving real cleanup where feasible. Check server
+owned cleanup seams while preserving real cleanup where feasible.
+`tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
+holds a late handshake or in-flight work at a boundary and releases it with a
+value or a rejection, `cancelDuringCleanup`
+cancels from inside final cleanup, and `controlledCleanup` gives children
+refused or confirmed outcomes with counted retries. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.

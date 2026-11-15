@@ -100,6 +100,57 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
   });
 });
 
+it("reports provider progress for observe_web_execution to the MCP caller", async () => {
+  const recording = recordingWebRuntimePort();
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      webRuntime: new WebRuntimeService({
+        ...recording,
+        observeExecution: async (input, options) => {
+          await options?.progress?.report({
+            phase: "observe",
+            completed: 1,
+            total: 2,
+            message: "observation window open",
+          });
+          return recording.observeExecution(input, options);
+        },
+      }),
+    },
+  );
+  const client = new Client({ name: "web-runtime-progress", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const progress: unknown[] = [];
+  const response = await client.callTool(
+    {
+      name: "observe_web_execution",
+      arguments: {
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "allowed-page",
+        observation_ms: 5,
+      },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(response.isError).not.toBe(true);
+  expect(progress).toContainEqual({
+    progress: 1,
+    message: "observe: observation window open",
+  });
+});
+
 cliTest(
   "preserves the same reconstructed runtime identity through compiled CLI and MCP evidence",
   async ({ cli }) => {

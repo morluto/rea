@@ -142,6 +142,8 @@ const tracedSchema = z.strictObject({
   ),
   events: z.array(nativeCallEventSchema),
   other_stops: z.array(z.string()),
+  /** Breakpoint traps and stops on a requested location that were not recorded as hits; each may be a lost hit. */
+  unattributed_breakpoint_stops: z.int().nonnegative(),
 });
 
 const tracerOutputSchema = z.discriminatedUnion("status", [

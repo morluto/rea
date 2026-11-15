@@ -16,6 +16,7 @@ export interface AnalysisSettingValues {
   readonly "capture.packet_json_expansion_bytes": number;
   readonly "javascript.analysis_timeout_ms": number;
   readonly "javascript.max_heap_mb": number;
+  readonly "javascript.member_mutation_alias_states": number;
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
   readonly "bridge.max_request_bytes": number;
