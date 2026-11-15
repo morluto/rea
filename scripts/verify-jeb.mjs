@@ -103,7 +103,10 @@ try {
 } catch (cause) {
   if (fixture !== undefined && !fixture.released)
     process.stderr.write(`JEB fixture retained at ${fixtureDirectory}\n`);
-  const causes = cause instanceof AggregateError ? cause.errors : [cause];
+  // Fixture and cleanup failures nest AggregateErrors; report each leaf reason.
+  const leaves = (reason) =>
+    reason instanceof AggregateError ? reason.errors.flatMap(leaves) : [reason];
+  const causes = leaves(cause);
   process.stderr.write(
     `JEB real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
   );
