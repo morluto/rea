@@ -450,18 +450,15 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
     transientFrames,
     resolvedTransientFrames,
   } = options;
+  const registered = event.registered;
   if (
-    event.method !== "WebMCP.toolsAdded" &&
-    event.method !== "WebMCP.toolsRemoved"
+    registered?.method !== "WebMCP.toolsAdded" &&
+    registered?.method !== "WebMCP.toolsRemoved"
   )
     return;
-  const params = recordValue(event.params);
-  if (params === undefined) {
-    completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return;
-  }
-  if (event.method === "WebMCP.toolsRemoved") {
-    for (const removed of webMcpEventTools(params.tools, completeness)) {
+  const declared = webMcpEventTools(registered.payload.tools, completeness);
+  if (registered.method === "WebMCP.toolsRemoved") {
+    for (const removed of declared) {
       const name = cdpStringValue(removed.name);
       const frameId = cdpStringValue(removed.frameId);
       if (name === undefined || frameId === undefined) {
@@ -473,30 +470,30 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
     }
     return;
   }
-  for (const declared of webMcpEventTools(params.tools, completeness)) {
-    const frameId = cdpStringValue(declared.frameId);
+  for (const tool of declared) {
+    const frameId = cdpStringValue(tool.frameId);
     if (frameId !== undefined && transientFrames.has(frameId)) {
       if (!resolvedTransientFrames.has(frameId)) continue;
       transientFrames.delete(frameId);
       resolvedTransientFrames.delete(frameId);
     }
-    const normalized = normalizeTool(declared, input, frames, completeness);
+    const normalized = normalizeTool(tool, input, frames, completeness);
     if (normalized === undefined) continue;
     tools.set(normalized.tool_key, normalized);
   }
 };
 
+/** Each malformed or missing inventory entry is a recorded gap, not an omission. */
 const webMcpEventTools = (
-  value: unknown,
+  tools: readonly (UnknownRecord | undefined)[] | undefined,
   completeness: CdpCaptureCompleteness,
 ): UnknownRecord[] => {
-  if (!Array.isArray(value)) {
+  if (tools === undefined) {
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
     return [];
   }
   const records: UnknownRecord[] = [];
-  for (const item of value) {
-    const record = recordValue(item);
+  for (const record of tools) {
     if (record === undefined) {
       completeness.exclude("webmcp_tools", "invalid_protocol_value");
       continue;

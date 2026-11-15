@@ -241,15 +241,14 @@ checkCounted(
 // schema in src/browser/protocol/CdpEvents.ts; a subscriber reads
 // `event.registered`, not the raw payload, so malformed members cannot be
 // reinterpreted, dropped or defaulted differently by each subscriber.
-checkCounted(
+check(
   "raw CDP event payload read (register the event in src/browser/protocol/CdpEvents and read event.registered)",
-  "cdp-raw-event-params",
   files.filter(
     (file) =>
       file.path.startsWith("src/browser/") ||
       file.path.startsWith("src/inspector/"),
   ),
-  /\bevent\.params\b/gu,
+  /\bevent\.params\b/u,
   ["src/browser/CdpConnection.ts"],
 );
 

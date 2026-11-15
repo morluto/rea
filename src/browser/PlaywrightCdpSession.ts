@@ -8,7 +8,11 @@ import {
   type CdpCommandResult,
   type CdpProtocolMethod,
 } from "./protocol/CdpCommands.js";
-import type { CdpProtocolEvent } from "./protocol/CdpEvents.js";
+import {
+  registeredCdpEvent,
+  type CdpEventName,
+  type CdpRegisteredEventOf,
+} from "./protocol/CdpEvents.js";
 
 /**
  * A Playwright CDP session that sends only registered commands and admits each
@@ -21,12 +25,14 @@ export interface PlaywrightCdpSession {
     params?: CdpCommandParams<M>,
   ): Promise<CdpCommandResult<M>>;
   /**
-   * Subscribe to one protocol event by its name in Playwright's protocol
-   * table. Payloads stay unknown until the event is registered in
-   * `protocol/CdpEvents.ts`; the subscriber parses them meanwhile.
+   * Subscribe to one registered event. Its payload is parsed once by the
+   * schema in `protocol/CdpEvents.ts`, as on `CdpConnection`. Returns the
+   * unsubscribe function.
    */
-  on(event: CdpProtocolEvent, listener: (params: unknown) => void): void;
-  off(event: CdpProtocolEvent, listener: (params: unknown) => void): void;
+  on<E extends CdpEventName>(
+    event: E,
+    listener: (event: CdpRegisteredEventOf<E>) => void,
+  ): () => void;
   detach(): Promise<void>;
 }
 
@@ -42,10 +48,15 @@ const registeredSession = (
       operation,
     ),
   on: (event, listener) => {
-    session.on(event, listener);
-  },
-  off: (event, listener) => {
-    session.off(event, listener);
+    const receive = (params: unknown): void => {
+      const registered = registeredCdpEvent(event, params);
+      if (registered?.method === event)
+        listener(registered as CdpRegisteredEventOf<typeof event>);
+    };
+    session.on(event, receive);
+    return () => {
+      session.off(event, receive);
+    };
   },
   detach: () => session.detach(),
 });
