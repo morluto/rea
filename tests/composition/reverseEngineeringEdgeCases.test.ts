@@ -102,7 +102,7 @@ it("records pathless objdump architecture support as provider capability evidenc
       operation: "architectures",
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.parameters).not.toHaveProperty("path");
     expect(result.value.parameters).not.toHaveProperty(
       "artifact_sha256_before",

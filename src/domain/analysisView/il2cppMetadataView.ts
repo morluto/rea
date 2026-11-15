@@ -633,7 +633,7 @@ export const projectIl2cppMetadataView = (
         : report.binary.generic_methods == null
           ? "Addresses come from static binary tables; runtime behavior and generic instance code remain unknown."
           : "Addresses come from static binary tables; runtime behavior and generic instances outside genericMethodTable remain unknown.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
           ]

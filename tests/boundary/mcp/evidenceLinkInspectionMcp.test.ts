@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
@@ -279,9 +283,9 @@ it("reports the source a composed workflow refuses, and clears it on import", as
   const health = record("get_project_health");
   const linked = createEvidence(
     {
-      path: dossier.subject.local_path,
-      sha256: dossier.subject.identity.sha256,
-      format: dossier.subject.identity.format,
+      path: fileSubjectDisplay(dossier.subject).local_path,
+      sha256: fileIdentity(dossier.subject).sha256,
+      format: fileIdentity(dossier.subject).format,
     },
     dossier.provider,
     {

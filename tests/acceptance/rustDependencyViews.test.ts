@@ -1,3 +1,4 @@
+import { fileSubjectArchitecture } from "../fixtures/evidenceSubject.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -288,9 +289,7 @@ cliTest(
           path,
           sha256: report.artifact.sha256,
           format: format === "macho" ? "mach-o" : format,
-          ...(full.subject.identity.architecture === null
-            ? {}
-            : { architecture: full.subject.identity.architecture }),
+          ...fileSubjectArchitecture(full.subject),
         },
         full.provider,
         {
@@ -339,9 +338,7 @@ cliTest(
         path,
         sha256: report.artifact.sha256,
         format: "elf",
-        ...(full.subject.identity.architecture === null
-          ? {}
-          : { architecture: full.subject.identity.architecture }),
+        ...fileSubjectArchitecture(full.subject),
       },
       full.provider,
       {

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   EVIDENCE_FORMAT_REVISION,
   RECREATE_EVIDENCE_GUIDANCE,
@@ -31,7 +32,7 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation, parameters: {}, result: { observed: operation } },
     ),
@@ -411,7 +412,7 @@ cliTest(
       JSON.parse('{"__proto__":{"answer":7},"normal":{"answer":7}}'),
     );
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -454,7 +455,7 @@ cliTest(
       literal: "&copy; <br>",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",

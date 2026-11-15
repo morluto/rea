@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { chmod, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -499,7 +500,7 @@ describe("managed member comparison subject identity", () => {
       },
     );
     const unavailableSubject = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       {
         id: "partial-fixture",
         name: "Partial fixture",

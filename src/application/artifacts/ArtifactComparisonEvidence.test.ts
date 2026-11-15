@@ -1,3 +1,7 @@
+import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { expect, it } from "vitest";
 
@@ -44,36 +48,25 @@ const recreateSummary = (
 ): Evidence => {
   if (summary.subject === null)
     throw new Error("artifact summary fixture must identify its subject");
-  return createEvidence(
-    {
-      path: summary.subject.local_path,
-      sha256: summary.subject.identity.sha256,
-      format: summary.subject.identity.format,
-      ...(summary.subject.identity.architecture === null
-        ? {}
-        : { architecture: summary.subject.identity.architecture }),
-    },
-    summary.provider,
-    {
-      predicateType: summary.predicate_type,
-      operation: summary.operation,
-      parameters,
-      result: normalizedResult,
-      ...(summary.analysis_profile === null
-        ? {}
-        : { analysisProfile: summary.analysis_profile }),
-      rawResult: summary.raw_result,
-      confidence: summary.confidence,
-      authority: summary.authority,
-      environment: summary.environment,
-      limitations: summary.limitations,
-      ...(summary.relationship_coverage === null
-        ? {}
-        : { relationshipCoverage: summary.relationship_coverage }),
-      locations: summary.locations,
-      evidenceLinks: summary.evidence_links,
-    },
-  );
+  return createEvidence(fileSubjectTarget(summary.subject), summary.provider, {
+    predicateType: summary.predicate_type,
+    operation: summary.operation,
+    parameters,
+    result: normalizedResult,
+    ...(summary.analysis_profile === null
+      ? {}
+      : { analysisProfile: summary.analysis_profile }),
+    rawResult: summary.raw_result,
+    confidence: summary.confidence,
+    authority: summary.authority,
+    environment: summary.environment,
+    limitations: summary.limitations,
+    ...(summary.relationship_coverage === null
+      ? {}
+      : { relationshipCoverage: summary.relationship_coverage }),
+    locations: summary.locations,
+    evidenceLinks: summary.evidence_links,
+  });
 };
 
 it("reports a missing retained parent instead of treating summary facts as inventory", async () => {
@@ -162,11 +155,10 @@ it("accepts display-only subject changes excluded from Evidence identity", async
     throw new Error("artifact summary fixture must identify its subject");
   const displayOnly = parseEvidence({
     ...summary,
-    subject: {
-      ...summary.subject,
+    subject: displayedEvidenceSubject(summary.subject, {
       name: "renamed.app",
       local_path: "/display-only/renamed.app",
-    },
+    }),
   });
   const resolved = resolveArtifactComparisonEvidence(
     displayOnly,
@@ -245,9 +237,8 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
     aliasPath === undefined
       ? parent
       : rebindEvidenceToTargetPath(parent, {
+          ...fileSubjectTarget(parent.subject),
           path: aliasPath,
-          sha256: parent.subject!.identity.sha256,
-          format: parent.subject!.identity.format,
         });
   const projected = await inspectAnalysisView({
     source: { kind: "inline", evidence: selectedParent },
@@ -325,9 +316,8 @@ it.each<SummaryEra>(["current"])(
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
     const rebound = rebindEvidenceToTargetPath(parent, {
+      ...fileSubjectTarget(parent.subject),
       path: "/selected/alias.bin",
-      sha256: parent.subject!.identity.sha256,
-      format: parent.subject!.identity.format,
     });
     expect(rebound.evidence_id).toBe(parent.evidence_id);
     expect(resolveArtifactComparisonEvidence(summary, () => rebound)).toEqual({

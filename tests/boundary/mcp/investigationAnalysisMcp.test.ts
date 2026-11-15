@@ -1,3 +1,4 @@
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
 import { parseEvidence, createEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -220,40 +221,29 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
 const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
   if (base.subject === null) throw new Error("missing dossier subject");
-  return createEvidence(
-    {
-      path: base.subject.local_path,
-      sha256: base.subject.identity.sha256,
-      format: base.subject.identity.format,
-      ...(base.subject.identity.architecture === null
-        ? {}
-        : { architecture: base.subject.identity.architecture }),
+  return createEvidence(fileSubjectTarget(base.subject), base.provider, {
+    predicateType: base.predicate_type,
+    operation: base.operation,
+    parameters: base.parameters,
+    result: {
+      ...jsonObjectSchema.parse(base.normalized_result),
+      callees: addresses.map((address) => ({
+        address,
+        name: "next",
+        classification: null,
+        body: {
+          available: false,
+          reason: "The fixture has no callee body-extent observation.",
+        },
+      })),
     },
-    base.provider,
-    {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: {
-        ...jsonObjectSchema.parse(base.normalized_result),
-        callees: addresses.map((address) => ({
-          address,
-          name: "next",
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no callee body-extent observation.",
-          },
-        })),
-      },
-      rawResult: base.raw_result,
-      confidence: base.confidence,
-      authority: base.authority,
-      limitations: base.limitations,
-      locations: base.locations,
-      evidenceLinks: base.evidence_links,
-    },
-  );
+    rawResult: base.raw_result,
+    confidence: base.confidence,
+    authority: base.authority,
+    limitations: base.limitations,
+    locations: base.locations,
+    evidenceLinks: base.evidence_links,
+  });
 };
 
 it.each([
@@ -653,11 +643,7 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
       callees: { status: "complete" },
     } as const;
     const left = createEvidence(
-      {
-        path: fixture.subject!.local_path,
-        sha256: fixture.subject!.identity.sha256,
-        format: fixture.subject!.identity.format,
-      },
+      fileSubjectTarget(fixture.subject),
       fixture.provider,
       {
         operation: fixture.operation,

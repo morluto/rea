@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -9,6 +10,7 @@ import {
   evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
+  evidenceFileTarget,
 } from "../../domain/evidence.js";
 import {
   managedApplicationGraphReferenceInputSchema,
@@ -63,24 +65,29 @@ const createManagedApplicationGraphEvidence = (
   input: ParsedManagedGraphInput,
   result: ManagedApplicationGraphResult,
 ): Evidence =>
-  createEvidence(subjectTarget(input), MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-application-graph",
-    operation: OPERATION,
-    parameters: {
-      managed_artifact_evidence_id:
-        input.artifact?.evidence.evidence_id ?? null,
-      managed_members_evidence_id: input.members?.evidence.evidence_id ?? null,
-      managed_native_boundaries_evidence_id:
-        input.boundaries?.evidence.evidence_id ?? null,
+  createEvidence(
+    subjectTarget(input) ?? unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-application-graph",
+      operation: OPERATION,
+      parameters: {
+        managed_artifact_evidence_id:
+          input.artifact?.evidence.evidence_id ?? null,
+        managed_members_evidence_id:
+          input.members?.evidence.evidence_id ?? null,
+        managed_native_boundaries_evidence_id:
+          input.boundaries?.evidence.evidence_id ?? null,
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    evidenceLinks: result.evidence_links,
-  });
+  );
 
 const subjectTarget = (
   input: ParsedManagedGraphInput,
@@ -89,11 +96,7 @@ const subjectTarget = (
     input.artifact?.evidence.subject ??
     input.members?.evidence.subject ??
     input.boundaries?.evidence.subject;
-  if (
-    subject === undefined ||
-    subject === null ||
-    subject.identity.format !== "pe"
-  )
-    return undefined;
-  return evidenceSubjectTarget(subject);
+  return evidenceFileTarget({ subject })?.format === "pe"
+    ? evidenceSubjectTarget(subject)
+    : undefined;
 };

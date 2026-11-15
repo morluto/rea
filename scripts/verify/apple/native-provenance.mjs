@@ -35,7 +35,7 @@ export async function verifyNativeProvenance(app, executable) {
   const resourcePlistCli = toolContract("inspect_plist").outputSchema.parse(
     await artifactCliEvidence("inspect-plist", app),
   );
-  assert.equal(resourcePlistCli.subject, null);
+  assert.equal(resourcePlistCli.subject.identity.kind, "unknown");
   assert.equal(resourcePlistCli.raw_result, null);
   await withBundleResourcesMcp(app, async (client) => {
     const response = await artifactMcpCall(client, {
@@ -46,7 +46,7 @@ export async function verifyNativeProvenance(app, executable) {
     const mcp = toolContract("inspect_plist").outputSchema.parse(
       response.structuredContent,
     );
-    assert.equal(mcp.subject, null);
+    assert.equal(mcp.subject.identity.kind, "unknown");
     assert.equal(mcp.raw_result, null);
     assert.deepEqual(mcp.normalized_result, resourcePlistCli.normalized_result);
     assert.deepEqual(

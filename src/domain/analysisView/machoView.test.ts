@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 
@@ -418,9 +419,12 @@ describe("Mach-O analysis views", () => {
 
 describe("Mach-O view uncertainty", () => {
   it("keeps a missing subject unknown instead of inventing identity", () => {
-    const projected = projectAnalysisView(parent(report, null), {
-      kind: "summary",
-    });
+    const projected = projectAnalysisView(
+      parent(report, UNKNOWN_EVIDENCE_SUBJECT),
+      {
+        kind: "summary",
+      },
+    );
     if (!projected.ok) throw projected.error;
     expect(projected.value.artifact).toEqual({ path: "", sha256: null });
     expect(projected.value.unknowns).toContain(

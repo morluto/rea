@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   desktopViewPolicy,
   desktopViewPolicyInputSchema,
@@ -559,7 +560,7 @@ const inspectState = async (
     limitations,
   };
   if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
     parameters: {

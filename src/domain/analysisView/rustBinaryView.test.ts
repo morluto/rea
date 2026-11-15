@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
@@ -116,7 +119,7 @@ it("checks exact artifact identity and subject architecture for every Rust view"
     { sha256: "b".repeat(64) },
   ]) {
     const source = parent();
-    if (source.subject == null || source.subject.identity.format !== "elf")
+    if (source.subject == null || fileIdentity(source.subject).format !== "elf")
       throw new Error("Missing ELF source");
     const input = {
       ...source,

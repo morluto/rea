@@ -89,13 +89,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
-  subject:
-    carrier.subject === null
-      ? null
-      : changedEvidenceSubject(carrier.subject, {
-          format: "zip",
-          architecture: null,
-        }),
+  subject: changedEvidenceSubject(carrier.subject, {
+    format: "zip",
+    architecture: null,
+  }),
   normalizedResult,
   sealedResult: true,
   limitations: [],

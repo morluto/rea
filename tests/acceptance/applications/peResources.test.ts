@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
@@ -270,7 +271,7 @@ const expectPeInventoriesAcrossAdapters = async (
     expect(evidence.subject?.identity).toMatchObject({
       sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
     });
-    expect(evidence.subject?.identity.architecture).toBe(
+    expect(fileIdentity(evidence.subject).architecture).toBe(
       plus ? "x86_64" : "x86",
     );
     expect(report.coverage).toMatchObject({
@@ -408,7 +409,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
         entry_locations: resource.entry_locations.slice(0, 2),
       });
     }
-    expect(evidence.subject?.identity.sha256).toBe(
+    expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
     expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);

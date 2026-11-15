@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
@@ -151,7 +152,7 @@ it("accepts captured-page Evidence with an explicitly absent local artifact", ()
     {
       ...parent(),
       operation: "analyze_web_bundle",
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
       normalizedResult: {
         capture: { target_url: "https://example.test/" },
         route_inventory: inventory(),

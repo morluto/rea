@@ -1,5 +1,8 @@
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
-import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -109,9 +112,9 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject?.identity.format !== "elf")
+    if (fileIdentity(input.subject).format !== "elf")
       throw new Error("Expected ELF subject");
-    const subject = changedEvidenceSubject(input.subject, {
+    const subject = changedEvidenceSubject(input.subject!, {
       architecture: subjectArchitecture,
     });
     const normalizedResult = { ...report, architecture };

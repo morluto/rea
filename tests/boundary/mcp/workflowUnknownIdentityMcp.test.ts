@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -34,8 +35,8 @@ const pathSource = () => {
   return createEvidence(
     {
       path: `${template.subject.local_path}/workflow-unknown-path`,
-      sha256: template.subject.identity.sha256,
-      format: template.subject.identity.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -69,8 +70,8 @@ const incompleteRight = (suffix: string) => {
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,
-      sha256: template.subject.identity.sha256,
-      format: template.subject.identity.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {

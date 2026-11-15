@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
+import {
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewLayoutEvidence,
@@ -1175,7 +1178,10 @@ it("refuses a parent whose subject is absent or names another digest", () => {
   const { subject, ...withoutSubject } = parent;
   expect(projectAnalysisView(withoutSubject, view())).toMatchObject(refusal);
   expect(
-    projectAnalysisView({ ...withoutSubject, subject: null }, view()),
+    projectAnalysisView(
+      { ...withoutSubject, subject: UNKNOWN_EVIDENCE_SUBJECT },
+      view(),
+    ),
   ).toMatchObject(refusal);
   if (subject == null) throw new Error("Fixture evidence carries a subject");
   expect(

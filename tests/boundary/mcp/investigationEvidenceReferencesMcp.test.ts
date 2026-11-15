@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -87,9 +91,9 @@ it("keeps input capacity limits while composing dossiers that cannot be resent i
   const dossier = functionDossierSchema.parse(base.normalized_result);
   const source = createEvidence(
     {
-      path: base.subject.local_path,
-      sha256: base.subject.identity.sha256,
-      format: base.subject.identity.format,
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
     },
     base.provider,
     {
@@ -221,9 +225,9 @@ it("reports missing sources for a retained dossier with a large link set", async
   );
   const source = createEvidence(
     {
-      path: base.subject.local_path,
-      sha256: base.subject.identity.sha256,
-      format: base.subject.identity.format,
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
     },
     base.provider,
     {

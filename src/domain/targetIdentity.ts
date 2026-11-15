@@ -51,10 +51,38 @@ export interface FileTargetIdentity {
 }
 
 /**
+ * Why an observation names no target: it derives from linked Evidence that
+ * already commits to its sources, the producer did not observe the target's
+ * identity, or the target is not a kind REA can identify.
+ */
+export const unknownTargetReasonSchema = z.enum([
+  "derived-from-linked-evidence",
+  "not-observed",
+  "unsupported-subject",
+]);
+
+/** A target whose identity is unknown, with the reason it is unknown. */
+export const unknownTargetIdentitySchema = z.strictObject({
+  kind: z.literal("unknown"),
+  reason: unknownTargetReasonSchema,
+});
+
+/** A target whose identity is unknown, with the reason it is unknown. */
+export interface UnknownTargetIdentity {
+  readonly kind: "unknown";
+  readonly reason: z.infer<typeof unknownTargetReasonSchema>;
+}
+
+/** The explicit identity of a target REA did not identify. */
+export const unknownTarget = (
+  reason: UnknownTargetIdentity["reason"],
+): UnknownTargetIdentity => ({ kind: "unknown", reason });
+
+/**
  * What an observation or cache entry is about. Tagged by `kind`; see
  * docs/adr/evidence/target-identity.md for the kinds later slices add.
  */
-export type TargetIdentity = FileTargetIdentity;
+export type TargetIdentity = FileTargetIdentity | UnknownTargetIdentity;
 
 /** The selection an open binary target makes inside its bytes, if any. */
 export const binaryTargetSelection = (

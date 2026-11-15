@@ -96,7 +96,7 @@ export const projectWasmArtifactView = (
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
-      evidenceSubjectTarget(parent.subject ?? null),
+      evidenceSubjectTarget(parent.subject),
     )
   )
     return err(

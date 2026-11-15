@@ -131,7 +131,7 @@ export const projectAndroidPackageView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   // The engine digest identifies the JAR, never the authenticated APK subject.
-  const subject = evidenceSubjectTarget(parent.subject ?? null);
+  const subject = evidenceSubjectTarget(parent.subject);
   if (subject === undefined)
     return err(
       analysisViewInputError([

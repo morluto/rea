@@ -1053,7 +1053,8 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
-  if (result.artifact.sha256 === null) assert.equal(evidence.subject, null);
+  if (result.artifact.sha256 === null)
+    assert.equal(evidence.subject.identity.kind, "unknown");
   else assert.equal(evidence.subject.identity.sha256, result.artifact.sha256);
   assert.deepEqual(
     evidence.provider,

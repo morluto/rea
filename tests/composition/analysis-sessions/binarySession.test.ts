@@ -1,3 +1,8 @@
+import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createAnalysisExecution,
@@ -668,14 +673,7 @@ describe("evidence metadata imports and snapshot cache", () => {
     if (existing === undefined || existing.subject === null)
       throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
-      {
-        path: existing.subject.local_path,
-        sha256: existing.subject.identity.sha256,
-        format: existing.subject.identity.format,
-        ...(existing.subject.identity.architecture === null
-          ? {}
-          : { architecture: existing.subject.identity.architecture }),
-      },
+      fileSubjectTarget(existing.subject),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.analysis",
@@ -757,11 +755,10 @@ describe("Evidence display metadata refresh", () => {
         if (evidence.subject === null) throw new Error("Expected a subject");
         const relocated = {
           ...evidence,
-          subject: {
-            ...evidence.subject,
+          subject: displayedEvidenceSubject(evidence.subject, {
             local_path: `${evidence.subject.local_path}.moved`,
             name: `${evidence.subject.name}.moved`,
-          },
+          }),
         };
         const changed = vi.fn();
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
@@ -1157,7 +1154,7 @@ describe("snapshot cache eligibility", () => {
           ...(live ? { cachePolicy: "live" as const } : {}),
         }));
       const source = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         provider.identity(),
         {
           operation: "health",
@@ -1210,11 +1207,15 @@ describe("snapshot cache eligibility", () => {
   it("rejects invalid source Evidence on a non-replayable observation", async () => {
     const [target] = await createBinarySessionTargets();
     const provider = createCacheProvider([]);
-    const source = createEvidence(undefined, provider.identity(), {
-      operation: "health",
-      parameters: {},
-      result: "original",
-    });
+    const source = createEvidence(
+      unknownTarget("not-observed"),
+      provider.identity(),
+      {
+        operation: "health",
+        parameters: {},
+        result: "original",
+      },
+    );
     provider.createClient = () => ({
       execute: async () =>
         resultOk(

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
@@ -191,7 +192,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? undefined
         : createEvidence(
             artifact === undefined
-              ? undefined
+              ? unknownTarget("not-observed")
               : {
                   path: artifact.path,
                   format: "file",

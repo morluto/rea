@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
@@ -920,9 +924,9 @@ const withForeignMetadataAndNestedZipMember = (
   if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.identity.sha256,
-      format: subject.identity.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     evidence.provider,
     {

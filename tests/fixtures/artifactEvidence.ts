@@ -1,3 +1,4 @@
+import { fileSubjectDisplay, fileIdentity } from "./evidenceSubject.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -30,7 +31,7 @@ export const historicalInventoryEvidence = (
   });
   return createEvidence(
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: inventory.manifest.root_format,
     },
@@ -70,9 +71,9 @@ export const fragmentInventoryEvidence = (
   return Array.from({ length: count }, (_, index) =>
     createEvidence(
       {
-        path: subject.local_path,
-        sha256: subject.identity.sha256,
-        format: subject.identity.format,
+        path: fileSubjectDisplay(subject).local_path,
+        sha256: fileIdentity(subject).sha256,
+        format: fileIdentity(subject).format,
       },
       evidence.provider,
       {

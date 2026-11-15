@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -114,7 +115,7 @@ it("preserves BOM recovery through public bundle import", async () => {
 
 it("returns the complete session Evidence bundle in the tool result", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "observe", parameters: {}, result: { value: "seen" } },
   );
@@ -260,7 +261,7 @@ const createBundleSourceSession = () => {
       result: { completed: true },
       authority: "controlled-replay",
     }),
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},

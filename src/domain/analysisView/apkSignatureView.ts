@@ -100,7 +100,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
-  const subject = evidenceSubjectTarget(parent.subject ?? null);
+  const subject = evidenceSubjectTarget(parent.subject);
   if (
     subject !== undefined &&
     !apkSignatureMatchesSubject(report.artifact, subject)

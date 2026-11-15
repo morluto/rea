@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -36,7 +37,7 @@ it("checks each model parent digest independently of cached declarations and dis
           limitations: original.limitations,
         },
       );
-    const digest = original.subject.identity.sha256;
+    const digest = fileIdentity(original.subject).sha256;
     const valid = parent("valid", path, digest);
     const aliasPath = join(root, "other.gguf");
     const rebound = parent("rebound-path", aliasPath, digest);

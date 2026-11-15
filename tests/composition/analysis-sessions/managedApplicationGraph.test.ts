@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
@@ -317,7 +318,7 @@ it("preserves only a managed graph's matching subject in feature traces", () => 
     ...query,
   });
   if (!foreignTrace.ok) throw foreignTrace.error;
-  expect(foreignTrace.value.evidence.subject).toBeNull();
+  expect(foreignTrace.value.evidence.subject.identity.kind).toBe("unknown");
   const contradictory = createEvidence(
     { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
     parsed.provider,
@@ -522,25 +523,29 @@ it("normalizes MVID casing for node identity while preserving observed values", 
   const uppercaseMvid = members.module.mvid?.toUpperCase();
   if (uppercaseMvid === undefined || uppercaseMvid === null)
     throw new Error("Expected fixture module MVID");
-  const uppercaseMembers = createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
-    operation: "inspect_managed_members",
-    parameters: {},
-    result: {
-      ...members,
-      module: {
-        ...members.module,
-        mvid: uppercaseMvid,
-        enc_id: null,
-        enc_base_id: null,
+  const uppercaseMembers = createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...members,
+        module: {
+          ...members.module,
+          mvid: uppercaseMvid,
+          enc_id: null,
+          enc_base_id: null,
+        },
+        identity_scope: {
+          ...members.identity_scope,
+          requires_mvid: uppercaseMvid,
+        },
       },
-      identity_scope: {
-        ...members.identity_scope,
-        requires_mvid: uppercaseMvid,
-      },
+      rawResult: null,
+      limitations: members.limitations,
     },
-    rawResult: null,
-    limitations: members.limitations,
-  });
+  );
   const baseline = projectManagedApplicationGraphEvidence({
     managed_members: memberEvidence,
     managed_native_boundaries: boundaryEvidence,
@@ -585,7 +590,7 @@ describe("managed application graph module identity consistency", () => {
     );
     const conflictingMvid = "ffffffff-ffff-ffff-ffff-ffffffffffff";
     const conflictingBoundaries = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_native_boundaries",
@@ -625,7 +630,7 @@ describe("managed application graph module identity consistency", () => {
     if (members.module === null)
       throw new Error("Expected fixture module identity");
     const conflictingMembers = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -663,7 +668,7 @@ describe("managed application graph token scope", () => {
     );
     const wrongMvidValue = "ffffffff-ffff-ffff-ffff-ffffffffffff";
     const wrongMvidEvidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -680,7 +685,7 @@ describe("managed application graph token scope", () => {
       },
     );
     const wrongArtifactEvidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -738,7 +743,7 @@ describe("managed application graph token scope", () => {
         ? { ...members.identity_scope, requires_mvid: null }
         : members.identity_scope;
     const inconsistentMembers = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -770,25 +775,29 @@ describe("unknown managed application graph token scope", () => {
     const boundaries = managedNativeBoundaryInspectionSchema.parse(
       parseEvidence(boundaryEvidence).normalized_result,
     );
-    const unknownMembers = createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
-      operation: "inspect_managed_members",
-      parameters: {},
-      result: {
-        ...members,
-        module:
-          members.module === null
-            ? null
-            : {
-                ...members.module,
-                mvid: null,
-                enc_id: null,
-                enc_base_id: null,
-              },
-        identity_scope: { ...members.identity_scope, requires_mvid: null },
+    const unknownMembers = createEvidence(
+      unknownTarget("not-observed"),
+      MANAGED_STATIC_PROVIDER,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: {
+          ...members,
+          module:
+            members.module === null
+              ? null
+              : {
+                  ...members.module,
+                  mvid: null,
+                  enc_id: null,
+                  enc_base_id: null,
+                },
+          identity_scope: { ...members.identity_scope, requires_mvid: null },
+        },
+        rawResult: null,
+        limitations: members.limitations,
       },
-      rawResult: null,
-      limitations: members.limitations,
-    });
+    );
 
     const projected = projectManagedApplicationGraphEvidence({
       managed_members: unknownMembers,

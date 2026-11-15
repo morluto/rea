@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -38,9 +42,9 @@ const machoExports = (count: number): Evidence => {
     });
   return createEvidence(
     {
-      path: source.subject.local_path,
-      sha256: source.subject.identity.sha256,
-      format: source.subject.identity.format,
+      path: fileSubjectDisplay(source.subject).local_path,
+      sha256: fileIdentity(source.subject).sha256,
+      format: fileIdentity(source.subject).format,
     },
     source.provider,
     {

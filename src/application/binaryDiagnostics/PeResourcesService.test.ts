@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
@@ -95,7 +96,7 @@ it.each([
     });
     const result = await service.inspect({ path: report.artifact.path });
     if (!result.ok) throw result.error;
-    expect(result.value.subject?.identity.architecture ?? null).toBe(
+    expect(fileIdentity(result.value.subject).architecture ?? null).toBe(
       architecture,
     );
   },

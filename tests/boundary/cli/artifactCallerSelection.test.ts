@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,8 +31,8 @@ cliTest.skipIf(process.platform === "win32")(
     expect(observed.parameters).toMatchObject({ input_path: alias });
     expect(observed.subject?.local_path).toBe(join(root, alias));
     expect(direct.subject?.local_path).toBe(target);
-    expect(observed.subject?.identity.sha256).toBe(
-      direct.subject?.identity.sha256,
+    expect(fileIdentity(observed.subject).sha256).toBe(
+      fileIdentity(direct.subject).sha256,
     );
     const selectedInspection = artifactInspectionResultSchema.parse(
       observed.normalized_result,

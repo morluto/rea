@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { displayedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
@@ -231,10 +233,9 @@ it.each(["provider", "workflow"] as const)(
     if (!before.ok) throw before.error;
     const nameOnly = {
       ...evidence,
-      subject:
-        evidence.subject === null
-          ? null
-          : { ...evidence.subject, name: "display-only-name" },
+      subject: displayedEvidenceSubject(evidence.subject, {
+        name: "display-only-name",
+      }),
     };
     const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
     if (!nameImport.ok) throw nameImport.error;
@@ -254,11 +255,10 @@ it.each(["provider", "workflow"] as const)(
       if (record.subject === null) throw new Error("Expected fixture subject");
       return {
         ...record,
-        subject: {
-          ...record.subject,
+        subject: displayedEvidenceSubject(record.subject, {
           local_path: "/relocated/fixture",
           name: "renamed",
-        },
+        }),
       };
     };
     const foreign = ledger.import(
@@ -329,7 +329,7 @@ it.each(["provider", "workflow"] as const)(
       else cache.recordWorkflow(input);
       expect(
         ledger.record(
-          createEvidence(subject ?? undefined, provider, {
+          createEvidence(subject ?? unknownTarget("not-observed"), provider, {
             operation,
             parameters,
             result,
@@ -1512,11 +1512,10 @@ it("replays source-bearing entries only when their complete retained closure exi
     expect(ledger.record(record).ok).toBe(true);
   const movedSource = {
     ...source,
-    subject: {
-      ...source.subject,
+    subject: displayedEvidenceSubject(source.subject, {
       local_path: "/relocated/source",
       name: "source",
-    },
+    }),
   };
   const replacement = ledger.import(createEvidenceBundle([movedSource]));
   if (!replacement.ok) throw replacement.error;

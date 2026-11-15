@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -207,10 +208,9 @@ for (const missingSource of [false, true])
         throw new Error("Expected a file-backed source");
       const relocated = {
         ...source,
-        subject: {
-          ...source.subject,
+        subject: displayedEvidenceSubject(source.subject, {
           local_path: join(directory, "relocated.exe"),
-        },
+        }),
       };
       const imported = session.importEvidenceBundle(
         createEvidenceBundle([relocated]),
@@ -230,10 +230,9 @@ for (const missingSource of [false, true])
         throw new Error("Expected a file-backed parent");
       const relocatedParent = {
         ...parent,
-        subject: {
-          ...parent.subject,
+        subject: displayedEvidenceSubject(parent.subject, {
           local_path: join(directory, "relocated-parent.exe"),
-        },
+        }),
       };
       const importedParent = session.importEvidenceBundle(
         createEvidenceBundle([relocatedParent]),
