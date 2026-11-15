@@ -125,7 +125,6 @@
     "src/native/apple/AppleIpsFieldReader.ts": 1,
     "src/native/parsers/demangle.ts": 3,
     "src/native/parsers/lipo.ts": 1,
-    "src/native/pwndbg/PwndbgCoreContext.ts": 2,
     "src/native/pwntools/PwntoolsDecoder.ts": 2,
     "src/native/pwntools/PwntoolsResourceLimits.ts": 1
   },
