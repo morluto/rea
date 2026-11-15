@@ -16,7 +16,6 @@ import { join } from "node:path";
 import type {
   Browser,
   BrowserContext,
-  CDPSession,
   ConnectOverCDPOptions,
   Page,
   chromium,
@@ -37,7 +36,10 @@ import {
   settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
-import { admitCdpReply } from "./protocol/CdpCommands.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -404,10 +406,10 @@ const findConnectedPage = async (
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      let session: CDPSession;
+      let session: PlaywrightCdpSession;
       try {
         session = await withScenarioCommandDeadline(
-          () => context.newCDPSession(page),
+          () => newPlaywrightCdpSession(context, page, OPERATION),
           commandTimeoutMs,
           "command",
           "Target.attachToTarget",
@@ -418,15 +420,11 @@ const findConnectedPage = async (
       }
       try {
         throwIfScenarioCancelled(signal);
-        const { targetInfo } = admitCdpReply(
+        const { targetInfo } = await withScenarioCommandDeadline(
+          () => session.send("Target.getTargetInfo"),
+          commandTimeoutMs,
+          "command",
           "Target.getTargetInfo",
-          await withScenarioCommandDeadline(
-            () => session.send("Target.getTargetInfo"),
-            commandTimeoutMs,
-            "command",
-            "Target.getTargetInfo",
-          ),
-          OPERATION,
         );
         throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
@@ -455,7 +453,7 @@ class AttachedScenarioEnvironmentOwner {
 
   private constructor(
     private readonly page: Page,
-    private readonly session: CDPSession,
+    private readonly session: PlaywrightCdpSession,
     private readonly commandTimeoutMs: number,
   ) {}
 
@@ -465,10 +463,10 @@ class AttachedScenarioEnvironmentOwner {
     commandTimeoutMs: number,
     retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
-    let session: CDPSession;
+    let session: PlaywrightCdpSession;
     try {
       session = await withScenarioCommandDeadline(
-        () => context.newCDPSession(page),
+        () => newPlaywrightCdpSession(context, page, OPERATION),
         commandTimeoutMs,
         "command",
         "Target.attachToTarget",

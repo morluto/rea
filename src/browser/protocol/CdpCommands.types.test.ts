@@ -1,6 +1,7 @@
 import { expectTypeOf, it } from "vitest";
 
 import type { CdpConnection } from "../CdpConnection.js";
+import type { PlaywrightCdpSession } from "../PlaywrightCdpSession.js";
 import type {
   CdpCommand,
   CdpCommandResult,
@@ -21,6 +22,15 @@ it("sends only commands with a registered result schema", () => {
     // @ts-expect-error An unregistered command name does not compile.
     connection.send(method);
   expectTypeOf(send).toBeFunction();
+
+  // Playwright sessions are opened only through this owner (`rea/no-raw-cdp-session`).
+  const sendPlaywright = (
+    method: UnregisteredCommand,
+    session: PlaywrightCdpSession,
+  ) =>
+    // @ts-expect-error An unregistered command name does not compile.
+    session.send(method);
+  expectTypeOf(sendPlaywright).toBeFunction();
 });
 
 it("builds run-time command names only from registered domains", () => {

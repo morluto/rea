@@ -520,7 +520,11 @@ const attachedBrowserFixture = (
     detach: vi.fn(async () => undefined),
   } as unknown as CDPSession;
   const environmentSession = {
-    send: vi.fn(callbacks.send ?? (async () => undefined)),
+    // Chromium acknowledges an Emulation command with an empty result object.
+    send: vi.fn(
+      async (method: string, parameters?: unknown) =>
+        (await callbacks.send?.(method, parameters)) ?? {},
+    ),
     detach: vi.fn(callbacks.detach ?? (async () => undefined)),
   } as unknown as CDPSession;
   const page = {
@@ -622,6 +626,7 @@ it("restores its environment overrides before releasing an attached browser", as
   );
   expect(fixture.environmentSession.send).toHaveBeenCalledWith(
     "Emulation.clearDeviceMetricsOverride",
+    undefined,
   );
   expect(fixture.page.emulateMedia).toHaveBeenLastCalledWith({
     colorScheme: null,
@@ -746,6 +751,7 @@ it("does not clear an attached environment override it failed to acquire", async
   );
   expect(fixture.environmentSession.send).toHaveBeenCalledWith(
     "Emulation.clearDeviceMetricsOverride",
+    undefined,
   );
   expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
   expect(fixture.browser.close).toHaveBeenCalledOnce();
@@ -1578,11 +1584,12 @@ it.each(["media", "focus"] as const)(
     const environmentSession = {
       send: vi.fn(
         async (method: string, parameters?: { enabled?: boolean }) => {
-          if (method !== "Emulation.setFocusEmulationEnabled") return;
+          if (method !== "Emulation.setFocusEmulationEnabled") return {};
           if (parameters?.enabled === false) {
             if (mutation === "focus") restored = true;
           } else if (mutation === "focus")
             await new Promise((resolve) => setTimeout(resolve, 80));
+          return {};
         },
       ),
       detach: vi.fn(async () => undefined),
@@ -1636,10 +1643,12 @@ it.each(["media", "focus"] as const)(
     if (mutation === "media")
       expect(environmentSession.send).not.toHaveBeenCalledWith(
         "Emulation.clearDeviceMetricsOverride",
+        undefined,
       );
     else
       expect(environmentSession.send).toHaveBeenCalledWith(
         "Emulation.clearDeviceMetricsOverride",
+        undefined,
       );
     expect(browser.close).toHaveBeenCalledOnce();
   },
