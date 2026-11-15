@@ -972,6 +972,55 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
+  "joins the launch identity read before a cancelled capture returns",
+  async () => {
+    const controller = new AbortController();
+    let readSettledAt: number | undefined;
+    const finalizationHost: FinalizationHost = {
+      observe: async () => {
+        // Cancel while the launch identity read is still pending, then let
+        // the read finish only afterwards.
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        readSettledAt = performance.now();
+        return { state: "readable" as const, identity: "launch" };
+      },
+      signal: async () => "signaled" as const,
+    };
+    const root = await createTestTempDirectory("rea-root-identity-join-");
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: ["-e", "setTimeout(() => {}, 20000)"],
+        working_directory: root,
+        timeout_ms: 20_000,
+        idle_timeout_ms: 20_000,
+      }),
+      controller.signal,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      finalizationHost,
+    );
+    const returnedAt = performance.now();
+
+    if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(result.error);
+    expect(
+      readSettledAt,
+      "the capture does not return while its identity read is still running",
+    ).toBeDefined();
+    expect(readSettledAt!).toBeLessThanOrEqual(returnedAt);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
   "keeps the attempts when the escalation cannot be delivered through the retained identity",
   async () => {
     const calls: string[] = [];
