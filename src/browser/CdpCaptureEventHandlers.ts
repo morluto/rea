@@ -1,7 +1,5 @@
 import {
-  readCdpResponseReceived,
   scopeCdpResponse,
-  readCdpLoadingFinished,
   type CdpRequestWillBeSentFacts,
 } from "./CdpNetworkEventFacts.js";
 import {
@@ -391,9 +389,8 @@ const preserveMalformedRedirectEvidence = (
 
 export const handleResponseReceived = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpEventPayload<"Network.responseReceived">,
 ): void => {
-  const facts = readCdpResponseReceived(params);
   const requestId = facts.requestId;
   if (requestId === null) {
     state.completeness.exclude("network_requests", "invalid_protocol_value");
@@ -434,9 +431,8 @@ export const handleResponseReceived = (
 
 export const handleLoadingFinished = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpEventPayload<"Network.loadingFinished">,
 ): void => {
-  const facts = readCdpLoadingFinished(params);
   const requestId = facts.requestId;
   if (requestId === null) return;
   if (state.malformedRedirectRequestIds.has(requestId)) return;
@@ -565,15 +561,14 @@ const captureConsoleText = (
 
 export const handleWebSocketFrame = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  frame: CdpEventPayload<"Network.webSocketFrameSent">,
   direction: "sent" | "received",
 ): void => {
-  const requestId = cdpStringValue(params.requestId);
+  const requestId = frame.requestId;
   if (requestId === undefined) return;
   const connection = state.webSocketConnectionsById.get(requestId);
   if (connection === undefined) return;
-  const response = recordValue(params.response);
-  const opcodeValue = numberValue(response?.opcode);
+  const opcodeValue = frame.opcode;
   // RFC 6455 encodes opcodes in four bits; keep reserved values as observed data.
   const opcode =
     opcodeValue !== undefined &&
@@ -582,7 +577,7 @@ export const handleWebSocketFrame = (
     opcodeValue <= 15
       ? opcodeValue
       : null;
-  const payload = cdpStringValue(response?.payloadData);
+  const payload = frame.payloadData;
   const payloadBytes =
     opcode === null || payload === undefined
       ? null
@@ -674,10 +669,9 @@ const captureWebSocketShape = (
 
 export const handleWebSocketCreated = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  created: CdpEventPayload<"Network.webSocketCreated">,
 ): void => {
-  const requestId = cdpStringValue(params.requestId);
-  const rawUrl = cdpStringValue(params.url);
+  const { requestId, url: rawUrl } = created;
   if (requestId === undefined) {
     state.completeness.exclude(
       "websocket_connections",
