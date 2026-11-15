@@ -1405,6 +1405,32 @@ it("retains the execution failure while cleanup is pending and resumes after cle
   }
 });
 
+it("does not send a jadx-reported request failure to doctor", async () => {
+  const { service, apk, launches, provider } = await setup("tool-error");
+  try {
+    const outcome = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (outcome.ok) throw new Error("Expected the reported tool error");
+    const projected = projectAnalysisError(outcome.error);
+    expect(projected).toMatchObject({
+      code: "execution_failure",
+      retryable: false,
+      details: {
+        diagnostics: {
+          reason: "manifest decoder rejected malformed binary XML",
+        },
+      },
+    });
+    expect(projected.message).toContain("details.diagnostics.reason");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
+    await verifyCleanup(launches);
+  } finally {
+    await provider.close();
+  }
+});
+
 it("accepts exact selected-overload smali from the bridge", async () => {
   const { service, apk, launches, provider } = await setup(
     "selected-overload-smali",

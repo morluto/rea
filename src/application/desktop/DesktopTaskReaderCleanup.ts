@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -22,9 +22,7 @@ const primaryFailure = (cause: unknown): AnalysisError | undefined => {
   if (cause instanceof AnalysisError) return cause;
   if (cause === undefined) return undefined;
   return cause instanceof OwnedCommandFailure && cause.reason === "cancelled"
-    ? new AnalysisCancelledError(OPERATION, {
-        cause: cause.cancellation?.reason,
-      })
+    ? cancelledBy(OPERATION, carriedReason(cause.cancellation?.reason))
     : new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
         cause,
         userMessage: `The task reader could not complete: ${cause instanceof Error ? cause.message : String(cause)}`,

@@ -1,10 +1,14 @@
 import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
+import {
   BOUNDED_PRODUCER_LIMITS as LIMITS,
   resolveProducerLimits,
 } from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectSignalDecodersInput,
   signalDecodersSchema,
@@ -50,11 +54,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -65,6 +69,7 @@ import {
   signalRecordingSchema,
 } from "../domain/signals/signalRecording.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -157,9 +162,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       await this.#resources.release();
       if (!sigrokHostSupported(this.platform))
         throw new Error(
@@ -440,33 +443,39 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       )
         this.#resources.retain(root, cause.cleanupOwner);
       result = err(
-        this.#failure(
+        classifyProviderFailure(
           cause,
-          phase,
-          resourcePath,
-          root?.path ?? null,
-          effectiveLimits,
-          capturedOutput,
-          operation,
-          limits,
+          this.#failureDialect(
+            phase,
+            resourcePath,
+            root?.path ?? null,
+            effectiveLimits,
+            capturedOutput,
+            operation,
+            limits,
+          ),
         ),
       );
     }
-    return this.#resources.finish(
-      result,
-      (execution) =>
-        createAnalysisExecutionEvidence(
-          operation,
-          input,
-          execution,
-          "observed",
-        ),
-      operation,
-      options?.signal,
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: this.#resources.providerId,
+        operation,
+        signal: options?.signal,
+        close: () => this.#resources.release(),
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
+            operation,
+            input,
+            execution,
+            "observed",
+          ),
+      }),
     );
   }
-  #failure(
-    cause: unknown,
+  /** This provider's dialect for the shared provider failure classifier. */
+  #failureDialect(
     phase: "configuration" | "workspace" | "producer" | "integrity",
     path: string,
     workspacePath: string | null,
@@ -477,101 +486,98 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       readonly output_bytes: number;
       readonly command_timeout_ms: number;
     },
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.#resources.cleanupFailure(
-        cause,
-        (primary) =>
-          this.#failure(
-            primary,
-            phase,
-            path,
+  ): ProviderFailureDialect {
+    const command = this.#resources.commandContext(
+      limits,
+      effectiveLimits,
+      operation,
+      "producer_limits",
+    );
+    return {
+      providerId: SIGROK_PROVIDER_IDENTITY.id,
+      operation,
+      recognise: (cause) =>
+        cause instanceof DecoderDiscoveryBudgetError
+          ? new AnalysisResourceConstraintError(
+              operation,
+              "memory",
+              cause.message,
+              { line_budget: 65536 },
+              {
+                cause,
+                ...(observedOutput === undefined
+                  ? {}
+                  : { capturedOutput: observedOutput }),
+                ...fixedAllowanceOptions(
+                  "The sigrok decoder-discovery line allowance",
+                  "capture",
+                ),
+              },
+            )
+          : undefined,
+      command: () => command,
+      // The retained workspace owns a command's unresolved cleanup and reports
+      // it when the run finishes; the command reports only its own outcome.
+      commandCleanup: (_failure, _primary, outcome) =>
+        classifyProviderOutcome(outcome, command),
+      readCleanup: (read, primary) =>
+        this.#resources.readCleanupFailure(
+          read,
+          primary,
+          observedOutput,
+          operation,
+        ),
+      observedOutput,
+      unclassified: (cause) => {
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        if (phase === "workspace")
+          return privateWorkspaceFailure(
+            SIGROK_PROVIDER_IDENTITY.id,
+            operation,
+            cause,
             workspacePath,
-            effectiveLimits,
+          );
+        if (phase === "integrity")
+          return this.#resources.integrityFailure(
+            cause,
+            path,
             observedOutput,
             operation,
-            limits,
-          ),
-        observedOutput,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-      });
-    if (cause instanceof DecoderDiscoveryBudgetError)
-      return new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        cause.message,
-        { line_budget: 65536 },
-        {
+          );
+        if (phase === "configuration")
+          return new AnalysisCapabilityUnavailableError(
+            SIGROK_PROVIDER_IDENTITY.id,
+            operation,
+            reason,
+            {
+              cause,
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              ...(cause instanceof ResourceLimitedVersionProbeFailure
+                ? {
+                    diagnostics: {
+                      version_probe_status_owner: cause.statusOwner,
+                    },
+                  }
+                : {}),
+              userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
+            },
+          );
+        if (
+          cause instanceof ArtifactReaderFailure &&
+          cause.reason === "integrity"
+        )
+          return new AnalysisArtifactChangedError(operation, path, reason, {
+            cause,
+          });
+        return new AnalysisOutputError(operation, reason, {
           cause,
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
-          ...fixedAllowanceOptions(
-            "The sigrok decoder-discovery line allowance",
-            "capture",
-          ),
-        },
-      );
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof OwnedCommandFailure)
-      return this.#resources.commandFailure(
-        cause,
-        limits,
-        effectiveLimits,
-        operation,
-        "producer_limits",
-      );
-    if (phase === "workspace")
-      return privateWorkspaceFailure(
-        SIGROK_PROVIDER_IDENTITY.id,
-        operation,
-        cause,
-        workspacePath,
-      );
-    if (phase === "integrity")
-      return this.#resources.integrityFailure(
-        cause,
-        path,
-        observedOutput,
-        operation,
-      );
-    if (phase === "configuration")
-      return new AnalysisCapabilityUnavailableError(
-        SIGROK_PROVIDER_IDENTITY.id,
-        operation,
-        reason,
-        {
-          cause,
-          ...(observedOutput === undefined
-            ? {}
-            : { capturedOutput: observedOutput }),
-          ...(cause instanceof ResourceLimitedVersionProbeFailure
-            ? {
-                diagnostics: {
-                  version_probe_status_owner: cause.statusOwner,
-                },
-              }
-            : {}),
-          userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
-        },
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, reason, {
-        cause,
-      });
-    return new AnalysisOutputError(operation, reason, {
-      cause,
-      ...(observedOutput === undefined
-        ? {}
-        : { capturedOutput: observedOutput }),
-    });
+        });
+      },
+    };
   }
 }

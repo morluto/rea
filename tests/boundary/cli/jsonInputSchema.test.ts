@@ -30,6 +30,8 @@ import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain
 import { managedNativeVerificationRequestSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedReconstructionImportRequestSchema } from "../../../src/domain/managed/managedReconstruction.js";
 import { nativeCallObservationInputSchema } from "../../../src/domain/native/nativeCallObservation.js";
+import { matchNativeFunctionsInputSchema } from "../../../src/contracts/native/functionMatchingContracts.js";
+import { COMPARE_WASM_INTERFACES_CONTRACT } from "../../../src/contracts/wasm/wasmComparisonContracts.js";
 import {
   jsonInputArgument,
   jsonInputContentSchema,
@@ -129,6 +131,14 @@ const documents = [
   {
     command: CLI_COMMANDS.compareArtifacts,
     schema: artifactComparisonInputSchema,
+  },
+  {
+    command: CLI_COMMANDS.compareWasmInterfaces,
+    schema: frame(COMPARE_WASM_INTERFACES_CONTRACT.inputSchema),
+  },
+  {
+    command: CLI_COMMANDS.matchNativeFunctions,
+    schema: frame(matchNativeFunctionsInputSchema),
   },
   {
     command: CLI_COMMANDS.captureBrowserScenario,

@@ -4,9 +4,10 @@ import { isOneColourPng } from "../browser/PngVisualDiff.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { Deadline } from "../domain/deadline.js";
 
-/** How often REA retakes a first screenshot the desktop has not drawn on, and the time the retries share. */
+/** How often REA retakes a first screenshot the desktop has not drawn on. */
 const DRAWN_POLL_MS = 500;
-const DRAWN_WAIT_MS = 10_000;
+/** The time those retries share unless a test shortens it. */
+export const DRAWN_WAIT_MS = 10_000;
 
 /** A driver's screenshot answer, as far as the wait reads it. */
 interface Screenshot {
@@ -25,14 +26,15 @@ const undrawn = (shot: Screenshot): boolean => {
 /**
  * A whole-screen PNG screenshot once the desktop has drawn: readiness can
  * pass while the display is still one colour, so REA takes another every
- * 500 ms while it is. Retries share 10 s, each given only what is left of
+ * 500 ms while it is. Retries share `waitMs` (10 s), each given only what is left of
  * it; when that runs out, the latest frame is returned.
  */
 export const drawnScreenshot = async <Shot extends Screenshot>(
   take: (signal: AbortSignal) => Promise<Shot>,
   signal: AbortSignal,
+  waitMs: number = DRAWN_WAIT_MS,
 ): Promise<Shot> => {
-  const deadline = Deadline.after(DRAWN_WAIT_MS);
+  const deadline = Deadline.after(waitMs);
   let shot = await take(signal);
   while (!shot.isError && undrawn(shot)) {
     const left = deadline.remainingMs();

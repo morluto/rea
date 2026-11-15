@@ -83,7 +83,6 @@ export const androidComponentSummarySchema = z.strictObject({
   declaration_coverage: z.strictObject({
     complete: z.int().nonnegative(),
     partial: z.int().nonnegative(),
-    unknown: z.int().nonnegative(),
   }),
 });
 
@@ -188,6 +187,7 @@ export const projectAndroidPackageView = (
     if (!page.ok) return page;
     return ok({
       kind: "android" as const,
+      facet: "manifest" as const,
       view,
       ...shared,
       item: {
@@ -212,7 +212,7 @@ export const projectAndroidPackageView = (
     unknowns: boundedViewMessages(
       [
         ...shared.unknowns,
-        "Components are static declarations. Omitted historical declaration fields remain unknown; exported declarations and SDK defaults are distinct.",
+        "Components are static declarations; exported declarations and SDK defaults are distinct.",
         ...(report.components.status === "complete"
           ? []
           : [
@@ -275,7 +275,7 @@ export const projectAndroidPackageView = (
       },
       exported_declarations: { true: 0, false: 0, unknown: 0 },
       exported_defaults: { true: 0, false: 0, unknown: 0 },
-      declaration_coverage: { complete: 0, partial: 0, unknown: 0 },
+      declaration_coverage: { complete: 0, partial: 0 },
     };
     for (const row of rows) {
       if (!matches(row)) continue;

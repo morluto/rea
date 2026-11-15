@@ -22,9 +22,10 @@ import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
@@ -407,9 +408,10 @@ const artifactReaderFailure = (
       cause,
     });
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (cause.reason === "limit")
     return new AnalysisResourceConstraintError(
       OPERATION,

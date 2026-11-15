@@ -10,10 +10,11 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -622,11 +623,7 @@ export const matchRegexValues = async (input: {
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
   if (input.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(input.operation, {
-        cause: input.signal.reason,
-      }),
-    );
+    return err(cancelledBy(input.operation, input.signal));
   const admitted = snapshotRegexConfiguration(
     input.deadline,
     input.heapRequest,
@@ -664,9 +661,7 @@ export const matchRegexValues = async (input: {
       const onAbort = () =>
         finish(
           err(
-            new AnalysisCancelledError(input.operation, {
-              cause: input.signal?.reason,
-            }),
+            cancelledBy(input.operation, carriedReason(input.signal?.reason)),
           ),
         );
       const timer = setTimeout(

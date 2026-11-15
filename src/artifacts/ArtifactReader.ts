@@ -243,6 +243,11 @@ export interface ArtifactReader {
 }
 
 /** Typed adapter failure translated at provider boundary. */
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;

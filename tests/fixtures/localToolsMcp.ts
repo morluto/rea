@@ -20,6 +20,8 @@ export const localToolsMcpEnvironment = (
   REA_LOG_LEVEL: "silent",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   GHIDRA_INSTALL_DIR: process.execPath,
+  // Validate each result against its complete advertised output contract.
+  REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   ...environment,
 });
 

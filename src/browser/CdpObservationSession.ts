@@ -3,7 +3,11 @@ import type {
   ObserveWebSessionInput,
   WebObservationSession,
 } from "../domain/browserSession.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -745,7 +749,7 @@ const waitForWindow = async (
     const settle = (complete: () => void): void => {
       if (settled) return;
       settled = true;
-      timerController.abort();
+      timerController.abort(OwnerCancellation.noLongerNeeded);
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
       removeProtocolFailure();
@@ -755,9 +759,7 @@ const waitForWindow = async (
     const onAbort = (): void =>
       settle(() => {
         reject(
-          new AnalysisCancelledError("observe_web_session", {
-            cause: signal?.reason,
-          }),
+          cancelledBy("observe_web_session", carriedReason(signal?.reason)),
         );
       });
     signal?.addEventListener("abort", onAbort, { once: true });
