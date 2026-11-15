@@ -40,7 +40,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
   ELF_PT_GNU_RELRO,

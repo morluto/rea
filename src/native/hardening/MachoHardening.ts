@@ -34,7 +34,7 @@ import {
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readMachoEncryption } from "../../artifacts/apple/MachoEncryptionReader.js";
 import {
   frameLoadCommands,

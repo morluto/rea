@@ -55,8 +55,6 @@
     "application <-> frida",
     "application <-> providers",
     "artifacts <-> dotnet",
-    "artifacts <-> firmware",
-    "artifacts <-> gpu",
     "artifacts <-> javascript",
     "artifacts <-> native",
     "artifacts <-> process",

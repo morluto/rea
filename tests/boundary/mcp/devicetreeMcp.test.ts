@@ -18,7 +18,7 @@ import {
   cells,
   devicetreeFixture,
   dtString,
-} from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 

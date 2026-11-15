@@ -6,7 +6,7 @@ import {
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 import {
   decodeSwiftConformanceTypeReference,

@@ -32,7 +32,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import { readElfHardening } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
