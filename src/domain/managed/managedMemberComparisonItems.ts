@@ -280,6 +280,7 @@ const sameAssemblyIdentity = (
   left.public_key.token === right.public_key.token;
 
 interface ReferenceTarget {
+  readonly rowResolved: boolean | undefined;
   readonly offset: number | null;
   readonly opcode: string;
   readonly token: string;
@@ -338,13 +339,13 @@ const compareReferenceTargets = (
       if (leftTarget.identity !== rightTarget.identity) changed = true;
       continue;
     }
-    // A token that names no row — an unresolvable owner such as TypeSpec —
-    // still names one row per side when both sides read the same authenticated
-    // artifact, so the row is equal without a nominal identity. A resolved
-    // identity on the other side means the unresolved side lost information,
-    // which stays unknown.
+    // Same-artifact token equality requires both producers to establish the
+    // referenced row. Missing/historical facts or malformed operands stay unknown.
     if (
       sameArtifact &&
+      leftTarget.rowResolved === true &&
+      left.token === right.token &&
+      rightTarget.rowResolved === true &&
       left.signature.parse_status === "decoded" &&
       right.signature.parse_status === "decoded" &&
       leftTarget.identity == null &&
@@ -372,12 +373,14 @@ const compareFieldTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightAccesses.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     sameArtifact,
@@ -398,12 +401,14 @@ const compareCallTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightEdges.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     sameArtifact,

@@ -485,8 +485,12 @@ This is nominal metadata identity, not assembly resolution or runtime binding.
 Edges without a resolved identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
 equivalence. The exception is a target the left and right sides reach under the
-same token of the same authenticated artifact: that token names one metadata
-row, so it establishes equal targets without a nominal identity. Valid
+same caller and target tokens of the same authenticated artifact, with both
+producers reporting `target_row_resolved: true`: those parsed facts establish
+the same metadata row without a nominal identity. Missing historical row
+resolution, malformed or wrong-kind references, undecoded signatures and
+unresolved TypeSpec operands stay unknown. This fact describes metadata
+resolution, not runtime binding. Valid
 MethodSpecs combine the base member identity with the resolved instantiation
 signature, preserving generic argument distinctions.
 

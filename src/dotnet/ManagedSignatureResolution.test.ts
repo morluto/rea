@@ -745,6 +745,8 @@ describe("comparison of edges to a TypeSpec-owned member", () => {
   it("reports unchanged for the same token of the same artifact", () => {
     const inspection = typeSpecMember(0x0a00_0001);
     expect(inspection.call_edges[0]?.target_identity_sha256).toBeNull();
+    expect(inspection.call_edges[0]?.target_declaring_type).toBeNull();
+    expect(inspection.call_edges[0]?.target_row_resolved).toBe(true);
     const comparison = compareManagedMembers(
       { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
       { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
@@ -767,5 +769,63 @@ describe("comparison of edges to a TypeSpec-owned member", () => {
     );
     expect(comparison.methods[0]?.status).toBe("unknown");
     expect(comparison.methods[0]?.dimensions).toContain("availability");
+  });
+
+  it.each([
+    ["missing row", 0x0a00_0002, Buffer.from([0, 0, 1])],
+    ["wrong member kind", 0x0a00_0001, Buffer.from([6, 8])],
+    ["undecoded target signature", 0x0a00_0001, Buffer.from([0, 0, 0x7f])],
+  ] as const)(
+    "keeps a %s unknown in the same artifact",
+    (_name, token, signature) => {
+      const inspection = inspectDisplayFixture({
+        typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+        memberRefParentRaw: (1 << 3) | 4,
+        memberRefSignature: signature,
+        ilBody: body(token),
+      });
+      const comparison = compareManagedMembers(
+        { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+        { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+      );
+      expect(comparison.methods[0]?.status).toBe("unknown");
+    },
+  );
+
+  it("keeps historical target-row resolution unknown", () => {
+    const inspection = typeSpecMember(0x0a00_0001);
+    const historical = {
+      ...inspection,
+      call_edges: inspection.call_edges.map(
+        ({ target_row_resolved: _omitted, ...edge }) => edge,
+      ),
+    };
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: historical },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: historical },
+    );
+    expect(comparison.methods[0]?.status).toBe("unknown");
+  });
+
+  it("compares a proven TypeSpec field row through the same owner", () => {
+    const operand = Buffer.alloc(4);
+    operand.writeUInt32LE(0x0a00_0001);
+    const inspection = inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      memberRefSignature: Buffer.from([6, 8]),
+      ilBody: Buffer.concat([
+        Buffer.from([0x1e, 0x7e]),
+        operand,
+        Buffer.from([0x26, 0x2a]),
+      ]),
+    });
+    expect(inspection.field_accesses[0]?.target_identity_sha256).toBeNull();
+    expect(inspection.field_accesses[0]?.target_row_resolved).toBe(true);
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+    );
+    expect(comparison.methods[0]?.status).toBe("unchanged");
   });
 });
