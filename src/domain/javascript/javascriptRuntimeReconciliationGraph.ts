@@ -9,6 +9,8 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { RuntimeProjection } from "./javascriptRuntimeReconciliationRuntime.js";
@@ -25,9 +27,44 @@ interface GraphCoverageFacts {
   readonly projectionOmissions: number;
   readonly knownOmissions: number;
   readonly omissionsKnown: boolean;
-  readonly inputStatus: "complete" | "partial" | "truncated";
+  readonly inputStatus: ReconciliationInputStatus;
   readonly outputTruncated: boolean;
 }
+
+/** What the static graphs and passive captures establish about their coverage. */
+export type ReconciliationInputStatus =
+  | "complete"
+  | "partial"
+  | "truncated"
+  | "unknown";
+
+/**
+ * The one reading of reconciliation input coverage. Bounded captures report
+ * only known gaps; a static graph whose producer could not tell or could not
+ * run makes the inputs unknown, which wins over a known truncation.
+ */
+export const reconciliationInputStatus = (
+  input: Pick<ReconciledGraphInput, "layers" | "captures">,
+): ReconciliationInputStatus => {
+  const coverage = joinCoverageStatus([
+    "complete",
+    ...input.layers.map(({ graph }) =>
+      applicationCoverageKnowledge(graph.coverage.status),
+    ),
+    ...input.captures.map(({ inspection }) =>
+      inspection.completeness.status === "complete_within_window"
+        ? ("complete" as const)
+        : ("partial" as const),
+    ),
+  ]);
+  if (coverage === "unknown") return "unknown";
+  const truncated =
+    input.layers.some(({ graph }) => graph.coverage.truncated) ||
+    input.captures.some(({ inspection }) =>
+      inspection.completeness.conditions.includes("truncated"),
+    );
+  return truncated ? "truncated" : coverage;
+};
 
 /** Combined graph plus omissions introduced while merging its observations. */
 export interface ReconciledApplicationGraphProjection {
@@ -65,7 +102,11 @@ export const buildReconciledApplicationGraph = (
         ? [
             "One or more source graphs or passive captures were incomplete or truncated.",
           ]
-        : []),
+        : facts.inputStatus === "unknown"
+          ? [
+              "One or more source graphs could not establish their coverage, so the reconciled graph's coverage is unknown.",
+            ]
+          : []),
       ...(facts.outputTruncated
         ? [
             "The reconciled graph omitted entities or classifications during projection.",
@@ -141,15 +182,6 @@ const graphCoverageFacts = (
       inspection.completeness.attach_limited_sections.length > 0 ||
       inspection.completeness.unavailable_sections.length > 0,
   );
-  const inputTruncated =
-    input.layers.some(({ graph }) => graph.coverage.truncated) ||
-    captureTruncated;
-  const inputComplete =
-    input.layers.every(({ graph }) => graph.coverage.status === "complete") &&
-    input.captures.every(
-      ({ inspection }) =>
-        inspection.completeness.status === "complete_within_window",
-    );
   const outputTruncated = projectionOmissions > 0;
   const sourceOmissions = input.layers.reduce(
     (total, { graph }) => total + (graph.coverage.omitted_count ?? 0),
@@ -163,11 +195,7 @@ const graphCoverageFacts = (
     projectionOmissions,
     knownOmissions: projectionOmissions + sourceOmissions,
     omissionsKnown,
-    inputStatus: inputTruncated
-      ? "truncated"
-      : inputComplete
-        ? "complete"
-        : "partial",
+    inputStatus: reconciliationInputStatus(input),
     outputTruncated,
   };
 };
@@ -177,40 +205,42 @@ const graphCoverage = (
   facts: GraphCoverageFacts,
   nodeCount: number,
 ): JavaScriptApplicationGraph["coverage"] =>
-  facts.inputStatus === "complete" && !facts.outputTruncated
-    ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
-    : facts.inputStatus === "truncated" || facts.outputTruncated
-      ? {
-          status: "partial",
-          truncated: true,
-          omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
-          limits: [
-            ...(facts.inputStatus === "truncated"
-              ? [
-                  {
-                    name: "runtime-reconciliation-input-coverage",
-                    value: input.layers.length + input.captures.length,
-                    unit: "items" as const,
-                  },
-                ]
-              : []),
-            ...(facts.outputTruncated
-              ? [
-                  {
-                    name: "runtime-reconciliation-output-limits",
-                    value: nodeCount,
-                    unit: "items" as const,
-                  },
-                ]
-              : []),
-          ],
-        }
-      : {
-          status: "partial",
-          truncated: false,
-          omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
-          limits: [],
-        };
+  facts.inputStatus === "unknown"
+    ? { status: "unknown", truncated: false, omitted_count: null, limits: [] }
+    : facts.inputStatus === "complete" && !facts.outputTruncated
+      ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
+      : facts.inputStatus === "truncated" || facts.outputTruncated
+        ? {
+            status: "partial",
+            truncated: true,
+            omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
+            limits: [
+              ...(facts.inputStatus === "truncated"
+                ? [
+                    {
+                      name: "runtime-reconciliation-input-coverage",
+                      value: input.layers.length + input.captures.length,
+                      unit: "items" as const,
+                    },
+                  ]
+                : []),
+              ...(facts.outputTruncated
+                ? [
+                    {
+                      name: "runtime-reconciliation-output-limits",
+                      value: nodeCount,
+                      unit: "items" as const,
+                    },
+                  ]
+                : []),
+            ],
+          }
+        : {
+            status: "partial",
+            truncated: false,
+            omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
+            limits: [],
+          };
 
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] => [
   ...new Map(edges.map((edge) => [edge.edge_id, edge])).values(),
