@@ -51,7 +51,6 @@
     "src/inspector/V8InspectorProvider.ts": 1,
     "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 3,
     "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
-    "src/jeb/JebProvider.ts": 1,
     "src/kuna/KunaCommand.ts": 1,
     "src/kuna/KunaProjectExport.ts": 1,
     "src/kuna/KunaSessionClient.ts": 1,
