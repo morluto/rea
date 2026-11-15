@@ -1,3 +1,4 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { basename, dirname, posix, win32 } from "node:path";
 
 import { ArtifactReaderFailure } from "../../resources/index.js";
@@ -845,11 +846,13 @@ const limitNativeSample = (
         (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
     );
   const preferredPaths = new Set(preferred.map((image) => image.path));
-  const kept = [
-    ...preferred,
-    ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
-  ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
-  const omittedNative = scan.native_images.length - kept.length;
+  const { items: kept, omitted: omittedNative } = boundedList(
+    [
+      ...preferred,
+      ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
+    ],
+    MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  );
   const keptPaths = new Set(kept.map((image) => image.path));
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (
