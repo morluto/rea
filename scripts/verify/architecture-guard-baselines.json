@@ -458,7 +458,7 @@
     "src/domain/javascript/sourceToBundleComparisonSchemas.ts": 1,
     "src/domain/javascript/staticObservedEndpointSchemas.ts": 1,
     "src/domain/jeb/jebAnalysis.ts": 1,
-    "src/domain/managed/managedArtifact.ts": 6,
+    "src/domain/managed/managedArtifact.ts": 4,
     "src/domain/managed/managedMemberComparison.ts": 3,
     "src/domain/managed/managedNativeVerificationSchemas.ts": 2,
     "src/domain/managed/managedReconstruction.ts": 1,

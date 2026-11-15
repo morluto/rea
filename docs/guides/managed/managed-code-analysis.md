@@ -724,6 +724,11 @@ type selection. Limitations name each counted class, and graph coverage is
 incomplete. A missing `calls` edge is therefore not evidence that a method is
 never called.
 
+A supplied inspection whose parser coverage is `unavailable` examined nothing,
+so the graph cannot tell what it omits: the result's `coverage.status` and the
+graph coverage are then `unknown`, even beside a known gap in another source.
+`partial` is reserved for known gaps.
+
 ## Evidence record shape
 
 Member comparison, application graph projection, and managed/native verification
