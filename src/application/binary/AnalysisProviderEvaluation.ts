@@ -6,6 +6,8 @@ import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
+  isAborted,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
@@ -47,10 +49,7 @@ export const evaluateAnalysisProviderCandidate = async (
   Result<AnalysisProviderCandidateEvaluation, AnalysisCancelledError>
 > => {
   const { signal } = options;
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
   let resolved: Awaited<ReturnType<typeof candidate.resolveAnalysisProfile>>;
   try {
     resolved = await candidate.resolveAnalysisProfile(target, options);
@@ -97,10 +96,7 @@ export const evaluateAnalysisProviderCandidate = async (
           );
     return ok({ ...rejection, profileError: error });
   }
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
   try {
     if (resolved.value.profile === null)
       return ok(
@@ -163,9 +159,6 @@ export const evaluateAnalysisProviderCandidate = async (
     );
   }
 };
-
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 /** Name doctor only for a provider whose installation it can check. */
 const profileRemediation = (candidate: AnalysisProviderCandidate): string => {

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -59,7 +60,9 @@ describe("ZCode configuration paths", () => {
 
   it("resolves the personal skills directory beside the config root", () => {
     expect(
-      skillDestinations("/home/a", ["zcode"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["zcode"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".zcode", "skills", "reverse-engineer-anything"),
     ]);
@@ -347,7 +350,9 @@ describe("ZCode fallback uninstall", () => {
     const native = JSON.stringify({ mcp: { servers: { rea: owned } } });
     await writeFile(client.configPath, native);
     const fallback = await writeFallback(home, servers);
-    const cursor = supportedClients(home).find(({ name }) => name === "cursor");
+    const cursor = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "cursor",
+    );
     if (cursor === undefined) throw new Error("missing Cursor client");
     await mkdir(dirname(cursor.configPath), { recursive: true });
     const otherClient = JSON.stringify({ mcpServers: { rea: owned } });

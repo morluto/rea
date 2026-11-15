@@ -183,9 +183,9 @@ export class DshCordisDocument {
 
   /** Validate literals without treating expression source as an environment value. */
   environment(
-    overrides: Readonly<Record<string, string>> = {},
-    validation: "fragment" | "effective" = "effective",
-    platform: NodeJS.Platform = process.platform,
+    overrides: Readonly<Record<string, string>>,
+    validation: "fragment" | "effective",
+    platform: NodeJS.Platform,
   ): Result<
     {
       readonly values: Readonly<Record<string, string>>;
@@ -263,14 +263,16 @@ export class DshCordisDocument {
   desired(
     command: readonly string[],
     overrides: Readonly<Record<string, string>>,
+    platform: NodeJS.Platform,
   ): Result<Record<string, unknown>, ConfigurationError> {
     if (this.#editabilityError !== undefined)
       return err(this.#editabilityError);
-    const environment = this.environment(overrides);
+    const environment = this.environment(overrides, "effective", platform);
     if (!environment.ok) return environment;
     const env = mergeEnvironmentOverrides<unknown>(
       isPatchRecord(this.config?.env) ? this.config.env : {},
       overrides,
+      platform,
     );
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
@@ -279,7 +281,8 @@ export class DshCordisDocument {
   }
 
   /** Plan every replacement from source snapshots before changing an output tree. */
-  serialize(desired?: Record<string, unknown>): string {
+  serialize(edit?: DshCordisRegistration): string {
+    const desired = edit?.desired;
     if (
       this.#editabilityError !== undefined &&
       (this.#unknownStructure || desired !== undefined)
@@ -316,9 +319,11 @@ export class DshCordisDocument {
       const owned = new Set(op.ownedRows);
       inserted.items = inserted.items.flatMap((entry, index) => {
         if (!owned.has(index)) return [entry];
-        if (carried || desired === undefined) return [];
+        if (carried || edit === undefined) return [];
         carried = true;
-        return [this.#entry(desired, invalidated)] as typeof inserted.items;
+        return [
+          this.#entry(edit.desired, edit.platform, invalidated),
+        ] as typeof inserted.items;
       });
       if (inserted.items.length === 0) copy.delete("insert");
       // An emptied operation keeps caller fields unless it would patch REA's row.
@@ -353,6 +358,7 @@ export class DshCordisDocument {
 
   #entry(
     desired: Record<string, unknown>,
+    platform: NodeJS.Platform,
     invalidated: ReadonlySet<Node>,
   ): YAMLMap<unknown, unknown> {
     const entry = this.#yaml.detach(this.#entryNode, invalidated);
@@ -392,8 +398,10 @@ export class DshCordisDocument {
           this.#yaml.renameKey(nextEnv, pair, key);
           continue;
         }
+        // Windows environment names match case-insensitively, so a caller's
+        // spelling of a desired name is kept rather than duplicated.
         const alias =
-          process.platform === "win32"
+          platform === "win32"
             ? Object.keys(desiredEnv).find(
                 (name) => name.toUpperCase() === key.toUpperCase(),
               )
@@ -411,10 +419,16 @@ export class DshCordisDocument {
   }
 }
 
+/** REA's desired entry and the platform whose environment names it uses. */
+export interface DshCordisRegistration {
+  readonly desired: Record<string, unknown>;
+  readonly platform: NodeJS.Platform;
+}
+
 class DshCordisEdit {
   constructor(
     readonly source: DshCordisDocument,
-    readonly desired?: Record<string, unknown>,
+    readonly registration?: DshCordisRegistration,
   ) {}
 }
 export const dshDocument = (
@@ -439,16 +453,16 @@ export const parseDshCordisDocument = (
 };
 export const editDshDocument = (
   parsed: ClientConfigurationDocument,
-  desired?: Record<string, unknown>,
+  registration?: DshCordisRegistration,
 ): Record<string, unknown> => ({
-  cordis: new DshCordisEdit(dshDocument(parsed.document), desired),
+  cordis: new DshCordisEdit(dshDocument(parsed.document), registration),
 });
 export const serializeDshDocument = (
   document: Record<string, unknown>,
 ): string => {
   if (!(document.cordis instanceof DshCordisEdit))
     throw new ConfigurationError("Missing Cordis edit plan");
-  return document.cordis.source.serialize(document.cordis.desired);
+  return document.cordis.source.serialize(document.cordis.registration);
 };
 export const dshClientRegistrationEntry = (
   command: readonly string[],

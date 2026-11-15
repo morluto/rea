@@ -6,6 +6,7 @@ import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
@@ -60,17 +61,22 @@ const composeDeepBinarySession = (
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
 ): BinarySession => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const platform = HOST_PLATFORM.platform;
+  const environment = snapshotEnvironment(selectedEnvironment, platform);
   const hopper = new HopperProvider(config, logger, environment);
   const ghidra = new GhidraProvider(config, logger, environment);
-  const ida = new IdaProvider(config, environment);
+  const ida = new IdaProvider(config, environment, (registration, selected) =>
+    createIdaMcpConnection(registration, selected, {
+      platform: HOST_PLATFORM.platform,
+    }),
+  );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
-    HOST_PLATFORM.platform,
+    platform,
     settings,
   );
   const nativeInspectionAvailable =
@@ -89,7 +95,7 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, HOST_PLATFORM.platform, settings),
+    createBundleResourceFactory(environment, platform, settings),
   );
 };
 

@@ -221,7 +221,7 @@ describe("skill regular-file cleanup ownership", () => {
 
   it("waits for an admitted skill read before its resource scope closes", async () => {
     const home = await createTestTempDirectory("rea-setup-skill-inflight-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
@@ -279,7 +279,7 @@ describe("skill regular-file cleanup ownership", () => {
 describe("skill cleanup diagnostics", () => {
   it("preserves read and host cleanup failures when doctor identity cannot complete", async () => {
     const home = await createTestTempDirectory("rea-doctor-skill-close-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
@@ -337,7 +337,7 @@ describe("skill cleanup diagnostics", () => {
 
   it("returns uninstall changes with a failed cleanup item for a retained handle", async () => {
     const home = await createTestTempDirectory("rea-uninstall-skill-close-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });

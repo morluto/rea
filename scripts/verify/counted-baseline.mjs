@@ -36,3 +36,36 @@ export const recordLoweredBaseline = (baselines, key, compared) => {
   else baselines[key] = compared.baseline;
   return true;
 };
+
+const byCodeUnit = ([left], [right]) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * The baseline file's one written form: guard keys keep their order and each
+ * guard's paths are sorted by code unit. The guard rejects a file in any other
+ * form, so a hand edit or merge cannot leave an order the next
+ * `--shrink-baselines` would silently rewrite in an unrelated change.
+ */
+export const serializeCountedBaselines = (baselines) =>
+  `${JSON.stringify(
+    Object.fromEntries(
+      Object.entries(baselines).map(([key, counts]) => [
+        key,
+        Object.fromEntries(Object.entries(counts).sort(byCodeUnit)),
+      ]),
+    ),
+    null,
+    2,
+  )}\n`;
+
+/**
+ * What the guard does with the baseline file it read as `text`, given the
+ * baselines after comparison: nothing when the file is already in its written
+ * form; otherwise `write` that form when shrinking (even if no count was
+ * lowered), or `reject` the file so a hand edit is fixed in its own change.
+ */
+export const reconcileBaselineFile = (text, baselines, shrink) => {
+  const written = serializeCountedBaselines(baselines);
+  if (written === text) return { action: "none" };
+  return shrink ? { action: "write", text: written } : { action: "reject" };
+};

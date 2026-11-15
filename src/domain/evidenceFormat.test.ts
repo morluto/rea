@@ -10,6 +10,7 @@ import {
   EVIDENCE_FORMAT_REVISION,
   RECREATE_EVIDENCE_GUIDANCE,
 } from "./evidenceFormat.js";
+import { ParseFailureError } from "./parseFailure.js";
 
 const record = createEvidence(
   undefined,
@@ -40,6 +41,15 @@ it.each([
   if (parsed.ok) throw new Error("Expected the earlier format to be refused");
   expect(parsed.error.kind).toBe("unsupported-format");
   expect(parsed.error.message).toContain(RECREATE_EVIDENCE_GUIDANCE);
+  expect(parsed.error.cause).toBeInstanceOf(ParseFailureError);
+  expect(parsed.error.cause).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "evidence-bundle",
+      field: "evidence_format",
+      undecodedContent: true,
+    },
+  });
   const read = readEvidenceBundle(earlier, {
     operation: "import_evidence_bundle",
     path: ["evidence_bundle"],

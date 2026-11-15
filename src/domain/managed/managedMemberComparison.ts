@@ -23,7 +23,6 @@ import {
   buildMethodItems,
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
 
@@ -215,7 +214,11 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   methods: z.array(methodComparisonItemSchema),
   fields: z.array(fieldComparisonItemSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when both observations are complete over the same selected scope and method rows; unknown when a side is unavailable or the selected scope agreement cannot be established.",
+      ),
     left_status: z.enum(["complete", "partial", "unavailable"]),
     right_status: z.enum(["complete", "partial", "unavailable"]),
   }),
@@ -289,9 +292,6 @@ export const compareManagedMembers = (
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
     scope,
-    signatureResolutionExamined:
-      hasSignatureResolution(left.result) &&
-      hasSignatureResolution(right.result),
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,

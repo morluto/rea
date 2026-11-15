@@ -140,7 +140,7 @@ export const projectNativeInventoryView = (
         discovery_coverage: "unknown" as const,
         selectable_fields: fieldSchema.options,
       },
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     });
   // Normalize the selection once: repeated caller fields must not multiply
   // work or temporary entries for every retained row. Keep the original view.

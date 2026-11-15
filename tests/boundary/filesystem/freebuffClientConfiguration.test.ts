@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -106,6 +107,7 @@ describe("FreeBuff configuration paths", () => {
       await symlink(join(home, "removed-profile"), profile, "dir");
       const statuses = (options = {}) =>
         readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
           ...options,
         });
@@ -149,7 +151,9 @@ describe("FreeBuff configuration paths", () => {
   });
 
   it("resolves the personal skills directory FreeBuff discovers", () => {
-    expect(skillDestinations("/home/a", ["freebuff"])).toEqual([
+    expect(
+      skillDestinations("/home/a", ["freebuff"], {}, process.platform),
+    ).toEqual([
       {
         client: "shared",
         path: join("/home/a", ".agents", "skills", "reverse-engineer-anything"),

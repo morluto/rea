@@ -1,3 +1,8 @@
+import {
+  canonicalOutputSchema,
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -33,14 +38,18 @@ const viewValidators = async (client: Client) => {
   const contract = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (contract?.outputSchema === undefined)
+  if (contract === undefined)
     throw new Error("Missing named view output contract");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = contract.inputSchema;
-  const outputSchema: Record<string, unknown> = contract.outputSchema;
+  const inputSchema = canonicalInputSchema(contract.name);
+  const outputSchema = canonicalOutputSchema(contract.name);
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { ajv, inputSchema, toolDefinition: contract };
+  return {
+    ajv,
+    inputSchema,
+    toolDefinition: withCanonicalOutputSchema(contract),
+  };
 };
 
 const retainedInventoryView =
@@ -117,7 +126,7 @@ const expectedPckMembers = (
   return expected;
 };
 
-const profiles = ["full", "compact"] as const;
+const profiles = ["compact"] as const;
 const members = [
   { path: "res://a.txt", data: "a" },
   { path: "res://b.txt", data: "b" },
@@ -184,11 +193,7 @@ it.for(inventoryCases)(
     ).toBe(nested.normalized_result);
     const graph = nested.normalized_result;
     const view = retainedInventoryView(client, parent.evidence_id, validators);
-    await assertInvalidNodeField(
-      client,
-      parent.evidence_id,
-      profile === "full" ? validators : undefined,
-    );
+    await assertInvalidNodeField(client, parent.evidence_id, undefined);
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
     const expectedMembers = expectedPckMembers(members, wanted);
     const occurrences = await view({

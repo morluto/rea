@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../../../src/cli.js";
 import {
   describeContractCommand,
+  describeOperationChoices,
   describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
@@ -108,6 +109,9 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
+  // The named option may supply a selector in place of the positional.
+  if (parameter.selectorOption !== undefined && value === undefined)
+    return true;
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -188,10 +192,18 @@ const argvValues = (
   description: ContractCliDescription,
   options: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> => {
+  const positional: ReadonlySet<string> = new Set(
+    description.parameters
+      .filter((parameter) => parameter.positional)
+      .map(({ key }) => key),
+  );
+  // A required selector is supplied positionally.
   const required = description.parameters.filter(
     (parameter) =>
-      !admits(registeredField(description, parameter), undefined) &&
-      (parameter.positional || !Object.hasOwn(options, parameter.key)),
+      (parameter.selectorOption === undefined
+        ? !admits(registeredField(description, parameter), undefined)
+        : parameter.selectorOption.required) &&
+      !Object.hasOwn(options, parameter.key),
   );
   const filled = Object.fromEntries(
     required.map((parameter) => [
@@ -200,8 +212,13 @@ const argvValues = (
     ]),
   );
   return {
+    ...Object.fromEntries(
+      Object.entries(options).filter(([key]) => positional.has(key)),
+    ),
     ...(registered.get(description.command)!.options as z.ZodObject).parse({
-      ...options,
+      ...Object.fromEntries(
+        Object.entries(options).filter(([key]) => !positional.has(key)),
+      ),
       ...Object.fromEntries(
         required
           .filter(({ positional }) => !positional)
@@ -216,42 +233,87 @@ const argvValues = (
   };
 };
 
+/**
+ * Argv for commands whose contract rules need more than one value per
+ * required field: a selector choice, a pattern grammar or a change to make.
+ */
+const ARGV_SATISFYING_RULES: Readonly<
+  Record<string, Readonly<Record<string, unknown>>>
+> = {
+  "annotate-native-function": { name: "renamed" },
+  "search-bytes": { pattern: "41 ??" },
+  "inspect-native-data-type": { type: "/struct" },
+  "capture-native-ui-scenario": {
+    steps: '[{"kind":"wait","milliseconds":0}]',
+  },
+};
+
 const each = descriptions.map(
   (description) => [description.command, description] as const,
 );
 
+/** Commands whose CLI projection is derived from a tool contract. */
+const MIGRATED_COMMANDS = [
+  "inspect-sqlite-database",
+  "inspect-elf-notes",
+  "inspect-pe-resources",
+  "inspect-devicetree",
+  "inspect-go-binary",
+  "inspect-v8-code-cache",
+  "inspect-rust-binary",
+  "inspect-python-pyc",
+  "inspect-erlang-beam",
+  "inspect-model-artifact",
+  "inspect-apk-signature",
+  "inspect-desktop-application",
+  "inspect-evm-interface",
+  "audit-release-exposure",
+  "inspect-il2cpp-metadata",
+  "inspect-gpu-code-objects",
+  "inspect-signal-decoders",
+  "decode-signal-recording",
+  "inspect-packet-fields",
+  "inspect-packet-capture",
+  "inspect-wasm-artifact",
+  "inspect-firmware-regions",
+  "extract-firmware",
+  "inspect-keyed-archive",
+  "trace-dylib-resolution",
+  "inspect-asset-catalog",
+  "decode-interface-builder",
+  "annotate-native-function",
+  "search-bytes",
+  "inspect-native-load-image",
+  "read-bytes",
+  "address-to-file-offset",
+  "trace-native-values",
+  "inspect-native-data-type",
+  "inspect-native-instruction",
+  "resolve-native-call-targets",
+  "trace-native-ui-action",
+  "inspect-native-dispatch-metadata",
+  "procedure-references",
+  "inspect-native-api",
+  "inspect",
+  "xrefs",
+  "trace",
+  "function",
+  "instructions",
+  "decompile",
+  "search",
+  "decompile-all",
+  "observe-native-ui",
+  "capture-native-ui-scenario",
+  "inspect-macho",
+  "inspect-signature",
+  "list-architectures",
+  "demangle-swift",
+];
+
 describe("CLI commands projected from tool contracts", () => {
   it("registers the migrated commands", () => {
     expect(descriptions.map(({ command }) => command)).toEqual(
-      expect.arrayContaining([
-        "inspect-sqlite-database",
-        "inspect-elf-notes",
-        "inspect-pe-resources",
-        "inspect-devicetree",
-        "inspect-go-binary",
-        "inspect-v8-code-cache",
-        "inspect-rust-binary",
-        "inspect-python-pyc",
-        "inspect-erlang-beam",
-        "inspect-model-artifact",
-        "inspect-apk-signature",
-        "inspect-desktop-application",
-        "inspect-evm-interface",
-        "audit-release-exposure",
-        "inspect-il2cpp-metadata",
-        "inspect-gpu-code-objects",
-        "inspect-signal-decoders",
-        "decode-signal-recording",
-        "inspect-packet-fields",
-        "inspect-packet-capture",
-        "inspect-wasm-artifact",
-        "inspect-firmware-regions",
-        "extract-firmware",
-        "inspect-keyed-archive",
-        "trace-dylib-resolution",
-        "inspect-asset-catalog",
-        "decode-interface-builder",
-      ]),
+      expect.arrayContaining(MIGRATED_COMMANDS),
     );
   });
 
@@ -286,7 +348,13 @@ describe("CLI commands projected from tool contracts", () => {
           ...description.parameters
             .filter(({ positional }) => !positional)
             .map(({ key }) => key),
+          ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
+          ...description.parameters.flatMap(({ selectorOption }) =>
+            [selectorOption, selectorOption?.alternative].flatMap((option) =>
+              option === undefined ? [] : [option.key],
+            ),
+          ),
         ].toSorted(),
       );
     },
@@ -313,8 +381,12 @@ describe("CLI commands projected from tool contracts", () => {
           ).toBe(true);
         }
         if (parameter.runtimeJson !== undefined) {
-          // JSON text decoded when the command runs; see below.
-          for (const value of [undefined, "", "{", "{}"])
+          // JSON text decoded when the command runs; see below. Argv
+          // requires the text of a required field.
+          expect(admits(cliField, undefined), parameter.key).toBe(
+            admits(contractField, undefined),
+          );
+          for (const value of ["", "{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
           continue;
         }
@@ -348,8 +420,15 @@ describe("CLI commands projected from tool contracts", () => {
 
   it.each(each)(
     "%s maps parsed argv to an admitted contract input",
-    (_command, description) => {
-      const values = argvValues(description, {});
+    (command, description) => {
+      const values = argvValues(
+        description,
+        ARGV_SATISFYING_RULES[command] ?? {},
+      );
+      // Runtime JSON text is decoded as admission does.
+      for (const { key, runtimeJson } of description.parameters)
+        if (runtimeJson !== undefined && typeof values[key] === "string")
+          values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
       expect(description.contract.inputSchema.safeParse(input).error).toBe(
         undefined,
@@ -634,7 +713,9 @@ describe("Session targets of contract commands", () => {
       expect(Object.values(description.toContractInput(values))).not.toContain(
         "rel/app",
       );
-      expect(description.callerInputs(values)).toEqual({});
+      expect(
+        Object.values(description.callerInputs(values)).flat(),
+      ).not.toContain("rel/app");
     },
   );
 
@@ -663,6 +744,170 @@ describe("Session targets of contract commands", () => {
         },
       ),
     ).toThrow("probe projects two fields to one CLI key");
+  });
+});
+
+const openingKeys = (description: ContractCliDescription) =>
+  description.sessionTarget!.options.map(({ key }) => key);
+
+describe("Opening options of session-targeted contract commands", () => {
+  it.each(
+    sessionTargeted.filter(
+      ([, description]) => description.sessionTarget!.options.length > 0,
+    ),
+  )(
+    "%s keeps opening options out of the contract input",
+    (_command, description) => {
+      for (const key of openingKeys(description))
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      expect(
+        description.sessionTarget!.admitOpening(description.contract.name, {}),
+      ).toEqual({ ok: true, value: {} });
+    },
+  );
+
+  it.each(
+    sessionTargeted.filter(([, description]) =>
+      openingKeys(description).includes("entry-point"),
+    ),
+  )(
+    "%s admits a native target interpretation with open_binary",
+    (_command, description) => {
+      const target = description.sessionTarget!;
+      const snapshot = openingKeys(description).includes("snapshot");
+      const values = {
+        ...argvValues(
+          description,
+          ARGV_SATISFYING_RULES[description.command] ?? {},
+        ),
+        [target.key]: "rel/app",
+        "target-format": "raw-binary",
+        architecture: "x86",
+        "entry-point": "0x100",
+        provider: "ghidra",
+        ...(snapshot ? { snapshot: "rel/snapshot.json" } : {}),
+      };
+      expect(Object.values(description.toContractInput(values))).not.toContain(
+        "0x100",
+      );
+      // The snapshot is admitted resolved and passed on as typed.
+      expect(target.admitOpening(description.contract.name, values)).toEqual({
+        ok: true,
+        value: {
+          format: "raw-binary",
+          architecture: "x86",
+          entry_point: "0x100",
+          provider_id: "ghidra",
+          ...(snapshot ? { snapshot_path: "rel/snapshot.json" } : {}),
+        },
+      });
+      // The pairing rule refuses before the target opens and names CLI keys.
+      const unpaired = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        "target-format": "raw-binary",
+        architecture: "x86",
+      });
+      expect(unpaired.ok).toBe(false);
+      if (!unpaired.ok)
+        expect(unpaired.error.issues).toEqual([
+          expect.objectContaining({
+            path: ["entry-point"],
+            message: expect.stringMatching(/requires architecture/u),
+          }),
+        ]);
+      const format = target.options.find(({ key }) => key === "target-format")!;
+      expect(admits(format.schema, "raw-binary")).toBe(true);
+      expect(admits(format.schema, "esp-flash-image")).toBe(false);
+    },
+  );
+
+  it.each(
+    sessionTargeted.filter(([, description]) =>
+      openingKeys(description).includes("flashOffset"),
+    ),
+  )(
+    "%s admits ESP flash options with the opening contract and keeps them out of the contract input",
+    (_command, description) => {
+      const target = description.sessionTarget!;
+      const values = {
+        ...argvValues(description, {}),
+        [target.key]: "rel/app",
+        targetFormat: "esp-flash-image",
+        flashOffset: "0x1000",
+      };
+      for (const { key } of target.options)
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      expect(Object.values(description.toContractInput(values))).not.toContain(
+        "0x1000",
+      );
+      expect(target.admitOpening(description.contract.name, values)).toEqual({
+        ok: true,
+        value: { format: "esp-flash-image", flash_offset: "0x1000" },
+      });
+      expect(target.admitOpening(description.contract.name, {})).toEqual({
+        ok: true,
+        value: {},
+      });
+      // The opening contract's pairing rule names the CLI key.
+      const unpaired = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        flashOffset: "0x1000",
+      });
+      expect(unpaired.ok).toBe(false);
+      if (!unpaired.ok)
+        expect(unpaired.error.issues).toEqual([
+          expect.objectContaining({
+            path: ["flashOffset"],
+            message: expect.stringMatching(/only with format=esp-flash-image/u),
+          }),
+        ]);
+      // Only the projected values of an opening field are admitted.
+      const format = target.options.find(({ key }) => key === "targetFormat")!;
+      expect(admits(format.schema, "esp-flash-image")).toBe(true);
+      expect(admits(format.schema, "raw-binary")).toBe(false);
+    },
+  );
+});
+
+describe("Opening fields a session target projects", () => {
+  it("refuses opening fields the opening contract cannot supply", () => {
+    const opening = {
+      name: "open",
+      inputSchema: z.object({
+        path: z.string(),
+        mode: z.enum(["a", "b"]).optional(),
+        required: z.string(),
+      }),
+    };
+    const describeOpening = (
+      fields: Record<string, { values?: [string]; callerPath?: true }>,
+    ) =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({}) },
+        {
+          command: "probe",
+          description: "Probe",
+          sessionTarget: {
+            description: "Target",
+            open: { contract: opening, fields },
+          },
+        },
+      );
+    expect(() => describeOpening({ missing: {} })).toThrow(
+      "open has no option field missing",
+    );
+    expect(() => describeOpening({ path: {} })).toThrow(
+      "open has no option field path",
+    );
+    expect(() => describeOpening({ required: {} })).toThrow(
+      "open.required is required",
+    );
+    expect(() => describeOpening({ mode: { values: ["c"] } })).toThrow(
+      "open.mode does not admit c",
+    );
+    expect(() => describeOpening({ mode: { callerPath: true } })).toThrow(
+      "open.mode is not a path",
+    );
   });
 });
 
@@ -768,6 +1013,12 @@ describe("JSON-document contract commands", () => {
         "compare-artifacts",
         "inspect-analysis-view",
         "match-native-functions",
+        "build-reconstruction-obligation-ledger",
+        "evaluate-reconstruction-coverage",
+        "observe-native-calls",
+        "compare-static-and-observed-endpoints",
+        "capture-browser-scenario",
+        "validate-browser-scenario",
       ]),
     );
   });
@@ -777,12 +1028,18 @@ describe("JSON-document contract commands", () => {
     (_command, description) => {
       const command = registered.get(description.command)!;
       const args = (command.args as z.ZodObject).shape;
-      expect(Object.keys(args)).toEqual([description.key]);
+      expect(Object.keys(args)).toEqual([
+        ...(description.sessionTarget === undefined
+          ? []
+          : [description.sessionTarget.key]),
+        description.key,
+      ]);
       const advertised = (args[description.key] as z.ZodType).meta();
       expect(advertised?.contentMediaType).toBe("application/json");
       const content = advertised?.contentSchema as Record<string, unknown>;
       expect(content).toEqual(jsonInputContentSchema(description.content));
-      // Every contract field reaches the document unless omitted with a reason.
+      // Every contract field reaches the document unless omitted with a
+      // reason or taken as an option beside it.
       const input = inputJsonSchema(description.contract.inputSchema);
       const fields = new Set(
         reachable(input, []).flatMap((branch) =>
@@ -794,16 +1051,26 @@ describe("JSON-document contract commands", () => {
       for (const field of fields)
         expect(
           reachable(content, [field]).length > 0 ||
-            Object.hasOwn(description.omitted, field),
+            Object.hasOwn(description.omitted, field) ||
+            Object.hasOwn(description.flagged, field),
           field,
         ).toBe(true);
-      for (const field of Object.keys(description.omitted))
+      for (const field of [
+        ...Object.keys(description.omitted),
+        ...Object.keys(description.flagged),
+      ])
         expect(reachable(content, [field]), field).toEqual([]);
+      const options = [
+        ...description.deliveryOptions,
+        ...description.cliOnlyOptions,
+      ].map(({ key }) => key);
+      for (const key of Object.values(description.flagged))
+        expect(options, key).toContain(key);
       expect(
         Object.keys(
           (command.options as z.ZodObject | undefined)?.shape ?? {},
         ).toSorted(),
-      ).toEqual(description.cliOnlyOptions.map(({ key }) => key).toSorted());
+      ).toEqual(options.toSorted());
     },
   );
 
@@ -864,5 +1131,292 @@ describe("JSON-document contract commands", () => {
     expect(
       Object.keys(inputJsonSchema(described.content).properties as object),
     ).toEqual(["required"]);
+  });
+});
+
+describe("JSON-document delivery options", () => {
+  const contract = {
+    name: "probe",
+    inputSchema: z.object({
+      required: z.string(),
+      optional: z.string().optional(),
+    }),
+  };
+  const projection = {
+    command: "probe",
+    description: "Probe",
+    document: "Probe JSON",
+  };
+
+  it("takes detail and view beside the document and admits them before the handler", () => {
+    expect(() =>
+      describeContractDocumentCommand(contract, {
+        ...projection,
+        evidenceDelivery: true,
+      }),
+    ).toThrow("probe.detail is not an optional field");
+    const delivered = {
+      name: "probe",
+      inputSchema: contract.inputSchema.extend({
+        detail: z.enum(["complete", "summary"]).default("complete"),
+        view: z.object({ offset: z.number() }).optional(),
+      }),
+    };
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        viewDelivery: { invalidJson: "view must be JSON" },
+      }),
+    ).toThrow("probe view delivery requires evidenceDelivery");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        omit: { detail: "never" },
+      }),
+    ).toThrow("probe.detail is both omitted and an option");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        cliOptions: { evidence_output: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    const flagged = describeContractDocumentCommand(delivered, {
+      ...projection,
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be JSON" },
+    });
+    expect(
+      Object.keys(inputJsonSchema(flagged.content).properties as object),
+    ).toEqual(["required", "optional"]);
+    expect(flagged.admitDelivery({ detail: "complete" })).toEqual({
+      ok: true,
+      value: { detail: "complete", evidenceOutput: undefined },
+    });
+    expect(
+      flagged.admitDelivery({
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":2}',
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        detail: "summary",
+        evidenceOutput: "out.json",
+        view: { offset: 2 },
+      },
+    });
+    for (const values of [
+      { detail: "complete", view: '{"offset":2}' },
+      { detail: "summary", evidence_output: "out.json", view: "{" },
+      {
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":"2"}',
+      },
+      { detail: "summary" },
+    ])
+      expect(flagged.admitDelivery(values).ok, JSON.stringify(values)).toBe(
+        false,
+      );
+  });
+});
+
+const selecting = each.flatMap(([command, description]) =>
+  description.parameters.flatMap((parameter) =>
+    parameter.selectorOption === undefined
+      ? []
+      : [[command, description, parameter, parameter.selectorOption] as const],
+  ),
+);
+
+describe("Positional selectors with a named option", () => {
+  it.each(selecting)(
+    "%s takes its selector positionally or by its named option",
+    (_command, description, parameter, option) => {
+      const command = registered.get(description.command)!;
+      const named = (command.options as z.ZodObject).shape[option.key];
+      expect(admits(named as z.ZodType, undefined)).toBe(true);
+      expect(admits(named as z.ZodType, "-dash")).toBe(true);
+      // A required selector is refused when neither spelling is given,
+      // including where only the CLI requires it.
+      expect(option.required).toBe(
+        option.required ||
+          !admits(description.fields[parameter.field]!, undefined),
+      );
+      const { required } = option;
+      const admit = (values: Record<string, unknown>) =>
+        description.admit({
+          [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...values,
+        });
+      const selected = (values: Record<string, unknown>) => {
+        const result = admit(values);
+        return result.ok ? result.value.input[parameter.field] : result.error;
+      };
+      expect(selected({ [parameter.key]: "main" })).toBe("main");
+      expect(selected({ [option.valueKey]: "-main" })).toBe("-main");
+      expect(selected({ [parameter.key]: "m", [option.valueKey]: "m" })).toBe(
+        "m",
+      );
+      const issues = (values: Record<string, unknown>) => {
+        const result = admit(values);
+        return result.ok ? [] : result.error.issues;
+      };
+      expect(issues({ [parameter.key]: "a", [option.valueKey]: "b" })).toEqual([
+        expect.objectContaining({
+          path: [option.key],
+          reason: "invalid_value",
+        }),
+      ]);
+      if (required)
+        expect(issues({})).toEqual([
+          expect.objectContaining({
+            path: [option.key],
+            reason: "missing_argument",
+          }),
+        ]);
+      if (option.kind === "native")
+        // The named spelling is kept when both name one native address.
+        expect(
+          selected({ [parameter.key]: "0x1a", [option.valueKey]: "0x1A" }),
+        ).toBe("0x1A");
+    },
+  );
+
+  const alternatives = selecting.flatMap(
+    ([command, description, parameter, option]) =>
+      option.alternative === undefined
+        ? []
+        : [[command, description, parameter, option.alternative] as const],
+  );
+  it.each(alternatives)(
+    "%s maps its alternative selector option onto the same field",
+    (_command, description, parameter, alternative) => {
+      const option = parameter.selectorOption!;
+      const admit = (values: Record<string, unknown>) =>
+        description.admit({
+          [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...values,
+        });
+      const alone = admit({ [alternative.valueKey]: "0x10" });
+      expect(alone.ok && alone.value.input[parameter.field]).toBe(
+        alternative.selects("0x10"),
+      );
+      const agreeing = admit({
+        [alternative.valueKey]: "0x10",
+        [option.valueKey]: alternative.selects("0x10"),
+      });
+      expect(agreeing.ok).toBe(true);
+      for (const conflicting of [
+        { [alternative.valueKey]: "0x10", [parameter.key]: "main" },
+        { [alternative.valueKey]: "0x10", [option.valueKey]: "main" },
+      ]) {
+        const result = admit(conflicting);
+        expect(result.ok ? [] : result.error.issues).toEqual([
+          expect.objectContaining({
+            path: [alternative.key],
+            reason: "invalid_value",
+          }),
+        ]);
+      }
+    },
+  );
+
+  it("refuses a selector whose contract admits an empty value", () => {
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ text: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["text"],
+          selectorOptions: { text: { name: "text", description: "Text" } },
+        },
+      ),
+    ).toThrow("probe.text admits an empty selector");
+  });
+
+  it("refuses a selector option on a field that is not a positional text selector", () => {
+    const describeSelector = (
+      positionals: readonly ("text" | "count")[],
+      field: "text" | "count",
+    ) =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.object({ text: z.string(), count: z.number() }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals,
+          selectorOptions: { [field]: { name: "named", description: "Named" } },
+        },
+      );
+    expect(() => describeSelector([], "text")).toThrow(
+      "probe.text is not a positional selector",
+    );
+    expect(() => describeSelector(["count"], "count")).toThrow(
+      "probe.count is not a text selector",
+    );
+  });
+});
+
+describe("Operation choices selected by an option", () => {
+  it("refuses an operation choice whose contract projects other options", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z.object({ text: z.string(), extra: z.string() }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      { name: "probe", inputSchema: z.object({ text: z.string() }) },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
+  });
+
+  it("refuses an operation choice whose contract projects other option rules", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z
+              .object({ text: z.string(), limit: z.number().optional() })
+              .meta({ dependentRequired: { limit: ["text"] } }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          text: z.string(),
+          limit: z.number().optional(),
+        }),
+      },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
   });
 });

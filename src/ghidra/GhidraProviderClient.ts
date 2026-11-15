@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
   filterGhidraLiteralCandidates,
@@ -616,17 +617,18 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   // An invalid decompile seed is refused only by operations that use it.
-  let launcherDecompileTimeout: number | undefined;
-  try {
-    launcherDecompileTimeout = config.ghidraDecompileTimeoutSeconds;
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-  }
+  const decompileTimeout = readRuntimeSetting(
+    () => config.ghidraDecompileTimeoutSeconds,
+  );
+  const launcherDecompileTimeout = decompileTimeout.ok
+    ? decompileTimeout.value
+    : undefined;
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
+    bridgeMaxReplyBytes: config.bridgeMaxReplyBytes,
     platform: installation.platform,
     ...(project === undefined ? {} : { existingProject: true }),
     launcher: new GhidraHeadlessLauncher({
@@ -1055,13 +1057,9 @@ export const createGhidraProviderClient = (input: {
             }
           : {}),
       });
-      let operationLimits: ReturnType<typeof selectLimits>;
-      try {
-        operationLimits = selectLimits();
-      } catch (cause: unknown) {
-        if (cause instanceof ConfigurationError) return err(cause);
-        throw cause;
-      }
+      const admittedLimits = readRuntimeSetting(selectLimits);
+      if (!admittedLimits.ok) return admittedLimits;
+      const operationLimits = admittedLimits.value;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);
@@ -1354,6 +1352,9 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // A refused setting (for example the reply ceiling admitted before launch)
+  // is already the caller-facing refusal with its setting and allowed values.
+  if (failure.cause instanceof ConfigurationError) return failure.cause;
   if (failure.kind === "checkpoint") {
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
@@ -1412,7 +1413,7 @@ const projectPrimarySessionError = (
       operation,
       physicalCause.path,
       physicalCause.reason,
-      context,
+      { ...context, integrityCheck: physicalCause.integrityCheck },
     );
   if (
     failure.kind === "admission" &&
@@ -2043,7 +2044,7 @@ export const ghidraStartupTimeoutGuidance = (
       ? `Large projects can need longer: ${raise}. Existing-project mode does not run auto-analysis, so analyzer settings do not shorten this startup. ${retry}${client}`
       : source === "owned-checkpoint"
         ? `Checkpoint startup can need longer: ${raise}. Restoring a saved Program skips auto-analysis; initial analysis and its first checkpoint must complete once. ${retry} Keep REA_GHIDRA_CHECKPOINT_DIR to recover the last successful save. Analyzer overrides require explicitly disabling checkpoint mode.${client}`
-        : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; for repeated work on the same native ELF, PE or Mach-O binary on a POSIX host, analyze it once into a Ghidra project and set REA_GHIDRA_PROJECT_PATH to reuse that analysis.${client}`;
+        : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; --snapshot reuses cached query results, not the analyzed Ghidra Program. For repeated work on supported native ELF, PE or Mach-O binaries on Linux/macOS, opt into REA_GHIDRA_CHECKPOINT_DIR to save completed analysis automatically, or select an analyzed project with REA_GHIDRA_PROJECT_PATH. Checkpoint mode excludes analysis overrides; use a project already analyzed with the desired settings for customized analysis. Changing startup mode requires a new REA invocation or an MCP server restart. Initial analysis must still complete once.${client}`;
   };
   return {
     limit: analysisSettingLimit(

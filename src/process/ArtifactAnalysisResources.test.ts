@@ -1,5 +1,10 @@
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
 } from "../artifacts/ArtifactResourceScope.js";
@@ -60,7 +65,7 @@ it.runIf(process.platform !== "win32")(
     const selected = join(root, "selected");
     await writeFile(target, "fixture");
     await symlink(target, selected);
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture-provider",
       "decode_signal_recording",
       readStableArtifact,
@@ -93,7 +98,7 @@ it.each(["command", "limiter"])(
   async (failedPath) => {
     const source = new ArtifactReaderFailure("path", "Artifact was replaced");
     const reads: string[] = [];
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture-provider",
       "fixture-operation",
       async (path) => {
@@ -170,7 +175,7 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
       ],
     }),
   });
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -227,7 +232,7 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
 
 it("preserves the primary error and resolves cleanup status after retry", async () => {
   let closes = 0;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -288,7 +293,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
 it("resolves each returned cleanup error with its own retained root", async () => {
   let closesA = 0;
   let closesB = 0;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -373,7 +378,7 @@ it("resolves an artifact cleanup error when its scope owner later closes", async
     }
     return { bytes: Buffer.alloc(0), sha256: "0".repeat(64) };
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readArtifact,
@@ -436,7 +441,7 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
     }
     return { bytes: Buffer.alloc(0), sha256: "0".repeat(64) };
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readArtifact,
@@ -492,7 +497,7 @@ it.each([
 ])(
   "preserves caller cancellation at resource admission: %s",
   async (reason) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -526,7 +531,7 @@ it.each([
 ])(
   "projects the command owner's exact cancellation independently of physical causes: %s",
   async (reason) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -593,7 +598,7 @@ it.each([false, true])(
         },
       );
     };
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readArtifact,
@@ -621,7 +626,7 @@ it.each([false, true])(
 );
 
 it("names the fixed producer command deadline and says it has no override", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -649,7 +654,7 @@ it("names the fixed producer command deadline and says it has no override", asyn
 });
 
 it("says REA retains the tighter inherited limit when a producer signal fires", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -699,7 +704,7 @@ it("says REA retains the tighter inherited limit when a producer signal fires", 
 });
 
 it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not reported", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -741,7 +746,7 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
 });
 
 it("treats a fixed command-output cap as a non-retryable capture allowance", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -785,7 +790,7 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
 });
 
 it("retains a physical command failure when the owner also observed late cancellation", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -815,7 +820,7 @@ it("retains a physical command failure when the owner also observed late cancell
 
 it("preserves typed caller cancellation through failed workspace cleanup and retry", async () => {
   let denied = true;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -892,7 +897,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       },
     );
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readArtifact,
@@ -936,7 +941,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
 it.each([false, true])(
   "keeps an existing physical primary across cleanup-time cancellation (failed close: %s)",
   async (failsClose) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -991,7 +996,7 @@ it.each([false, true])(
 );
 
 it("keeps cleanup with no reported capability unresolved instead of clearing it from an empty scope", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -1028,7 +1033,7 @@ it("keeps cleanup with no reported capability unresolved instead of clearing it 
 });
 
 it("joins mixed runtime cleanup and resolves each error only through its exact lease", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -1081,7 +1086,7 @@ it("retains producer output when a completed read is cancelled during failed clo
   const caller = new AbortController();
   const reason = { request: "cancel during close" };
   const scope = new ArtifactResourceScope();
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -1112,12 +1117,14 @@ it("retains producer output when a completed read is cancelled during failed clo
     ).catch((cause: unknown) => cause);
     if (!(cause instanceof ArtifactReaderFailure))
       throw new Error("Expected retained artifact failure");
-    const error = resources.cleanupFailure(
+    const error = classifyProviderFailure(
       cause,
-      () => {
-        throw new Error("Completed read has no physical failure");
-      },
-      output,
+      artifactResourceDialect(resources, {
+        kind: "integrity",
+        operation: "inspect_signal_decoders",
+        path,
+        capturedOutput: output,
+      }),
     );
     const primary = error.cleanupPrimary;
     expect(primary).toMatchObject({
@@ -1146,7 +1153,7 @@ it("retains producer output when a completed read is cancelled during failed clo
 });
 
 it("keeps aggregate cleanup live through partial recovery without reclosing healthy roots", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,

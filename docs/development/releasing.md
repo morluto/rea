@@ -62,6 +62,50 @@ both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
 the original run after a partial publication.
 
+## Check the packed catalog with client engines
+
+rea-agents 6.9.0 advertised a pattern that RE2 and Rust's `regex` cannot
+compile, so clients rejected the whole tools list
+([#10830](https://github.com/morluto/rea/issues/10830)). Release qualification
+runs `ci.yml` on the release revision, and its build job checks the advertised
+catalog with every client engine and, in full qualification, Python
+`jsonschema`; a refusal fails qualification, so publication does not start.
+
+To check the archive itself, for example when auditing a release or
+investigating a client report, install the exact qualified archive: the
+`package.tgz` in the release run's `verified-release-package` artifact, which
+the publish job uploads unchanged. A root `npm pack` is not that archive; it
+lacks the release manifest, `npm-shrinkwrap.json` and bundled dependencies. The
+check needs Go and Python 3.10 or later on the host. It runs in a subshell, so
+its cleanup trap removes the archive, installed package and Python engines on
+success or failure without replacing your shell's own trap.
+
+```bash
+(
+  set -eu
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  gh run download "$RELEASE_RUN_ID" --repo morluto/rea \
+    --name verified-release-package --dir "$work/verified"
+  npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund \
+    --prefix "$work/prefix" "$work/verified/package.tgz"
+  python3 -m venv "$work/engines"
+  "$work/engines/bin/pip" install --require-hashes \
+    -r scripts/verify/advertised-schemas/requirements.txt
+  REA_REQUIRE_SCHEMA_ENGINES=1 REA_SCHEMA_ENGINES_PYTHON="$work/engines/bin/python" \
+    node scripts/verify-advertised-schemas.mjs --complete \
+    --package-root="$work/prefix/node_modules/rea-agents"
+)
+```
+
+Set `RELEASE_RUN_ID` to the release workflow run that qualified the version.
+Run it from a checkout of the release commit after `npm run build:cached`; the
+checkout supplies the checker and the profile list, and the installed package
+supplies every listing. The run must report each engine with its version,
+including `go regexp (RE2)`, `re2 (C++)`, `rust regex`, `rust fancy-regex`,
+`rust jsonschema` and `python jsonschema`; a missing engine fails instead of
+passing. Report any refusal as a release defect.
+
 ## Recover an already published npm release
 
 Rerunning a job uses its original workflow and source revision. When a verifier

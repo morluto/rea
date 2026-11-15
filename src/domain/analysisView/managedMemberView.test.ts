@@ -41,6 +41,11 @@ it("keeps unexamined collections unknown while normalizing immutable managed par
     signature_resolution: null,
     exported_types: null,
     user_strings: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
   };
   const input = parent(freezeOwnedJsonTreeSnapshot(unexamined));
   for (let attempt = 0; attempt < 2; attempt++) {

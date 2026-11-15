@@ -17,8 +17,10 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { isRecord } from "../domain/isRecord.js";
+import { schemaAnnotations } from "../domain/schemaAnnotations.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -88,6 +90,49 @@ const oncePerContract = <
   return built;
 };
 
+/** The instruction an advertised complete observation carries after its description. */
+export const COMPLETE_OBSERVATION_GUIDANCE =
+  "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.";
+
+/**
+ * Apply typed presentation annotations while Zod projects an advertised input.
+ * Running inside this projection only keeps `--schema`, output schemas and
+ * every other JSON Schema conversion of the same Zod schema canonical.
+ */
+const presentAnnotatedInput = ({
+  zodSchema,
+  jsonSchema,
+}: {
+  readonly zodSchema: z.core.$ZodType;
+  readonly jsonSchema: Record<string, unknown>;
+}): void => {
+  if (schemaAnnotations(zodSchema)?.completeObservation !== true) return;
+  // These operands are complete producer results, not fields an agent builds,
+  // so the wire declaration omits the repeated result schema.
+  if (jsonSchema.type !== "object")
+    throw new TypeError(
+      "A complete observation annotation requires an object schema",
+    );
+  const description = [jsonSchema.description, COMPLETE_OBSERVATION_GUIDANCE]
+    .filter((text) => typeof text === "string")
+    .join(" ");
+  for (const key of Object.keys(jsonSchema)) delete jsonSchema[key];
+  Object.assign(jsonSchema, { type: "object", description });
+};
+
+/**
+ * Declare `type: "object"` on a union root whose alternatives are all objects,
+ * after its combinator, where Zod places root metadata.
+ */
+const objectRoot = ({
+  $defs,
+  ...root
+}: Record<string, unknown>): Record<string, unknown> => ({
+  ...root,
+  type: "object",
+  ...($defs === undefined ? {} : { $defs }),
+});
+
 /** Attach caller guidance to a canonical schema for the SDK wire projection. */
 export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
@@ -99,12 +144,17 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
       (project) => (options) => {
         const inline = project({
           ...options,
-          libraryOptions: { ...options.libraryOptions, reused: "inline" },
+          libraryOptions: {
+            ...options.libraryOptions,
+            reused: "inline",
+            override: presentAnnotatedInput,
+          },
         });
         const examples = advertisedInputExamples(contract);
         const presented = presentInputJsonSchema(
           inline,
           fallbackPropertyDescription,
+          schemaAnnotations(contract.inputSchema),
         );
         const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
           .hasEvidence
@@ -136,18 +186,6 @@ export const advertisedInputJsonSchema = <Contract extends ToolContract>(
     target: "draft-2020-12",
   }) as Record<string, unknown>;
 
-/**
- * Return the canonical output JSON Schema: the complete projection of the
- * contract's output, which the full output profile lists. A client that
- * validates a reply uses it whatever the selected profile advertises.
- */
-export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
-  contract: Contract,
-): Record<string, unknown> =>
-  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
 /** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
@@ -157,11 +195,16 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
-        const shared = presentOutputJsonSchema(
-          project({
-            ...options,
-            libraryOptions: { reused: "ref", ...options.libraryOptions },
-          }),
+        const projected = project({
+          ...options,
+          libraryOptions: { reused: "ref", ...options.libraryOptions },
+        });
+        const shared = shareOutputDefinitions(
+          presentOutputJsonSchema(
+            schemaAnnotations(contract.outputSchema)?.objectRoot === true
+              ? objectRoot(projected)
+              : projected,
+          ),
         );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.
@@ -177,6 +220,20 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       },
     ),
   );
+
+/**
+ * Return the canonical output JSON Schema registered on MCP for a target: the
+ * complete projection of the contract's output, which the full output profile
+ * lists. A client that validates a reply uses it whatever the selected profile
+ * advertises.
+ */
+export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+  target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
+): Record<string, unknown> =>
+  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
+    target,
+  }) as Record<string, unknown>;
 
 /**
  * Apply a wire-presentation transform to one schema's advertised input

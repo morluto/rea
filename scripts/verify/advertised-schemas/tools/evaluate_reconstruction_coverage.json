@@ -1,0 +1,9 @@
+{
+  "schemas": {
+    "input compact": "4c824f77c8039956",
+    "output compact": "6eb93bf85f43f04d"
+  },
+  "patterns": {
+    "output": ["^[A-Za-z][\\x2d-\\x3aA-Z_a-z]{0,199}$", "^ev_[0-9a-f]{64}$"]
+  }
+}

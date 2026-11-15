@@ -15,6 +15,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "./runOwned.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const value: AnalysisPartialObservation = {
   kind: "retained-evidence",
@@ -125,7 +126,7 @@ it("classifies a producer composite whose primary is a cancellation as cancelled
   const finalized = await runOwned(
     async () => err(composite),
     options(controller, async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   );
   expect(finalized).toMatchObject({
@@ -159,7 +160,7 @@ it("publishes recovered completion after cleanup resolves", async () => {
   const published: AnalysisPartialObservation[] = [];
   const finalized = await runOwned(async () => err(failure), {
     ...options(controller, async () => {
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
     }),
     recoverCompleted: (_error, observed) =>
       observed.cleanupResolvedByClose ? { value } : undefined,
@@ -178,7 +179,7 @@ it("keeps a recovered value when cancellation arrives during its publication", a
   });
   const finalized = await runOwned(async () => err(failure), {
     ...options(controller, async () => {
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
     }),
     recoverCompleted: () => ({ value }),
     commit: async () => {
@@ -200,7 +201,7 @@ it("keeps a cancellation that arrives while a recovered publication fails", asyn
   const publication = new AnalysisProtocolError("publication failed");
   const finalized = await runOwned(async () => err(failure), {
     ...options(controller, async () => {
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
     }),
     recoverCompleted: () => ({ value }),
     commit: async () => {
@@ -223,7 +224,7 @@ it("retains a recovered value when its publication fails", async () => {
   });
   const finalized = await runOwned(async () => err(failure), {
     ...options(new AbortController(), async () => {
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
     }),
     recoverCompleted: () => ({ value }),
     commit: async () => {

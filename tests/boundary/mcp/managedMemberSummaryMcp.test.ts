@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -66,10 +67,11 @@ const verifyProjection = async ({
   const viewDefinition = advertised.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (viewDefinition?.outputSchema === undefined)
-    throw new Error("View schema is absent");
+  if (viewDefinition === undefined) throw new Error("View schema is absent");
   const viewInputSchema: Record<string, unknown> = viewDefinition.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewDefinition.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewDefinition.name,
+  );
   for (const collection of COLLECTIONS) {
     const projectedReply = await client.callTool(
       {
@@ -197,9 +199,11 @@ it("summarizes selected members and pages every original collection after the fi
   const definition = advertised.find(
     (x) => x.name === "inspect_managed_members",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Managed member schemas are absent");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -307,7 +311,7 @@ it("summarizes selected members and pages every original collection after the fi
 });
 
 it("keeps collections that member Evidence never examined unknown", async () => {
-  const directory = await createTestTempDirectory("rea-member-historical-");
+  const directory = await createTestTempDirectory("rea-member-unexamined-");
   const path = join(directory, "fixture.dll");
   await writeFile(path, buildManagedPeFixture());
   const { client } = await createHarness();
@@ -325,8 +329,13 @@ it("keeps collections that member Evidence never examined unknown", async () => 
     user_strings: null,
     selection: null,
     signature_resolution: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
   };
-  const historical = createEvidence(undefined, parent.provider, {
+  const unexamined = createEvidence(undefined, parent.provider, {
     operation: parent.operation,
     parameters: parent.parameters,
     result: recorded,
@@ -334,7 +343,7 @@ it("keeps collections that member Evidence never examined unknown", async () => 
     authority: parent.authority,
   });
   const summary = await inspectAnalysisView({
-    source: { kind: "inline", evidence: historical },
+    source: { kind: "inline", evidence: unexamined },
     view: { kind: "summary" },
   });
   if (!summary.ok) throw summary.error;
@@ -350,13 +359,13 @@ it("keeps collections that member Evidence never examined unknown", async () => 
   for (const collection of ["exported_types", "user_strings"] as const)
     expect(
       await inspectAnalysisView({
-        source: { kind: "inline", evidence: historical },
+        source: { kind: "inline", evidence: unexamined },
         view: { kind: "managed-members", collection, offset: 0, limit: 1 },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   expect(
     await inspectAnalysisView({
-      source: { kind: "inline", evidence: historical },
+      source: { kind: "inline", evidence: unexamined },
       view: { kind: "managed", collection: "attributes", offset: 0, limit: 1 },
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });

@@ -16,6 +16,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 describe("upstream IDA tool result decoding", () => {
   it("leaves successful legacy, structured, and native evidence unchanged", () => {
@@ -187,6 +188,7 @@ const failingHttpConnection = (
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
 };
 
@@ -289,6 +291,7 @@ it("preserves the SDK request timeout as a typed IDA timeout", async () => {
       timeoutMs,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     await expect(connection.connect()).resolves.toEqual([]);
@@ -356,6 +359,7 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
       timeoutMs,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     await connection.connect();
@@ -510,6 +514,7 @@ const withIdaResource = async (
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     await connection.connect();
@@ -677,6 +682,7 @@ it("uses the actual SDK abort outcome to preserve the caller reason", async () =
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
   const controller = new AbortController();
   const reason = { caller: "exact opaque reason" };
@@ -734,6 +740,7 @@ it("keeps a real SDK physical failure when abort arrives during its outer unwind
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     await connection.connect();
@@ -879,6 +886,7 @@ const cleanupConnection = () =>
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
 
 it("refuses an oversized HTTP error promptly and retains its exact pending cancellation for retry", async () => {
@@ -1126,6 +1134,7 @@ it.each(["completed", "pending", "rejected"] as const)(
         timeoutMs: 30,
       },
       {},
+      idaConnectionDependencies(),
     );
     try {
       const failure = await connection
