@@ -449,6 +449,26 @@ export const rpmUtf8PackageFixture = (): Buffer =>
     ],
   });
 
+/** BASENAMES entry `caf\xe9.txt` holds a Latin-1 byte that is not valid UTF-8. */
+export const rpmInvalidUtf8FilenameFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "latin1" },
+      {
+        tag: RPM_TAG.dirNames,
+        type: RPM_TYPE.stringArray,
+        strings: ["/srv/"],
+      },
+      {
+        tag: RPM_TAG.baseNames,
+        type: RPM_TYPE.stringArray,
+        count: 2,
+        bin: Buffer.from("cafe.txt\0caf\xe9.txt\0", "latin1"),
+      },
+      { tag: RPM_TAG.dirIndexes, type: RPM_TYPE.int32, int32: [0, 0] },
+    ],
+  });
+
 /** In-bounds PREIN stored as INT32 rather than the STRING its reader requires. */
 export const rpmInt32PreinFixture = (): Buffer =>
   encodeRpmPackage({

@@ -81,13 +81,10 @@ export const RPM_PACKAGE_LIMITATIONS = [
   "File inventory and payload identity come from header tags; the cpio payload is not decompressed.",
 ] as const;
 
+/** Header text stays raw until a reader decodes it, so no bytes are replaced. */
 type HeaderValue =
-  | { readonly kind: "string"; readonly value: string; readonly bytes: number }
-  | {
-      readonly kind: "strings";
-      readonly values: readonly string[];
-      readonly bytes: readonly number[];
-    }
+  | { readonly kind: "string"; readonly raw: Buffer }
+  | { readonly kind: "strings"; readonly raw: readonly Buffer[] }
   | { readonly kind: "ints"; readonly values: readonly number[] }
   | { readonly kind: "bin"; readonly value: Buffer };
 
@@ -99,6 +96,7 @@ interface IndexEntry {
 }
 
 interface DecodedHeader {
+  readonly label: "signature" | "main";
   readonly location: { readonly offset: number; readonly bytes: number };
   readonly indexEntries: number;
   readonly storeBytes: number;
@@ -213,21 +211,11 @@ const readCString = (
   store: Buffer,
   offset: number,
   message: string,
-): {
-  readonly value: string;
-  readonly bytes: number;
-  readonly next: number;
-} => {
+): { readonly raw: Buffer; readonly next: number } => {
   if (offset >= store.length) fail(message, { field: "data store" });
   const nul = store.indexOf(0, offset);
   if (nul === -1) fail(message, { field: "data store" });
-  // RPM header text is UTF-8; the stored byte length is kept separately so
-  // byte counts stay exact even when decoding replaces invalid sequences.
-  return {
-    value: store.subarray(offset, nul).toString("utf8"),
-    bytes: nul - offset,
-    next: nul + 1,
-  };
+  return { raw: store.subarray(offset, nul), next: nul + 1 };
 };
 
 const readStrings = (
@@ -235,20 +223,45 @@ const readStrings = (
   offset: number,
   count: number,
   message: string,
-): {
-  readonly values: readonly string[];
-  readonly bytes: readonly number[];
-} => {
-  const values: string[] = [];
-  const bytes: number[] = [];
+): readonly Buffer[] => {
+  const raw: Buffer[] = [];
   let cursor = offset;
   for (let index = 0; index < count; index += 1) {
     const read = readCString(store, cursor, message);
-    values.push(read.value);
-    bytes.push(read.bytes);
+    raw.push(read.raw);
     cursor = read.next;
   }
-  return { values, bytes };
+  return raw;
+};
+
+// RPM header text is UTF-8. Strict decoding keeps a leading U+FEFF as text
+// and refuses invalid sequences instead of replacing them with U+FFFD.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** Raw bytes quoted in an invalid-UTF-8 refusal; PATH_MAX covers file paths. */
+const MAX_QUOTED_RAW_BYTES = 4096;
+
+/** Decode one read text value, or refuse it with its exact stored bytes. */
+const headerText = (
+  header: DecodedHeader,
+  tag: number,
+  raw: Buffer,
+  index?: number,
+): string => {
+  try {
+    return UTF8.decode(raw);
+  } catch {
+    const quoted = raw.subarray(0, MAX_QUOTED_RAW_BYTES);
+    const position = index === undefined ? "" : `[${String(index)}]`;
+    const extent =
+      quoted.length < raw.length
+        ? `first ${String(quoted.length)} of ${String(raw.length)} raw bytes`
+        : `raw bytes`;
+    return fail(
+      `RPM ${header.label} header tag ${String(tag)}${position} is not valid UTF-8, so its text cannot be reported without replacing source bytes (${extent}: ${hex(quoted)}).`,
+      { field: `${header.label} tag ${String(tag)}` },
+    );
+  }
 };
 
 const readInts = (
@@ -328,7 +341,7 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
         entry.offset,
         `RPM STRING tag ${String(entry.tag)} is not NUL-terminated in the data store.`,
       );
-      return { kind: "string", value: read.value, bytes: read.bytes };
+      return { kind: "string", raw: read.raw };
     }
     case RPM_TYPE.bin: {
       if (entry.count > store.bytes.length - entry.offset)
@@ -344,7 +357,7 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
     case RPM_TYPE.i18nString:
       return {
         kind: "strings",
-        ...readStrings(
+        raw: readStrings(
           store.bytes,
           entry.offset,
           entry.count,
@@ -596,6 +609,7 @@ const parseHeader = (
     values.set(entry.tag, decodeEntry(store, entry));
   }
   return {
+    label,
     location: { offset: start, bytes: 16 + indexBytes + storeBytes },
     indexEntries,
     storeBytes,
@@ -621,16 +635,27 @@ const stringValue = (
 ): string | undefined => {
   const value = header.values.get(tag);
   if (value === undefined) return undefined;
-  if (value.kind === "string") return value.value;
-  if (value.kind === "strings") return value.values[0];
+  if (value.kind === "string") return headerText(header, tag, value.raw);
+  if (value.kind === "strings")
+    return headerText(header, tag, value.raw[0]!, 0);
   return unexpectedKind(tag, value);
 };
 
-/** Decoded text plus its stored UTF-8 byte length, for byte-count reporting. */
+/** Stored byte length plus text decoded only when the report includes it. */
 interface StoredString {
-  readonly text: string;
+  readonly text: () => string;
   readonly bytes: number;
 }
+
+const stored = (
+  header: DecodedHeader,
+  tag: number,
+  raw: Buffer,
+  index?: number,
+): StoredString => ({
+  text: () => headerText(header, tag, raw, index),
+  bytes: raw.length,
+});
 
 const storedString = (
   header: DecodedHeader,
@@ -638,9 +663,8 @@ const storedString = (
 ): StoredString | undefined => {
   const value = header.values.get(tag);
   if (value === undefined) return undefined;
-  if (value.kind === "string") return { text: value.value, bytes: value.bytes };
-  if (value.kind === "strings")
-    return { text: value.values[0]!, bytes: value.bytes[0]! };
+  if (value.kind === "string") return stored(header, tag, value.raw);
+  if (value.kind === "strings") return stored(header, tag, value.raw[0]!, 0);
   return unexpectedKind(tag, value);
 };
 
@@ -651,12 +675,8 @@ const storedStrings = (
   const value = header.values.get(tag);
   if (value === undefined) return undefined;
   if (value.kind === "strings")
-    return value.values.map((text, index) => ({
-      text,
-      bytes: value.bytes[index]!,
-    }));
-  if (value.kind === "string")
-    return [{ text: value.value, bytes: value.bytes }];
+    return value.raw.map((raw, index) => stored(header, tag, raw, index));
+  if (value.kind === "string") return [stored(header, tag, value.raw)];
   return unexpectedKind(tag, value);
 };
 
@@ -666,8 +686,9 @@ const stringArray = (
 ): readonly string[] | undefined => {
   const value = header.values.get(tag);
   if (value === undefined) return undefined;
-  if (value.kind === "strings") return value.values;
-  if (value.kind === "string") return [value.value];
+  if (value.kind === "strings")
+    return value.raw.map((raw, index) => headerText(header, tag, raw, index));
+  if (value.kind === "string") return [headerText(header, tag, value.raw)];
   return unexpectedKind(tag, value);
 };
 
@@ -937,7 +958,7 @@ const scriptText = (
       maxBytes,
       `RPM ${kind} scriptlet is ${String(source.bytes)} bytes, above the ${String(maxBytes)}-byte script budget.`,
     );
-  return { bytes: source.bytes, text: include ? source.text : null };
+  return { bytes: source.bytes, text: include ? source.text() : null };
 };
 
 /** Group each TRIGGERNAME condition under the TRIGGERSCRIPTS entry its TRIGGERINDEX names. */

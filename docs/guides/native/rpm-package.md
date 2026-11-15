@@ -71,7 +71,10 @@ count as zero or silently truncating.
 Malformed or truncated headers fail with typed refusals. A tag the report reads
 that is stored with another type or a different fixed count (for example a
 `PREIN` stored as `INT32`, or a two-value `EPOCH`) is refused as malformed
-rather than reported as missing. Safely read lead and
-signature facts stay in `issues[].observed`. A completed file snapshot remains
-available as a `file-snapshot-hash` partial observation. Foreign magic is
-`unsupported_target`, not a successful parse.
+rather than reported as missing. Header text is decoded as strict UTF-8 only for
+values the report includes: a file path, package field, dependency, or requested
+scriptlet with invalid UTF-8 is refused as malformed, and the refusal quotes the
+tag, entry index, and raw bytes in hex instead of reporting text with replaced
+bytes. Safely read lead and signature facts stay in `issues[].observed`. A
+completed file snapshot remains available as a `file-snapshot-hash` partial
+observation. Foreign magic is `unsupported_target`, not a successful parse.

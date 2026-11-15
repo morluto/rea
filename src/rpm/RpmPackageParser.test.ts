@@ -11,6 +11,7 @@ import {
   rpmBinaryPackageFixture,
   rpmGroupedTriggerFixture,
   rpmInt32PreinFixture,
+  rpmInvalidUtf8FilenameFixture,
   rpmOutOfBoundsIndexFixture,
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
@@ -194,6 +195,63 @@ it("decodes UTF-8 header text and reports stored byte lengths", () => {
   expect(prein?.text).toBe("echo é\n");
   // "echo é\n" is 7 characters but 8 UTF-8 bytes in the data store.
   expect(prein?.bytes).toBe(8);
+});
+
+it("refuses an invalid UTF-8 filename with its raw bytes instead of replacing them", () => {
+  const bytes = rpmInvalidUtf8FilenameFixture();
+  expect(() => parseRpmPackage(bytes, identity(bytes), defaults)).toThrow(
+    ParseFailureError,
+  );
+  try {
+    parseRpmPackage(bytes, identity(bytes), defaults);
+  } catch (cause) {
+    if (!(cause instanceof ParseFailureError)) throw cause;
+    expect(cause.failure).toMatchObject({
+      kind: "malformed",
+      format: "rpm",
+      field: "main tag 1117",
+      observed: { signature: { size: 256 } },
+    });
+    expect(cause.message).toMatch(/tag 1117\[1\] is not valid UTF-8/u);
+    expect(cause.message).toContain(
+      Buffer.from("caf\xe9.txt", "latin1").toString("hex"),
+    );
+    expect(cause.message).not.toContain("\uFFFD");
+  }
+});
+
+it("reports invalid UTF-8 scriptlet bytes without decoding text it omits", () => {
+  const bytes = rpmBinaryPackageFixture({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "latin1script" },
+      {
+        tag: RPM_TAG.prein,
+        type: RPM_TYPE.string,
+        count: 1,
+        bin: Buffer.from("echo \xe9\n\0", "latin1"),
+      },
+      // DESCRIPTION is not reported, so its bytes are never decoded.
+      {
+        tag: 1005,
+        type: RPM_TYPE.i18nString,
+        count: 1,
+        bin: Buffer.from("r\xe9sum\xe9\0", "latin1"),
+      },
+    ],
+  });
+  const report = parse(bytes);
+  expect(report.scriptlets).toEqual([
+    expect.objectContaining({ kind: "prein", bytes: 7, text: null }),
+  ]);
+  expect(() =>
+    parse(
+      bytes,
+      inspectRpmPackageInputSchema.parse({
+        path: defaults.path,
+        include_script_text: true,
+      }),
+    ),
+  ).toThrow(/tag 1023 is not valid UTF-8/u);
 });
 
 it("groups every TRIGGERNAME condition under the script TRIGGERINDEX names", () => {
