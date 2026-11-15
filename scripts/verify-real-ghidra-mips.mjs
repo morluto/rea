@@ -347,7 +347,7 @@ try {
         const snapshot = parseAnalysisSnapshot(
           JSON.parse(await readFile(snapshotPath, "utf8")),
         );
-        assert.equal(snapshot.target.architecture, "mips");
+        assert.equal(snapshot.target.identity.architecture, "mips");
         const parameters = snapshot.binding.analysis_profile.parameters;
         assert.equal(
           parameters.language_id,
@@ -660,7 +660,7 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "mips");
+      assert.equal(snapshot.target.identity.architecture, "mips");
       assert.deepEqual(
         snapshot.binding.analysis_profile.parameters.mips_elf,
         expectedMipsElfProfile(independent.mips),

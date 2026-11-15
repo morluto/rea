@@ -26,3 +26,18 @@ ea668fc953e9a642f05b325df67ce0407b602f1b
 
 # refactor(domain): move the validated source map leaf decoder into src/domain (#11498)
 733b361073b3d32cc64a108570fc56c86c9f60a1
+
+# refactor(providers): move the native command runner into the shared provider core (#11462)
+a20c6590f35fed9c5a493a7b71da8e5fd193c687
+
+# refactor(domain): move the PNG visual diff into src/domain (#11496)
+b305b82a1a1d76b42fc5e4a7c29cf6d024729a56
+
+# refactor(domain): move the Android JNI library and native export parsers into domain (#11513)
+16bee3ea2169327aa15ec7944868a3c22ab5abc9
+
+# refactor(resources): move the ZIP artifact reader into src/resources (#11525)
+072b5787b61c56979bbb1c7d60dd883b1403367e
+
+# refactor(domain): move the .NET metadata readers into src/domain/managed (#11544)
+412d621fd16f2803c59755ef52b294c84f849ca6

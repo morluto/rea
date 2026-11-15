@@ -47,6 +47,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -119,13 +120,9 @@ const closeDebuggerCommandSession = async (
         reason:
           cause instanceof AggregateError
             ? cause.errors
-                .map((error: unknown) =>
-                  error instanceof Error ? error.message : String(error),
-                )
+                .map((error: unknown) => errorMessage(error))
                 .join("; ")
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         ...retainedDebuggerDiagnostics(cause),
       },
       {

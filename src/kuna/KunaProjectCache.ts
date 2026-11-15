@@ -73,6 +73,7 @@ import type {
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -732,7 +733,7 @@ export class KunaProjectCache {
           const closeFailure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [retained.resource],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             {
               operation: KUNA_EXPORT_OPERATION,
               cause:
@@ -905,7 +906,7 @@ export class KunaProjectCache {
         const failure = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           copying.resources.cleanupResources,
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: KUNA_EXPORT_OPERATION },
         );
         bindArtifactFileCleanup(cause, failure);
@@ -1384,7 +1385,7 @@ export class KunaProjectCache {
     const error = new ProviderCleanupError(
       KUNA_PROVIDER_ID,
       [path],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
     const retained = {

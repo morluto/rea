@@ -41,6 +41,7 @@ import {
   type DirectoryIdentity,
   type FileIdentity,
 } from "./SafeOutputTreeIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One file durably written to an operation-owned output tree. */
 export interface SafeOutputFile {
@@ -519,7 +520,7 @@ export class SafeOutputTree {
     if (!complete)
       throw new ArtifactReaderFailure(
         "integrity",
-        `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
+        `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${errorMessage(removalFailure)}`}`,
         {
           integrityCheck: "output-lifecycle",
           cause: removalFailure,

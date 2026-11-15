@@ -40,6 +40,7 @@ import type {
 import { webModuleResolutionSchema } from "../../domain/webModuleTrace.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { importMapForTrustedResolver } from "./importMapForTrustedResolver.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_module_imports";
 const TIMEOUT_MS = 20000;
@@ -89,7 +90,7 @@ const moduleResolverFailure = (
     ...(remediationAction === undefined ? {} : { remediationAction }),
     diagnostics: {
       executable,
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 
@@ -532,7 +533,7 @@ const cleanupFailure = (
     "native-module-resolver",
     ["chromium-browser"],
     {
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
     {
       cause,

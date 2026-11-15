@@ -15,6 +15,7 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "./classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * The dialect for a failure the artifact resources observed: a selected input
@@ -35,8 +36,6 @@ export const artifactResourceDialect = (
         : undefined;
   const captured =
     observedOutput === undefined ? {} : { capturedOutput: observedOutput };
-  const reasonOf = (cause: unknown) =>
-    cause instanceof Error ? cause.message : String(cause);
   const shared = {
     providerId,
     operation,
@@ -71,7 +70,7 @@ export const artifactResourceDialect = (
               {
                 path: ["path"],
                 reason: "invalid_value",
-                message: reasonOf(cause),
+                message: errorMessage(cause),
               },
             ],
           ),
@@ -97,7 +96,7 @@ export const artifactResourceDialect = (
             diagnostics: {
               stage: "integrity",
               resource_path: context.path,
-              reason: reasonOf(cause),
+              reason: errorMessage(cause),
             },
           }),
       };

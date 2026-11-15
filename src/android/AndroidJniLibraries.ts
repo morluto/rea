@@ -23,6 +23,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
 export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
@@ -207,8 +208,7 @@ export const readAndroidJniLibraries = async (input: {
                     cause instanceof ArtifactReaderFailure
                       ? cause.reason
                       : "io",
-                  message:
-                    cause instanceof Error ? cause.message : String(cause),
+                  message: errorMessage(cause),
                   ...(cause instanceof ArtifactReaderFailure &&
                   cause.integrityCheck !== undefined
                     ? { integrity_check: cause.integrityCheck }
@@ -278,10 +278,7 @@ export const readAndroidJniLibraries = async (input: {
           "jadx",
           [owner.resource],
           {
-            reason:
-              released.cause instanceof Error
-                ? released.cause.message
-                : String(released.cause),
+            reason: errorMessage(released.cause),
           },
           { operation, cause: released.cause },
         );

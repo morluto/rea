@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   readUniversalMachoImage,
   readUniversalMachoSlice,
@@ -18,6 +16,7 @@ import {
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(
@@ -249,9 +248,7 @@ const selectedFatImage = (
       byte_length: slice.size,
       cpu_type: slice.cpuType,
       cpu_subtype: slice.cpuSubtype,
-      container_table_sha256: createHash("sha256")
-        .update(bytes.subarray(0, fat.tableEnd))
-        .digest("hex"),
+      container_table_sha256: sha256Hex(bytes.subarray(0, fat.tableEnd)),
     },
     limitations,
   });

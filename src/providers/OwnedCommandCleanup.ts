@@ -21,6 +21,7 @@ import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Transfer exact helper and command cleanup capabilities to the caller's scope. */
 export const retainOwnedCommandCleanup = (
@@ -49,10 +50,7 @@ export const retainOwnedCommandCleanup = (
           providerId,
           [preparation.path],
           {
-            reason:
-              preparation.cleanupCause instanceof Error
-                ? preparation.cleanupCause.message
-                : String(preparation.cleanupCause),
+            reason: errorMessage(preparation.cleanupCause),
           },
           { cause: preparation, operation },
         );

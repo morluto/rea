@@ -40,6 +40,7 @@ import {
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
 import { isStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -889,9 +890,7 @@ export class ProviderProcessSupervisor {
       if (this.#inspectionCleanup.size > 0)
         return this.#inspectionStopFailure(
           [...this.#inspectionCleanup.values()]
-            .map(({ cause }) =>
-              cause instanceof Error ? cause.message : String(cause),
-            )
+            .map(({ cause }) => errorMessage(cause))
             .join("; "),
         );
       if (this.launch.cleanup !== undefined) {

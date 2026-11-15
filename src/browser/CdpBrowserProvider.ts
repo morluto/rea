@@ -98,6 +98,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const CLEANUP_DOMAINS = [
   "Network",
   "Debugger",
@@ -634,7 +635,7 @@ const withTargetSession = async <
         : new ProviderCleanupError(
             "rea-cdp-browser",
             [input.target_id],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation, cause },
           );
   }
