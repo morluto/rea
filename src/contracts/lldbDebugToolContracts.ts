@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { localPathStringSchema } from "../domain/localPath.js";
+import { coverageStatusSchema } from "../domain/coverage.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -12,7 +13,7 @@ const lldbCommandResult = z.strictObject({
   process_state: z.string().optional(),
   output_truncated: z.boolean(),
   output_invalid_utf8: z.literal(true).optional(),
-  completion_status: z.enum(["complete", "unknown"]),
+  completion_status: coverageStatusSchema,
 });
 
 /**
@@ -29,7 +30,9 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
     inputSchema: z.strictObject({
       path: localPathStringSchema
         .optional()
-        .describe("Local Mach-O executable path to launch under LLDB. Cannot be combined with pid."),
+        .describe(
+          "Local Mach-O executable path to launch under LLDB. Cannot be combined with pid.",
+        ),
       args: z
         .array(z.string())
         .optional()
@@ -43,7 +46,9 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
         .int()
         .positive()
         .optional()
-        .describe("Process ID to attach to instead of launching a new target. Cannot be combined with path."),
+        .describe(
+          "Process ID to attach to instead of launching a new target. Cannot be combined with path.",
+        ),
       stop_at_entry: z
         .boolean()
         .optional()
@@ -51,7 +56,9 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
       disable_aslr: z
         .boolean()
         .optional()
-        .describe("Whether to disable ASLR for reproducible addresses (default: true)."),
+        .describe(
+          "Whether to disable ASLR for reproducible addresses (default: true).",
+        ),
       breakpoints: z
         .array(z.string())
         .optional()

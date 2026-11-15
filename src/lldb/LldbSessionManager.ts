@@ -6,13 +6,15 @@ import { existsSync } from "node:fs";
 
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { LLDB_PROVIDER_IDENTITY } from "./LldbProviderIdentity.js";
 
 const BRIDGE_SCRIPT = fileURLToPath(
   new URL("../../bridge/native/rea_lldb_session.py", import.meta.url),
@@ -108,7 +110,7 @@ export class LldbSessionManager {
     } = {},
   ) {
     this.#environment = { ...(options.environment ?? process.env) };
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#commandTimeoutMs =
       options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
     this.#startupTimeoutMs =
@@ -119,7 +121,7 @@ export class LldbSessionManager {
     signal?: AbortSignal,
     options: LldbStartOptions = {},
   ): Promise<Result<LldbStartResult, AnalysisError>> {
-    if (signal?.aborted) return err(new AnalysisCancelledError("start_lldb_session"));
+    if (signal?.aborted) return err(cancelledBy("start_lldb_session", signal));
     if (this.#platform !== "darwin") {
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -351,7 +353,7 @@ export class LldbSessionManager {
         ]),
       );
     }
-    if (signal?.aborted) return err(new AnalysisCancelledError("lldb_command"));
+    if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
 
     const executeOperation = async (): Promise<
       Result<
@@ -359,7 +361,7 @@ export class LldbSessionManager {
         AnalysisError
       >
     > => {
-      if (signal?.aborted) return err(new AnalysisCancelledError("lldb_command"));
+      if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
       try {
         const timeoutMs = this.#commandTimeoutMs;
         const rpcTimeoutMs = timeoutMs + 5000;
@@ -371,7 +373,12 @@ export class LldbSessionManager {
           completion_status: "complete" | "unknown";
           pid?: number | null;
           target?: string | null;
-        }>(session, "command", { command, timeout: timeoutMs / 1000 }, rpcTimeoutMs);
+        }>(
+          session,
+          "command",
+          { command, timeout: timeoutMs / 1000 },
+          rpcTimeoutMs,
+        );
 
         if (res.process_state) {
           session.processState = res.process_state;
@@ -393,38 +400,34 @@ export class LldbSessionManager {
           completion_status: res.completion_status ?? "complete",
         };
 
-        const evidence = createEvidence(
-          undefined,
-          { id: "apple.lldb", name: "Apple LLDB", version: null },
-          {
-            predicateType: "rea.debugger.console-observation",
-            operation: "lldb_command",
-            parameters: { session_id: sessionId, command },
-            result: {
-              command: cmdResult.command,
-              output: cmdResult.output,
-              ...(cmdResult.process_state !== undefined
-                ? { process_state: cmdResult.process_state }
-                : {}),
-              output_truncated: cmdResult.output_truncated,
-              completion_status: cmdResult.completion_status,
-            },
-            rawResult: {
-              command: cmdResult.command,
-              output: cmdResult.output,
-              ...(cmdResult.process_state !== undefined
-                ? { process_state: cmdResult.process_state }
-                : {}),
-              output_truncated: cmdResult.output_truncated,
-              completion_status: cmdResult.completion_status,
-            },
-            subjectUnavailableReason:
-              "The active LLDB inferior identity is not established by the debugger session identifier.",
-            limitations: [
-              "LLDB commands run unrestricted against the local target inferior and host runtime.",
-            ],
+        const evidence = createEvidence(undefined, LLDB_PROVIDER_IDENTITY, {
+          predicateType: "rea.debugger.console-observation",
+          operation: "lldb_command",
+          parameters: { session_id: sessionId, command },
+          result: {
+            command: cmdResult.command,
+            output: cmdResult.output,
+            ...(cmdResult.process_state !== undefined
+              ? { process_state: cmdResult.process_state }
+              : {}),
+            output_truncated: cmdResult.output_truncated,
+            completion_status: cmdResult.completion_status,
           },
-        );
+          rawResult: {
+            command: cmdResult.command,
+            output: cmdResult.output,
+            ...(cmdResult.process_state !== undefined
+              ? { process_state: cmdResult.process_state }
+              : {}),
+            output_truncated: cmdResult.output_truncated,
+            completion_status: cmdResult.completion_status,
+          },
+          subjectUnavailableReason:
+            "The active LLDB inferior identity is not established by the debugger session identifier.",
+          limitations: [
+            "LLDB commands run unrestricted against the local target inferior and host runtime.",
+          ],
+        });
 
         return ok({ result: cmdResult, evidence });
       } catch (cause) {
@@ -460,7 +463,8 @@ export class LldbSessionManager {
           target?: string | null;
         }>(session, "status", {}, 3000);
         if (res) {
-          if (res.process_state !== undefined) session.processState = res.process_state;
+          if (res.process_state !== undefined)
+            session.processState = res.process_state;
           if (res.pid !== undefined) session.pid = res.pid;
           if (res.target !== undefined) session.target = res.target;
         }
@@ -478,9 +482,7 @@ export class LldbSessionManager {
     };
   }
 
-  async close(
-    sessionId: string,
-  ): Promise<
+  async close(sessionId: string): Promise<
     Result<
       {
         readonly target_state:

@@ -4,21 +4,24 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { LldbSessionManager } from "../src/lldb/LldbSessionManager.js";
 
 const exec = promisify(execFile);
 
 if (process.platform !== "darwin") {
-  console.log("[-] Native LLDB session verification requires macOS Apple Silicon (Darwin).");
+  console.log(
+    "[-] Native LLDB session verification requires macOS Apple Silicon (Darwin).",
+  );
   process.exit(0);
 }
 
-const tempDir = await mkdtemp(join(tmpdir(), "rea-lldb-e2e-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-lldb-e2e-" });
+const tempDir = fixture.path;
 const testSource = join(tempDir, "target.c");
 const targetBinary = join(tempDir, "target");
 
@@ -49,11 +52,13 @@ try {
 
   const candidatePairs = [
     {
-      clang: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+      clang:
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
       sdk: "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
     },
     {
-      clang: "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+      clang:
+        "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
       sdk: "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
     },
   ];
@@ -97,9 +102,15 @@ try {
     stop_at_entry: true,
   });
 
-  assert.equal(startResult.ok, true, `Failed to start session: ${JSON.stringify(startResult)}`);
+  assert.equal(
+    startResult.ok,
+    true,
+    `Failed to start session: ${JSON.stringify(startResult)}`,
+  );
   const { session_id, pid, state } = startResult.value;
-  console.log(`[+] LLDB Session started! ID: ${session_id}, PID: ${pid}, State: ${state}`);
+  console.log(
+    `[+] LLDB Session started! ID: ${session_id}, PID: ${pid}, State: ${state}`,
+  );
   assert.ok(session_id, "Session ID should be defined");
   assert.ok(pid, "Target PID should be assigned");
 
@@ -112,12 +123,16 @@ try {
   // 3. Continue to the breakpoint at compute_magic
   console.log("\n[3] Continuing to breakpoint at 'compute_magic'...");
   const contResult = await manager.execute(session_id, "continue");
-  assert.equal(contResult.ok, true, `Continue failed: ${JSON.stringify(contResult)}`);
+  assert.equal(
+    contResult.ok,
+    true,
+    `Continue failed: ${JSON.stringify(contResult)}`,
+  );
   console.log("[+] Breakpoint hit output:\n" + contResult.value.result.output);
   assert.ok(
     contResult.value.result.output.includes("compute_magic") ||
-    contResult.value.result.output.includes("stop reason = breakpoint"),
-    "Target should have stopped at breakpoint"
+      contResult.value.result.output.includes("stop reason = breakpoint"),
+    "Target should have stopped at breakpoint",
   );
 
   // 4. Read ARM64 argument registers ($x0, $x1)
@@ -125,14 +140,20 @@ try {
   const regResult = await manager.execute(session_id, "register read x0 x1");
   assert.equal(regResult.ok, true);
   console.log("[+] Registers:\n" + regResult.value.result.output);
-  assert.ok(regResult.value.result.output.includes("x0"), "Output should contain x0");
+  assert.ok(
+    regResult.value.result.output.includes("x0"),
+    "Output should contain x0",
+  );
 
   // 5. Inspect Call Stack Backtrace
   console.log("\n[5] Retaining Thread Call-Stack Backtrace...");
   const btResult = await manager.execute(session_id, "thread backtrace");
   assert.equal(btResult.ok, true);
   console.log("[+] Backtrace:\n" + btResult.value.result.output);
-  assert.ok(btResult.value.result.output.includes("compute_magic"), "Frame should include compute_magic");
+  assert.ok(
+    btResult.value.result.output.includes("compute_magic"),
+    "Frame should include compute_magic",
+  );
 
   // 6. Resume execution to process completion
   console.log("\n[6] Resuming execution until process exit...");
@@ -173,5 +194,7 @@ try {
   if (manager) {
     await manager.closeAll().catch(() => undefined);
   }
-  await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  if (fixture) {
+    await fixture.release().catch(() => undefined);
+  }
 }

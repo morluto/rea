@@ -64,6 +64,7 @@ export const UNIT_LAYERS = Object.freeze(
       "javascript",
       "jeb",
       "kuna",
+      "lldb",
       "model",
       "native",
       "objdump",

@@ -83,20 +83,11 @@ export const registerLldbTools = (
           start,
         );
       }
-      const partial = result.error.partialObservation;
-      const parsed = evidenceSchema.safeParse(partial);
-      if (parsed.success) {
-        const recorded = recordEvidence?.(parsed.data);
-        if (recorded !== undefined) {
-          return delivery.toRecordedPartialErrorToolResult(
-            result.error,
-            parsed.data.evidence_id,
-            recorded,
-            start.returnsTargetContent,
-          );
-        }
-      }
-      return delivery.toCallToolResult(result, start);
+      return delivery.toPartialErrorToolResult(
+        result.error,
+        start.returnsTargetContent,
+        recordEvidence,
+      );
     },
   );
 
@@ -121,20 +112,11 @@ export const registerLldbTools = (
         () => manager.retryCleanupFailures(),
       );
       if (!result.ok) {
-        const partial = result.error.partialObservation;
-        const parsed = evidenceSchema.safeParse(partial);
-        if (parsed.success) {
-          const recorded = recordEvidence?.(parsed.data);
-          if (recorded !== undefined) {
-            return delivery.toRecordedPartialErrorToolResult(
-              result.error,
-              parsed.data.evidence_id,
-              recorded,
-              commandContract.returnsTargetContent,
-            );
-          }
-        }
-        return delivery.toCallToolResult(result, commandContract);
+        return delivery.toPartialErrorToolResult(
+          result.error,
+          commandContract.returnsTargetContent,
+          recordEvidence,
+        );
       }
       const recorded = recordEvidence?.(result.value.evidence);
       return delivery.toEvidenceToolResult(
