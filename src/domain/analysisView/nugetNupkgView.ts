@@ -83,9 +83,6 @@ export const projectNugetNupkgView = (
       content_count: report.contents.length,
       limitation_count: report.limitations.length,
     },
-    coverage: completeWithinViewCoverage(
-      report.contents.length,
-      report.contents.length,
-    ),
+    coverage: completeWithinViewCoverage(report.contents.length),
   });
 };
