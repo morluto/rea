@@ -67,6 +67,8 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
+  carriedReason,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -227,7 +229,7 @@ const hashAdbFile = async (
         },
       );
     if (cause instanceof RegularFileOperationCancelled)
-      throw new AnalysisCancelledError(operation, { cause: cause.reason });
+      throw cancelledBy(operation, carriedReason(cause.reason));
     throw cause;
   }
 };
@@ -248,8 +250,7 @@ const adbDigestError = (
       digestOutcome.value,
     );
   if (digestFailure instanceof RegularFileCancelled)
-    return new AnalysisCancelledError(operation, {
-      cause: digestFailure.reason,
+    return cancelledBy(operation, carriedReason(digestFailure.reason), {
       partialObservation,
     });
   const resource = `${digestFailure.path} (ADB digest handle)`;
@@ -271,8 +272,7 @@ const adbDigestError = (
     digestOutcome.kind === "failed" ? digestOutcome.cause : undefined;
   const cancellation = regularFileCancellation(digestFailure);
   if (cancellation !== undefined) {
-    const error = new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
+    const error = cancelledBy(operation, carriedReason(cancellation.reason), {
       cleanup: { reason, resources: [resource] },
       partialObservation,
     });
@@ -485,8 +485,7 @@ const publishScreenExclusively = async (
   operation: string,
   signal: AbortSignal | undefined,
 ): Promise<ScreenPublicationCloseFailure | undefined> => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
   const output = await open(outputPath, "wx", 0o600);
   // Successful exclusive creation is this fallback's cutoff. Finish and sync
   // the visible file despite later cancellation so its receipt remains known.
@@ -625,24 +624,29 @@ const cancellationWithCleanupFailure = (
   cleanup: AnalysisError,
   resources: readonly string[],
 ): AnalysisCancelledError =>
-  new AnalysisCancelledError(primary.operation, {
-    cause: new AggregateError(
-      [primary, cleanup],
-      "ADB cancellation cleanup failed",
-      { cause: primary },
+  cancelledBy(
+    primary.operation,
+    carriedReason(
+      new AggregateError(
+        [primary, cleanup],
+        "ADB cancellation cleanup failed",
+        { cause: primary },
+      ),
     ),
-    diagnostics: primary.diagnostics,
-    ...(primary.capturedOutput === undefined
-      ? {}
-      : { capturedOutput: primary.capturedOutput }),
-    cleanup: {
-      reason: [primary.cleanup?.reason, cleanup.message]
-        .filter((reason): reason is string => reason !== undefined)
-        .join("; "),
-      resources: [...new Set([...primary.cleanupResources, ...resources])],
+    {
+      diagnostics: primary.diagnostics,
+      ...(primary.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: primary.capturedOutput }),
+      cleanup: {
+        reason: [primary.cleanup?.reason, cleanup.message]
+          .filter((reason): reason is string => reason !== undefined)
+          .join("; "),
+        resources: [...new Set([...primary.cleanupResources, ...resources])],
+      },
+      partialObservation: primary.partialObservation,
     },
-    partialObservation: primary.partialObservation,
-  });
+  );
 
 /** Publish an ADB-produced archive without replacing an existing caller file. */
 const publishBugreport = async (
@@ -896,9 +900,10 @@ export class AdbProvider {
     signal?: AbortSignal,
   ): Promise<ProviderAvailability> {
     if (this.#closing)
-      throw new AnalysisCancelledError("inspect_adb_client", {
-        cause: signal?.reason,
-      });
+      throw cancelledBy(
+        "inspect_adb_client",
+        isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
+      );
     const release = this.#beginAvailabilityProbe();
     try {
       const selection = await this.selection(signal);
@@ -1140,13 +1145,12 @@ export class AdbProvider {
       if (failure !== undefined)
         primary = analysisErrorWithCancellation(
           failure,
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
+          cancelledBy(operation, signal),
         );
     }
     if (primary === undefined && result?.ok && signal?.aborted === true) {
       const completed = result.value;
-      primary = new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      primary = cancelledBy(operation, signal, {
         partialObservation: createEvidence(
           completed.subject ?? undefined,
           completed.provider,
@@ -1385,9 +1389,7 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const signal = options?.signal;
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
-      );
+      return err(cancelledBy(request.operation, signal));
     let selection: AdbBinarySelection;
     let identity: AdbClientIdentity;
     try {
@@ -3156,10 +3158,7 @@ export class AdbProvider {
       signal,
     );
     if (!captured.ok) return captured;
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted === true) return err(cancelledBy(operation, signal));
     const dimensions = readPngHeaderDimensions(captured.value.stdout);
     if (dimensions === undefined)
       return err(
@@ -3180,9 +3179,7 @@ export class AdbProvider {
           await writeFile(stagedPath, captured.value.stdout, { flag: "wx" });
           await syncStagedAdbFile(stagedPath, resources, operation);
           if (signal?.aborted === true)
-            return err(
-              new AnalysisCancelledError(operation, { cause: signal.reason }),
-            );
+            return err(cancelledBy(operation, signal));
           try {
             // A same-filesystem hard link atomically publishes without replacing
             // caller output. Its success is the publication cutoff.
@@ -3413,8 +3410,7 @@ export class AdbProvider {
       signal?.aborted === true
         ? analysisErrorWithCancellation(
             failure,
-            new AnalysisCancelledError(operation, {
-              cause: signal.reason,
+            cancelledBy(operation, signal, {
               partialObservation: retainedObservation,
             }),
           )

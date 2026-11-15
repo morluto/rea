@@ -190,7 +190,7 @@ against the canonical contracts. See [output schemas](../reference/mcp-contracts
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
-The settings above delivered all 240 tools in 611,305 bytes and a
+The settings above delivered every tool of that catalog in 611,305 bytes and a
 `binary_session` call succeeded. These are measured SSE response sizes for
 that catalog, not a size guarantee for future catalogs or other profiles.
 
@@ -339,8 +339,8 @@ when `ANTHROPIC_BASE_URL` points to a non-first-party host, such as DeepSeek's
 Anthropic-compatible endpoint. It then sends every REA tool's name, description
 and input schema with every request
 ([#2019](https://github.com/morluto/rea/issues/2019)). On main at 04089d5be,
-with 172 tools, that payload measured about 496 KB with the default profile and
-about 290 KB with `compact`. By the o200k and cl100k tokenizers, that is roughly
+that payload measured about 496 KB with the default profile and about 290 KB
+with `compact`. By the o200k and cl100k tokenizers, that is roughly
 120k and 68k tokens. Compaction cannot remove tool definitions. If they nearly
 fill the window Claude Code assumes, the context refills after every compaction
 and Claude Code reports that autocompact is thrashing. To avoid this:
@@ -427,18 +427,12 @@ client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
-Setup selects the compact input-schema advertisement for new or refreshed Kimi
-registrations unless their stored configuration or setup environment explicitly
-selects `REA_MCP_INPUT_SCHEMA_PROFILE=full` or `compact`. This keeps REA's
-canonical tool validation unchanged while avoiding a Moonshot Kimi Code 2.2.0
-failure observed with the full catalog: its request was rejected because a
-single tool schema exceeded the provider's size limit. The limit is
-provider-specific and not an MCP protocol limit. `rea doctor --client kimi`
-reports an older registration with no explicit profile as stale. To restore the
-compact profile, run `rea setup --client kimi` or add
-`REA_MCP_INPUT_SCHEMA_PROFILE=compact` to the registration's `env`, then restart
-Kimi Code. An explicit `full` profile remains respected and can still exceed
-Moonshot's limit.
+The server advertises compact input schemas by default, which avoids a Moonshot
+Kimi Code 2.2.0 failure observed with the full catalog: its request was rejected
+because a single tool schema exceeded the provider's size limit. The limit is
+provider-specific and not an MCP protocol limit. Setup preserves an explicit
+`REA_MCP_INPUT_SCHEMA_PROFILE` from the stored registration or the setup
+environment; an explicit `full` profile can still exceed Moonshot's limit.
 Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
@@ -453,10 +447,9 @@ LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
 the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
 a file with comments, trailing commas, or a byte order mark without a backup
 or a write. The entry carries `command`, `args`, and `env`, and setup keeps
-every other server. Local models often have small context windows, so setup
-selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
-setup environment selects a profile explicitly. Doctor reports an entry with no
-explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+every other server. Local models often have small context windows; the default
+compact input-schema profile applies unless the stored entry or the setup
+environment selects `REA_MCP_INPUT_SCHEMA_PROFILE` explicitly. LM Studio 0.4.26 on macOS loaded
 this registration, and a local model called an REA tool through it. Linux and
 Windows remain unverified.
 

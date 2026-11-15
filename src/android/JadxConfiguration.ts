@@ -19,9 +19,10 @@ import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -198,9 +199,9 @@ export const inspectJadxAvailability = async (
     };
   } catch (cause) {
     if (cause instanceof JadxInterruption)
-      throw new AnalysisCancelledError(
+      throw cancelledBy(
         options.operation ?? "inspect_jadx_configuration",
-        { cause: cause.reason },
+        carriedReason(cause.reason),
       );
     if (cause instanceof JadxConfigurationFailure)
       return {
@@ -483,7 +484,7 @@ const archiveCancellation = (
         diagnostics,
         ...jadxOperationTimeoutGuidance(options.operationDeadline.timeoutMs),
       })
-    : new AnalysisCancelledError(operation, { cause: reason, diagnostics });
+    : cancelledBy(operation, carriedReason(reason), { diagnostics });
 };
 
 const requireSupportedHost = (): void => {

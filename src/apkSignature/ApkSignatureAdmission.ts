@@ -1,6 +1,7 @@
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
 
@@ -13,10 +14,7 @@ class ApkSignatureAdmission {
   readonly #waiting: (() => void)[] = [];
 
   acquire(signal?: AbortSignal): Promise<Release> {
-    if (signal?.aborted)
-      return Promise.reject(
-        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return Promise.reject(cancelledBy(OPERATION, signal));
     if (!this.#active) {
       this.#active = true;
       return Promise.resolve(this.#release());
@@ -42,9 +40,7 @@ class ApkSignatureAdmission {
       const onAbort = () => {
         const index = this.#waiting.indexOf(grant);
         if (index !== -1) this.#waiting.splice(index, 1);
-        reject(
-          new AnalysisCancelledError(OPERATION, { cause: signal?.reason }),
-        );
+        reject(cancelledBy(OPERATION, carriedReason(signal?.reason)));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       this.#waiting.push(grant);
