@@ -2,106 +2,31 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
-import {
-  buildCallPathEvidence,
-  findChangedBehaviorEvidence,
-  correlateStaticAndRuntimeEvidence,
-  type InvestigationWorkflowExecution,
-} from "../application/investigation/InvestigationWorkflows.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { Result } from "../domain/result.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { recordWorkflowEvidence } from "./registerInvestigationTools/helpers.js";
-import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { RECONSTRUCTION_PROVIDER } from "../domain/investigationProviders.js";
-import {
-  toolRegistrationOptions,
-  applicationToolRegistrationOptions,
-} from "./toolRegistrationOptions.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 import { verifyReconstruction } from "../domain/reconstructionVerification.js";
 
+/**
+ * Register reconstruction verification. Comparisons and the investigation
+ * workflows are session-derived bindings in the shared table.
+ */
 export const registerInvestigationTools = (
   server: EvidenceMcpServer,
   session: BinarySessionPort,
 ): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
-  registerInvestigationWorkflow(
-    server,
-    session,
-    admission,
-    toolContract("find_changed_behavior"),
-    findChangedBehaviorEvidence,
-  );
-  registerInvestigationWorkflow(
-    server,
-    session,
-    admission,
-    toolContract("build_call_path"),
-    buildCallPathEvidence,
-  );
-  registerInvestigationWorkflow(
-    server,
-    session,
-    admission,
-    toolContract("correlate_static_and_runtime"),
-    correlateStaticAndRuntimeEvidence,
-  );
   registerReconstruction(
     server,
     session,
     admission,
     toolContract("verify_reconstruction"),
-  );
-};
-
-type RecordWorkflowName =
-  | "find_changed_behavior"
-  | "build_call_path"
-  | "correlate_static_and_runtime";
-const registerInvestigationWorkflow = (
-  server: EvidenceMcpServer,
-  session: BinarySessionPort,
-  admission: ReturnType<typeof withAdmittedAnalysis>,
-  contract: ReturnType<typeof toolContract<RecordWorkflowName>>,
-  execute: (
-    input: unknown,
-    reader: BinarySessionPort,
-    signal?: AbortSignal,
-  ) => Result<InvestigationWorkflowExecution, AnalysisError>,
-): void => {
-  server.registerTool(
-    contract.name,
-    applicationToolRegistrationOptions(contract),
-    async (input, context) =>
-      runAdmittedToolOperation(
-        server,
-        admission,
-        contract.name,
-        context.mcpReq.signal,
-        async () => {
-          const computed = await runDerivedOperation(
-            context,
-            contract.name,
-            () => {
-              const result = execute(input, session, context.mcpReq.signal);
-              if (!result.ok) throw result.error;
-              return result.value;
-            },
-            (value) => value,
-          );
-          return deliverInvestigationWorkflow(
-            server,
-            session,
-            contract,
-            computed,
-          );
-        },
-      ),
   );
 };
 
