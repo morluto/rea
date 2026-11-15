@@ -98,6 +98,13 @@ it.each([
     false,
   ],
   ["Function.prototype.extra=unknown;const get=()=>({});get.call(null)", false],
+  ["patch(Function.prototype);const get=()=>({});get.call(null)", true],
+  ["patch(Function.prototype);const get=()=>({});get.apply(null,[])", true],
+  ["patch(Function);const get=()=>({});get.call(null)", true],
+  [
+    "patch(Function.prototype);const get=()=>module;get.call=()=>({});get.call(null)",
+    false,
+  ],
 ])(
   "retains inherited invocation uncertainty without revoking own slots: %s",
   (receiver, expected) => {
@@ -128,6 +135,15 @@ it("keeps an earlier native invocation before a later prototype write", () => {
     const get=()=>({});
     get.call(null).require('./unused.cjs');
     Function.prototype.call=unknown;
+  `);
+  expect(analysis.references).toEqual([]);
+});
+
+it("keeps an earlier native invocation before a later prototype escape", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const get=()=>({});
+    get.call(null).require('./unused.cjs');
+    patch(Function.prototype);
   `);
   expect(analysis.references).toEqual([]);
 });

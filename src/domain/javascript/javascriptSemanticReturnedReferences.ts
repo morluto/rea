@@ -1,10 +1,10 @@
 import * as t from "@babel/types";
 import {
-  ambientPathMayObserveAt,
   semanticAmbientWriteGeneration,
   semanticBindingEffectGeneration,
   semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 
 import {
   semanticStaticPropertyKey,
@@ -152,12 +152,12 @@ export const createSemanticReturnedReferences = (
       javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
     const inheritedInvocationChanged = (method: "call" | "apply"): boolean =>
       invocation !== undefined &&
-      ambientPathMayObserveAt(state, invocation, [
-        "global",
+      intrinsicPrototypeMemberMayHaveChanged(
+        state,
         "Function",
-        "prototype",
         method,
-      ]);
+        invocation,
+      );
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
