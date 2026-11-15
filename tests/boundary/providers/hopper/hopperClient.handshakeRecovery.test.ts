@@ -1,3 +1,7 @@
+import {
+  transportReplyContracts,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { access, rm } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,7 +16,6 @@ import type {
   BridgeSession,
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
 const stop = async (child: ChildProcess): Promise<void> => {
@@ -72,7 +75,11 @@ const setup = (
     healthMode,
     shutdownMode,
   );
-  const client = new HopperClient({ launcher, startupTimeoutMs: 2_000 });
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 2_000,
+  });
   onTestFinished(async () => {
     await client.close();
     await Promise.all(
@@ -94,6 +101,7 @@ it.each(["missing", "not-listening"] as const)(
     let session: BridgeSession | undefined;
     let helper: ChildProcess | undefined;
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       startupTimeoutMs: 2_000,
       launcher: {
         launch(value) {
