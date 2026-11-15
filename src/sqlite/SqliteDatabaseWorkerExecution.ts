@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
@@ -41,7 +42,6 @@ import type {
   ProviderProcessSupervisor,
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
-import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
 import {
   SQLITE_DATABASE_LIMITS,
   SQLITE_INSPECTION_REASONS,
@@ -254,7 +254,7 @@ export const executeSqliteDatabaseWorker = async (request: {
         : { retainCleanup: request.retainCleanup }),
     },
   );
-  const capturedOutput = capturedSqliteOutput(execution);
+  const capturedOutput = capturedProviderOutput(execution);
   request.captured(capturedOutput);
   let reply: z.output<typeof replySchema>;
   let finalization: AnalysisError | undefined;
