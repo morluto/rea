@@ -1,5 +1,6 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -171,7 +172,7 @@ export const firmwareResultSchemas = {
     engine,
     selection,
     output_directory: z.string(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     files: z.array(
       z.strictObject({
         // Producer-relative identity retains source spelling; `path` identifies

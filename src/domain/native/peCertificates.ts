@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -144,7 +145,7 @@ export const peCertificatesSchema = z.strictObject({
     .nullable(),
   entries: z.array(certificateEntrySchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     examined_entries: uint,
     certificates: uint,
   }),

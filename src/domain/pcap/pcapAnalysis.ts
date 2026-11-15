@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
@@ -123,7 +124,7 @@ export const pcapResultSchemas = {
     unattributed_dns_addresses: z.array(z.string().min(1)),
     unattributed_dns_address_count: z.int().nonnegative(),
     unattributed_dns_packet_count: z.int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     diagnostics: z
       .strictObject({ capinfos_stderr: z.string(), tshark_stderr: z.string() })
       .optional(),

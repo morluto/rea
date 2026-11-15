@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
@@ -12,8 +13,7 @@ const offsetSchema = z.int().min(0);
  * examined nothing of that kind, unlike `partial`, which records a known gap.
  */
 export const managedInspectionStateSchema = z.enum([
-  "complete",
-  "partial",
+  ...knownCoverageStatusSchema.options,
   "unavailable",
 ]);
 export type ManagedInspectionState = z.infer<
@@ -581,7 +581,7 @@ export const managedMemberInspectionSchema = z
     // coverage. null means they were not examined, not that there were none.
     user_strings: z
       .object({
-        state: z.enum(["complete", "partial"]),
+        state: knownCoverageStatusSchema,
         literals: z.array(managedUserStringSchema),
         issues: z.array(managedParseIssueSchema),
       })

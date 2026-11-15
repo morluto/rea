@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -274,7 +275,11 @@ export const kernelModuleSchema = z.strictObject({
   signature: signatureSchema.nullable(),
   coverage: z.strictObject({
     status: z
-      .enum(["complete", "partial", "not_applicable", "unsupported"])
+      .enum([
+        ...knownCoverageStatusSchema.options,
+        "not_applicable",
+        "unsupported",
+      ])
       .describe(
         "Whether the supported inspection examined the declared facts; omitted or undecodable facts make coverage partial.",
       ),
