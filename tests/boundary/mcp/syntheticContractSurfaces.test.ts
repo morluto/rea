@@ -41,7 +41,9 @@ const synthetic = {
     "inspect_synthetic_fixture",
     toolEffects({ mutatesSession: true, launchesProcess: true }),
   ),
-  kind: "application",
+  // A provider kind is unavailable without the provider; only the
+  // `availability: "standalone"` declaration makes it available below.
+  kind: "android-provider",
   description: "Inspect one synthetic fixture path.",
   inputSchema: z.strictObject({ path: z.string() }),
   outputSchema: evidenceResultOf(z.object({})),
@@ -150,7 +152,7 @@ mcpTest(
     expect(inventory.find(({ name }) => name === synthetic.name)).toMatchObject(
       {
         name: synthetic.name,
-        surface: "application",
+        surface: "android-provider",
         available: true,
         annotations: {
           read_only: sessionAnnotations.readOnlyHint,
@@ -160,5 +162,14 @@ mcpTest(
         },
       },
     );
+    const { availability: _declared, ...undeclared } = synthetic;
+    expect(
+      buildCapabilityInventory(
+        { open: false, capabilities: [] },
+        { processCaptureEnabled: false },
+        () => true,
+        [...TOOL_CONTRACTS, undeclared],
+      ).find(({ name }) => name === synthetic.name),
+    ).toMatchObject({ available: false, reason: "provider_missing" });
   },
 );
