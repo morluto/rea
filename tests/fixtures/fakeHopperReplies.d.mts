@@ -1,6 +1,7 @@
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 
-/** Successful bridge replies the fake Hopper serves. */
+/** Successful bridge replies the fake Hopper serves, keyed by method. */
+export const FAKE_HOPPER_REPLIES: Readonly<Record<string, () => JsonValue>>;
 export function fakeHopperReply(method: string): JsonValue | undefined;
 
 /** Every method fakeHopperReply answers. */
