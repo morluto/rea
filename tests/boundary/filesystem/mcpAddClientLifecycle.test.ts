@@ -863,6 +863,51 @@ it.skipIf(platform === "win32")(
   },
 );
 
+it.skipIf(platform === "win32")(
+  "reports REA's registration that only a read-only Goose layer defines",
+  async () => {
+    const { home, team, row, environment, systemPaths } = await gooseFixture(
+      "rea-goose-lower-only-",
+    );
+    await writeFile(
+      team,
+      `extensions:\n  rea:\n    type: stdio\n    cmd: ${JSON.stringify(command[0])}\n    args: ${JSON.stringify(command.slice(1))}\n`,
+    );
+    const uninstall = () =>
+      runUninstall(
+        false,
+        systemUninstallHost(
+          home,
+          undefined,
+          environment,
+          platform,
+          systemPaths,
+        ),
+      );
+    // Without a user file, and with one that has no REA entry, Goose still
+    // loads the lower registration, so uninstall is not complete.
+    const retained = expect.objectContaining({
+      name: "goose",
+      status: "failed",
+      detail: expect.stringContaining("read-only configuration layer"),
+    });
+    await expect(uninstall()).resolves.toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([retained]),
+    });
+    await mkdir(dirname(row.configPath), { recursive: true });
+    await writeFile(row.configPath, "extensions: {}\n");
+    await expect(uninstall()).resolves.toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([retained]),
+    });
+    expect(await readFile(team, "utf8")).toContain("rea:");
+    // A disabled lower entry is not loaded, so nothing is retained.
+    await writeFile(team, "extensions:\n  rea:\n    enabled: false\n");
+    await expect(uninstall()).resolves.toMatchObject({ status: "complete" });
+  },
+);
+
 const gooseFixture = async (prefix: string) => {
   const home = await createTestTempDirectory(prefix);
   const team = join(home, "team.yaml");
