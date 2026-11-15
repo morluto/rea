@@ -180,6 +180,93 @@ describe("registered Network event payloads", () => {
   });
 });
 
+describe("registered Target, lifecycle and WebMCP event payloads", () => {
+  it.each([
+    [{ sessionId: "session-1" }, "session-1"],
+    [{ sessionId: 7 }, undefined],
+    [{}, undefined],
+  ])(
+    "reads a detached target's session %j without inventing one",
+    (params, sessionId) => {
+      expect(
+        receiveCdpEvent({ method: "Target.detachedFromTarget", params })
+          .registered,
+      ).toEqual({
+        method: "Target.detachedFromTarget",
+        payload: { sessionId },
+      });
+    },
+  );
+
+  it("reads an attached target's session and type", () => {
+    expect(
+      receiveCdpEvent({
+        method: "Target.attachedToTarget",
+        params: { sessionId: "child", targetInfo: { type: "iframe" } },
+      }).registered?.payload,
+    ).toEqual({ sessionId: "child", targetType: "iframe" });
+  });
+
+  it("keeps a lifecycle milestone's malformed timestamp unknown", () => {
+    expect(
+      receiveCdpEvent({
+        method: "Page.lifecycleEvent",
+        params: {
+          frameId: "main",
+          loaderId: "l",
+          name: "load",
+          timestamp: "1",
+        },
+      }).registered?.payload,
+    ).toEqual({
+      frameId: "main",
+      loaderId: "l",
+      name: "load",
+      timestamp: undefined,
+    });
+  });
+
+  it.each([
+    ["a missing inventory", {}, undefined],
+    ["a non-list inventory", { tools: {} }, undefined],
+    [
+      "malformed entries in place",
+      { tools: [{ name: "a" }, "b"] },
+      [{ name: "a" }, undefined],
+    ],
+  ])("keeps WebMCP %s explicit", (_label, params, tools) => {
+    expect(
+      receiveCdpEvent({ method: "WebMCP.toolsAdded", params }).registered
+        ?.payload,
+    ).toEqual({ tools });
+  });
+
+  it("carries a requested navigation's reason and a commit's transition type", () => {
+    expect(
+      cdpFrameEvent(
+        receiveCdpEvent({
+          method: "Page.frameRequestedNavigation",
+          params: { frameId: "main", reason: "reload", url: "https://a.test/" },
+        }),
+      )?.reason,
+    ).toBe("reload");
+    expect(
+      cdpFrameEvent(
+        receiveCdpEvent({
+          method: "Page.frameNavigated",
+          params: {
+            frame: {
+              id: "main",
+              url: "https://a.test/",
+              transitionType: "link",
+            },
+          },
+        }),
+      )?.transitionType,
+    ).toBe("link");
+  });
+});
+
 describe("unregistered CDP events", () => {
   it("leaves an unregistered event unparsed", () => {
     const event = receiveCdpEvent({

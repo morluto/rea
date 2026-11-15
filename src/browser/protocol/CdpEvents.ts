@@ -60,6 +60,10 @@ export interface CdpFrameEvent {
   readonly facts: CdpFrameFacts;
   /** `missing` for attach and detach events, which carry no URL. */
   readonly url: CdpFrameUrlObservation;
+  /** The reported reason of a requested navigation. */
+  readonly reason: string | undefined;
+  /** The committed frame's reported transition type. */
+  readonly transitionType: string | undefined;
 }
 
 const frameEvent = (kind: CdpFrameEventKind) =>
@@ -74,6 +78,11 @@ const frameEvent = (kind: CdpFrameEventKind) =>
     return {
       facts: cdpFrameEventPayloadFacts(kind, params),
       url: observeCdpFrameUrl(urlSource),
+      reason: kind === "requested" ? cdpStringValue(record?.reason) : undefined,
+      transitionType:
+        kind === "navigated"
+          ? cdpStringValue(recordValue(record?.frame)?.transitionType)
+          : undefined,
     };
   });
 
@@ -121,6 +130,40 @@ const requestWillBeSent = z.unknown().transform((params) => ({
   runtime: runtimeRequestSchema.safeParse(params),
 }));
 
+/** The flat session a target event names; undefined when missing or malformed. */
+const targetDetached = z.unknown().transform((params) => ({
+  sessionId: cdpStringValue(recordValue(params)?.sessionId),
+}));
+
+const targetAttached = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    targetType: cdpStringValue(recordValue(record?.targetInfo)?.type),
+  };
+});
+
+/** A frame lifecycle milestone; the timeline decides frame selection and time policy. */
+const lifecycleEvent = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    frameId: cdpStringValue(record?.frameId),
+    loaderId: cdpStringValue(record?.loaderId),
+    name: cdpStringValue(record?.name),
+    timestamp: numberValue(record?.timestamp),
+  };
+});
+
+/**
+ * Declared WebMCP tools. A missing or non-list inventory is undefined, never
+ * empty; malformed entries keep their positions as undefined.
+ */
+const webMcpTools = z.unknown().transform((params) => ({
+  tools: admitRecords(recordValue(params)?.tools)?.map((tool) =>
+    recordValue(tool),
+  ),
+}));
+
 /**
  * One payload schema per subscribed event. The connection parses each
  * registered event once, before any subscriber sees it. A schema never
@@ -146,6 +189,11 @@ const CDP_EVENT_PAYLOADS = {
   "Network.loadingFailed": z.unknown().transform(readCdpLoadingFailed),
   "Network.webSocketCreated": z.unknown().transform(readCdpWebSocketCreated),
   "Network.webSocketFrameSent": z.unknown().transform(readCdpWebSocketFrame),
+  "Target.attachedToTarget": targetAttached,
+  "Target.detachedFromTarget": targetDetached,
+  "Page.lifecycleEvent": lifecycleEvent,
+  "WebMCP.toolsAdded": webMcpTools,
+  "WebMCP.toolsRemoved": webMcpTools,
   "Network.webSocketFrameReceived": z
     .unknown()
     .transform(readCdpWebSocketFrame),

@@ -51,11 +51,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const attachedEvent = z.object({
-  sessionId: z.string(),
-  targetInfo: z.object({ type: z.string() }),
-});
-const detachedEvent = z.object({ sessionId: z.string() });
 type PolicyTarget = {
   readonly id: string;
   readonly detached: Promise<void>;
@@ -170,14 +165,19 @@ export class PlaywrightScenarioServiceWorkers {
     }
     const connection = this.#session.connection;
     this.#removeListener = connection.onEvent((event) => {
+      const registered = event.registered;
       if (
-        event.method === "Target.attachedToTarget" &&
+        registered?.method === "Target.attachedToTarget" &&
         this.#targets.has(event.sessionId ?? "")
       ) {
-        const { sessionId, targetInfo } = attachedEvent.parse(event.params);
-        if (targetInfo.type === "iframe") this.addTarget(sessionId);
-      } else if (event.method === "Target.detachedFromTarget") {
-        const id = detachedEvent.parse(event.params).sessionId;
+        const { sessionId, targetType } = registered.payload;
+        if (sessionId === undefined || targetType === undefined)
+          throw new BrowserObservationError(OPERATION, "protocol_error");
+        if (targetType === "iframe") this.addTarget(sessionId);
+      } else if (registered?.method === "Target.detachedFromTarget") {
+        const id = registered.payload.sessionId;
+        if (id === undefined)
+          throw new BrowserObservationError(OPERATION, "protocol_error");
         this.#targets.get(id)?.markDetached();
         this.#targets.delete(id);
         if (id === this.#session?.sessionId) this.#detached = true;
