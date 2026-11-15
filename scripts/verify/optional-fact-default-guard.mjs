@@ -7,7 +7,8 @@
 //
 // A default that is legitimate (a request default such as a pagination
 // offset, a library field that is optional by contract, or absence that is
-// modelled elsewhere) carries a comment on its line or the line before:
+// modelled elsewhere) carries a comment on the line before its expression,
+// on that expression's first line, or on the default's line:
 // `// optional-fact-default: <why the default is not an observation>`.
 //
 // CI runs the architecture guards before installing dependencies, so this
@@ -50,9 +51,10 @@ const expressionKeywords = new Set([
   "yield",
 ]);
 
+// After a closing bracket, `++` or `--` an operand has ended, so `/` divides.
 const regexAllowedAfter = (token) =>
   token === undefined ||
-  (token.kind === "punct" && !/^[)\]}]$/u.test(token.text)) ||
+  (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text)) ||
   (token.kind === "id" && expressionKeywords.has(token.text));
 
 /** End of a template's text from `at` (after a backtick or a substitution's `}`). */
@@ -150,7 +152,12 @@ const tokenize = (source) => {
     } else if (char === "`" || (char === "}" && braces.at(-1) === "template")) {
       if (char === "}") braces.pop();
       at = templateEnd(source, at + 1, braces);
-      tokens.push({ kind: "string", text: "", start });
+      // Template text after a substitution's `}` closes that substitution.
+      tokens.push({
+        kind: char === "}" ? "substitution-end" : "string",
+        text: "",
+        start,
+      });
     } else if (char === "/" && regexAllowedAfter(tokens.at(-1))) {
       at = regexEnd(source, at);
       tokens.push({ kind: "regex", text: "", start });
@@ -241,7 +248,12 @@ const endsDefault = new Set([")", "]", "}", ",", ";", ":", "?", "??"]);
 
 const isWholeDefault = (tokens, last, lineOf) => {
   const next = tokens[last + 1];
-  if (next === undefined || endsDefault.has(kind(next))) return true;
+  if (
+    next === undefined ||
+    next.kind === "substitution-end" ||
+    endsDefault.has(kind(next))
+  )
+    return true;
   // A statement that ends without a semicolon continues on a later line.
   return (
     next.kind !== "punct" &&
@@ -281,10 +293,12 @@ export const optionalFactDefaultCount = (source) => {
     const last = isObservedDefault(tokens, at + 1);
     if (last === undefined) return;
     if (!isWholeDefault(tokens, last, lineOf)) return;
+    // A marker belongs to the expression it opens or ends: the line before
+    // the chain, its first line, or the default's line. A marker on a line in
+    // between explains a nested expression, not this default.
     const start = lineOf(tokens[chainStart(tokens, at - 1)].start);
     const end = lineOf(tokens[last].start);
-    for (let line = start - 1; line <= end; line += 1)
-      if (exempt.has(line)) return;
+    if ([start - 1, start, end].some((line) => exempt.has(line))) return;
     count += 1;
   });
   return count;

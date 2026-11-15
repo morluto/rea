@@ -129,6 +129,27 @@ it("tracks template substitutions and division", () => {
   ).toBe(1);
 });
 
+it("counts defaults in template substitutions and after postfix updates", () => {
+  expect(optionalFactDefaultCount("const s = `${report.count ?? 0}`;")).toBe(1);
+  expect(optionalFactDefaultCount("const s = `${report.count ?? 0\n}`;")).toBe(
+    1,
+  );
+  expect(
+    optionalFactDefaultCount("const ratio = i++ / (report.count ?? 0);"),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("const ratio = i-- / (report.count ?? 0);"),
+  ).toBe(1);
+});
+
+it("does not let a nested expression's marker exempt an outer default", () => {
+  expect(
+    optionalFactDefaultCount(
+      "const n = build(\n  // optional-fact-default: request default, not an observation\n  options.offset ?? 0,\n).count ?? 0;",
+    ),
+  ).toBe(1);
+});
+
 it("exempts a default whose operand starts on an earlier line", () => {
   expect(
     optionalFactDefaultCount(
