@@ -3,8 +3,8 @@ import { extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
-import { preflightPropertyListDecode } from "../artifacts/apple/PropertyListDecodeBudget.js";
-import { decodeBinaryPropertyList } from "../artifacts/apple/BinaryPlistMaterializer.js";
+import { preflightPropertyListDecode } from "../domain/apple/propertyListDecodeBudget.js";
+import { decodeBinaryPropertyList } from "../domain/apple/binaryPlistMaterializer.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";

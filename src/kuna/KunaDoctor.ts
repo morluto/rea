@@ -63,7 +63,7 @@ export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
  */
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   options: {
     readonly resourceScope: RetainedResourceScope;
     readonly signal?: AbortSignal;

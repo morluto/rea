@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { maxCodePoints } from "../schemaConstraints.js";
 import { localPathStringSchema } from "../localPath.js";
-import { coverageStatusSchema } from "../coverage.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 
 /** Full logical ZIP path budget, enforced by Flutter library inventory. */
@@ -84,7 +84,6 @@ export const dartPoolPolicy = (
  * the failures, caps and disagreements it recorded, so it never reports
  * `unknown`.
  */
-const flutterCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
 
 export const flutterInputSchemas = {
   identify_flutter_build: z.strictObject({
@@ -194,7 +193,7 @@ export const flutterResultSchemas = {
         }),
       }),
     ),
-    coverage: flutterCoverageSchema,
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_dart_aot: z.strictObject({
     target: z.strictObject({
@@ -204,7 +203,7 @@ export const flutterResultSchemas = {
     }),
     abi: z.string().min(1),
     libapp: z.strictObject({
-      coverage: flutterCoverageSchema.describe(
+      coverage: knownCoverageStatusSchema.describe(
         "Coverage of ELF symbols, independent data headers, AOT kind, extents and agreeing hashes",
       ),
       bytes: z.int().nonnegative(),
@@ -232,7 +231,7 @@ export const flutterResultSchemas = {
     }),
     string_pool: z.strictObject({
       policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
-      coverage: flutterCoverageSchema.describe(
+      coverage: knownCoverageStatusSchema.describe(
         "Coverage of the bounded printable-run projection; independent of snapshot header validity",
       ),
       /** Distinct package: source URIs, sorted, bounded. */
@@ -246,6 +245,6 @@ export const flutterResultSchemas = {
       class_like_token_count_at_least: z.int().nonnegative(),
       printable_run_count: z.int().nonnegative(),
     }),
-    coverage: flutterCoverageSchema,
+    coverage: knownCoverageStatusSchema,
   }),
 } as const;

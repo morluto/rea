@@ -1,13 +1,13 @@
-import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { LC } from "./machoLoadCommandCodes.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
   MachoEncryptionFacts,
   MachoSliceEncryption,
-} from "../../domain/apple/machoEncryption.js";
-import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
-import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+} from "./machoEncryption.js";
+import { validateFatSliceIdentity } from "./machoContainer.js";
+import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -16,7 +16,7 @@ import {
   type MachoReadIssue,
   type MachoSliceHeader,
   type ReadAt,
-} from "./MachoLoadCommandReader.js";
+} from "./machoLoadCommandReader.js";
 
 // loader.h: encryption_info_command is five 32-bit words; the 64-bit form adds `pad`.
 const ENCRYPTION_COMMAND_SIZE = { 32: 20, 64: 24 } as const;

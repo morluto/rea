@@ -12,6 +12,7 @@ import {
   type GdbProviderIdentity,
 } from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { classifyLaunchFailure } from "../process/launchFailure.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
@@ -247,7 +248,8 @@ const verifyGdbInferiorOutputSink = async (
   selectedTty: string,
   rememberIdentity: (identity: OwnedInferiorIdentity) => void,
 ): Promise<void> => {
-  if (process.platform !== "linux")
+  // The descriptors live in this host's /proc, whichever host the manager models.
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
     );
@@ -420,7 +422,7 @@ export class GdbSessionManager {
     const limits = debuggerConstructionLimits(this.#environment);
     this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     const stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     this.#sessions = new OwnedDebuggerSessionRegistry({
       provider: "gdb",

@@ -1,23 +1,23 @@
 import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
-} from "./BinaryPlistLayout.js";
-import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
-import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
-import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
+} from "./binaryPlistLayout.js";
+import { decodeXmlPlistText } from "../propertyListXmlText.js";
+import { hasBinaryPlistSignature } from "./appleArchiveFormat.js";
+import { PlistNestingLimitError } from "./plistValue.js";
 import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
   truncatedInput,
   unsupportedInput,
-} from "../../domain/parseFailure.js";
+} from "../parseFailure.js";
 import {
   binaryPlistCloneOffsetWidth,
   binaryDateRequiresExactSeconds,
   binaryPlistObjectEnd,
   binaryPlistUidNormalizationWidth,
-} from "./PlistScalars.js";
+} from "./plistScalars.js";
 
 /** Preflight the representation created by the pinned plist decoder. */
 export const preflightPropertyListDecode = (

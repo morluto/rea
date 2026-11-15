@@ -713,18 +713,25 @@ checkCounted(
 // takes it from there and passes the platform or architecture on as a
 // required parameter. An ambient read elsewhere mixes the host REA runs on
 // with the host a caller asked about, and cannot be selected by a test.
+// Named imports from node:process or node:os and os.platform()/os.arch() are
+// the same read under another spelling.
+const ambientHostRead = (property, osFunction) =>
+  new RegExp(
+    String.raw`\bprocess\.${property}\b|\bos\.${osFunction}\(\)|\bimport\s*(?:type\s*)?\{[^}]*\b(?:${property}|${osFunction})\b[^}]*\}\s*from\s*["'](?:node:)?(?:process|os)["']`,
+    "gu",
+  );
 checkCounted(
   "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
   "ambient-host-platform",
   files,
-  /\bprocess\.platform\b/gu,
+  ambientHostRead("platform", "platform"),
   ["src/platform/HostPlatform.ts"],
 );
 checkCounted(
   "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
   "ambient-host-architecture",
   files,
-  /\bprocess\.arch\b/gu,
+  ambientHostRead("arch", "arch"),
   ["src/platform/HostPlatform.ts"],
 );
 

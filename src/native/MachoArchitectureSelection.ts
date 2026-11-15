@@ -7,11 +7,11 @@ import {
 } from "../domain/apple/machoCpuIdentity.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { LipoArchitecture } from "./parsers/lipo.js";
 import type {
   AdmittedMachoSlice,
   MachoSliceSelectionRefusal,
 } from "./metadata/MachoSliceSelection.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 /** Apple tool names for the domain-owned host subtype preference. */
 const preferredSubtypes = <Subtype extends number>(

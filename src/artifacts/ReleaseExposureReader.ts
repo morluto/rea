@@ -33,7 +33,7 @@ import {
   projectStableArtifactFailure,
   readerIntegrityFailure,
 } from "../resources/index.js";
-import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
   InternalInvariantError,
   invariantViolation,

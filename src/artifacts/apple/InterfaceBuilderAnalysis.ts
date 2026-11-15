@@ -5,7 +5,7 @@ import {
 } from "../../domain/parseFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import {
   plistDuplicateKeyLimitations,
   type PlistDuplicateKeys,
@@ -46,7 +46,7 @@ import {
 import {
   preflightPropertyListDecode,
   type PlistDecodePreflight,
-} from "./PropertyListDecodeBudget.js";
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   InterfaceBuilderDecodeBudget,
   interfaceBuilderDecodeBudgetExceeded,
@@ -65,7 +65,7 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
   hasBinaryPlistSignature,
