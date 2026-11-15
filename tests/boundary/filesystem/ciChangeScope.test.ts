@@ -20,6 +20,10 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import {
+  gitRepository,
+  planChanges,
+} from "../../../scripts/ci/change-plan.mjs";
+import {
   executeWorkflowFixture as execFileAsync,
   workflowGit as git,
 } from "../../support/workflowGit.js";
@@ -95,7 +99,8 @@ async function fixture() {
   return { directory, base: initial.base };
 }
 
-async function classify(
+/** Run the CI entrypoint as the workflow does, writing GITHUB_OUTPUT. */
+async function runPlanScript(
   directory: string,
   base: string,
   head: string,
@@ -123,6 +128,66 @@ async function classify(
   );
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
+
+/** Plan against the fixture repository's real Git history, in process. */
+function classify(
+  directory: string,
+  base: string,
+  head: string,
+  event = "pull_request",
+  full = false,
+  skipFull = false,
+): Promise<Record<string, unknown>> {
+  return Promise.resolve().then(() =>
+    planChanges(
+      { event, full, skipFull, base, head },
+      gitRepository(directory),
+    ),
+  );
+}
+
+const PATH_BASE = "1".repeat(40);
+const PATH_HEAD = "2".repeat(40);
+
+/**
+ * Plan a commit that adds or edits only `paths`. Git's diff for such a commit
+ * is exactly those paths, so these cases skip the repository; `packageJson`
+ * holds package.json at the base and head when the commit edits it.
+ * Deletions, renames, malformed metadata and history keep the Git fixture.
+ */
+function classifyCommit(
+  paths: readonly string[],
+  event = "pull_request",
+  full = false,
+  packageJson?: { readonly before: string; readonly after: string },
+): Promise<Record<string, unknown>> {
+  return Promise.resolve().then(() =>
+    planChanges(
+      { event, full, skipFull: false, base: PATH_BASE, head: PATH_HEAD },
+      {
+        mergeBase: (base) => base,
+        isAncestor: () => true,
+        changedFiles: () => paths,
+        readFile: (revision, path) => {
+          if (path === "package.json" && packageJson !== undefined)
+            return revision === PATH_BASE
+              ? packageJson.before
+              : packageJson.after;
+          throw new Error(`${path} at ${revision} needs the Git fixture`);
+        },
+      },
+    ),
+  );
+}
+
+const classifyPaths = (
+  paths: readonly string[],
+  event?: string,
+  full?: boolean,
+) => classifyCommit(paths, event, full);
+
+const classifyPackage = (before: string, after: string) =>
+  classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
   ["bridge/native/rea_lldb_tracer.py", "python"],
@@ -160,9 +225,7 @@ it.each([
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
   });
 });
@@ -170,9 +233,7 @@ it.each([
 it.each(["src/domain/webCaptureDiffSchemas.ts", "src/domain/webScreenshot.ts"])(
   "selects real browser verification for %s without capture lanes",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       browser: true,
       packet_capture: false,
       signal_recording: false,
@@ -222,11 +283,9 @@ it("keeps every translated README and authored guide on the documentation lane",
 });
 
 it("runs documentation verification when only its published-route verifier changes", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "scripts/verify-documentation-routes.mjs",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["scripts/verify-documentation-routes.mjs"]),
+  ).toMatchObject({
     docs: true,
   });
 });
@@ -234,11 +293,9 @@ it("runs documentation verification when only its published-route verifier chang
 it.each(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"])(
   "selects static checks for authored documentation code (%s) without provider lanes",
   async (extension) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [
+    const plan = await classifyPaths([
       `docs/.vitepress/helpers/navigation.${extension}`,
     ]);
-    const plan = await classify(directory, base, head);
     const { CI_FLAGS } = await loadScopes();
     expect(plan).toMatchObject({ tier: "fast", code: true, docs: true });
     for (const flag of CI_FLAGS)
@@ -264,11 +321,9 @@ it("retains code checks when documentation code is removed or renamed to Markdow
 });
 
 it("selects code checks for documentation filenames containing line separators", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "docs/.vitepress/navigation\u2028menu.ts",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["docs/.vitepress/navigation\u2028menu.ts"]),
+  ).toMatchObject({
     code: true,
     docs: true,
     runtime: false,
@@ -285,9 +340,7 @@ it.each([
 ])(
   "keeps portable CI reporter %s on static checks and portable tests",
   async (name) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [`scripts/ci/${name}`]);
-    const plan = await classify(directory, base, head);
+    const plan = await classifyPaths([`scripts/ci/${name}`]);
     const { CI_FLAGS } = await loadScopes();
     expect(plan.code).toBe(true);
     for (const flag of CI_FLAGS)
@@ -296,12 +349,9 @@ it.each([
 );
 
 it("preserves a provider lane when a portable CI reporter changes with provider source", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "scripts/ci/test-report.mjs",
-    "src/evm/Example.ts",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["scripts/ci/test-report.mjs", "src/evm/Example.ts"]),
+  ).toMatchObject({
     code: true,
     evm: true,
     browser: false,
@@ -310,9 +360,7 @@ it("preserves a provider lane when a portable CI reporter changes with provider 
 });
 
 it("keeps unknown CI scripts on the fast Linux baseline", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["scripts/ci/new-qualification.mjs"]);
-  const plan = await classify(directory, base, head);
+  const plan = await classifyPaths(["scripts/ci/new-qualification.mjs"]);
   const { CI_FLAGS } = await loadScopes();
   expect(plan).toMatchObject({ tier: "fast", code: true, runtime: true });
   for (const flag of CI_FLAGS)
@@ -320,7 +368,11 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   expect(plan.matrix).toEqual({
     include: [{ os: "ubuntu-latest", platform: "linux", architecture: "x64" }],
   });
-  const full = await classify(directory, base, head, "pull_request", true);
+  const full = await classifyPaths(
+    ["scripts/ci/new-qualification.mjs"],
+    "pull_request",
+    true,
+  );
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
@@ -332,13 +384,43 @@ it("emits an observational owner proposal without changing ordinary or full port
     testSelection: { mode: "candidate", owners: ["evm"] },
   });
   expect(
-    await classify(directory, base, head, "pull_request", true),
+    await runPlanScript(directory, base, head, "pull_request", true),
   ).toMatchObject({
     code: true,
     testSelection: { mode: "full", owners: [] },
   });
   const output = await readFile(join(directory, "scope-output"), "utf8");
   expect(output).toContain('test_selection={"version":1,"mode":"full"');
+});
+
+it("passes the workflow environment through the entrypoint unchanged", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, ["src/evm/Example.ts"]);
+  const { CI_FLAGS } = await loadScopes();
+  // Fast and reused plans exercise BASE_SHA/HEAD_SHA and CI_SKIP_FULL; the
+  // entrypoint must answer exactly as the in-process planner does.
+  for (const [event, skipFull, tier] of [
+    ["pull_request", false, "fast"],
+    ["push", false, "fast"],
+    ["schedule", true, "reused"],
+  ] as const) {
+    const expected = await classify(
+      directory,
+      base,
+      head,
+      event,
+      false,
+      skipFull,
+    );
+    expect(expected.tier).toBe(tier);
+    expect(
+      await runPlanScript(directory, base, head, event, false, skipFull),
+    ).toEqual(expected);
+    const output = await readFile(join(directory, "scope-output"), "utf8");
+    for (const flag of CI_FLAGS)
+      expect(output).toContain(`${flag}=${String(expected[flag])}\n`);
+    expect(output).toContain(`tier=${tier}\n`);
+  }
 });
 
 it("does not charge a documentation PR for unrelated implementation updates on main", async () => {
@@ -387,9 +469,7 @@ it.each([
 ])(
   "selects the reverse-tool coverage and mutation gate for %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
     });
@@ -423,9 +503,7 @@ const reverseToolsInputs = [
 it.each(reverseToolsInputs)(
   "selects the reverse-tool quality gate for configured input %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
     });
@@ -442,9 +520,9 @@ it.each([
 ])(
   "retains complete checks when documentation is mixed with %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, ["README.md", path]);
-    expect(await classify(directory, base, head)).toMatchObject({ code: true });
+    expect(await classifyPaths(["README.md", path])).toMatchObject({
+      code: true,
+    });
   },
 );
 
@@ -463,9 +541,9 @@ it("retains complete checks when implementation is renamed into documentation", 
 });
 
 it("keeps main pushes scoped when a successful ancestor baseline is available", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["docs/readme/README_ja.md"]);
-  expect(await classify(directory, base, head, "push")).toMatchObject({
+  expect(
+    await classifyPaths(["docs/readme/README_ja.md"], "push"),
+  ).toMatchObject({
     tier: "fast",
     code: false,
     package: false,
@@ -629,9 +707,9 @@ it("fails closed when the successful push baseline is not an ancestor", async ()
 
 it("fails classification rather than treating an invalid Git comparison as a scope", async () => {
   const { directory, base } = await fixture();
-  await expect(classify(directory, "missing-ref", base)).rejects.toMatchObject({
-    code: 1,
-  });
+  await expect(
+    runPlanScript(directory, "missing-ref", base),
+  ).rejects.toMatchObject({ code: 1 });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
 });
 
@@ -1235,9 +1313,7 @@ it.each([
     { code: true, sqlite: false, ghidra_bridge: false, agentenv: false },
   ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject(expected);
+  expect(await classifyPaths([path])).toMatchObject(expected);
 });
 
 it("scopes package script edits while retaining broad dependency checks", async () => {
@@ -1281,20 +1357,14 @@ it("scopes package script edits while retaining broad dependency checks", async 
 it.each(["test:sqlite", "test:sqlite:run"])(
   "routes %s script changes to the SQLite runtime matrix",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "vitest run" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({
-        scripts: { [script]: "vitest run --reporter=default" },
-      }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "vitest run" } }),
+        JSON.stringify({
+          scripts: { [script]: "vitest run --reporter=default" },
+        }),
+      ),
+    ).toMatchObject({
       code: true,
       sqlite: true,
       evm: false,
@@ -1304,20 +1374,14 @@ it.each(["test:sqlite", "test:sqlite:run"])(
 );
 
 it("keeps unrelated test script changes off the SQLite runtime matrix", async () => {
-  const { directory } = await fixture();
-  const base = await change(
-    directory,
-    ["package.json"],
-    JSON.stringify({ scripts: { "test:domain": "vitest run src/domain" } }),
-  );
-  const head = await change(
-    directory,
-    ["package.json"],
-    JSON.stringify({
-      scripts: { "test:domain": "vitest run src/domain --reporter=default" },
-    }),
-  );
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPackage(
+      JSON.stringify({ scripts: { "test:domain": "vitest run src/domain" } }),
+      JSON.stringify({
+        scripts: { "test:domain": "vitest run src/domain --reporter=default" },
+      }),
+    ),
+  ).toMatchObject({
     code: true,
     sqlite: false,
     evm: false,
@@ -1329,9 +1393,7 @@ it.each([
   "src/domain/apkSignature/apkSignatureSchemes.ts",
   "scripts/verify-apk-signature.mjs",
 ])("selects the real APK signing lane for %s", async (path) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(await classifyPaths([path])).toMatchObject({
     apk_signature: true,
   });
 });
@@ -1609,9 +1671,7 @@ it.each([
     { code: true, fixtures: false, readiness: false, package: false },
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject(expected);
+  expect(await classifyPaths([path])).toMatchObject(expected);
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {
@@ -1631,7 +1691,7 @@ it("fails without emitting a plan when package metadata is malformed", async () 
   const { directory } = await fixture();
   const base = await change(directory, ["package.json"], '{"scripts":{}}');
   const head = await change(directory, ["package.json"], "{broken");
-  await expect(classify(directory, base, head)).rejects.toMatchObject({
+  await expect(runPlanScript(directory, base, head)).rejects.toMatchObject({
     code: 1,
   });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
@@ -1656,18 +1716,12 @@ it.each([
 ])(
   "routes the %s script to its glob-owned lane",
   async (script, command, expected) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: command } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: `${command} --verbose` } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: command } }),
+        JSON.stringify({ scripts: { [script]: `${command} --verbose` } }),
+      ),
+    ).toMatchObject({
       code: true,
       ...expected,
     });
@@ -1677,18 +1731,12 @@ it.each([
 it.each(["knip:production", "lint:typed"])(
   "keeps the %s analysis command within static checks",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+        JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: false,
       package: false,
@@ -1759,23 +1807,17 @@ it("honors ci:full for successive PR revisions", async () => {
 it.each(["compile:termux", "build:termux", "build:termux:run"])(
   "does not expand %s edits into unrelated providers",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "npm run compile:termux" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({
-        scripts: {
-          [script]:
-            "node scripts/run-exclusive.mjs artifacts npm run compile:termux",
-        },
-      }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "npm run compile:termux" } }),
+        JSON.stringify({
+          scripts: {
+            [script]:
+              "node scripts/run-exclusive.mjs artifacts npm run compile:termux",
+          },
+        }),
+      ),
+    ).toMatchObject({
       code: true,
       workflows: true,
       runtime: false,
@@ -1929,9 +1971,7 @@ it.each([
   ".nvmrc",
   ".npmrc",
 ])("selects package hosts for compiler input %s", async (path) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  const plan = await classify(directory, base, head);
+  const plan = await classifyPaths([path]);
   expect(plan).toMatchObject({
     tier: "fast",
     code: true,
@@ -1950,19 +1990,13 @@ it.each([
 it.each(["typescript", "tsrs"])(
   "selects fallback host checks when compiler dependency %s changes",
   async (name) => {
-    const { directory } = await fixture();
     const before = { name: "fixture", devDependencies: { [name]: "1.0.0" } };
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify(before),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ ...before, devDependencies: { [name]: "2.0.0" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify(before),
+        JSON.stringify({ ...before, devDependencies: { [name]: "2.0.0" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: true,
       package: true,
@@ -1984,18 +2018,12 @@ it.each([
 ])(
   "selects fallback host checks when compiler command %s changes",
   async (name) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [name]: "node scripts/old.mjs" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [name]: "node scripts/new.mjs" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [name]: "node scripts/old.mjs" } }),
+        JSON.stringify({ scripts: { [name]: "node scripts/new.mjs" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: true,
       package: true,

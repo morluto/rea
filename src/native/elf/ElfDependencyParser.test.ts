@@ -1061,3 +1061,27 @@ it("maps ELF64 table addresses above Number.MAX_SAFE_INTEGER through PT_LOAD", (
   expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
   expect(report.imports.length).toBeGreaterThan(0);
 });
+
+it("uses the dynamic declaration when two section headers share a dynamic type", () => {
+  const bytes = Buffer.from(elfDependencyFixture({ bits: 64, little: true }));
+  const shoff = Number(bytes.readBigUInt64LE(0x28));
+  const shentsize = bytes.readUInt16LE(0x3a);
+  const shnum = bytes.readUInt16LE(0x3c);
+  // Retype the dynamic string table's header (SHT_STRTAB) as a second SHT_DYNSYM.
+  const types = Array.from({ length: shnum }, (_, index) =>
+    bytes.readUInt32LE(shoff + index * shentsize + 4),
+  );
+  const dynsymCount = types.filter((type) => type === 11).length;
+  expect(dynsymCount).toBe(1);
+  const strtab = types.indexOf(3);
+  bytes.writeUInt32LE(11, shoff + strtab * shentsize + 4);
+  const report = parse(bytes);
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message:
+        "More than one .dynsym section header; using the dynamic declaration",
+    }),
+  );
+  expect(report.imports.length).toBeGreaterThan(0);
+});

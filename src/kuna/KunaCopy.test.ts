@@ -17,6 +17,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { copyAndHash, kunaCopyFailureFacts } from "./KunaCommand.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withKunaProjectDeadline } from "../../tests/boundary/providers/kuna/kunaProjectRequest.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -305,11 +306,13 @@ it("keeps staging until both copy descriptors close, then retires the exact work
     await cache.close();
     vi.restoreAllMocks();
   });
-  const built = await cache.build({
-    installation,
-    targetPath,
-    targetSha256: createHash("sha256").update("owned input").digest("hex"),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      targetPath,
+      targetSha256: createHash("sha256").update("owned input").digest("hex"),
+    }),
+  );
   if (built.ok)
     throw new Error(
       "Expected copy descriptor cleanup failure before any engine call",

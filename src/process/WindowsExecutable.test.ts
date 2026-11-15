@@ -114,3 +114,20 @@ it("stops a pending filesystem lookup when its owner aborts", async () => {
   complete({ isFile: () => true });
   expect(lookup.stat).toHaveBeenCalledTimes(1);
 });
+
+it("resolves a path-qualified command at its own location with PATHEXT, never on PATH", async () => {
+  lookup.stat.mockImplementation(async (path: string) => ({
+    isFile: () => path === "C:\\project\\.venv\\Scripts\\python.EXE",
+  }));
+  expect(
+    await findWindowsExecutable(
+      ".venv\\Scripts\\python",
+      { PATH: "C:\\tools", PATHEXT: ".COM;.EXE" },
+      options(),
+    ),
+  ).toEqual({ ok: true, value: "C:\\project\\.venv\\Scripts\\python.EXE" });
+  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
+    "C:\\project\\.venv\\Scripts\\python.COM",
+    "C:\\project\\.venv\\Scripts\\python.EXE",
+  ]);
+});

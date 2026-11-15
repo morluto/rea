@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -40,7 +41,10 @@ const expectedRegistration = (profile?: "full" | "compact") => ({
 
 const doctorState = async (home: string) =>
   (
-    await readClientRegistrationStatuses(home, undefined, { environment: {} })
+    await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+    })
   ).find(({ client }) => client === "lm_studio");
 
 /** An installed LM Studio home; the pointer and cache layouts are opt-in. */

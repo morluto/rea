@@ -37,6 +37,7 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -378,7 +379,7 @@ it("retains ownership-helper cleanup until worker close retries it", async () =>
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -419,7 +420,7 @@ it("retains failed helper cleanup without caller cancellation", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const physical = new DarwinProcessOwnershipInspectionError(

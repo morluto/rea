@@ -18,7 +18,8 @@ import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -158,9 +159,10 @@ const elfDependenciesFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

@@ -1,3 +1,4 @@
+import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
@@ -750,9 +751,22 @@ export const parseElfDependencies = (
     shnum,
     shentsize,
   );
+  const sectionsByType = keyedBy(sectionFacts, (section) => section.type);
+  // A repeated section type names no single table; like a disagreeing
+  // header, it leaves the dynamic-table declaration in charge.
+  const sectionOfType = (type: number, label: string) => {
+    const selected = uniqueKeyed(sectionsByType, type);
+    if (selected.ok) return selected.value;
+    issues.push({
+      code: "malformed_entry",
+      location: hex(shoff),
+      message: `More than one ${label} section header; using the dynamic declaration`,
+    });
+    return undefined;
+  };
   const sectionOf = (type: number, tag: number, label: string) =>
     agreedSection(
-      sectionFacts.find((section) => section.type === type),
+      sectionOfType(type, label),
       addresses.get(tag),
       mappings,
       label,
@@ -760,7 +774,7 @@ export const parseElfDependencies = (
     );
   const syment = unique.get(DT_SYMENT);
   const dynsymSection = agreedSection(
-    sectionFacts.find((section) => section.type === SHT_DYNSYM),
+    sectionOfType(SHT_DYNSYM, ".dynsym"),
     addresses.get(DT_SYMTAB),
     mappings,
     ".dynsym",
@@ -1554,9 +1568,9 @@ const parseImports = (
     );
     let version: ElfDependencyImport["version"] = null;
     if (versymBytes !== null && (index + 1) * 2 <= versymBytes.length) {
-      const raw = reader.little
-        ? versymBytes.readUInt16LE(index * 2)
-        : versymBytes.readUInt16BE(index * 2);
+      const raw = new BinaryReader(versymBytes, reader.little, "elf").u16(
+        index * 2,
+      );
       const versionIndex = raw & 0x7fff;
       const hidden = (raw & 0x8000) !== 0;
       if (versionIndex <= 1)

@@ -13,6 +13,7 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const platform = Object.getOwnPropertyDescriptor(
   systemProcessOwnershipHost,
@@ -132,7 +133,7 @@ it("preserves exact cancelled preparation cleanup capabilities", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const failure = new DarwinProcessOwnershipInspectionError(

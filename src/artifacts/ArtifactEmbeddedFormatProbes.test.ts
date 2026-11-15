@@ -188,7 +188,12 @@ it("reuses a located .NET header only for the same source and honors cached canc
     await withOwnedRegularFile(path, {}, async (source) => {
       expect(
         () => new ArtifactEmbeddedFormatProbes(path, source, undefined, facts),
-      ).toThrow("Root artifact changed before inventory");
+      ).toThrow(
+        expect.objectContaining({
+          reason: "integrity",
+          integrityCheck: "container-identity",
+        }),
+      );
     });
     expect(locate).toHaveBeenCalledTimes(1);
   } finally {
