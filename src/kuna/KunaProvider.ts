@@ -1,4 +1,5 @@
 import { KunaDocumentError } from "./KunaDocumentError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import { accessSync, constants, statSync } from "node:fs";
 
@@ -218,10 +219,10 @@ export class KunaProvider implements AnalysisProviderCandidate {
           : { processLauncher: this.#launcher }),
       });
     } catch (cause: unknown) {
-      const retainedCleanup = kunaRetainedResourceCleanupError(
-        cause,
-        "kuna:profile",
-      );
+      const retainedCleanup =
+        cause instanceof ArtifactReaderFailure
+          ? kunaRetainedResourceCleanupError(cause, "kuna:profile")
+          : undefined;
       if (retainedCleanup !== undefined) return err(retainedCleanup);
       if (!(cause instanceof RegularFileCleanupFailure)) {
         const cancellation = kunaResources.installationCancellationError(
