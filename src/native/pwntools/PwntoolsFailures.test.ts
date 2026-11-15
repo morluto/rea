@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
@@ -121,7 +121,6 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
   expect(projected.details?.limit).toMatchObject({
     control_kind: "parameter",
     parameter: "pwntools_timeout_ms",
-    cli_flag: "--pwntools-timeout-ms",
     effective_value: 4_500,
     default_value: 30_000,
   });

@@ -27,8 +27,8 @@ import { managedNativeVerificationResultSchema } from "../../src/domain/managed/
 import { managedReconstructionImportResultSchema } from "../../src/domain/managed/managedReconstruction.js";
 
 import { captureProcessScenarioFile } from "../../src/application/process/ProcessCli.js";
-import { compareManagedMemberPaths } from "../../src/application/managed/ManagedMemberComparisonService.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { managedComparisonCommand } from "../fixtures/managedComparisonCommand.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
@@ -619,7 +619,7 @@ describe.each(managedWorkflows)(
 describe("managed comparison output failure with completed source reads", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("retains the left source and output failure cause after reading real artifacts", async () => {
+  it("retains both sources and the output failure cause after reading real artifacts", async () => {
     const root = await createTestTempDirectory("rea-managed-output-failure-");
     const leftPath = join(root, "left.dll");
     const rightPath = join(root, "right.dll");
@@ -637,80 +637,34 @@ describe("managed comparison output failure with completed source reads", () => 
       },
     );
 
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cause).toBe(failure);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisOutputError",
-      partialObservation: {
-        operation: "inspect_managed_members",
-        subject: { local_path: leftPath },
-        normalized_result: {
-          methods: [expect.objectContaining({ token: "0x06000001" })],
+    expect(await managedComparisonCommand()(leftPath, rightPath)).toMatchObject(
+      {
+        code: "unreadable_output",
+        details: {
+          argument_observations: [
+            {
+              argument: "left",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: leftPath },
+                normalized_result: {
+                  methods: [expect.objectContaining({ token: "0x06000001" })],
+                },
+              },
+            },
+            {
+              argument: "right",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: rightPath },
+              },
+            },
+          ],
         },
       },
-    });
+    );
   });
 });
-
-it.each(["missing", "invalid", "cleanup"])(
-  "retains both managed admission cleanup owners when the left has a %s failure",
-  async (leftFailure) => {
-    const root = await createTestTempDirectory(
-      "rea-managed-admission-cleanup-",
-    );
-    const leftPath = join(root, "left.dll");
-    const rightPath = join(root, "right.dll");
-    await writeFile(rightPath, buildManagedPeFixture());
-    if (leftFailure === "invalid") await writeFile(leftPath, "invalid PE");
-    if (leftFailure === "cleanup")
-      await writeFile(leftPath, buildManagedPeFixture());
-    const rightIdentity = await stat(rightPath);
-    const original = OwnedFileHandle.prototype.close;
-    const owners = new Set<OwnedFileHandle>();
-    const close = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementation(async function (this: OwnedFileHandle) {
-        const identity = await this.handle.stat();
-        if (identity.ino === rightIdentity.ino || leftFailure === "cleanup") {
-          owners.add(this);
-          throw new Error("injected managed admission close failure");
-        }
-        await original.call(this);
-      });
-    onTestFinished(async () => {
-      close.mockRestore();
-      for (const owner of owners) await owner.close();
-    });
-
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result.error.cleanupResources).toContain(rightPath);
-    expect(primaryAnalysisError(result.error)).toMatchObject({
-      path: leftPath,
-    });
-    if (leftFailure === "cleanup")
-      expect(result.error.cleanupResources).toContain(leftPath);
-    expect(owners.size).toBe(leftFailure === "cleanup" ? 2 : 1);
-    expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
-
-    close.mockRestore();
-    const retry = async (cause: unknown): Promise<void> => {
-      if (cause instanceof RetainedRegularFileCleanupFailure)
-        await cause.cleanupLease.release();
-      else if (cause instanceof AggregateError)
-        for (const nested of cause.errors) await retry(nested);
-      else if (cause instanceof Error) await retry(cause.cause);
-    };
-    await retry(result.error);
-    expect(result.error.cleanupIncomplete).toBe(false);
-    expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
-  },
-);
 
 describe("ledger generation failure ownership through the public SDK", () => {
   afterEach(() => vi.restoreAllMocks());

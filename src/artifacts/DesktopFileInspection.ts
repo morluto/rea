@@ -21,7 +21,7 @@ import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
 import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
 import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {

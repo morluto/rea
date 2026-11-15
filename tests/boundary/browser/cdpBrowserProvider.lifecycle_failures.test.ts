@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -751,16 +752,13 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
     trackBrowser(browser);
     const controller = new AbortController();
     const reason = new AnalysisInputError("caller_operation");
-    let markSourceMapRequested!: () => void;
-    const sourceMapRequested = new Promise<void>((resolve) => {
-      markSourceMapRequested = resolve;
-    });
+    const sourceMapRequest = phaseArrival();
     const originalFetch = globalThis.fetch;
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((resource, init) => {
         if (String(resource).includes("/app.js.map")) {
-          markSourceMapRequested();
+          sourceMapRequest.arrive();
           return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
             if (signal?.aborted === true) {
@@ -785,7 +783,7 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
         }),
         { signal: controller.signal },
       );
-      await sourceMapRequested;
+      await sourceMapRequest.reached(pending, "source-map request");
       controller.abort(reason);
       const result = await pending;
       expect(result).toMatchObject({

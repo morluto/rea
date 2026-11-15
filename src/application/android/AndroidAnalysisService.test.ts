@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { AndroidAnalysisService } from "./AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../ports/android/AndroidAnalysisPort.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
@@ -9,7 +9,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 
 it("retains the selected subject in bounded search Evidence", () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };

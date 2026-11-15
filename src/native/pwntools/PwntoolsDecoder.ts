@@ -1,20 +1,28 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
-import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  HOST_PLATFORM,
+  type HostPlatform,
+} from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { invariantViolation } from "../../domain/internalInvariant.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
-  capturedPwntoolsOutput,
   pwntoolsBudgetRecovery,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
@@ -26,17 +34,11 @@ import { z } from "zod";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../application/AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -79,7 +81,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
-import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (
@@ -188,6 +190,8 @@ export class PwntoolsDecoder<
     readonly createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-artifact-decoder-" }),
+    /** The host the decoder runs on; selects the supported-host gate. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {
     this.identity = profile.identity;
   }
@@ -253,7 +257,7 @@ export class PwntoolsDecoder<
   ): Promise<Result<Report, AnalysisError>> {
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     const selectedLimits = pwntoolsProducerLimitsSchema.safeParse(
       input.producer_limits === undefined ? {} : input.producer_limits,
@@ -337,10 +341,10 @@ export class PwntoolsDecoder<
     try {
       if (options?.signal?.aborted)
         throw cancelledBy(OPERATION, options.signal);
-      if (!pwntoolsHostSupported(process.platform, process.arch)) {
+      if (!pwntoolsHostSupported(this.host.platform, this.host.architecture)) {
         const requirement = pwntoolsHostRequirement(
-          process.platform,
-          process.arch,
+          this.host.platform,
+          this.host.architecture,
         );
         throw new AnalysisCapabilityUnavailableError(
           this.identity.id,
@@ -461,7 +465,7 @@ export class PwntoolsDecoder<
         options,
         failure,
       );
-      const capturedOutput = capturedPwntoolsOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       let reply: z.output<typeof replySchema>;
       try {
         let file;
@@ -619,7 +623,7 @@ export class PwntoolsDecoder<
         input,
         payload: reply.value,
         snapshot,
-        diagnostics: capturedOutput,
+        diagnostics: providerResultDiagnostics(capturedOutput),
       });
       if (replyFinalization !== undefined) {
         result = err(
@@ -875,7 +879,7 @@ export class PwntoolsDecoder<
           reason: cause instanceof Error ? cause.message : String(cause),
           captured_output: {
             ...(pending.diagnostics ??
-              capturedPwntoolsOutput(process.supervisor.snapshot())),
+              capturedProviderOutput(process.supervisor.snapshot())),
           },
           previous_error:
             pending.failure === undefined

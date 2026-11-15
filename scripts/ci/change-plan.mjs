@@ -5,9 +5,10 @@ import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
   CI_LANES,
+  SHARED_BOUNDARY,
   WINDOWS_EXECUTABLE_SELECTION_INPUTS,
 } from "./scopes.mjs";
-import { planTestSelection } from "./test-selection.mjs";
+import { planTestSelection, testShards } from "./test-selection.mjs";
 
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
@@ -58,11 +59,6 @@ const matchesAny = (file, patterns) =>
 export function planChanges(request, repository) {
   const selected = Object.fromEntries(flags.map((flag) => [flag, false]));
   const reasons = [];
-  // Shared process, contract, CLI, and CI-script edits are not a specific provider.
-  // Fast qualification keeps the portable suite and the Linux x64 runtime
-  // baseline. Full qualification still selects every lane.
-  const SHARED_BOUNDARY =
-    /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
   const full = (reason) => {
     if (tier === "full") {
       for (const flag of flags) selected[flag] = true;
@@ -269,11 +265,7 @@ export function planChanges(request, repository) {
       selected.readiness = true;
     }
     if (file.startsWith("tests/")) return;
-    if (
-      /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/.test(
-        file,
-      )
-    ) {
+    if (SHARED_BOUNDARY.test(file)) {
       full(`Shared boundary: ${file}`);
     } else if (owners.length) {
       if (file.startsWith("src/") || file.startsWith("bridge/"))
@@ -343,8 +335,26 @@ export function planChanges(request, repository) {
         ]
       : [linux],
   };
-  const testSelection = planTestSelection(files, event, tier);
-  return { ...selected, tier, matrix, files, reasons, testSelection };
+  const testSelection = planTestSelection({
+    files,
+    event,
+    tier,
+    code: selected.code,
+    // The checked-out revision is the one whose tests run.
+    snapshot: {
+      list: () => repository.listFiles("HEAD", ["src", "tests"]),
+      read: (paths) => repository.readFiles("HEAD", paths),
+    },
+  });
+  return {
+    ...selected,
+    tier,
+    matrix,
+    files,
+    reasons,
+    testSelection,
+    testShards: testShards(tier, testSelection),
+  };
 }
 
 /** Answer the plan's Git questions from the repository in `cwd`. */
@@ -370,5 +380,32 @@ export const gitRepository = (cwd = process.cwd()) => {
         .split("\0")
         .filter(Boolean),
     readFile: (revision, path) => git("show", `${revision}:${path}`),
+    listFiles: (revision, directories) =>
+      git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
+        .split("\0")
+        .filter(Boolean),
+    // One batch process reads every requested blob.
+    readFiles: (revision, paths) => {
+      const output = execFileSync("git", ["cat-file", "--batch"], {
+        cwd,
+        input: paths.map((path) => `${revision}:${path}\n`).join(""),
+        maxBuffer: 512 * 1024 * 1024,
+      });
+      const contents = new Map();
+      let offset = 0;
+      for (const path of paths) {
+        const end = output.indexOf(10, offset);
+        const [, type, size] = output.toString("utf8", offset, end).split(" ");
+        if (type !== "blob")
+          throw new Error(`Git could not read ${revision}:${path}`);
+        const start = end + 1;
+        contents.set(
+          path,
+          output.toString("utf8", start, start + Number(size)),
+        );
+        offset = start + Number(size) + 1;
+      }
+      return contents;
+    },
   };
 };

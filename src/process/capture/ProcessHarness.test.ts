@@ -24,7 +24,7 @@ import {
   accountFullyObservedProcessCapture,
   emptyProcessCapture,
 } from "../../domain/process/processCapture.fixture.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import {
   ProcessCaptureError,
   normalizeCaptureFailure,

@@ -1274,6 +1274,9 @@ resource readers remain read-only within the selected bundle.
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
+When `path` is omitted and the open target is itself a plist, a plist that
+cannot be read or decoded is reported against that target
+(`target_unavailable`), not as an input issue on `path`.
 The CLI `rea inspect-plist <path>` opens its selected artifact for one invocation.
 
 Each provider client receives `binary_session.analysis_run.run_id` before any
@@ -1479,6 +1482,10 @@ reported only when its owning ledger confirms it; an inline result with
 observation cannot fit the MCP response, its corresponding `_omitted` detail
 reports the delivery limit. Cleanup failure and other completed source failures
 remain visible separately.
+A composite request that completes one argument's observation before another
+step fails reports it in `details.argument_observations` as
+`{argument, observation}`, named by the composite's input field, beside the
+failing step's own `partial_observation`.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup

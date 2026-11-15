@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { beforeAll, expect, it } from "vitest";
@@ -133,6 +134,7 @@ const readCapture = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", script],
     inputPath: "/authored-capture.pcap",
@@ -178,6 +180,7 @@ it("classifies a caller cancellation through the shared owner", async () => {
   const reason = { request: "caller cancel" };
   const running = runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", "setInterval(() => {}, 1000)"],
     inputPath: "/authored-capture.pcap",

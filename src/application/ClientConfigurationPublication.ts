@@ -3,7 +3,7 @@ import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -13,7 +13,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";

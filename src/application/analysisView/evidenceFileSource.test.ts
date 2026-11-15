@@ -8,7 +8,7 @@ import {
   analysisViewNativeEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
@@ -228,7 +228,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -262,7 +262,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;

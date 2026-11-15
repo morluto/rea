@@ -16,7 +16,7 @@ import type { NativeCommandRunner } from "../native/CommandRunner.js";
 import { NativeCommandFailure } from "../native/CommandRunner.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");

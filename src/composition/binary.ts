@@ -13,6 +13,7 @@ import type { Logger } from "pino";
 import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
+import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -63,12 +64,16 @@ const composeDeepBinarySession = (
 ): BinarySession => {
   const platform = HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(selectedEnvironment, platform);
-  const hopper = new HopperProvider(config, logger, environment);
+  const hopper = new HopperProvider(
+    config,
+    logger,
+    environment,
+    platform,
+    LINUX_HOPPER_LAUNCHER_VERIFICATION,
+  );
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment, (registration, selected) =>
-    createIdaMcpConnection(registration, selected, {
-      platform: HOST_PLATFORM.platform,
-    }),
+    createIdaMcpConnection(registration, selected, { platform }),
   );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
@@ -106,7 +111,7 @@ const createBundleResourceFactory = (
 ) => {
   return {
     createClient: async (
-      root: import("../application/AppBundleExecutable.js").ResolvedAppBundleResourceRoot,
+      root: import("../domain/apple/bundleResourceRoot.js").ResolvedAppBundleResourceRoot,
     ) => {
       const [{ ArtifactProvider }, { NativeMacOSProvider }] = await Promise.all(
         [
@@ -148,7 +153,7 @@ export const createManagedBinarySession = (): BinarySession =>
 /** Compose the artifact operations without candidates for deep analysis engines. */
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -169,7 +174,7 @@ export const createArtifactBinarySession = (
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../native/NativeMacOSProvider.js").then(({ NativeMacOSProvider }) =>
     composeBinarySession(

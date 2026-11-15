@@ -8,7 +8,7 @@ import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js"
 import {
   readRegularFileText,
   RegularFileReadFailure,
-} from "../RegularFileRead.js";
+} from "../../process/RegularFileRead.js";
 import {
   downloadInstallFiles,
   downloadInstallSchema,

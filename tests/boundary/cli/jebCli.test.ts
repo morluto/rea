@@ -32,7 +32,7 @@ it("validates decompile item input before contacting the engine", async () => {
     fieldErrors: [
       {
         code: "too_small",
-        path: "item-address",
+        path: "itemAddress",
       },
     ],
   });

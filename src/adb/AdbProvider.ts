@@ -33,7 +33,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import type {
   AdbDisplayNumericIssues,
@@ -43,15 +43,13 @@ import type {
   AdbPackagePullPartialObservation,
   AdbRequest,
 } from "../domain/adb/adbDeviceAnalysis.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import {
   adbDisplayPartialObservationSchema,
   adbResultSchemas,
@@ -99,7 +97,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import {
   adbCommandOutputFailure,
   adbArguments,
@@ -649,6 +647,8 @@ export interface AdbProviderOptions {
   readonly createRuntimeRoot?: (
     options?: PrivateRuntimeRootOptions,
   ) => Promise<AdbRuntimeRoot>;
+  /** The host adb and its pulled files live on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type AdbRuntimeRoot = Pick<PrivateRuntimeRoot, "path" | "close">;
@@ -824,6 +824,7 @@ const reservePackageDestinations = async (
  */
 export class AdbProvider {
   private readonly environment: Readonly<Record<string, string | undefined>>;
+  private readonly platform: NodeJS.Platform;
   readonly #createRuntimeRoot: (
     options?: PrivateRuntimeRootOptions,
   ) => Promise<AdbRuntimeRoot>;
@@ -840,9 +841,10 @@ export class AdbProvider {
   #outputCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.environment = snapshotEnvironment(
       options.environment ?? process.env,
-      HOST_PLATFORM.platform,
+      this.platform,
     );
     this.#createRuntimeRoot =
       options.createRuntimeRoot ??
@@ -850,7 +852,7 @@ export class AdbProvider {
   }
 
   private selection(signal?: AbortSignal): Promise<AdbBinarySelection> {
-    return resolveAdbBinary(this.environment, process.platform, signal);
+    return resolveAdbBinary(this.environment, this.platform, signal);
   }
 
   /** Probe the selected adb binary; never contacts devices or the server. */
@@ -1866,7 +1868,7 @@ export class AdbProvider {
       signal,
     );
     if (!paths.ok) return paths;
-    const parsed = parsePmPathOutput(paths.value.stdout);
+    const parsed = parsePmPathOutput(paths.value.stdout, this.platform);
     const capturedOutput = {
       stdout: paths.value.stdout,
       stderr: paths.value.stderr,
@@ -2245,7 +2247,7 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const derived = adbHostFileName(input.device_path);
+    const derived = adbHostFileName(input.device_path, this.platform);
     if (!derived.ok)
       return err(
         new AnalysisInputError(operation, undefined, [

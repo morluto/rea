@@ -23,7 +23,7 @@ import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEv
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",

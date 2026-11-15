@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { BunStandaloneArtifactReader } from "../../../src/artifacts/BunStandaloneArtifactReader.js";
 import { DenoStandaloneArtifactReader } from "../../../src/artifacts/DenoStandaloneArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
@@ -227,14 +227,7 @@ it("joins late .NET descriptor admission before reporting reader shutdown", asyn
   const root = await createTestTempDirectory("rea-dotnet-late-admission-");
   const path = join(root, "source");
   await writeFile(path, "unread source");
-  let reach = () => {};
-  let resume = () => {};
-  const reached = new Promise<void>((resolve) => {
-    reach = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const netDescriptorAdmission = phaseGate();
   let descriptor: FileHandle | undefined;
   injected.opened = (openedPath, handle) => {
     if (openedPath !== path || descriptor !== undefined) return;
@@ -244,8 +237,7 @@ it("joins late .NET descriptor admission before reporting reader shutdown", asyn
     vi.spyOn(handle, "stat").mockImplementation(async (...args) => {
       if (!held) {
         held = true;
-        reach();
-        await gate;
+        await netDescriptorAdmission.hold();
       }
       return stat(...args);
     });
@@ -255,8 +247,7 @@ it("joins late .NET descriptor admission before reporting reader shutdown", asyn
   try {
     const inspection = reader.entries()[Symbol.asyncIterator]().next();
     launched.push(inspection);
-    await awaitAcknowledgement(
-      reached,
+    await netDescriptorAdmission.reached(
       inspection,
       ".NET descriptor admission",
     );
@@ -267,12 +258,12 @@ it("joins late .NET descriptor admission before reporting reader shutdown", asyn
     launched.push(closing);
     await Promise.resolve();
     expect(closed).toBe(false);
-    resume();
+    netDescriptorAdmission.release();
     await Promise.allSettled(launched);
     expect(closed).toBe(true);
     expect(descriptor?.fd).toBe(-1);
   } finally {
-    resume();
+    netDescriptorAdmission.release();
     await Promise.allSettled(launched);
     try {
       await reader.close();

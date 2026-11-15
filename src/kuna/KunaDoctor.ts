@@ -5,12 +5,12 @@ import { dirname, posix, win32 } from "node:path";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import {
   admitKunaCommand,
   type KunaAdmissionRefusal,
 } from "./KunaAdmission.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
 import {
@@ -63,7 +63,7 @@ export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
  */
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   options: {
     readonly resourceScope: RetainedResourceScope;
     readonly signal?: AbortSignal;

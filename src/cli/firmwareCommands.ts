@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "../contracts/firmware/firmwareToolContracts.js";
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
@@ -37,7 +36,6 @@ export const registerFirmwareCommands = (
     logger,
     contractNamed(FIRMWARE_TOOL_CONTRACTS, "inspect_firmware_regions"),
     {
-      command: CLI_COMMANDS.inspectFirmwareRegions,
       description:
         "Inspect firmware signature candidates without extracting them",
       positionals: ["path"],
@@ -51,7 +49,6 @@ export const registerFirmwareCommands = (
     logger,
     contractNamed(FIRMWARE_TOOL_CONTRACTS, "extract_firmware"),
     {
-      command: CLI_COMMANDS.extractFirmware,
       description:
         "Extract selected firmware bytes and return verified files and provenance",
       positionals: ["path", "output_directory"],

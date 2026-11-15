@@ -91,12 +91,13 @@ it.skipIf(process.platform === "win32")(
         );
         expect(cli.status).toBe(1);
         expect(cli.stderr).toBe("");
+        // The CLI names the refused field by its option key.
         expect(JSON.parse(cli.stdout)).toMatchObject({
           code: "invalid_request",
           details: {
             issues: [
               {
-                path: ["output_directory"],
+                path: ["output-directory"],
                 reason: "invalid_value",
                 observed: { path: output, code: hostCode },
               },

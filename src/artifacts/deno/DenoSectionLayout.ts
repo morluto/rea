@@ -1,7 +1,7 @@
 import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 

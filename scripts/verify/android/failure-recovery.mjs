@@ -9,7 +9,7 @@ import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../../../dist/contracts/toolContracts.js";
-import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../dist/domain/analysisErrorProjectionSchema.js";
 import {
   VerifierFixture,
   withVerifierFixture,

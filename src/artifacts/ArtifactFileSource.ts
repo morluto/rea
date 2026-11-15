@@ -12,11 +12,11 @@ import {
   artifactSelectedPathErrno,
   artifactReadCancelledBy,
   assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 
 /** Verify an admitted descriptor against the regular file still named by its path. */
 export const assertArtifactFileSelectedSource = async (
