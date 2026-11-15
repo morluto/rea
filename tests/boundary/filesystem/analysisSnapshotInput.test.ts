@@ -17,6 +17,7 @@ import {
   ANALYSIS_SNAPSHOT_TARGET,
 } from "../../../src/domain/analysisSnapshot.fixture.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 
@@ -118,6 +119,28 @@ describe.each([
       ok: true,
       value: snapshot,
     });
+  });
+});
+
+it("refuses a snapshot holding an earlier-format bundle with the recreate guidance", async () => {
+  const root = await createTestTempDirectory("rea-snapshot-evidence-format-");
+  const path = join(root, "snapshot.json");
+  const { evidence_format: _current, ...unmarked } = createEvidenceBundle([]);
+  await writeFile(
+    path,
+    JSON.stringify({
+      target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
+      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: unmarked,
+    }),
+  );
+  const loaded = await readAnalysisSnapshot(path);
+  if (loaded.ok) throw new Error("Expected the earlier format to be refused");
+  expect(projectAnalysisError(loaded.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE) },
   });
 });
 

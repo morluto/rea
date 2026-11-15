@@ -365,8 +365,7 @@ cliTest(
     expect(result.json).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      details: { path },
-      message: expect.stringContaining("this JSON is one Evidence record"),
+      details: { path, detected_kind: "evidence-record" },
     });
   },
 );

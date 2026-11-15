@@ -200,7 +200,7 @@ it("reports invalid packed Python syntax with the member filename", async () => 
 it.each(["valid", "invalid"] as const)(
   "parses %s source under an owned private root and preserves owner cleanup",
   async (kind) => {
-    expect(privateRuntimeRootCapability().available).toBe(true);
+    expect(privateRuntimeRootCapability(process.platform).available).toBe(true);
     const input = await fixture(
       kind === "valid" ? validSource : "def broken(:\n",
     );
