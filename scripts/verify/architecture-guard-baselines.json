@@ -359,7 +359,6 @@
     "src/server/createServer.ts": 1
   },
   "hand-caught-configuration-error": {
-    "src/application/binary/BinarySession.ts": 3,
     "src/application/McpClientRegistration.ts": 1,
     "src/application/McpRegistrationCatalog.ts": 1,
     "src/application/McpRegistrationGit.ts": 1,
@@ -367,6 +366,7 @@
     "src/application/SupportedClients.ts": 1,
     "src/application/Uninstall.ts": 2,
     "src/application/WebScriptExportService.ts": 1,
+    "src/application/binary/BinarySession.ts": 3,
     "src/ghidra/GhidraProviderClient.ts": 1,
     "src/ida/IdaConfiguration.ts": 1
   },
@@ -418,12 +418,9 @@
     "scripts/verify-pe-load-config.mjs": 1,
     "scripts/verify-published-package.mjs": 1,
     "scripts/verify-real-cutter.mjs": 1,
-    "scripts/verify-real-ghidra-address-context.mjs": 1,
     "scripts/verify-real-ghidra-checkpoints.mjs": 1,
     "scripts/verify-real-ghidra-function-bundle.mjs": 1,
     "scripts/verify-real-ghidra-project-coverage.mjs": 1,
-    "scripts/verify-real-ghidra-swift.mjs": 1,
-    "scripts/verify-real-ghidra-switch.mjs": 1,
     "scripts/verify-real-ghidra.mjs": 1,
     "scripts/verify-real-hopper-callers.mjs": 1,
     "scripts/verify-real-hopper-deadlines.mjs": 1,
