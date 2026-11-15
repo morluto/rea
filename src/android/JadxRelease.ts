@@ -21,42 +21,70 @@ export interface JadxBridgeIdentity {
 }
 
 /**
- * The top-level class body of a Java source with comments removed and nested
- * bodies blanked, so only the outer class's own member declarations remain.
- * String and character literals are kept, and braces inside them are not
- * counted. Text blocks are not handled; the bridge source does not use them.
+ * Java source as string and character literals, single characters, and one
+ * space per comment, each with the brace depth it sits at (a brace carries the
+ * depth outside it). Braces inside literals and comments are not counted. Text
+ * blocks are not handled; the bridge source does not use them.
  */
-const topLevelClassMembers = (source: string): string => {
-  let members = "";
+function* javaPieces(
+  source: string,
+): Generator<{ readonly text: string; readonly depth: number }> {
   let depth = 0;
   let index = 0;
   while (index < source.length) {
     const character = source[index] ?? "";
     const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      const end = source.indexOf("\n", index);
-      index = end === -1 ? source.length : end;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      index = end === -1 ? source.length : end + 2;
-      if (depth === 1) members += " ";
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      let end = index + 1;
+    let end = index + 1;
+    let text = character;
+    if (character === "/" && (next === "/" || next === "*")) {
+      const close =
+        next === "/"
+          ? source.indexOf("\n", index)
+          : source.indexOf("*/", index + 2);
+      end = close === -1 ? source.length : next === "/" ? close : close + 2;
+      text = " ";
+    } else if (character === '"' || character === "'") {
       while (end < source.length && source[end] !== character)
         end += source[end] === "\\" ? 2 : 1;
-      if (depth === 1) members += source.slice(index, end + 1);
-      index = end + 1;
-      continue;
+      end += 1;
+      text = source.slice(index, end);
     }
-    if (character === "}") depth -= 1;
-    if (depth === 1) members += character === "{" ? " " : character;
-    if (character === "{") depth += 1;
-    index += 1;
+    if (text === "}") depth -= 1;
+    yield { text, depth };
+    if (text === "{") depth += 1;
+    index = end;
   }
+}
+
+/**
+ * The body of the top-level class named `className`, with comments removed and
+ * nested bodies blanked, so only that class's own member declarations remain.
+ * Other top-level types in the same file are ignored.
+ */
+const topLevelClassMembers = (source: string, className: string): string => {
+  const declaresClass = new RegExp(
+    String.raw`(?:^|\s)class\s+${className}(?![\w$])`,
+    "u",
+  );
+  let members = "";
+  let header = "";
+  let inClass = false;
+  let classBodies = 0;
+  for (const { text, depth } of javaPieces(source)) {
+    if (depth === 0 && text === "{") {
+      // A top-level type body opens; its header names the type.
+      inClass = declaresClass.test(header);
+      if (inClass) classBodies += 1;
+      header = "";
+    } else if (depth === 0)
+      header = text === ";" || text === "}" ? "" : header + text;
+    else if (depth === 1 && inClass)
+      members += text === "{" || text === "}" ? " " : text;
+  }
+  if (classBodies !== 1)
+    throw new Error(
+      `REA's JADX bridge source must declare top-level class ${className} exactly once; found ${String(classBodies)}`,
+    );
   return members;
 };
 
@@ -79,7 +107,7 @@ const declaredString = (members: string, constant: string): string => {
 
 /** Read the bridge identity the bridge source itself declares. */
 export const parseJadxBridgeIdentity = (source: string): JadxBridgeIdentity => {
-  const members = topLevelClassMembers(source);
+  const members = topLevelClassMembers(source, "ReaJadxBridge");
   return Object.freeze({
     name: declaredString(members, "BRIDGE_NAME"),
     version: declaredString(members, "BRIDGE_VERSION"),

@@ -52,3 +52,25 @@ it("reads only the outer class's own fields, whatever their formatting", () => {
     version: "12",
   });
 });
+
+it("ignores other top-level types in the bridge source", () => {
+  const sibling = [
+    "final class Helper {",
+    '  static final String BRIDGE_NAME = "helper";',
+    '  static final String BRIDGE_VERSION = "helper";',
+    "}",
+    "",
+  ].join("\n");
+
+  expect(
+    parseJadxBridgeIdentity(
+      `${sibling}${declaration("rea-jadx-bridge", "12")}`,
+    ),
+  ).toEqual({ name: "rea-jadx-bridge", version: "12" });
+  expect(() =>
+    parseJadxBridgeIdentity(`${sibling}class ReaJadxBridgeV2 {}\n`),
+  ).toThrow(/top-level class ReaJadxBridge exactly once; found 0/u);
+  expect(() =>
+    parseJadxBridgeIdentity(`${sibling}class ReaJadxBridge {}\n`),
+  ).toThrow(/BRIDGE_NAME exactly once; found 0/u);
+});
