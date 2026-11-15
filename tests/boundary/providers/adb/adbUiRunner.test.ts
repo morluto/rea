@@ -1514,6 +1514,17 @@ it("reconciles retained UI work before a non-UI call queued during discovery on 
     '"operation":"stop_adb_app"',
   );
 
+  // Public local inspection stays usable even when runner cleanup cannot
+  // contact this device, and must not send another cancel/forget broadcast.
+  const beforeLocal = await readFile(workspace.path("calls"), "utf8");
+  const client = await harness.client.callTool({
+    name: "inspect_adb_client",
+    arguments: {},
+  });
+  expect(client.isError, JSON.stringify(client)).not.toBe(true);
+  expect(await readFile(workspace.path("calls"), "utf8")).toBe(beforeLocal);
+  expect(await readFile(workspace.path("active"), "utf8")).toBe(activeId);
+
   await setMode({});
   const stopped = await harness.client.callTool({
     name: "stop_adb_app",
@@ -1547,6 +1558,10 @@ it("cancels a non-UI admission wait without cancelling the active UI caller", as
     await expect
       .poll(() => readFile(workspace.path("active"), "utf8"))
       .toMatch(/^[a-f0-9-]{36}$/u);
+    const beforeLocal = await readFile(workspace.path("calls"), "utf8");
+    const local = await service.execute("inspect_adb_client", {});
+    if (!local.ok) throw local.error;
+    expect(await readFile(workspace.path("calls"), "utf8")).toBe(beforeLocal);
     const controller = new AbortController();
     const reason = new Error("cancel only the non-UI caller");
     // This direct provider call enters the admission wait synchronously, while

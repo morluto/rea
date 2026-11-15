@@ -871,7 +871,7 @@ export class AdbProvider {
     new Set<PendingOutputDirectoryCleanup>();
   /** All accepted device work, including discovery and finalization, has one owner. */
   #tail: Promise<void> = Promise.resolve();
-  readonly #availabilityProbes = new Set<Promise<void>>();
+  readonly #localProbes = new Set<Promise<void>>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #outputCleanupPromise: Promise<void> | undefined;
@@ -904,7 +904,7 @@ export class AdbProvider {
         "inspect_adb_client",
         isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
       );
-    const release = this.#beginAvailabilityProbe();
+    const release = this.#beginLocalProbe();
     try {
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
@@ -927,14 +927,14 @@ export class AdbProvider {
   }
 
   /** Local version probes need no device turn, but shutdown must join their cleanup. */
-  #beginAvailabilityProbe(): () => void {
+  #beginLocalProbe(): () => void {
     let release!: () => void;
     const active = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.#availabilityProbes.add(active);
+    this.#localProbes.add(active);
     return () => {
-      this.#availabilityProbes.delete(active);
+      this.#localProbes.delete(active);
       release();
     };
   }
@@ -945,7 +945,7 @@ export class AdbProvider {
     if (this.#closePromise !== undefined) return this.#closePromise;
     const closing = (async () => {
       await this.#tail;
-      await Promise.all(this.#availabilityProbes);
+      await Promise.all(this.#localProbes);
       const failures: unknown[] = [];
       const failedLeases = new Set<AnalysisCleanupLease>();
       let allFailuresHaveExactLeaseOwners = true;
@@ -1319,6 +1319,17 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
+    // Client inspection is a local version probe, not device admission. It
+    // must neither wait on nor reconcile runner work, even when cleanup failed.
+    // Shutdown still owns the probe through its final process cleanup.
+    if (request.operation === "inspect_adb_client") {
+      const release = this.#beginLocalProbe();
+      try {
+        return await this.#executeOperation(request, options);
+      } finally {
+        release();
+      }
+    }
     const predecessor = this.#tail;
     let release!: () => void;
     const completed = new Promise<void>((resolve) => {
@@ -1331,7 +1342,7 @@ export class AdbProvider {
       try {
         await awaitPredecessor(predecessor, request.operation, options?.signal);
         // Retained UI work can still affect the device. Reconcile it before
-        // any later operation, not only before another UI request or shutdown.
+        // any later device operation, not only another UI request or shutdown.
         const recovered = await this.#ui.reconcile(
           request.operation,
           options?.signal,
