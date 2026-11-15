@@ -133,6 +133,30 @@ it.each([
   },
 );
 
+// Another root frame proves a change even when its loader is malformed, so
+// the window keeps what it collected instead of failing.
+it.each([
+  ["another root frame", "document_changed", "new-main"],
+  ["the selected frame", "protocol_error", "selected-main"],
+] as const)(
+  "ends on a malformed loader for %s as %s",
+  async (_label, expected, frameId) => {
+    const session = selectedSession();
+    const window = new CdpExecutionWindow(session);
+    const result = window.start(30_000).then(
+      (reason) => reason,
+      (cause: unknown) => (cause as { reason?: string }).reason,
+    );
+    deliver(session, window, {
+      method: "Page.frameNavigated",
+      params: {
+        frame: { id: frameId, loaderId: 7, url: "https://example.test/" },
+      },
+    });
+    await expect(result).resolves.toBe(expected);
+  },
+);
+
 it("surfaces malformed frame identity as a protocol failure without guessing a transition", async () => {
   const session = selectedSession();
   const window = new CdpExecutionWindow(session);
