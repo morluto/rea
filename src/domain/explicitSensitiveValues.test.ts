@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import {
+  explicitTextSpellings,
+  explicitUtf16Spellings,
   explicitUtf8Spellings,
+  explicitValueSpans,
+  lowercasePercentEscapes,
   explicitValuesOccurIn,
   isTransportCredentialHeader,
   redactExplicitOutput,
@@ -11,11 +15,8 @@ it.each([
   ["secret context", ["secret"], "[REDACTED] context"],
   ["secret context", ["secret", "REDACTED"], "… context"],
   ["secret context", ["secret", "[", "…"], " context"],
-  [
-    "secretable context",
-    ["secret", "able", "table"],
-    "[REDACTED][REDACTED] context",
-  ],
+  // Overlapping declarations redact as one span, leaving no fragment between.
+  ["secretable context", ["secret", "able", "table"], "[REDACTED] context"],
   ["secretsecret context", ["secret", "…", "REDACTED"], " context"],
 ] as const)(
   "keeps declared literals out of replacement text: %s",
@@ -108,4 +109,56 @@ it("recognizes protocol-defined credential headers in any case only", () => {
     expect(isTransportCredentialHeader(name)).toBe(true);
   for (const name of ["x-api-key", "x-auth-token", "location"])
     expect(isTransportCredentialHeader(name)).toBe(false);
+});
+
+it("merges overlapping occurrences of one or several declarations", () => {
+  expect(explicitValueSpans("aaaa", ["aa"])).toEqual([{ start: 0, end: 4 }]);
+  expect(explicitValueSpans("abcdef xx cd", ["abcd", "cdef", "cd"])).toEqual([
+    { start: 0, end: 6 },
+    { start: 10, end: 12 },
+  ]);
+  expect(explicitValueSpans("abab", ["ab"])).toEqual([
+    { start: 0, end: 2 },
+    { start: 2, end: 4 },
+  ]);
+  expect(explicitValueSpans("text", [""])).toEqual([]);
+});
+
+it("spells a declared value in each selected encoding", () => {
+  expect(
+    explicitTextSpellings("a b'/é", [
+      "uri-component",
+      "uri-query",
+      "uri-plus-space",
+      "form",
+    ]),
+  ).toEqual([
+    "a%20b'%2F%C3%A9",
+    "a%20b%27%2F%C3%A9",
+    "a+b'%2F%C3%A9",
+    "a+b%27%2F%C3%A9",
+  ]);
+  expect(explicitTextSpellings('q"\\n', ["json-escaped"])).toEqual([
+    'q\\"\\\\n',
+  ]);
+  expect(explicitTextSpellings("ok", ["json-escaped"])).toEqual([]);
+  expect(explicitTextSpellings("\u00ff", ["hex"])).toEqual(["c3bf", "C3BF"]);
+  const base64 = explicitTextSpellings("secret-value", ["base64"]);
+  for (const prefix of ["", "x", "xy"])
+    expect(
+      base64.some((spelling) =>
+        Buffer.from(`${prefix}secret-value`)
+          .toString("base64")
+          .includes(spelling),
+      ),
+    ).toBe(true);
+  // URL serializers write an unpaired surrogate as U+FFFD.
+  expect(explicitTextSpellings("\ud800", ["uri-component"])).toEqual([
+    "%EF%BF%BD",
+  ]);
+  expect(explicitUtf16Spellings("ab")).toEqual([
+    Buffer.from([0x61, 0, 0x62, 0]),
+    Buffer.from([0, 0x61, 0, 0x62]),
+  ]);
+  expect(lowercasePercentEscapes("a%2Fb%C3")).toBe("a%2fb%c3");
 });
