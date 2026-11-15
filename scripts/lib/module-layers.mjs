@@ -442,6 +442,17 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     reason:
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
   }),
+  Object.freeze({
+    from: "captures",
+    to: "pcap",
+    files: Object.freeze(["PcapConfiguration.ts"]),
+    // Live packet capture runs the same Wireshark tshark that the pcap
+    // provider runs. It locates, selects, versions and identity-checks it
+    // through pcap's Wireshark tool configuration, so REA_TSHARK_COMMAND and
+    // the executable identity rules have one owner.
+    reason:
+      "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
+  }),
 ]);
 
 /** Whether one provider-to-provider import is a declared dependency. */

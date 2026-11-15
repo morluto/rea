@@ -474,14 +474,14 @@ checkCounted(
   [],
 );
 
-// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// `tshark -T json` has one envelope reader, src/domain/pcap/tsharkJsonPackets.ts,
 // which owns malformed JSON, the packet array and each packet's layers.
 checkCounted(
-  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/domain/pcap/tsharkJsonPackets)",
   "tshark-json-envelope",
   files,
   /\b_source\s*\.\s*layers\b/gu,
-  ["src/pcap/TsharkJsonPackets.ts"],
+  ["src/domain/pcap/tsharkJsonPackets.ts"],
 );
 
 // Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
