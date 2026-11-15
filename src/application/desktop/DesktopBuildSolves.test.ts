@@ -1,5 +1,5 @@
 import * as buildEnvironment from "../../desktop/BuildComputerEnvironment.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { renderSmokeTask } from "../../domain/desktop/appExport.js";
 import { MEASURE_BUILD_TASK_CONTRACT } from "../../contracts/desktopBuildMeasureContract.js";
 import {

@@ -1,6 +1,6 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import type {
-  GpuCoverage,
   GpuCodeObjectsInput,
   GpuCodeObjects,
   GpuObject,
@@ -29,7 +29,7 @@ import {
   readPeSectionDirectory,
   type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -66,7 +66,7 @@ export class GpuInventory {
     "Static declarations only; no GPU execution, SASS disassembly, host launch correlation or runtime compatibility was verified.",
     "Object IDs are positional identities scoped to artifact.sha256. Locations inside decoded objects name their containing object; they are not file offsets.",
   ];
-  discovery: GpuCoverage = "complete";
+  discovery: KnownCoverageStatus = "complete";
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;

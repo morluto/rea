@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import {
   nativeMetadataEvidenceSchema,
@@ -101,7 +102,7 @@ export type NativeInvestigationEdge = z.infer<
 export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
   status: z
-    .enum(["complete", "partial", "unknown", "unsupported", "not_requested"])
+    .enum([...coverageStatusSchema.options, "unsupported", "not_requested"])
     .describe(
       "unknown when the producer could not tell how much of the facet it covered; omitted is then null.",
     ),

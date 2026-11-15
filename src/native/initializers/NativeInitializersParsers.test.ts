@@ -49,7 +49,7 @@ import {
 import { buildAddressRangeIndex } from "./addressRangeIndex.js";
 import { InitializerNotes } from "./initializerNotes.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 
 const artifact = (bytes: Buffer) => ({
   path: "/artifacts/image",

@@ -4,6 +4,7 @@ import {
   wasmInterfaceByteBudgetSchema,
 } from "./wasmInterface.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
 import type { EvidenceSubjectTarget } from "../evidence.js";
@@ -177,7 +178,7 @@ export const wasmArtifactSchema = z
     glue: z.array(
       z.strictObject({
         artifact,
-        parse_status: z.enum(["complete", "partial", "failed"]),
+        parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
         references: z.array(
           z.strictObject({
             value: z.string(),

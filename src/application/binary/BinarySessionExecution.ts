@@ -16,7 +16,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 import {
   isSnapshotCacheable,

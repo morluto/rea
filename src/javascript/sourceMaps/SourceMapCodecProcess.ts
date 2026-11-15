@@ -1,4 +1,4 @@
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,

@@ -5,8 +5,10 @@ import {
   assertArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
+} from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {

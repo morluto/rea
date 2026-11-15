@@ -29,7 +29,7 @@ import {
 } from "../process/ProcessOutputTokenScanner.js";
 import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -38,7 +38,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
-import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import type { GhidraSeedReport } from "./GhidraAnalysisSeeds.js";
@@ -120,7 +120,7 @@ import { existingGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";

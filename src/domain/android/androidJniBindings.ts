@@ -1,3 +1,4 @@
+import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -63,6 +64,16 @@ export const androidJniLibraryIdentitySchema = z.strictObject({
   declared_size: count.nullable(),
   compressed_size: count.nullable(),
 });
+/**
+ * Why one selected library has no facts. `integrity_check` names the reader
+ * check an `integrity` failure violated; Evidence recorded before this field
+ * has no check, which means the check is unknown.
+ */
+const androidJniLibraryFailureSchema = z.strictObject({
+  kind: z.string(),
+  message: z.string(),
+  integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS).exactOptional(),
+});
 export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   abi_compatibility: z.enum(["consistent", "mismatch", "unknown"]),
   byte_order: z.enum(["little", "big"]).nullable(),
@@ -74,14 +85,12 @@ export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   table_count: count,
   table_entry_count: count,
   unknowns: z.array(z.string()),
-  failure: z.strictObject({ kind: z.string(), message: z.string() }).nullable(),
+  failure: androidJniLibraryFailureSchema.nullable(),
 });
 export const androidJniLibraryObservationSchema =
   androidJniLibraryIdentitySchema.extend({
     facts: androidJniLibraryFactsSchema.nullable(),
-    failure: z
-      .strictObject({ kind: z.string(), message: z.string() })
-      .nullable(),
+    failure: androidJniLibraryFailureSchema.nullable(),
   });
 export type AndroidJniLibraryObservation = z.infer<
   typeof androidJniLibraryObservationSchema

@@ -5,7 +5,7 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,
   GPU_OBJECT_BYTES,

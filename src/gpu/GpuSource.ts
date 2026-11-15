@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,

@@ -4,17 +4,17 @@ import {
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+  writeTextFile,
+} from "../../resources/index.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "../../desktop/AgentEnvComputer.js";
-import { writeTextFile } from "../JsonFiles.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
@@ -55,7 +55,7 @@ import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import { errorText } from "./DesktopBuildCommands.js";
 
 const MEASURE = "measure_build_task";

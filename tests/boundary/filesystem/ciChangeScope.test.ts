@@ -193,6 +193,27 @@ const classifyPackage = (before: string, after: string) =>
   classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/readStableArtifact.ts", "sqlite"],
+  ["src/resources/readStableArtifact.ts", "browser"],
+  ["src/resources/readStableArtifact.ts", "binary_layout"],
+  ["src/resources/readStableArtifact.ts", "evm"],
+  ["src/resources/readStableArtifact.ts", "recorded_crash"],
+  ["src/resources/readStableArtifact.ts", "web_network"],
+  ["src/resources/readStableArtifact.ts", "web_source_map"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
+  ["src/resources/ArtifactReader.ts", "sqlite"],
+  ["src/resources/ArtifactReader.ts", "binary_layout"],
+  ["src/resources/ArtifactReader.ts", "evm"],
+  ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
@@ -227,6 +248,19 @@ it.each([
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
@@ -1389,7 +1423,7 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [

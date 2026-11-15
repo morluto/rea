@@ -2,13 +2,11 @@ import { capturedProviderOutput } from "./capturedProviderOutput.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,

@@ -12,7 +12,7 @@ import {
 } from "../../domain/playwrightTrace/playwrightTrace.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import type { PlaywrightTracePort } from "./PlaywrightTracePort.js";
+import type { PlaywrightTracePort } from "../../ports/playwrightTrace/PlaywrightTracePort.js";
 
 const evidence = (report: PlaywrightTrace) =>
   createEvidence(

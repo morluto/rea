@@ -1,5 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, sep } from "node:path";

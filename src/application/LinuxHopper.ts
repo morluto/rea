@@ -1,6 +1,5 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { isAborted } from "../domain/analysisErrorCore.js";
-import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -9,7 +8,7 @@ import { join, posix } from "node:path";
 
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   downloadHopperPackage,
   isHopperRequestCancellation,
@@ -38,6 +37,7 @@ import {
   type VerifiedLinuxHopperPackage,
   type VerifiedLinuxHopperLauncher,
 } from "./LinuxHopperPublisher.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
 
 /** Package-manager output retained per stream without stopping the command. */
 const PACKAGE_MANAGER_OUTPUT_BYTES = 64 * 1024;
@@ -513,28 +513,6 @@ export const installLinuxHopper = async (
   }
 };
 
-/** Canonical launcher path for a legacy user-local Linux Hopper installation. */
-const linuxHopperLauncherPath = (home: string): string =>
-  appendCallerPath(home, ".local/share/rea/hopper/bin/Hopper", "linux");
-
-/** REA's managed Linux install path, preferred when no explicit launcher is set. */
-export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";
-
-/** Other system-wide Hopper paths used by package installations. */
-const systemLinuxHopperLauncherCandidates: readonly string[] = [
-  "/opt/hopper-v4/bin/hopper",
-  "/usr/bin/hopper",
-];
-
-/** Probe REA-managed and user-local installs before arbitrary system builds. */
-export const linuxHopperLauncherCandidates = (
-  home: string,
-): readonly string[] => [
-  REA_MANAGED_LINUX_HOPPER_LAUNCHER,
-  linuxHopperLauncherPath(home),
-  ...systemLinuxHopperLauncherCandidates,
-];
-
 /**
  * Compose package-manager and linker checks from the selected caller
  * environment. The distribution comes from the caller's host-fact owner, so
@@ -639,6 +617,13 @@ export const inspectLinuxHopperLauncher = async (
     );
   }
 };
+
+/** The Linux launcher authentication production composition gives the Hopper provider. */
+export const LINUX_HOPPER_LAUNCHER_VERIFICATION: LinuxHopperLauncherVerification =
+  {
+    inspect: inspectLinuxHopperLauncher,
+    retryCleanup: retryLinuxHopperPublisherCleanup,
+  };
 
 /** The publisher retains a failed close before throwing; retry every retained owner. */
 const closePublisherAndRetainedScopes = async (

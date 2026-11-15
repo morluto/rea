@@ -1,5 +1,14 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  sameArtifactEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
@@ -32,15 +41,6 @@ import {
   type ZipReaderConstructorOptions,
 } from "@zip.js/zip.js";
 
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
 import {
   accountZipMemberRegion,
   type ZipLocalRecord,

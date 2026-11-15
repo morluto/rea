@@ -1,4 +1,4 @@
-import type { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { ArtifactReaderFailure } from "../resources/index.js";
 import type {
   ReferenceSourceEntry,
   ReferenceSourceFailureCode,

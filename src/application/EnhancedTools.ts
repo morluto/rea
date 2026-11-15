@@ -18,7 +18,7 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   enhancedInputSchemas,
   type CallRelationshipDirection,

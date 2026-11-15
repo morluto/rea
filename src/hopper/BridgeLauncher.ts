@@ -14,9 +14,9 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+  ArtifactResourceScope,
+  AnalysisCleanupLeaseGroup,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import type {
@@ -57,8 +57,7 @@ import {
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
-import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
-import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPublisher.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
@@ -161,8 +160,12 @@ export type HopperApplicationLauncherOptions =
 export interface HopperApplicationLauncherDependencies {
   readonly imageFileSystem?: HopperImageCopyFileSystem;
   readonly verifyNativeHelper?: typeof verifyMacHopperNativeHelper;
-  readonly verifyLinuxLauncher?: typeof inspectLinuxHopperLauncher;
-  readonly retryPublisherCleanup?: typeof retryLinuxHopperPublisherCleanup;
+  /**
+   * Linux launcher authentication, supplied by composition. Without it a
+   * Linux demo launch is refused before the launcher runs.
+   */
+  readonly verifyLinuxLauncher?: LinuxHopperLauncherVerification["inspect"];
+  readonly retryPublisherCleanup?: LinuxHopperLauncherVerification["retryCleanup"];
   readonly platform?: NodeJS.Platform;
   readonly acquireTargetLease?: typeof acquireHopperTargetLease;
   readonly acquireApplicationLease?: typeof acquireLinuxHopperApplicationLease;
@@ -237,10 +240,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
     if (usesLinuxDemo(this.options)) {
       try {
-        await (
-          this.dependencies.retryPublisherCleanup ??
-          retryLinuxHopperPublisherCleanup
-        )();
+        // Without a verification owner nothing was verified, so nothing is retained.
+        await this.dependencies.retryPublisherCleanup?.();
       } catch (cause: unknown) {
         const observation = ArtifactReaderFailure.cleanupObservation(
           cause,
@@ -439,7 +440,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
-          this.dependencies.verifyLinuxLauncher ?? inspectLinuxHopperLauncher
+          this.dependencies.verifyLinuxLauncher ?? unverifiableLinuxLauncher
         )(this.options.launcherPath, this.options.environment, signal);
         if (!inspected.ok)
           return inspected.error.reason === "cancelled"
@@ -779,6 +780,20 @@ export const linuxDemoLaunch = (
     args: helperArguments,
   };
 };
+
+/** Refuse a Linux launcher when no verification owner was supplied. */
+const unverifiableLinuxLauncher: LinuxHopperLauncherVerification["inspect"] =
+  () =>
+    Promise.resolve(
+      err(
+        Object.assign(
+          new Error(
+            "Linux Hopper launcher verification is not configured; REA does not run an unverified launcher.",
+          ),
+          { reason: "verification_unavailable" },
+        ),
+      ),
+    );
 
 const cancelledLauncherVerification = (
   signal: AbortSignal | undefined,
