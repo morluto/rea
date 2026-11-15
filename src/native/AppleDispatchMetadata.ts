@@ -49,7 +49,6 @@ import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
 import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
   type AdmittedMachoSlice,
 } from "./AppleMachoSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
@@ -466,6 +465,15 @@ const appleDispatchMetadataPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
+    // A recognized Mach-O class this reader cannot decode still holds metadata
+    // another reader may recover.
+    if (cause instanceof BinaryFormatFailure && cause.undecodedContent)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
     if (cause instanceof BinaryFormatFailure)
       return new AnalysisUnsupportedTargetError(
         OPERATION,
@@ -478,13 +486,6 @@ const appleDispatchMetadataPrimaryFailure = (
               ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },
-      );
-    if (cause instanceof UnsupportedMachoMetadataFormatError)
-      return new AnalysisCapabilityUnavailableError(
-        IDENTITY.id,
-        OPERATION,
-        cause.message,
-        { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
       return cancelledBy(

@@ -1,6 +1,7 @@
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
+  NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
@@ -53,6 +54,11 @@ export interface SetupClient {
    * ownership of a registration REA wrote.
    */
   readonly sharedRegistration?: boolean;
+  /**
+   * Only a registration REA wrote makes this client applicable: setup never
+   * detects it, and doctor reports it only when its file holds a `rea` row.
+   */
+  readonly registrationApplicability?: true;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -142,6 +148,7 @@ interface ClientDefinitionBase {
   readonly mcpAdd?: McpAddExposure;
   readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly sharedRegistration?: true;
+  readonly registrationApplicability?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -648,6 +655,117 @@ const zedLocation = ({
         message: `Both ${native} and the Flatpak Zed folder ${sandboxed} exist, so REA cannot tell which Zed you use. Remove the configuration of the Zed you no longer use, then configure Zed again.`,
       });
 };
+
+/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
+const mcporterExpandHome = (value: string, home: string): string =>
+  value === "~"
+    ? home
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? join(home, value.slice(2))
+      : value;
+
+const regularPathPresent = (
+  path: string,
+): Result<boolean, ClientPathFailure> => {
+  try {
+    lstatSync(path);
+    return ok(true);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return ok(false);
+    return err({
+      path,
+      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring MCPorter.`,
+    });
+  }
+};
+
+/**
+ * MCPorter's home layer (`listConfigLayerPaths`): a non-empty
+ * `MCPORTER_CONFIG` is the only file it loads; otherwise the first existing of
+ * the XDG and legacy `~/.mcporter` candidates (`mcporterConfigCandidates`),
+ * where only an absolute `XDG_CONFIG_HOME` counts. A new file goes where
+ * `mcporter config add --scope home` puts it. A relative `MCPORTER_CONFIG`
+ * follows each invocation's directory, which REA cannot know.
+ */
+const mcporterLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const legacy = join(home, ".mcporter");
+  const selected = env.MCPORTER_CONFIG?.trim();
+  if (selected) {
+    const path = mcporterExpandHome(selected, home);
+    // MCPorter applies path.resolve: `..` collapses lexically, not through
+    // links. The selected file is also the evidence that MCPorter is in use.
+    return pathApi.isAbsolute(path)
+      ? ok({
+          configPath: pathApi.resolve(path),
+          markerPath: pathApi.resolve(path),
+        })
+      : err({
+          path,
+          message:
+            "MCPORTER_CONFIG is relative, so the file MCPorter loads depends on the directory each command runs from. Set an absolute MCPORTER_CONFIG before configuring MCPorter.",
+        });
+  }
+  const configHome = mcporterExpandHome(
+    env.XDG_CONFIG_HOME?.trim() ?? "",
+    home,
+  );
+  const base = pathApi.isAbsolute(configHome)
+    ? join(configHome, "mcporter")
+    : legacy;
+  const candidates = [base, ...(base === legacy ? [] : [legacy])].flatMap(
+    (directory) => [
+      join(directory, "mcporter.json"),
+      join(directory, "mcporter.jsonc"),
+    ],
+  );
+  for (const candidate of candidates) {
+    const present = regularPathPresent(candidate);
+    if (!present.ok) return present;
+    // The loaded file's folder is the evidence, even when it is the legacy one.
+    if (present.value)
+      return ok({ configPath: candidate, markerPath: dirname(candidate) });
+  }
+  return ok({ configPath: join(base, "mcporter.json"), markerPath: base });
+};
+
+/** mcporter getUrl's native nullish priority; an empty first value suppresses later aliases. */
+const MCPORTER_URL_FIELDS = [
+  "baseUrl",
+  "base_url",
+  "url",
+  "serverUrl",
+  "server_url",
+] as const;
+const MCPORTER_STDIO_INCOMPATIBILITIES: readonly NativeStdioIncompatibility[] =
+  [
+    // RawEntrySchema admits only optional strings, including an empty string.
+    ...MCPORTER_URL_FIELDS.map((field): NativeStdioIncompatibility => ({
+      kind: "invalid-string",
+      field,
+    })),
+    ...MCPORTER_URL_FIELDS.map((field, index): NativeStdioIncompatibility =>
+      index === 0
+        ? { kind: "truthy", field }
+        : {
+            kind: "all",
+            conditions: [
+              ...MCPORTER_URL_FIELDS.slice(0, index).map(
+                (prior): NativeStdioIncompatibility => ({
+                  kind: "nullish",
+                  field: prior,
+                }),
+              ),
+              { kind: "truthy", field },
+            ],
+          },
+    ),
+  ];
 
 /**
  * Amp's user settings: `settings.json` or `settings.jsonc` in
@@ -1323,6 +1441,21 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "amp",
   }),
   defineClient({
+    name: "mcporter",
+    mcpAdd: { projectPaths: ["config/mcporter.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: [...MCPORTER_URL_FIELDS, "executable"],
+      stdio: MCPORTER_STDIO_INCOMPATIBILITIES,
+    },
+    displayName: "MCPorter",
+    location: mcporterLocation,
+    // MCPorter imports setup-managed clients' registrations by default, so a
+    // registration of its own is opt-in.
+    registrationApplicability: true,
+    format: "json",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1493,6 +1626,9 @@ export const supportedClients = (
         ...(definition.discoveryPaths === undefined
           ? {}
           : { discoveryPaths: definition.discoveryPaths(context) }),
+        ...(definition.registrationApplicability === true
+          ? { registrationApplicability: true }
+          : {}),
         ...(definition.sharedRegistration === true
           ? { sharedRegistration: true }
           : {}),

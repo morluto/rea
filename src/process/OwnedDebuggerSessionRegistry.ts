@@ -5,6 +5,11 @@ import type {
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
+import {
   closeOwnedDebuggerSessions,
   retainedDebuggerCleanupFailure,
   type OwnedDebuggerStopResult,
@@ -34,7 +39,8 @@ export interface OwnedDebuggerSessionRegistryOptions<Session> {
 
 /**
  * Owns the persistent sessions of one debugger: the published session map,
- * start reservations against its capacity, one in-flight stop per session,
+ * in-flight starts and their reservations against its capacity, one in-flight
+ * stop per session,
  * cleanup failures retained until a stop is confirmed, cleanup retry, and
  * closing every session. Each debugger keeps its protocol, detach and
  * stop-reason policy.
@@ -57,6 +63,8 @@ export class OwnedDebuggerSessionRegistry<
     Promise<OwnedDebuggerStopResult>
   >();
   #reservations = 0;
+  /** In-flight starts; closing aborts each as owner-closed and awaits it. */
+  readonly #starts = new Map<AbortController, Promise<unknown>>();
 
   constructor(options: OwnedDebuggerSessionRegistryOptions<Session>) {
     this.#options = options;
@@ -99,6 +107,50 @@ export class OwnedDebuggerSessionRegistry<
       held = false;
       this.#reservations -= 1;
     };
+  }
+
+  /**
+   * Run one session start that closing aborts as owner-closed. The caller's
+   * abort is relayed; when it came first, a cancellation reports the
+   * caller's reason. Register before awaiting, so a close cannot miss it.
+   */
+  start<Value>(
+    operation: string,
+    callerSignal: AbortSignal | undefined,
+    run: (signal: AbortSignal) => Promise<Result<Value, AnalysisError>>,
+  ): Promise<Result<Value, AnalysisError>> {
+    const controller = new AbortController();
+    let callerAbortWon = false;
+    const relayAbort = (): void => {
+      if (controller.signal.aborted) return;
+      callerAbortWon = true;
+      controller.abort(callerSignal?.reason);
+    };
+    callerSignal?.addEventListener("abort", relayAbort, { once: true });
+    if (callerSignal?.aborted) relayAbort();
+    const started = Promise.resolve()
+      .then(() => run(controller.signal))
+      .finally(() => {
+        callerSignal?.removeEventListener("abort", relayAbort);
+        this.#starts.delete(controller);
+      });
+    this.#starts.set(controller, started);
+    return started.then((result) =>
+      !result.ok &&
+      result.error instanceof AnalysisCancelledError &&
+      callerAbortWon &&
+      callerSignal !== undefined
+        ? err(cancelledWithCallerReason(operation, callerSignal, result.error))
+        : result,
+    );
+  }
+
+  /** Abort every in-flight start as owner-closed and wait for each to settle. */
+  async abortStarts(): Promise<void> {
+    const active = [...this.#starts.entries()];
+    for (const [controller] of active)
+      controller.abort(OwnerCancellation.ownerClosed);
+    await Promise.allSettled(active.map(([, start]) => start));
   }
 
   /** Whether a stop of this session is in flight. */
@@ -189,7 +241,7 @@ export class OwnedDebuggerSessionRegistry<
 
   /**
    * Stop every session; sessions whose stop is incomplete stay registered for
-   * retry. Callers block new starts and drain in-flight ones first.
+   * retry. Callers block new starts and abort in-flight ones first.
    */
   closeAll(): Promise<void> {
     return closeOwnedDebuggerSessions(
@@ -199,3 +251,30 @@ export class OwnedDebuggerSessionRegistry<
     );
   }
 }
+
+/**
+ * A cancellation with the caller's own reason, keeping what the provider's
+ * cancellation retained: its facts, its output and its cleanup.
+ */
+export const cancelledWithCallerReason = (
+  operation: string,
+  signal: AbortSignal,
+  previous?: AnalysisCancelledError,
+): AnalysisCancelledError => {
+  const cancellation = cancelledBy(operation, signal, {
+    cleanupPrimary: previous,
+    ...(previous?.diagnostics === undefined
+      ? {}
+      : { diagnostics: previous.diagnostics }),
+    ...(previous?.capturedOutput === undefined
+      ? {}
+      : { capturedOutput: previous.capturedOutput }),
+    ...(previous?.cleanup === undefined ? {} : { cleanup: previous.cleanup }),
+    ...(previous?.partialObservation === undefined
+      ? {}
+      : { partialObservation: previous.partialObservation }),
+  });
+  if (previous?.cleanupIncomplete)
+    cancellation.bindCleanupDependencies([previous]);
+  return cancellation;
+};

@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
@@ -105,7 +106,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   resolve(
