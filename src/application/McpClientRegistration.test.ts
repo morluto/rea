@@ -374,6 +374,41 @@ it("refuses global Junie registration when known configuration disables or obscu
     expect(await register({})).toMatchObject({ ok: false });
   }
 });
+
+it("selects an absolute JUNIE_HOME and refuses a relative one before writing", async () => {
+  const home = await createTestTempDirectory("rea-junie-home-");
+  const select = (JUNIE_HOME: string) =>
+    resolveMcpRegistrationClients(
+      {
+        agents: ["junie"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment: { JUNIE_HOME },
+      },
+      resources,
+    );
+  const selectedHome = join(home, "selected-junie");
+  const absolute = await select(selectedHome);
+  if (!absolute.ok) throw absolute.error;
+  expect(absolute.value[0]?.configPath).toBe(
+    join(selectedHome, "mcp", "mcp.json"),
+  );
+  // Junie resolves a relative home against its own working directory, which
+  // REA cannot know; resolving it against `cwd` would write the wrong file.
+  const relative = await select("selected-junie");
+  expect(relative).toMatchObject({
+    ok: false,
+    error: {
+      message:
+        "JUNIE_HOME is relative, so the location Junie reads depends on its working directory. Set an absolute JUNIE_HOME before configuring Junie.",
+    },
+  });
+  await expect(
+    lstat(join(home, "selected-junie", "mcp")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+});
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");
   const path = join(directory, "settings.json");
