@@ -133,7 +133,6 @@
     "src/native/pe/PeBinaryFailure.ts": 1,
     "src/native/pwndbg/PwndbgCoreContext.ts": 3,
     "src/native/pwntools/PwntoolsDecoder.ts": 8,
-    "src/native/pwntools/PwntoolsFailures.ts": 2,
     "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
     "src/process/ownedDebuggerSession.ts": 1,
     "src/rizin/RizinDebugSessionManager.ts": 1

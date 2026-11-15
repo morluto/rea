@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import WebSocket, { type RawData } from "ws";
 import { isUtf8 } from "node:buffer";
 
@@ -18,7 +19,6 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -667,7 +667,7 @@ const waitForOpen = async (
       signal?.removeEventListener("abort", onAbort);
     };
     const boundedTimeoutMs = Math.min(
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
       handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {

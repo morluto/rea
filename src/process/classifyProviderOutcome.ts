@@ -70,6 +70,8 @@ export interface ProviderOutcomeContext {
   readonly resourceSignal?: (signal: "SIGXCPU" | "SIGXFSZ") => {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
+    /** Provider facts appended to the shared report, such as the selected allowance. */
+    readonly detail?: string;
   };
   /**
    * The provider's memory setting for a runtime exhaustion report, such as
@@ -148,7 +150,7 @@ export const classifyProviderOutcome = (
       return new AnalysisResourceConstraintError(
         operation,
         outcome.signal === "SIGXFSZ" ? "file-size" : "cpu",
-        `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.`,
+        `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.${reported?.detail === undefined ? "" : ` ${reported.detail}`}`,
         reported?.limits ?? null,
         { ...details, ...reported?.recovery },
       );
