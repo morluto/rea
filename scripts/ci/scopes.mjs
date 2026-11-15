@@ -253,6 +253,21 @@ const PATH_SCOPES = {
     "scripts/lib/runtime-admission.d.mts",
     "install.sh",
     "src/config/**",
+    // The darwin package baseline is the only CI run of the real Hopper
+    // bridge. Its reply contracts and the domain schemas they are built from
+    // must be checked against real replies before merge, not after.
+    "bridge/hopper_bridge.py",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/hopper/HopperProvider.ts",
+    "src/domain/native/nativeInventory.ts",
+    "src/domain/native/nativeObservation.ts",
+    "src/domain/native/nativeByteRead.ts",
+    "src/domain/native/nativeCallReference.ts",
+    "src/domain/native/functionDossier.ts",
+    "src/domain/native/nativeReference.ts",
+    "src/domain/native/nativeSegments.ts",
+    "src/domain/native/procedureInfo.ts",
+    "src/domain/native/nativeProviderOutput.ts",
     "src/application/Setup*.ts",
     "src/application/Uninstall*.ts",
     "src/application/ClientConfiguration*.ts",
