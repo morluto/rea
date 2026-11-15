@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,31 +7,47 @@ import {
   listAdvertisedCatalogs,
 } from "./lib/advertised-catalog.mjs";
 import {
+  describeSummaryChanges,
+  summarizeAdvertisedCatalogs,
+} from "./lib/advertised-catalog-summary.mjs";
+import { formatGeneratedFile } from "./lib/format-generated-file.mjs";
+import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { classifyLaunchFailure } from "../dist/process/launchFailure.js";
 
-// Compile every regular expression the packaged server advertises, in every
-// schema profile, with the engines clients and gateways actually run. One
-// pattern an engine refuses can make a client reject the whole tools/list
-// (#10830), so the portable-dialect rules are not trusted on their own.
+// Compile every regular expression and schema the packaged server advertises,
+// in every schema profile, with the engines and validators clients and
+// gateways actually run. One pattern or schema an engine refuses can make a
+// client reject the whole tools/list (#10830), so the portable-dialect rules
+// are not trusted on their own.
 //
 // An engine that is not installed is reported as not verified. CI sets
 // REA_REQUIRE_SCHEMA_ENGINES=1, which turns a missing engine into a failure.
 // `--package-root=DIR` lists an installed package, such as a packed release
 // candidate, instead of this checkout's build.
+// `--complete` adds the Python `jsonschema` meta-validation, which takes
+// seconds per profile.
+//
+// The run also compares the listings with the committed summary.json, so a
+// change to many tools' advertised schemas is visible in review.
+// `--update-summary` rewrites it.
 
 const directory = join(
   dirname(fileURLToPath(import.meta.url)),
   "verify/advertised-schemas",
 );
 const required = process.env.REA_REQUIRE_SCHEMA_ENGINES === "1";
+const options = new Set();
 let packageRoot;
 for (const option of process.argv.slice(2))
   if (option.startsWith("--package-root="))
     packageRoot = resolve(option.slice("--package-root=".length));
+  else if (option === "--complete" || option === "--update-summary")
+    options.add(option);
   else throw new Error(`Unknown advertised schema check option: ${option}`);
 const ENGINE_TIMEOUT_MS = 120_000;
 // Results carry one entry per refused value, so allow far more than one.
@@ -113,7 +129,8 @@ const listed = Math.round(performance.now() - start);
 const { advertisedSchemaPatterns } =
   await import("../dist/contracts/advertisedDialect.js");
 
-// Each distinct pattern once, with every place it is advertised.
+// Each distinct schema and pattern once, with every place it is advertised.
+const describeSite = (site) => `${site.tool} ${site.kind} (${site.profile})`;
 const advertised = distinctAdvertisedSchemas(catalogs);
 const patternSites = new Map();
 for (const { schema, sites } of advertised)
@@ -136,8 +153,22 @@ const checked = {
     describe: (indexes) =>
       indexes.map((index) => `/${patterns[index]}/`).join(", "),
   },
+  schema: {
+    values: advertised,
+    sites: (index) =>
+      advertised[index].sites.map((site) => ({
+        tool: site.tool,
+        text: describeSite(site),
+      })),
+    describe: (indexes) =>
+      `${String(indexes.length)} schema${indexes.length === 1 ? "" : "s"}`,
+  },
 };
-const input = JSON.stringify({ patterns });
+const input = JSON.stringify({
+  patterns,
+  schemas: advertised.map(({ schema }) => schema),
+  complete: options.has("--complete"),
+});
 
 const fixture = await VerifierFixture.open({
   prefix: "rea-advertised-schemas-",
@@ -170,6 +201,10 @@ const results = await withVerifierFixture(fixture, async () => {
             { engine: "re2 (C++)", kind: "pattern" },
             { engine: "rust regex", kind: "pattern" },
             { engine: "rust fancy-regex", kind: "pattern" },
+            { engine: "rust jsonschema", kind: "schema" },
+            ...(options.has("--complete")
+              ? [{ engine: "python jsonschema", kind: "schema" }]
+              : []),
           ],
           {
             command:
@@ -185,8 +220,47 @@ const results = await withVerifierFixture(fixture, async () => {
 });
 
 const problems = [];
+
+// Absolute local paths advertise the host's pattern, so the recorded summary
+// is the POSIX advertisement; Windows hosts cannot reproduce it.
+const summaryPath = join(directory, "summary.json");
+if (process.platform === "win32")
+  console.log("Advertised catalog summary: not compared on Windows hosts.");
+else {
+  const summary = summarizeAdvertisedCatalogs(
+    catalogs,
+    advertisedSchemaPatterns,
+  );
+  let recorded;
+  try {
+    recorded = JSON.parse(await readFile(summaryPath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const changes = describeSummaryChanges(recorded, summary);
+  const update = options.has("--update-summary");
+  if (changes.length > 0)
+    console.log(
+      `Advertised catalog summary ${update ? "updated" : "differs"}:\n${changes.map((line) => `  ${line}`).join("\n")}`,
+    );
+  try {
+    await ensureGeneratedFile({
+      path: summaryPath,
+      source: await formatGeneratedFile(
+        summaryPath,
+        `${JSON.stringify(summary, null, 2)}\n`,
+      ),
+      check: !update,
+      generateCommand: "npm run verify:advertised-schemas -- --update-summary",
+    });
+  } catch (error) {
+    problems.push(
+      `${error.message} Review the changes above; a PR that changes advertised schemas commits the summary with them.`,
+    );
+  }
+}
 console.log(
-  `Listed ${String(catalogs.length)} packaged catalogs in ${String(listed)} ms: ${String(patterns.length)} distinct patterns.`,
+  `Listed ${String(catalogs.length)} packaged catalogs in ${String(listed)} ms: ${String(advertised.length)} distinct schemas, ${String(patterns.length)} distinct patterns.`,
 );
 for (const result of results) {
   if (result.unavailable !== undefined) {
@@ -238,7 +312,7 @@ for (const result of results) {
 }
 if (problems.length > 0) {
   console.error(
-    `\nAdvertised pattern check failed (${String(problems.length)}):\n${problems.map((problem) => `  ${problem}`).join("\n")}`,
+    `\nAdvertised schema check failed (${String(problems.length)}):\n${problems.map((problem) => `  ${problem}`).join("\n")}`,
   );
   process.exitCode = 1;
 }
