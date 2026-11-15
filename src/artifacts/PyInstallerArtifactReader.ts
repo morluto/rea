@@ -4,7 +4,19 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { normalizeArtifactPath } from "../resources/index.js";
+import {
+  normalizeArtifactPath,
+  ArtifactReaderFailure,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  artifactReadCancelledBy,
+  ArtifactResourceScope,
+  abortIfNeeded,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
 import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
@@ -14,17 +26,6 @@ import {
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import {
-  ArtifactReaderFailure,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-  artifactReadCancelledBy,
-  ArtifactResourceScope,
-} from "../resources/index.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,
@@ -52,7 +53,6 @@ import {
 import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
 import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
 import { readPyInstallerBytes } from "./pyinstaller/PyInstallerBytes.js";
-import { abortIfNeeded } from "../resources/index.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
 const MAX_RETAINED_ENTRY_BYTES = 64 * 1024 * 1024;

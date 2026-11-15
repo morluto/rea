@@ -23,7 +23,7 @@
     "artifacts -> dotnet": 3,
     "artifacts -> javascript": 1,
     "artifacts -> native": 1,
-    "browser -> artifacts": 5,
+    "browser -> artifacts": 4,
     "browser -> javascript": 1,
     "captures -> pcap": 2,
     "desktop -> browser": 1,

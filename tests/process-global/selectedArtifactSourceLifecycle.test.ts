@@ -12,8 +12,7 @@ import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.js";
-import * as artifactHash from "../../src/artifacts/ArtifactHash.js";
+import * as streamDigest from "../../src/resources/StreamDigest.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -29,6 +28,7 @@ import { createDeferred } from "../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { NativeFixtureRunner } from "../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { ArtifactFileSource } from "../../src/resources/index.js";
 
 interface OpenControl {
   path: string | undefined;
@@ -299,8 +299,8 @@ it.each([false, true])(
     const completed = createDeferred<void>();
     const release = createDeferred<void>();
     const controller = new AbortController();
-    const originalHash = artifactHash.hashReadable;
-    vi.spyOn(artifactHash, "hashReadable").mockImplementation(
+    const originalHash = streamDigest.digestReadableToCompletion;
+    vi.spyOn(streamDigest, "digestReadableToCompletion").mockImplementation(
       async (...args) => {
         const hashed = await originalHash(...args);
         expect(hashed.sha256).toBe(fixture.sha256);

@@ -7,7 +7,6 @@ import {
 } from "../domain/artifactReaderLimits.js";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
@@ -16,16 +15,17 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
+  readArtifactFileChunks,
+  abortIfNeeded,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readArtifactFileChunks } from "../resources/index.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,
   type DotnetBundle,
   type DotnetBundleFile,
 } from "./dotnet/DotnetBundle.js";
-import { abortIfNeeded } from "../resources/index.js";
 
 /** Stable, range-streamed .NET bundle reader; extraction paths remain owned by SafeOutputTree. */
 export class DotnetBundleArtifactReader implements ArtifactReader {

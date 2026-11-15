@@ -25,12 +25,10 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
   ArtifactResourceScope,
-} from "../resources/index.js";
-import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
+  ArtifactFileSource,
 } from "../resources/index.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,
