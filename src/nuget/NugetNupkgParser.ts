@@ -5,23 +5,6 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
-  ERR_AMBIGUOUS_ARCHIVE,
-  ERR_BAD_FORMAT,
-  ERR_CENTRAL_DIRECTORY_NOT_FOUND,
-  ERR_ENCRYPTED_CENTRAL_DIRECTORY,
-  ERR_ENTRY_DATA_OUT_OF_BOUNDS,
-  ERR_EOCDR_LOCATOR_ZIP64_NOT_FOUND,
-  ERR_EOCDR_NOT_FOUND,
-  ERR_EXTRAFIELD_ZIP64_NOT_FOUND,
-  ERR_INVALID_COMPRESSED_DATA,
-  ERR_INVALID_CRC32,
-  ERR_INVALID_UNCOMPRESSED_SIZE,
-  ERR_LOCAL_FILE_HEADER_NOT_FOUND,
-  ERR_OVERLAPPING_ENTRY,
-  ERR_SPLIT_ZIP_FILE,
-  ERR_UNSUPPORTED_COMPRESSION,
-  ERR_UNSUPPORTED_ENCRYPTION,
-  ERR_UNSUPPORTED_UINT64,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipReader,
@@ -51,29 +34,6 @@ import {
   NugetNupkgCapacityFailure,
   NUGET_NUPKG_FORMAT,
 } from "./NugetNupkg.errors.js";
-
-const ZIP_FORMAT_MESSAGES = new Set([
-  ERR_AMBIGUOUS_ARCHIVE,
-  ERR_BAD_FORMAT,
-  ERR_CENTRAL_DIRECTORY_NOT_FOUND,
-  ERR_ENTRY_DATA_OUT_OF_BOUNDS,
-  ERR_EOCDR_LOCATOR_ZIP64_NOT_FOUND,
-  ERR_EOCDR_NOT_FOUND,
-  ERR_EXTRAFIELD_ZIP64_NOT_FOUND,
-  ERR_INVALID_COMPRESSED_DATA,
-  ERR_INVALID_CRC32,
-  ERR_INVALID_UNCOMPRESSED_SIZE,
-  ERR_LOCAL_FILE_HEADER_NOT_FOUND,
-  ERR_OVERLAPPING_ENTRY,
-  ERR_UNSUPPORTED_UINT64,
-]);
-
-const ZIP_UNSUPPORTED_MESSAGES = new Set([
-  ERR_ENCRYPTED_CENTRAL_DIRECTORY,
-  ERR_SPLIT_ZIP_FILE,
-  ERR_UNSUPPORTED_COMPRESSION,
-  ERR_UNSUPPORTED_ENCRYPTION,
-]);
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const NUPKG_LIMITATIONS = {
@@ -159,10 +119,11 @@ const wrapZipFailure = (
     cause instanceof NugetNupkgCapacityFailure
   )
     throw cause;
-  // The shared ZIP reader owns native decoder classifications: a Zstandard
-  // window above its fixed allowance is a resource limit, and a decoder
-  // feature it cannot provide (a Zstandard dictionary) is an unsupported
-  // layout. Neither is corrupt input.
+  // The shared ZIP reader owns ZIP failure classification, including native
+  // decoder faults: a Zstandard window above its fixed allowance is a
+  // resource limit, and a feature it cannot provide (encryption, split
+  // archives, a Zstandard dictionary) is an unsupported layout. Project its
+  // typed result instead of re-reading the error text here.
   const typed = typedZipFailure(cause, compressionMethod);
   if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
     throw typed;
@@ -172,16 +133,16 @@ const wrapZipFailure = (
       `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
-  const message = cause instanceof Error ? cause.message : String(cause);
-  if (ZIP_UNSUPPORTED_MESSAGES.has(message))
-    throw unsupportedInput(
-      NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP uses an unsupported layout: ${message}`,
-    );
-  if (ZIP_FORMAT_MESSAGES.has(message) || cause instanceof Error)
+  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP is malformed: ${message}`,
+      `NuGet package ZIP is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause: typed },
+    );
+  if (cause instanceof Error)
+    throw malformedInput(
+      NUGET_NUPKG_FORMAT,
+      `NuGet package ZIP is malformed: ${cause.message}`,
     );
   throw malformedInput(
     NUGET_NUPKG_FORMAT,
