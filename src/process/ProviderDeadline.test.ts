@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProviderStartupDeadline } from "./ProviderDeadline.js";
+import { STARTUP_OWNER_CLOSED } from "./SharedStartupAttempt.js";
 
 beforeEach(() => {
   vi.useFakeTimers({
@@ -319,6 +320,39 @@ it("finalizes an expired startup under its own budget and the caller's signal", 
     expect(finalization.signal).toBe(caller.signal);
     expect(finalization.signal?.aborted).toBe(false);
     expect(finalization.deadline.remainingMs()).toBe(1_000);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+it.each([
+  { reason: STARTUP_OWNER_CLOSED, ownerClosed: true },
+  { reason: new Error("caller stopped"), ownerClosed: false },
+])(
+  "reports whether the startup owner closed: $ownerClosed",
+  ({ reason, ownerClosed }) => {
+    const controller = new AbortController();
+    const deadline = new ProviderStartupDeadline(1000, controller.signal);
+    try {
+      expect(deadline.ownerClosed).toBe(false);
+      controller.abort(reason);
+      expect(deadline.interruption).toBe("cancelled");
+      expect(deadline.ownerClosed).toBe(ownerClosed);
+      expect(deadline.signal.reason).toBe(reason);
+    } finally {
+      deadline.dispose();
+    }
+  },
+);
+
+it("does not report an owner close after the budget elapsed", async () => {
+  const controller = new AbortController();
+  const deadline = new ProviderStartupDeadline(100, controller.signal);
+  try {
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort(STARTUP_OWNER_CLOSED);
+    expect(deadline.interruption).toBe("timeout");
+    expect(deadline.ownerClosed).toBe(false);
   } finally {
     deadline.dispose();
   }

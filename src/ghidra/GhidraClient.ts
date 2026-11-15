@@ -34,10 +34,7 @@ import {
   Utf8NdjsonDecodingError,
 } from "../process/Utf8NdjsonLineBuffer.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
@@ -1550,17 +1547,13 @@ export class GhidraClient {
     cause?: unknown,
     cancellation?: { readonly reason: unknown },
   ): GhidraSessionError {
-    if (
-      cancellation !== undefined &&
-      !(
-        deadline.signal.aborted &&
-        cancellation.reason === deadline.signal.reason
-      )
-    )
+    // A producer that cancelled while startup's deadline still ran reports
+    // its own cancellation; once the deadline aborted, the deadline reports.
+    if (cancellation !== undefined && !deadline.signal.aborted)
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.ownerClosed)
       return this.#failure(
         "process",
         "Ghidra session closed during startup",

@@ -48,10 +48,7 @@ import {
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
@@ -975,7 +972,7 @@ export class HopperClient {
   async #startupInterruption(
     deadline: ProviderStartupDeadline,
   ): Promise<HopperCancelledError | HopperTimeoutError | HopperProtocolError> {
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.ownerClosed)
       return new HopperProtocolError("Hopper session closed during startup");
     if (deadline.interruption === "cancelled")
       return hopperCancelledBySignal(deadline.signal);
