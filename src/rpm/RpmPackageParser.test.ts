@@ -565,6 +565,34 @@ it("refuses file inventories above the caller budget", () => {
   }
 });
 
+it("refuses a per-file array above the file budget before building its rows", () => {
+  const bytes = encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "rows" },
+      { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "1" },
+      { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+      { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+      {
+        tag: RPM_TAG.baseNames,
+        type: RPM_TYPE.stringArray,
+        strings: Array.from({ length: 64 }, () => ""),
+      },
+    ],
+  });
+  try {
+    parse(
+      bytes,
+      inspectRpmPackageInputSchema.parse({ path: defaults.path, max_files: 8 }),
+    );
+    throw new Error("expected file budget refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
+    if (!(cause instanceof RpmPackageCapacityFailure)) return;
+    expect(cause.resource).toBe("max_files");
+    expect(cause.message).toContain("BASENAMES declares 64 rows");
+  }
+});
+
 it("refuses file paths that expand past the read budget through a shared directory", () => {
   const directory = `/${"d".repeat(1023)}`;
   const baseNames = Array.from(

@@ -604,12 +604,41 @@ const checkTagSpec = (
     );
 };
 
+/**
+ * Main-header tags that hold one value per file row. Their declared counts are
+ * checked against max_files before any value is built, so a store that
+ * declares millions of empty strings never materializes them.
+ */
+const PER_FILE_TAGS: ReadonlyMap<number, string> = new Map([
+  [RPM_TAG.baseNames, "BASENAMES"],
+  [RPM_TAG.dirNames, "DIRNAMES"],
+  [RPM_TAG.dirIndexes, "DIRINDEXES"],
+  [RPM_TAG.fileSizes, "FILESIZES"],
+  [RPM_TAG.longFileSizes, "LONGFILESIZES"],
+  [RPM_TAG.fileModes, "FILEMODES"],
+  [RPM_TAG.fileDigests, "FILEDIGESTS"],
+  [RPM_TAG.fileFlags, "FILEFLAGS"],
+  [RPM_TAG.fileUserName, "FILEUSERNAME"],
+  [RPM_TAG.fileGroupName, "FILEGROUPNAME"],
+]);
+
+const checkPerFileCount = (entry: IndexEntry, maxFiles: number): void => {
+  const name = PER_FILE_TAGS.get(entry.tag);
+  if (name !== undefined && entry.count > maxFiles)
+    throw new RpmPackageCapacityFailure(
+      "max_files",
+      maxFiles,
+      `RPM ${name} declares ${String(entry.count)} rows, above the ${String(maxFiles)}-file budget.`,
+    );
+};
+
 const parseHeader = (
   reader: BinaryReader,
   start: number,
-  maxIndex: number,
+  budget: { readonly maxIndex: number; readonly maxFiles?: number },
   label: "signature" | "main",
 ): DecodedHeader => {
+  const { maxIndex, maxFiles = Number.POSITIVE_INFINITY } = budget;
   reader.range(start, 16, `RPM ${label} header`);
   const magic = reader.u32(start);
   if (magic !== RPM_HEADER_MAGIC)
@@ -681,6 +710,7 @@ const parseHeader = (
         `RPM ${label} header repeats tag ${String(entry.tag)}, so its value is ambiguous.`,
         { offset: at, field: `${label} tag ${String(entry.tag)}` },
       );
+    if (label === "main") checkPerFileCount(entry, maxFiles);
     values.set(entry.tag, decodeEntry(store, entry));
   }
   return {
@@ -1224,7 +1254,7 @@ export const parseRpmPackage = (
     parseHeader(
       reader,
       RPM_LEAD_SIZE,
-      input.max_header_index_entries,
+      { maxIndex: input.max_header_index_entries },
       "signature",
     ),
   );
@@ -1248,7 +1278,10 @@ export const parseRpmPackage = (
     const mainHeader = parseHeader(
       reader,
       headerStart,
-      input.max_header_index_entries,
+      {
+        maxIndex: input.max_header_index_entries,
+        maxFiles: input.max_files,
+      },
       "main",
     );
     const payloadOffset =
