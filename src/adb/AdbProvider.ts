@@ -27,7 +27,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 
-import { awaitPredecessor } from "../application/awaitPredecessor.js";
+import { awaitPredecessor } from "../domain/awaitPredecessor.js";
 import {
   type ExecutionOptions,
   type ProviderAvailability,

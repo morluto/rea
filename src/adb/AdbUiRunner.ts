@@ -2,13 +2,12 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
-  createAnalysisExecution,
-  type AnalysisExecution,
-  type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
+  createAnalysisExecutionEvidence,
+  type AnalysisObservation,
+} from "../domain/analysisObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { Evidence } from "../domain/evidence.js";
+import type { Evidence, EvidenceProvider } from "../domain/evidence.js";
+import { jsonValueSchema, jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -33,7 +32,6 @@ import {
   type adbUiSnapshotHeaderSchema,
   type AdbUiRequest,
 } from "../domain/adb/adbUiAnalysis.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -254,11 +252,15 @@ export class AdbUiRunner {
     client: z.infer<typeof adbClientIdentitySchema>,
     serial: string,
     observed: UiObservation,
-    provider: ProviderIdentity,
-  ): AnalysisExecution {
-    return createAnalysisExecution({ client, serial, ...observed }, provider, {
-      limitations: UI_LIMITATIONS,
-    });
+    provider: EvidenceProvider,
+  ): AnalysisObservation {
+    return {
+      result: jsonValueSchema.parse({ client, serial, ...observed }),
+      rawResult: null,
+      provider,
+      limitations: [...UI_LIMITATIONS],
+      locations: [],
+    };
   }
 
   get pendingResources(): readonly string[] {
@@ -778,9 +780,9 @@ export class AdbUiRunner {
     request: AdbUiRequest,
     selectedBinary: string,
     client: z.infer<typeof adbClientIdentitySchema>,
-    provider: ProviderIdentity,
+    provider: EvidenceProvider,
     signal?: AbortSignal,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+  ): Promise<Result<AnalysisObservation, AnalysisError>> {
     let primary: AnalysisError;
     let owned: RemoteRequest | undefined;
     let observed: UiObservation | undefined;

@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitPredecessor } from "./awaitPredecessor.js";
 

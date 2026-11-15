@@ -1,4 +1,4 @@
-import { cancelledBy } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "./analysisErrorCore.js";
 
 /**
  * Wait for a predecessor operation to finish, or reject when the caller

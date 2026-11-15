@@ -55,7 +55,7 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
-import { awaitPredecessor } from "../application/awaitPredecessor.js";
+import { awaitPredecessor } from "../domain/awaitPredecessor.js";
 
 const BRIDGE_SOURCE = fileURLToPath(
   new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
