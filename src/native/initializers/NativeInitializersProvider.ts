@@ -33,7 +33,7 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { ElfPointerRelocationFailure } from "../metadata/ElfPointerRelocations.js";
 import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";

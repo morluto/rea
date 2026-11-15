@@ -20,7 +20,7 @@ import {
   type BinaryContainer,
   type ImageSection,
   type LoadRegion,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,

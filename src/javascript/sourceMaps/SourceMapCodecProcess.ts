@@ -9,7 +9,7 @@ import {
   isSourceMapFailure,
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import {
   sourceMapCodecInputSchema,

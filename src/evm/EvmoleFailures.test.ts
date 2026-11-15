@@ -84,6 +84,10 @@ it.each([
     expect(result.capturedOutput).toEqual({
       stdout: "selected output",
       stderr: "warning",
+      stdout_bytes: 15,
+      stderr_bytes: 7,
+      exit_code: 0,
+      signal: null,
       truncated: false,
     });
     expect(result.cleanupIncomplete).toBe(false);

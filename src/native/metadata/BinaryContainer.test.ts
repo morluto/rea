@@ -13,7 +13,7 @@ import {
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
   const reader = new BinaryReader(Buffer.alloc(120), true, "elf");

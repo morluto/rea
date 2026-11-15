@@ -26,7 +26,10 @@ import {
 } from "../../domain/firmware/devicetree.js";
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+import {
+  DevicetreeLimitFailure,
+  parseDevicetree,
+} from "../../domain/firmware/devicetreeParser.js";
 
 const OPERATION = "inspect_devicetree";
 

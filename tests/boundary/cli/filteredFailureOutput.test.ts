@@ -10,7 +10,7 @@ import {
   createCliResultOutput,
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 

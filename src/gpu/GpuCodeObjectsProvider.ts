@@ -36,7 +36,7 @@ import {
   artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,

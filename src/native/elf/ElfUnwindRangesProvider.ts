@@ -25,7 +25,7 @@ import {
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
   ElfUnwindSymbolTextFailure,
   parseElfUnwindRanges,

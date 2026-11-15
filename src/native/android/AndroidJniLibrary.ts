@@ -17,7 +17,7 @@ import {
   BinaryResourceFailure,
   isBinaryStringReadLimit,
   createFileMappingIndex,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   readElfPointerRelocationsSteps,
   ElfPointerRelocationFailure,

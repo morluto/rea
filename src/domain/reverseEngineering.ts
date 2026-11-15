@@ -15,7 +15,7 @@ export const DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_REVERSE_COMMAND_OUTPUT_BYTES = Math.floor(
   (bufferConstants.MAX_STRING_LENGTH - 1024 * 1024) / (2 * 6),
 );
-export const reverseCommandOutputBytesSchema = z
+const reverseCommandOutputBytesSchema = z
   .number()
   .int()
   .min(1)
@@ -26,7 +26,7 @@ export const reverseCommandOutputBytesSchema = z
   );
 
 /** Per-call deadline for one-shot objdump and rizin commands. */
-export const reverseCommandTimeoutSchema = timerDurationMsSchema
+const reverseCommandTimeoutSchema = timerDurationMsSchema
   .exactOptional()
   .describe(
     "Wall-clock budget in milliseconds. Target preflight shares one budget across stat and digest, and the one-shot command receives that budget again (default 120000 each). Omitted means 120000. Applies on the next call. Output admission is separately controlled by max_output_bytes; does not raise Ghidra or Hopper startup deadlines or debugger session deadlines.",

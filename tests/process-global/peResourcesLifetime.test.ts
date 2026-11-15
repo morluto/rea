@@ -14,26 +14,29 @@ const parsing = vi.hoisted(() => {
   return { gate, entered: gate(), release: gate() };
 });
 
-vi.mock("../../src/native/pe/PeResourceParser.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../src/native/pe/PeResourceParser.js")
-    >();
-  return {
-    ...original,
-    parsePeResources: async (
-      ...arguments_: Parameters<typeof original.parsePeResources>
-    ) => {
-      parsing.entered.resolve();
-      await parsing.release.promise;
-      return original.parsePeResources(...arguments_);
-    },
-  };
-});
+vi.mock(
+  "../../src/artifacts/pe/PeResourceParser.js",
+  async (importOriginal) => {
+    const original =
+      await importOriginal<
+        typeof import("../../src/artifacts/pe/PeResourceParser.js")
+      >();
+    return {
+      ...original,
+      parsePeResources: async (
+        ...arguments_: Parameters<typeof original.parsePeResources>
+      ) => {
+        parsing.entered.resolve();
+        await parsing.release.promise;
+        return original.parsePeResources(...arguments_);
+      },
+    };
+  },
+);
 
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/artifacts/pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {

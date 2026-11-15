@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
 import type {
@@ -105,7 +106,11 @@ export const evmFailureDialect = (
           reason: failure.cleanupFailure,
           ...(failure.snapshot === null
             ? {}
-            : { captured_output: { ...capturedEvmOutput(failure.snapshot) } }),
+            : {
+                captured_output: {
+                  ...capturedProviderOutput(failure.snapshot),
+                },
+              }),
           previous_error: {
             failure_kind: failure.reason,
             message: failure.message,
@@ -165,7 +170,7 @@ const evmCommandContext = (
     context;
   return {
     operation: OPERATION,
-    capturedOutput: capturedEvmOutput,
+    capturedOutput: capturedProviderOutput,
     timeout: {
       ms: timeoutMs,
       userMessage: `The EVMole worker reached its ${String(timeoutMs)} ms server/provider deadline (timeout_ms). This is not a carrier-read or MCP client deadline. Omitted timeout_ms uses ${String(DEFAULT_EVM_TIMEOUT_MS)} ms.`,
@@ -280,12 +285,3 @@ const configuredWorkerLimits = (workerLimits: EvmWorkerLimits | undefined) =>
         },
         effective_soft_limits: null,
       };
-
-/** Preserve retained worker diagnostics with their observed truncation status. */
-export const capturedEvmOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated === true,
-});

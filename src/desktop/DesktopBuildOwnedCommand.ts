@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
@@ -14,7 +15,6 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
   AnalysisOutputError,
   cancelledBy,
@@ -142,7 +142,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
         ? preparation instanceof DarwinProcessOwnershipInspectionError
           ? preparation.capturedOutput
           : undefined
-        : artifactCommandOutput(command.snapshot);
+        : capturedProviderOutput(command.snapshot);
     const reason = desktopBuildOwnedCommandReason(failure);
     const physical =
       failure instanceof AnalysisError

@@ -347,6 +347,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; new
@@ -416,6 +427,17 @@ checkCounted(
   files,
   /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
   ["src/domain/boundedList.ts"],
+);
+
+// Display text cut with an appended ellipsis comes from ellipsisExcerpt in
+// src/domain/excerpt, which never splits a surrogate pair and marks the result
+// as excerpt text. A hand-written `${text.slice(0, n)}…` does neither.
+checkCounted(
+  "hand-written ellipsis excerpt (use ellipsisExcerpt from src/domain/excerpt)",
+  "ad-hoc-ellipsis",
+  files,
+  /\.slice\(\s*0\s*,[^)]*\)\)?\}(?:…|\.\.\.)/gu,
+  ["src/domain/excerpt.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
@@ -514,7 +536,7 @@ checkCounted(
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
-// kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
+// kind belong to BinaryReader (src/domain/binaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
 const PARSER_FOLDERS = [
   "src/android/",
@@ -564,11 +586,11 @@ const parserFiles = files.filter((file) =>
 // An unchecked Buffer or DataView read throws a bare RangeError past the end,
 // which a catch site cannot tell from a host stack or string limit.
 checkCounted(
-  "raw Buffer or DataView numeric read (use BinaryReader from src/native/metadata/BinaryContainer)",
+  "raw Buffer or DataView numeric read (use BinaryReader from src/domain/binaryContainer)",
   "raw-buffer-read",
   files,
   /\.(?:read(?:Big)?U?Int(?:8|16|32|64)?(?:LE|BE)?|readBigUint64(?:LE|BE)|readUint(?:8|16|32)(?:LE|BE)?|read(?:Float|Double)(?:LE|BE)|get(?:Big)?(?:Uint|Int)(?:8|16|32|64)|getFloat(?:32|64))\(/gu,
-  ["src/native/metadata/BinaryContainer.ts"],
+  ["src/domain/binaryContainer.ts"],
 );
 
 // An input fault is a ParseFailureError; a broken internal assumption is a
