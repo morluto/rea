@@ -7,7 +7,6 @@
   "extract-artifact options.outputRoot relative",
   "inspect-android-class options.mappingPath relative",
   "inspect-android-method options.mappingPath relative",
-  "inspect-electron-fuses args.path empty",
   "recover-javascript-sources args.outputDirectory relative",
   "recover-javascript-sources args.path relative"
 ]
