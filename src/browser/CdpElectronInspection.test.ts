@@ -16,7 +16,11 @@ import {
   captureFrames,
   inspectCdpElectronPage,
 } from "./CdpElectronInspection.js";
-import type { CdpEvent, CdpConnection } from "./CdpConnection.js";
+import {
+  receiveCdpEvent,
+  type CdpEvent,
+  type CdpConnection,
+} from "./CdpConnection.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
@@ -119,7 +123,7 @@ it.each([
     };
     const connection = {
       onEvent: (value: typeof listener) => {
-        listener = value;
+        listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
       send: fakeCdpSend(async (method) => {
@@ -329,7 +333,7 @@ it.each([
     };
     const connection = {
       onEvent: (value: typeof listener) => {
-        listener = value;
+        listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
       send: fakeCdpSend(async (method) => {
@@ -773,7 +777,7 @@ it.each([
     };
     const connection = {
       onEvent: (value: typeof listener) => {
-        listener = value;
+        listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
       send: fakeCdpSend(async (method) => {
@@ -907,7 +911,7 @@ it.each([
     };
     const connection = {
       onEvent: (value: typeof listener) => {
-        listener = value;
+        listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
       send: fakeCdpSend(async (method) => {

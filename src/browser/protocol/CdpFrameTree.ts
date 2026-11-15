@@ -147,6 +147,15 @@ export const cdpResourceTreeReplySchema = z
     };
   });
 
+/**
+ * The URL member the producer reported, before fragment handling; undefined
+ * only when it is missing. Scope checks of the raw report read this.
+ */
+export const reportedFrameUrl = (
+  observation: CdpFrameUrlObservation,
+): string | undefined =>
+  observation.kind === "missing" ? undefined : observation.scopeUrl;
+
 /** The readable URL of an observed frame; malformed or missing identity is undefined. */
 export const observedFrameUrl = (
   observation: CdpFrameUrlObservation,

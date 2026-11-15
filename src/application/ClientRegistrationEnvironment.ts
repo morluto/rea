@@ -1,5 +1,8 @@
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
@@ -142,7 +145,10 @@ export const clientRegistrationEnvironmentDetails = (
     registration,
     client?.registrationProfile,
   );
-  const raw = source.connection?.[key];
+  const field =
+    key === "envs" ? gooseEnvironmentField(source.connection) : ok(key);
+  if (!field.ok) return field;
+  const raw = source.connection?.[field.value];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
@@ -150,7 +156,7 @@ export const clientRegistrationEnvironmentDetails = (
         settings: existing.error.issues.map((issue) => ({
           setting: [
             ...(source.nested ? ["transport"] : []),
-            key,
+            field.value,
             ...issue.path,
           ].join("."),
           constraint:

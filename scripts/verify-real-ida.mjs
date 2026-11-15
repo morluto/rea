@@ -411,7 +411,9 @@ const mcp = async (cliDossier) => {
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";
-  const upstream = createIdaMcpConnection(config, process.env);
+  const upstream = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
   try {
     await upstream.connect();
     if (config.mode === "attached") {

@@ -1,4 +1,5 @@
 import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   fileSnapshotPartialObservationSchema,
   type FileSnapshotPartialObservation,
@@ -225,7 +226,7 @@ export class GhidraClient {
       ...options,
       startupTimeoutMs:
         options.startupTimeoutMs ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-      platform: options.platform ?? process.platform,
+      platform: options.platform ?? HOST_PLATFORM.platform,
       transport: options.transport ?? "unix-socket",
     };
     this.#logger = options.logger ?? silentLogger;

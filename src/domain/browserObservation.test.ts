@@ -9,6 +9,8 @@ import {
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
+import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
 describe("browser observation contracts", () => {
   it.each(["127.0.0.1", "[::1]"])(
@@ -282,6 +284,64 @@ describe("browser observation sensitive surfaces and retention", () => {
     expect(sanitizeEndpointCandidate(malformed)).toBe(malformed);
     expect(sanitizeEndpointCandidate("/api/search?q=rea#results")).toBe(
       "/api/search?q=rea#results",
+    );
+  });
+});
+
+describe("page inspection producer facts", () => {
+  const inspection = () =>
+    createWebPageInspection([
+      {
+        source: "fetch('/api');",
+        scriptKey: `scr_${"a".repeat(64)}`,
+        url: "https://app.example.test/main.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]);
+  const axNode = {
+    node_id: "root",
+    parent_id: null,
+    role: "RootWebArea",
+    name: null,
+    description: null,
+    ignored: false,
+    states: [],
+  };
+  const worker = {
+    target_id: "worker-1",
+    type: "worker",
+    url: "https://app.example.test/worker.js",
+    origin: "https://app.example.test",
+    attached: false,
+    opener_target_id: null,
+    parent_frame_id: null,
+  };
+
+  it.each([
+    ["script frame_id", ["scripts", "items", 0, "frame_id"]],
+    ["accessibility states", ["accessibility", "nodes", 0, "states"]],
+    ["worker opener_target_id", ["workers", 0, "opener_target_id"]],
+    ["worker parent_frame_id", ["workers", 0, "parent_frame_id"]],
+  ] as const)("refuses an inspection without the %s", (_label, path) => {
+    const base = inspection();
+    const input = structuredClone({
+      ...base,
+      accessibility: { ...base.accessibility, nodes: [axNode] },
+      workers: [worker],
+    });
+    expect(webPageInspectionSchema.safeParse(input).success).toBe(true);
+    const parent = path
+      .slice(0, -1)
+      .reduce<unknown>(
+        (value, key) => Reflect.get(value as object, key),
+        input,
+      );
+    Reflect.deleteProperty(parent as object, path.at(-1)!);
+    const parsed = webPageInspectionSchema.safeParse(input);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.path)).toContainEqual(
+      path,
     );
   });
 });

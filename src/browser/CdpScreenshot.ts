@@ -11,10 +11,8 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "./CdpFrameIdentity.js";
+import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
+import { cdpFrameEvent } from "./protocol/CdpEvents.js";
 import {
   observedFrameUrl,
   type CdpFrameTree,
@@ -26,11 +24,8 @@ import {
   unverifiedDocumentLimitation,
 } from "./CdpTargetSession.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
-import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
-import {
-  observeCdpFrameUrl,
-  classifyCdpFrameUrl,
-} from "./CdpCaptureDocuments.js";
+import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
+import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
@@ -329,12 +324,14 @@ interface ScreenshotNavigation {
 }
 
 const observeScreenshotNavigation = (
-  event: CdpEvent,
+  event: CdpReceivedEvent,
   origins: ReadonlySet<string>,
   state: ScreenshotNavigation,
 ): void => {
   const current = state.document.current;
-  const frameFacts = cdpFrameEventFacts(event);
+  const frameEvent = cdpFrameEvent(event);
+  if (frameEvent === undefined) return;
+  const { facts: frameFacts, url: observed } = frameEvent;
   const identity = selectCdpFrameIdentity(frameFacts, current.frameId);
   if (identity.applicability === "not_applicable") return;
   if (identity.identityIssue !== null || identity.parentIssue !== null) {
@@ -357,11 +354,10 @@ const observeScreenshotNavigation = (
   if (identity.selection === "other" && !identity.isRootReplacement) return;
   // A requested navigation does not establish a committed document change.
   // The frame-tree read after capture still verifies the selected URL.
-  if (event.method === "Page.frameRequestedNavigation") return;
-  const observed = observeCdpFrameUrl(frameFacts.source);
+  if (frameFacts.kind === "requested") return;
   const facts = classifyCdpFrameUrl(observed, origins);
   const comparison = state.document.observe(
-    event.method === "Page.frameNavigated"
+    frameFacts.kind === "navigated"
       ? {
           frameId: identity.frameId ?? current.frameId,
           loaderId: frameFacts.loaderId,

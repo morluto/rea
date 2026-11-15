@@ -2,7 +2,7 @@ import { readCdpRequestWillBeSent } from "./CdpNetworkEventFacts.js";
 import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
-import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpReceivedEvent } from "./CdpConnection.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import * as bodyShapes from "./CdpCaptureEventBodyShapes.js";
@@ -138,15 +138,15 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       );
   }
 
-  ingest(event: CdpEvent): void {
+  ingest(event: CdpReceivedEvent): void {
     if (this.document !== undefined) {
       if (event.method.startsWith("Network."))
         this.markDomainEnabled("Network");
       if (event.method.startsWith("Runtime."))
         this.markDomainEnabled("Runtime");
     }
-    if (event.method === "Page.frameNavigated") {
-      handlers.handleFrameNavigated(this, event.params);
+    if (event.registered?.method === "Page.frameNavigated") {
+      handlers.handleFrameNavigated(this, event.registered.payload);
       return;
     }
     const params = recordValue(event.params);

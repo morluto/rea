@@ -259,6 +259,51 @@ describe("CDP connection response correlation", () => {
   });
 });
 
+describe("CDP connection event admission", () => {
+  it("parses a registered event once and shares it with every subscriber", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      const params = {
+        frame: {
+          id: "main",
+          loaderId: "loader-1",
+          url: "https://app.example.test/page",
+        },
+        type: "Navigation",
+      };
+      const subscriber = () =>
+        new Promise<CdpTransportEvent>((resolve) => {
+          connection.onEvent((event) => {
+            if (event.method === "Page.frameNavigated") resolve(event);
+          });
+        });
+      const first = subscriber();
+      const second = subscriber();
+      browser.emitRawMessage(
+        JSON.stringify({ method: "Page.frameNavigated", params }),
+      );
+      const [left, right] = await Promise.all([first, second]);
+
+      expect(left.registered).toMatchObject({
+        method: "Page.frameNavigated",
+        payload: {
+          url: { kind: "observed", url: "https://app.example.test/page" },
+        },
+      });
+      expect(right.registered).toBe(left.registered);
+      expect(left.params).toEqual(params);
+      expect(right.params).toBe(left.params);
+    } finally {
+      await connection.close();
+    }
+  });
+});
+
 describe("CDP command cancellation causes", () => {
   it("preserves a supplied reason when a command starts with an aborted signal", async () => {
     const browser = await startFakeCdpBrowser();
