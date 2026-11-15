@@ -1,14 +1,19 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
+import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../contracts/browserScenarioToolContracts.js";
 import { advertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
-import { toolContract } from "../contracts/toolContracts.js";
+
+const contract = BROWSER_SCENARIO_TOOL_CONTRACTS.find(
+  (candidate) => candidate.name === "capture_browser_scenario",
+);
+if (contract === undefined)
+  throw new Error("capture_browser_scenario is not in its family");
 
 it("advertises the environment variable names a secret may not be given", () => {
   // A `.refine` refuses a name only after the caller sends it. `=` and NUL break
   // the launched process's environment before any action runs, so a client that
   // validates a request against `tools/list` must be able to see that too.
-  const contract = toolContract("capture_browser_scenario");
   const advertised = advertisedInputJsonSchema(contract);
   const validate = new Ajv2020({
     strict: false,
