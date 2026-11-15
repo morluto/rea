@@ -11,7 +11,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
-import { childNodes } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -34,15 +34,38 @@ const directInvocations = new WeakMap<
   WeakMap<t.Function, DirectInvocation | null>
 >();
 
-/** Whether `node` reads its activation's arguments other than by parameters. */
-const readsArgumentsObject = (node: t.Node): boolean => {
-  const pending: t.Node[] = [node];
-  while (pending.length > 0) {
-    const current = pending.pop()!;
-    if (t.isIdentifier(current, { name: "arguments" })) return true;
-    for (const child of childNodes(current)) pending.push(child);
+const functionsNamingArguments = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+/**
+ * Whether `callee`'s subtree names `arguments`, so its activation's arguments
+ * may be read other than by parameters. One program walk marks every
+ * function around each `arguments` identifier (nested arrows included).
+ */
+const namesArguments = (
+  callee: t.Function,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let marked = functionsNamingArguments.get(state);
+  if (marked === undefined) {
+    const functions = new WeakSet<t.Node>();
+    traverseJavaScriptAst(state.program, {
+      enter: (node) => {
+        if (!t.isIdentifier(node, { name: "arguments" })) return;
+        for (
+          let current = state.parentsByNode.get(node);
+          current !== undefined && !functions.has(current);
+          current = state.parentsByNode.get(current)
+        )
+          if (t.isFunction(current)) functions.add(current);
+      },
+    });
+    marked = functions;
+    functionsNamingArguments.set(state, marked);
   }
-  return false;
+  return marked.has(callee);
 };
 
 /** The call that invokes function expression `callee` where it is defined. */
@@ -77,7 +100,7 @@ const computeDirectInvocation = (
       (parameter, index) => !t.isIdentifier(parameter) && index !== rest,
     ) ||
     semanticDirectEvalRecorded(state) ||
-    readsArgumentsObject(callee)
+    namesArguments(callee, state)
   )
     return undefined;
   const spread = call.arguments.findIndex((argument) =>

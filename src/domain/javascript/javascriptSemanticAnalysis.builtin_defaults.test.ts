@@ -811,6 +811,16 @@ it.each([
     keys: [],
     why: "an unknown callee still receives an escape",
   },
+  {
+    source: `try { (function(p){ throw p })(fs); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a value thrown out of the callee reaches its caller's handler",
+  },
+  {
+    source: `try { (function(){ throw fs })(); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a captured value thrown out of a function reaches the caller's handler",
+  },
 ])(
   "tracks direct invocation arguments through parameters: $source ($why)",
   ({ source, keys }) => {

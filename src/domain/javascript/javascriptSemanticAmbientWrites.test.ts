@@ -463,6 +463,11 @@ it.each([
     writes: [],
     escapes: [["global", null]],
   },
+  {
+    source: "(function(g){throw g})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
 ])(
   "tracks arguments of directly invoked functions through parameters: $source",
   ({ source, writes, escapes }) => {
