@@ -1258,7 +1258,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "retains partial native export coverage after an observed match",
       ),
     ),
-    gap("No cancellation regression for the managed workflow provider."),
+    covered(
+      test(
+        "tests/composition/analysis-sessions/managedApplicationGraph.test.ts",
+        "stops resolving retained managed sources when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-elf-notes": inProcess(
     covered(
@@ -1294,7 +1299,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "preserves Harmony archive formats through the public CLI/MCP lifecycle",
       ),
     ),
-    gap("No cancellation regression for the Harmony application provider."),
+    covered(
+      test(
+        "tests/boundary/filesystem/harmony/application.test.ts",
+        "stops resolving retained inventory pages when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-javascript-application": {
     ownership: "process",
@@ -1348,7 +1358,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "traces a contextBridge API through IPC into linked native evidence",
       ),
     ),
-    gap("No cancellation regression for JavaScript application workflows."),
+    covered(
+      test(
+        "tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts",
+        "stops resolving retained version-comparison sources when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-javascript-runtime-reconciliation": inProcess(
     covered(
@@ -1357,7 +1372,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "matches renderer, frame, script bytes, and worker without claiming execution",
       ),
     ),
-    gap("No cancellation regression for JavaScript runtime reconciliation."),
+    covered(
+      test(
+        "src/application/javascript/JavaScriptRuntimeReconciliationService.test.ts",
+        "stops resolving retained reconciliation sources when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-kernel-build-config": inProcess(
     covered(
@@ -1411,8 +1431,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
   ),
   "rea-pe-certificates": inProcess(
-    gap(
-      "Successful certificate tables are covered at the parser and through generated CLI titles, not by a literal-titled provider regression.",
+    covered(
+      test(
+        "tests/acceptance/peCertificatesCli.test.ts",
+        "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
+      ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),
   ),
@@ -1558,7 +1581,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reports the observed header and payload through the public CLI",
       ),
     ),
-    gap("No cancellation regression for the V8 code cache provider."),
+    covered(
+      test(
+        "src/application/v8CodeCache/V8CodeCacheService.test.ts",
+        "retains a completed V8 code cache observation when the caller cancels as the provider completes",
+      ),
+    ),
   ),
   "rea-v8-inspector": {
     ownership: "connection",
@@ -2032,10 +2060,4 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
 export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "rea-apple-application:cleanup",
   "rea-apple-application:retry",
-  "rea-dotnet-workflows:cancel",
-  "rea-harmony-application:cancel",
-  "rea-javascript-application-workflows:cancel",
-  "rea-javascript-runtime-reconciliation:cancel",
-  "rea-pe-certificates:operation",
-  "rea-v8-code-cache:cancel",
 ];
