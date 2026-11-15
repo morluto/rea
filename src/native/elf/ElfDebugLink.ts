@@ -22,8 +22,6 @@ import {
 import {
   BinaryReader,
   type ImageSection,
-} from "../metadata/BinaryContainer.js";
-import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
@@ -381,10 +379,7 @@ interface ObservedBuildId {
 }
 
 const unknownBuildId = (
-  reason:
-    | "note_tables_malformed"
-    | "note_tables_unsupported"
-    | "build_id_exceeds_limit",
+  reason: "note_tables_malformed" | "note_tables_unsupported",
   limitation: string | null,
 ): ObservedBuildId => ({
   buildId: { status: "unknown", hex: null, ids: [], sources: [], reason },
@@ -426,15 +421,15 @@ const observeBuildId = (
   }
   const ids: string[] = [];
   const sources: BuildId["sources"] = [];
+  let oversized = false;
   for (const entry of notes.entries) {
     if (entry.owner !== "GNU" || entry.type !== GNU_BUILD_ID_NOTE_TYPE)
       continue;
     // The parser leaves oversized descriptors undecoded, so judge the raw size.
-    if (entry.descsz > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES)
-      return unknownBuildId(
-        "build_id_exceeds_limit",
-        "A GNU build-id exceeds 256 bytes and was not copied.",
-      );
+    if (entry.descsz > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES) {
+      oversized = true;
+      continue;
+    }
     const hex = entry.gnu?.build_id_hex;
     if (hex === null || hex === undefined || hex.length === 0) continue;
     if (!ids.includes(hex)) ids.push(hex);
@@ -446,6 +441,19 @@ const observeBuildId = (
       descriptor: entry.descriptor.location,
     });
   }
+  // An oversized note leaves the identity unknown, but the bounded ids and
+  // their note locations that were read stay as evidence.
+  if (oversized)
+    return {
+      buildId: {
+        status: "unknown",
+        hex: null,
+        ids,
+        sources,
+        reason: "build_id_exceeds_limit",
+      },
+      limitation: "A GNU build-id exceeds 256 bytes and was not copied.",
+    };
   if (ids.length === 0)
     return {
       buildId: {

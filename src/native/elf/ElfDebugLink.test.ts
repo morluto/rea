@@ -331,6 +331,27 @@ it("refuses an oversized GNU build-id from its raw size without hex-encoding it"
   });
 });
 
+it("keeps readable build-ids beside an oversized GNU build-id note", () => {
+  const notes = Buffer.concat([
+    gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
+    gnuBuildIdNote("cd".repeat(257), true),
+  ]);
+  const report = parse(elfDebugLinkFixture({ notes }));
+  expect(report.build_id).toMatchObject({
+    status: "unknown",
+    hex: null,
+    ids: [FIXTURE_BUILD_ID_HEX],
+    reason: "build_id_exceeds_limit",
+  });
+  expect(report.build_id.sources).toHaveLength(1);
+  expect(report.build_id.sources[0]).toMatchObject({
+    hex: FIXTURE_BUILD_ID_HEX,
+  });
+  expect(report.limitations).toContain(
+    "A GNU build-id exceeds 256 bytes and was not copied.",
+  );
+});
+
 it("keeps debuglink facts when the note table is malformed", () => {
   const report = parse(
     elfDebugLinkFixture({ notes: Buffer.from("not-a-note", "latin1") }),
