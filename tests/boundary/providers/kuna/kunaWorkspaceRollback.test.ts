@@ -20,6 +20,7 @@ import { ProviderCleanupError } from "../../../../src/domain/providerCleanupErro
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { session } from "./kunaSessionFixture.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -230,7 +231,7 @@ it.each([
       roots.mockRestore();
       if (reason instanceof ProviderCleanupError) {
         expect((await commands.prepare()).ok).toBe(false);
-        reason.resolveCleanup();
+        releaseOwnedCleanup(reason);
         // Observe the settled cached failure before admitting a fresh allocation.
         const settled = await commands.prepare();
         expect(settled).toEqual({ ok: false, error: reason });

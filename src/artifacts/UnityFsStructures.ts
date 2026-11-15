@@ -21,6 +21,7 @@ import {
   UNITYFS_SIGNATURE,
   unityFsLayoutFlags,
 } from "../domain/unityfsFormat.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** Per-decode resource limits, not format limits. Plain blocks are streamed. */
 const MAX_BLOCK_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
@@ -49,7 +50,7 @@ class UnityFsDirectoryBudget {
 }
 /** Signature, version, two bounded strings and the fixed tail; reads are bounded. */
 const HEADER_PREFIX_MAX = 8 + 4 + UNITYFS_HEADER_STRING_MAX * 2 + 20;
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 export interface UnityFsHeader {
   readonly formatVersion: number;

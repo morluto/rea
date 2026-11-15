@@ -324,3 +324,51 @@ it("preserves a new cancellation while retrying a previous job's cleanup", async
   expect(starts).toBe(1);
   expect(await owner.release()).toMatchObject({ verified: true });
 });
+
+it("keeps a failure naming several jobs incomplete until each job stops", async () => {
+  const stopped = new Set<string>();
+  const jobs: string[] = [];
+  const computer = {
+    exec: async (argv: readonly string[]) => {
+      const { job } = JSON.parse(argv.slice(5).join("")) as { job: string };
+      if (argv[4] === "run-begin") {
+        jobs.push(job);
+        return response({ started: true });
+      }
+      if (argv[4] === "run-poll") throw new Error("connection failed");
+      if (argv[4] === "run-cancel")
+        return response(
+          stopped.has(job)
+            ? { finished: true, exit_code: 130, stdout_bytes: 0 }
+            : { pending: true },
+        );
+      throw new Error("unexpected command");
+    },
+    homeFiles: async () => new Map(),
+    redacted: (text: string) => text,
+  } as ControlledComputer;
+  const owner = new BuildComputerLongRuns(computer);
+  const run = () =>
+    owner
+      .run(
+        ["export-desktop-application"],
+        options(new AbortController().signal),
+      )
+      .catch((error: unknown) => error);
+  const [first, second] = await Promise.all([run(), run()]);
+  expect(first).toBeInstanceOf(ProviderCleanupError);
+  expect(second).toBeInstanceOf(ProviderCleanupError);
+  const both = await run();
+  if (!(both instanceof ProviderCleanupError))
+    throw new Error("expected retained cleanup");
+  expect(jobs).toHaveLength(2);
+  expect(both.cleanupResources).toHaveLength(2);
+  stopped.add(jobs[0] ?? "");
+  expect(await owner.release()).toMatchObject({ verified: false });
+  expect(first).toMatchObject({ cleanupIncomplete: false });
+  expect(both.cleanupIncomplete).toBe(true);
+  expect(both.cleanupResources).toHaveLength(1);
+  stopped.add(jobs[1] ?? "");
+  expect(await owner.release()).toMatchObject({ verified: true });
+  expect(both.cleanupIncomplete).toBe(false);
+});

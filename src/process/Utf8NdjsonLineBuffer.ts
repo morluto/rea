@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -42,10 +43,7 @@ export class Utf8NdjsonLineBuffer {
   #fragmentBytes = 0;
   #nextNewline = -1;
   readonly #maxLineBytes: () => number;
-  readonly #decoder = new TextDecoder("utf-8", {
-    fatal: true,
-    ignoreBOM: true,
-  });
+  readonly #decoder = strictUtf8Decoder("preserve");
 
   constructor(maxLineBytes: () => number) {
     this.#maxLineBytes = maxLineBytes;

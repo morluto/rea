@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { ok } from "../../src/domain/result.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
-import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
+import {
+  fixtureCommandRepair,
+  ownedFailure,
+  ownedLaunchRefusal,
+  ownedOutput,
+  providerSnapshot,
+} from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
@@ -27,6 +33,7 @@ it.each(["objdump", "rizin"] as const)(
     const profile = {
       executable: process.execPath,
       arguments: ["-e", "process.stdout.write('complete-output')"],
+      repair: fixtureCommandRepair,
       identity: {
         id: "fixture-command",
         name: "Fixture command",
@@ -95,9 +102,13 @@ describe("reverse engineering command services", () => {
         REA_OBJDUMP_COMMAND: "/tools/objdump",
         DEBUGINFOD_URLS: "https://debug.example.invalid",
       },
-      run: async (command, args, options) => {
-        calls.push({ command, args, env: options?.env });
-        return { stdout: "DWARF output\n", stderr: "diagnostic\n" };
+      runOwned: async (spawn) => {
+        calls.push({
+          command: spawn.command,
+          args: spawn.arguments,
+          env: spawn.env,
+        });
+        return ownedOutput("DWARF output\n", "diagnostic\n");
       },
     });
 
@@ -136,9 +147,9 @@ describe("reverse engineering command services", () => {
     );
     let invoked = false;
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         invoked = true;
-        return { stdout: "", stderr: "" };
+        return ownedOutput();
       },
     });
 
@@ -171,15 +182,8 @@ describe("reverse engineering command services", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
-      run: async () => {
-        const failure = Object.assign(new Error("not found"), {
-          stdout: "",
-          stderr: "",
-          code: "ENOENT",
-          signal: null,
-          killed: false,
-        });
-        throw failure;
+      runOwned: async (spawn) => {
+        throw ownedLaunchRefusal("ENOENT", spawn.command);
       },
     });
 
@@ -204,14 +208,15 @@ describe("reverse engineering command services", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
-      run: async () => {
-        throw Object.assign(new Error("max buffer exceeded"), {
-          stdout: "captured partial output",
-          stderr: "",
-          code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-          signal: "SIGTERM",
-          killed: true,
-        });
+      runOwned: async () => {
+        throw ownedFailure(
+          "output-limit",
+          ownedOutput("captured partial output", "", {
+            exitCode: null,
+            signal: "SIGTERM",
+            diagnosticTruncated: true,
+          }),
+        );
       },
     });
 
@@ -263,9 +268,9 @@ it.each([
     const calls: (readonly string[])[] = [];
     const service = new ReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: "/tools/objdump" },
-      run: async (_command, args) => {
-        calls.push(args);
-        return { stdout: "captured stdout", stderr: "captured stderr" };
+      runOwned: async (spawn) => {
+        calls.push(spawn.arguments);
+        return ownedOutput("captured stdout", "captured stderr");
       },
     });
 
@@ -315,9 +320,9 @@ it("uses one selected environment snapshot for provider selection and execution"
   };
   const calls: { command: string; env: NodeJS.ProcessEnv | undefined }[] = [];
   const service = createReverseEngineeringService(selectedEnvironment, {
-    run: async (command, _args, options) => {
-      calls.push({ command, env: options?.env });
-      return { stdout: "headers", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push({ command: spawn.command, env: spawn.env });
+      return ownedOutput("headers");
     },
   });
   selectedEnvironment.REA_RIZIN_COMMAND = "/changed/rizin";
@@ -350,22 +355,18 @@ it("marks signal-terminated provider commands as unknown completion", async () =
   await writeFile(path, "fixture");
   let invocation = 0;
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       invocation += 1;
       if (invocation === 1)
-        throw Object.assign(new Error("provider killed by signal"), {
-          stdout: "partial output",
-          stderr: "",
-          code: null,
-          signal: "SIGKILL",
-          killed: true,
-        });
-      throw Object.assign(new Error("provider exited with status 2"), {
-        stdout: "ordinary partial output",
-        stderr: "ordinary diagnostic",
-        code: 2,
-        signal: null,
-        killed: false,
+        throw ownedFailure(
+          "process",
+          ownedOutput("partial output", "", {
+            exitCode: null,
+            signal: "SIGKILL",
+          }),
+        );
+      return ownedOutput("ordinary partial output", "ordinary diagnostic", {
+        exitCode: 2,
       });
     },
   });
@@ -425,23 +426,13 @@ describe("Rizin command service", () => {
     const calls: { command: string; args: readonly string[] }[] = [];
     const service = new ReverseEngineeringService({
       environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
-      run: async (command, args) => {
-        calls.push({ command, args });
-        const failure = new Error("command exited with status 2") as Error & {
-          stdout: string;
-          stderr: string;
-          code: number;
-          signal: null;
-          killed: boolean;
-        };
-        Object.assign(failure, {
-          stdout: "\u001b[31mpartial data\u001b[0m\n",
-          stderr: "command error",
-          code: 2,
-          signal: null,
-          killed: false,
-        });
-        throw failure;
+      runOwned: async (spawn) => {
+        calls.push({ command: spawn.command, args: spawn.arguments });
+        return ownedOutput(
+          "\u001b[31mpartial data\u001b[0m\n",
+          "command error",
+          { exitCode: 2 },
+        );
       },
     });
 
@@ -506,9 +497,9 @@ describe("Rizin command service", () => {
       await writeFile(path, "fixture");
       let invoked = false;
       const service = new ReverseEngineeringService({
-        run: async () => {
+        runOwned: async () => {
           invoked = true;
-          return { stdout: "", stderr: "" };
+          return ownedOutput();
         },
       });
 
@@ -536,9 +527,9 @@ describe("Rizin command service", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "before");
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         await writeFile(path, "after");
-        return { stdout: "changed", stderr: "" };
+        return ownedOutput("changed");
       },
     });
 
@@ -576,9 +567,9 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
   const calls: (readonly string[])[] = [];
   const service = new ReverseEngineeringService({
     environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
-    run: async (_command, args) => {
-      calls.push(args);
-      return { stdout: "bx lr\n", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push(spawn.arguments);
+      return ownedOutput("bx lr\n");
     },
   });
   const input = {
@@ -640,9 +631,9 @@ it("checks only the spelling and range of decoder and map inputs", async () => {
   await writeFile(path, "image");
   const calls: (readonly string[])[] = [];
   const service = new ReverseEngineeringService({
-    run: async (_command, args) => {
-      calls.push(args);
-      return { stdout: "", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push(spawn.arguments);
+      return ownedOutput();
     },
   });
 
@@ -721,15 +712,14 @@ it("retains partial Evidence when a provider command times out", async () => {
   const path = join(directory, "fixture.bin");
   await writeFile(path, "before");
   const service = new ReverseEngineeringService({
-    run: async () => {
-      const failure = Object.assign(new Error("timeout"), {
-        stdout: "captured before timeout",
-        stderr: "still running",
-        code: "ETIMEDOUT",
-        signal: "SIGTERM",
-        killed: true,
-      });
-      throw failure;
+    runOwned: async () => {
+      throw ownedFailure(
+        "timeout",
+        ownedOutput("captured before timeout", "still running", {
+          exitCode: null,
+          signal: "SIGTERM",
+        }),
+      );
     },
   });
 
@@ -769,7 +759,7 @@ it("retains partial Evidence when a provider command times out", async () => {
 
 it("keeps a selected architecture deadline on Evidence", async () => {
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "elf64-x86-64\n", stderr: "" }),
+    runOwned: async () => ownedOutput("elf64-x86-64\n"),
   });
   const selected = await service.inspectWithObjdump({
     operation: "architectures",
@@ -881,15 +871,12 @@ it("applies a caller-selected one-shot deadline on the next call", async () => {
   await writeFile(path, "before");
   const timeouts: number[] = [];
   const service = new ReverseEngineeringService({
-    run: async (_command, _args, options) => {
-      timeouts.push(options?.timeout ?? -1);
-      throw Object.assign(new Error("timeout"), {
-        stdout: "",
-        stderr: "",
-        code: "ETIMEDOUT",
-        signal: "SIGTERM",
-        killed: true,
-      });
+    runOwned: async (_spawn, limits) => {
+      timeouts.push(limits.timeoutMs ?? -1);
+      throw ownedFailure(
+        "timeout",
+        ownedOutput("", "", { exitCode: null, signal: "SIGTERM" }),
+      );
     },
   });
 
@@ -929,19 +916,17 @@ it("preserves raw byte counts when cancellation rejects invalid UTF-8 output", a
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const controller = new AbortController();
-  const failure = Object.assign(new Error("The operation was aborted"), {
-    stdout: "�",
-    stderr: "€",
-    stdoutBytes: 1,
-    stderrBytes: 3,
-    code: "ABORT_ERR",
-    signal: null,
-    killed: true,
-  });
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       controller.abort();
-      throw failure;
+      throw ownedFailure(
+        "cancelled",
+        ownedOutput("�", "€", {
+          stdout: { text: "�", bytes: 1, observedBytes: 1 },
+          exitCode: null,
+        }),
+        { cancellation: { reason: controller.signal.reason } },
+      );
     },
   });
 
@@ -971,16 +956,22 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
   await writeFile(path, "fixture");
   const controller = new AbortController();
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       controller.abort();
-      return {
-        stdout: "�",
-        stderr: "�",
-        stdoutInvalidUtf8: true,
-        stderrInvalidUtf8: true,
-        stdoutBytes: 1,
-        stderrBytes: 1,
-      };
+      return ownedOutput("", "", {
+        stdout: {
+          text: "�",
+          bytes: 1,
+          observedBytes: 1,
+          invalidUtf8: true,
+        },
+        stderr: {
+          text: "�",
+          bytes: 1,
+          observedBytes: 1,
+          invalidUtf8: true,
+        },
+      });
     },
   });
 
@@ -1022,14 +1013,11 @@ it("marks signal-terminated provider output incomplete", async () => {
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const service = new ReverseEngineeringService({
-    run: async () => {
-      throw Object.assign(new Error("terminated"), {
-        stdout: "partial",
-        stderr: "",
-        code: null,
-        signal: "SIGSEGV",
-        killed: false,
-      });
+    runOwned: async () => {
+      throw ownedFailure(
+        "process",
+        ownedOutput("partial", "", { exitCode: null, signal: "SIGSEGV" }),
+      );
     },
   });
 

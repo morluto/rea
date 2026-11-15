@@ -19,6 +19,7 @@ import {
   isAborted,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -148,27 +149,32 @@ export const withSignatureTarget = async (
       let completed: InspectSignature | undefined;
       const finalized = await runOwned(
         async (): Promise<Result<InspectSignature, AnalysisError>> => {
+          let binding: Result<SignatureTargetBinding, AnalysisError>;
           try {
-            const binding = await bindSignatureTarget(
+            binding = await bindSignatureTarget(
               target,
               join(root.path, basename(target.path)),
               children,
               signal,
             );
-            if (!binding.ok) return binding;
-            try {
-              return await inspect(binding.value);
-            } catch (cause: unknown) {
-              return err(
-                new AnalysisOutputError(
-                  "inspect_signature",
-                  "Native output parsing failed",
-                  { cause },
-                ),
-              );
-            }
           } catch (cause: unknown) {
             return err(signatureReadFailure(target, cause));
+          }
+          if (!binding.ok) return binding;
+          try {
+            return await inspect(binding.value);
+          } catch (cause: unknown) {
+            // A defect is REA's, not the command output's. runOwned releases
+            // the private copy first, reports the defect as this provider's
+            // adapter failure, and joins a failed release to it.
+            if (cause instanceof InternalInvariantError) throw cause;
+            return err(
+              new AnalysisOutputError(
+                "inspect_signature",
+                "Native output parsing failed",
+                { cause },
+              ),
+            );
           }
         },
         {

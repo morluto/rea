@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import { receiveCdpEvent } from "./CdpConnection.js";
 
 afterEach(() => vi.useRealTimers());
@@ -16,7 +17,7 @@ it("starts each domain at its first event or enable acknowledgment, preserving e
     }),
     new Set(["https://example.test"]),
   );
-  events.beginAuthorizedFrame({ frameId: "main" });
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "main" }));
   vi.setSystemTime(new Date("2026-10-24T00:00:01.000Z"));
   events.ingest(
     receiveCdpEvent({

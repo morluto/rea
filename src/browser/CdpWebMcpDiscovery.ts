@@ -15,6 +15,8 @@ import {
 } from "../domain/unicodeCodePointOrder.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
@@ -36,7 +38,6 @@ import {
 } from "./protocol/CdpFrameTree.js";
 import {
   cdpRootDocument,
-  compareCdpDocuments,
   unverifiedDocumentLimitation,
   type CdpDocumentIdentity,
 } from "./CdpTargetSession.js";
@@ -78,7 +79,11 @@ export const discoverWebMcp = async (
     context.sessionId,
     context.signal,
   );
-  const initialFrame = requiredDiscoveryFrame(frameTree, origins);
+  const document = CdpTargetDocument.watch(
+    context,
+    requiredDiscoveryFrame(frameTree, origins),
+  );
+  document.observeTree(frameTree);
   const frameUrls = new Map<string, FrameScopeFrame>();
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
   const frameScope = {
@@ -100,19 +105,28 @@ export const discoverWebMcp = async (
       "WebMCP.enable replay does not establish coverage of pre-existing subframe registrations. Later live registrations are retained, but cannot recover descriptors omitted before attachment.",
     );
   }
-  const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    if (ingestFrameScopeEvent(event, frameScope)) return;
-    ingestWebMcpEvent({
-      event,
-      input: context.input,
-      frames: frameUrls,
-      tools,
-      completeness,
-      transientFrames: frameScope.transientFrames,
-      resolvedTransientFrames: frameScope.resolvedTransientFrames,
-    });
-  });
+  // Only a proven document change removes a subframe's tools. An unknown
+  // comparison keeps them, and the owner keeps that identity unknown, so the
+  // result reports them as unverified (`unverifiedSubframeTools`).
+  document.onFrameDocumentChanged((frameId) =>
+    removeFrameTools(frameId, tools),
+  );
+  const removeListener = onCdpTargetEvent(
+    context.connection,
+    context.sessionId,
+    (event) => {
+      if (ingestFrameScopeEvent(event, frameScope)) return;
+      ingestWebMcpEvent({
+        event,
+        input: context.input,
+        frames: frameUrls,
+        tools,
+        completeness,
+        transientFrames: frameScope.transientFrames,
+        resolvedTransientFrames: frameScope.resolvedTransientFrames,
+      });
+    },
+  );
   let result: ReturnType<typeof buildWebMcpResult>;
   try {
     await context.progress?.report({
@@ -140,12 +154,19 @@ export const discoverWebMcp = async (
         "discover_webmcp_tools",
         context.signal,
       );
-    await assertStableAuthorizedFrame(context, initialFrame, origins, {
+    await assertStableAuthorizedFrame(context, document, origins, {
       completeness,
       limitations,
     });
     if (frameScope.transientFrames.size > 0)
       completeness.attachLimited("webmcp_tools");
+    const unverified = unverifiedSubframeTools(document, frameUrls, tools);
+    if (unverified.length > 0) {
+      completeness.attachLimited("webmcp_tools");
+      limitations.push(
+        `Document identity could not be established for frames ${unverified.join(", ")}: CDP reported no loader for a committed navigation, so tools listed for those frames may belong to an earlier document.`,
+      );
+    }
     result = buildWebMcpResult({
       context,
       frameTree,
@@ -156,6 +177,7 @@ export const discoverWebMcp = async (
     });
   } finally {
     removeListener();
+    document.close();
   }
   await context.progress?.report({
     phase: "browser_observation",
@@ -180,7 +202,6 @@ interface FrameScopeFrame {
   readonly url: string;
   readonly origin: string | null;
   readonly parentFrameId: string | null;
-  readonly loaderId?: string | undefined;
 }
 
 const ingestInitialFrameTree = (
@@ -195,7 +216,7 @@ const ingestInitialFrameTree = (
       invalidateFrameFacts(facts, state);
       continue;
     }
-    handleFrameUpdate(facts, state, true, node.url);
+    handleFrameUpdate(facts, state, node.url);
   }
 };
 
@@ -217,9 +238,8 @@ const ingestFrameScopeEvent = (
       state.resolvedTransientFrames.delete(facts.frameId);
       return true;
     case "navigated":
-      return handleFrameUpdate(facts, state, true, url);
     case "within_document":
-      return handleFrameUpdate(facts, state, false, url);
+      return handleFrameUpdate(facts, state, url);
     default:
       return false;
   }
@@ -240,9 +260,9 @@ const invalidateFrameFacts = (
 const handleFrameUpdate = (
   sourceFacts: CdpFrameFacts,
   state: FrameScopeState,
-  documentCommitted: boolean,
   observation: CdpFrameUrlObservation,
 ): boolean => {
+  const documentCommitted = sourceFacts.kind !== "within_document";
   const frameId = sourceFacts.frameId;
   if (
     sourceFacts.identityIssue !== null ||
@@ -297,17 +317,11 @@ const updateFrameScope = (
     return;
   }
   const previous = state.frames.get(frameId);
-  const loaderId = documentCommitted
-    ? sourceFacts.loaderId
-    : previous?.loaderId;
-  if (hasNewDocument(documentCommitted, previous, facts.url, loaderId))
-    removeFrameTools(frameId, state.tools);
   if (documentCommitted && state.transientFrames.has(frameId))
     state.resolvedTransientFrames.add(frameId);
   state.frames.set(frameId, {
     url: facts.url,
     origin: facts.origin,
-    ...(loaderId === undefined ? {} : { loaderId }),
     parentFrameId:
       sourceFacts.parentRelation === "not_applicable"
         ? (previous?.parentFrameId ?? null)
@@ -315,18 +329,27 @@ const updateFrameScope = (
   });
 };
 
-const hasNewDocument = (
-  documentCommitted: boolean,
-  previous: FrameScopeFrame | undefined,
-  url: string,
-  loaderId: string | undefined,
-): boolean =>
-  documentCommitted &&
-  previous !== undefined &&
-  (previous.url !== url ||
-    (loaderId !== undefined &&
-      previous.loaderId !== undefined &&
-      previous.loaderId !== loaderId));
+/**
+ * Subframes whose tools are kept although a committed navigation could not be
+ * compared with their earlier document (CDP reported no loader). Their tools
+ * stay visible, but may belong to that earlier document.
+ */
+const unverifiedSubframeTools = (
+  document: CdpTargetDocument,
+  frames: ReadonlyMap<string, FrameScopeFrame>,
+  tools: ReadonlyMap<string, WebMcpDiscovery["tools"]["items"][number]>,
+): string[] => {
+  const withTools = new Set([...tools.values()].map((tool) => tool.frame_id));
+  return [...frames]
+    .filter(
+      ([frameId, frame]) =>
+        frame.parentFrameId !== null &&
+        document.frameDocumentUnknown(frameId) &&
+        withTools.has(frameId),
+    )
+    .map(([frameId]) => frameId)
+    .sort(compareUnicodeCodePoints);
+};
 
 const removeFrameTools = (
   frameId: string,
@@ -371,13 +394,13 @@ const removeFrame = (
 };
 
 /**
- * Compare the final document before its scope: a changed document is
- * `target_changed`; a missing loader leaves coverage limited, with the
- * initial document kept as the evidence subject.
+ * Check the final document before its scope: a document changed since
+ * selection is `target_changed`; a missing loader leaves coverage limited,
+ * with the selected document kept as the evidence subject.
  */
 const assertStableAuthorizedFrame = async (
   context: DiscoveryContext,
-  initial: CdpDocumentIdentity,
+  document: CdpTargetDocument,
   origins: ReadonlySet<string>,
   coverage: {
     readonly completeness: CdpCaptureCompleteness;
@@ -390,14 +413,13 @@ const assertStableAuthorizedFrame = async (
     context.sessionId,
     context.signal,
   );
-  const final = discoveryDocument(finalTree);
-  const comparison = compareCdpDocuments(initial, final);
-  if (comparison === "changed")
+  document.observe(discoveryDocument(finalTree));
+  if (document.changed)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   requiredDiscoveryFrame(finalTree, origins);
-  if (comparison === "unknown") {
+  if (document.unknown) {
     coverage.completeness.attachLimited("webmcp_tools");
-    coverage.limitations.push(unverifiedDocumentLimitation(initial));
+    coverage.limitations.push(unverifiedDocumentLimitation(document.selected));
   }
 };
 
@@ -450,53 +472,52 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
     transientFrames,
     resolvedTransientFrames,
   } = options;
+  const registered = event.registered;
   if (
-    event.method !== "WebMCP.toolsAdded" &&
-    event.method !== "WebMCP.toolsRemoved"
+    registered?.method !== "WebMCP.toolsAdded" &&
+    registered?.method !== "WebMCP.toolsRemoved"
   )
     return;
-  const params = recordValue(event.params);
-  if (params === undefined) {
-    completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return;
-  }
-  if (event.method === "WebMCP.toolsRemoved") {
-    for (const removed of webMcpEventTools(params.tools, completeness)) {
+  const declared = webMcpEventTools(registered.payload.tools, completeness);
+  if (registered.method === "WebMCP.toolsRemoved") {
+    for (const removed of declared) {
       const name = cdpStringValue(removed.name);
       const frameId = cdpStringValue(removed.frameId);
       if (name === undefined || frameId === undefined) {
         completeness.exclude("webmcp_tools", "invalid_protocol_value");
         continue;
       }
-      for (const [key, tool] of tools)
-        if (tool.name === name && tool.frame_id === frameId) tools.delete(key);
+      tools.delete(registrationKey(frameId, name));
     }
     return;
   }
-  for (const declared of webMcpEventTools(params.tools, completeness)) {
-    const frameId = cdpStringValue(declared.frameId);
+  for (const tool of declared) {
+    const frameId = cdpStringValue(tool.frameId);
     if (frameId !== undefined && transientFrames.has(frameId)) {
       if (!resolvedTransientFrames.has(frameId)) continue;
       transientFrames.delete(frameId);
       resolvedTransientFrames.delete(frameId);
     }
-    const normalized = normalizeTool(declared, input, frames, completeness);
+    const normalized = normalizeTool(tool, input, frames, completeness);
     if (normalized === undefined) continue;
-    tools.set(normalized.tool_key, normalized);
+    tools.set(
+      registrationKey(normalized.frame_id, normalized.name),
+      normalized,
+    );
   }
 };
 
+/** Each malformed or missing inventory entry is a recorded gap, not an omission. */
 const webMcpEventTools = (
-  value: unknown,
+  tools: readonly (UnknownRecord | undefined)[] | undefined,
   completeness: CdpCaptureCompleteness,
 ): UnknownRecord[] => {
-  if (!Array.isArray(value)) {
+  if (tools === undefined) {
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
     return [];
   }
   const records: UnknownRecord[] = [];
-  for (const item of value) {
-    const record = recordValue(item);
+  for (const record of tools) {
     if (record === undefined) {
       completeness.exclude("webmcp_tools", "invalid_protocol_value");
       continue;
@@ -641,6 +662,14 @@ const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
     limitations,
   };
 };
+
+/**
+ * A frame's registration is identified by its frame and tool name. The frame
+ * URL in `tool_key` describes where it was registered, so a retained
+ * registration and its later update after a URL change share one entry.
+ */
+const registrationKey = (frameId: string, name: string): string =>
+  compositeKey([frameId, name]);
 
 const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   // Registrations without a known admitted frame are excluded above, so the

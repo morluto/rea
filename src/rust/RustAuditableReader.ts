@@ -10,6 +10,7 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
 import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Compressed zlib stream limit. */
 const RUST_SECTION_BYTES = 1024 * 1024;
@@ -225,7 +226,7 @@ const parseDocument = (
 ): z.infer<typeof documentSchema> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch (cause) {
     throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }

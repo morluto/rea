@@ -3,7 +3,7 @@ import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { TextDecoder } from "node:util";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 type Frame =
   | {
@@ -150,7 +150,8 @@ export const decodeCaptureText = (
   format: "HAR" | "qlog",
 ): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // Exported HAR and qlog files may carry a BOM signature (RFC 8259 8.1).
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     throw new CaptureFormatError(
       "malformed",

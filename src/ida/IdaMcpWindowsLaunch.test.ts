@@ -118,6 +118,27 @@ it("reports an uninspectable Windows command candidate with its path and code, n
   expect(String(failure)).not.toContain("was not found");
 });
 
+it("snapshots the child's environment with the injected platform's name semantics", async () => {
+  files.present.add("C:\\Tools\\ida-mcp.EXE");
+  const { launches } = await observeLaunch("ida-mcp", {
+    SystemRoot: "C:\\Windows",
+    Path: "C:\\Tools",
+    PathExt: ".EXE",
+  });
+  // Windows names are case-insensitive: the snapshot folds them to one
+  // spelling on whatever host runs the connection.
+  expect(launches).toEqual([
+    expect.objectContaining({
+      command: "C:\\Tools\\ida-mcp.EXE",
+      hostEnvironment: expect.objectContaining({
+        SYSTEMROOT: "C:\\Windows",
+        PATH: "C:\\Tools",
+        PATHEXT: ".EXE",
+      }),
+    }),
+  ]);
+});
+
 it("closes while a Windows command lookup is stalled on an unreachable PATH directory", async () => {
   files.stalled.add("\\\\offline\\tools\\ida-mcp.EXE");
   const launches: unknown[] = [];

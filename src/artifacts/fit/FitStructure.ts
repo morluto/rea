@@ -21,6 +21,7 @@ import {
 } from "../../firmware/devicetree/DevicetreeParser.js";
 import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
 const FIT_MAX_IMAGES = 1024;
@@ -115,7 +116,7 @@ const valueOf = (fdt: Buffer, property: FitProperty): Buffer =>
   fdt.subarray(property.offset, property.offset + property.bytes);
 
 // A property value is data: a leading U+FEFF is not a file encoding signature.
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const nulCount = (raw: Buffer): number => {
   let count = 0;
   for (const byte of raw) if (byte === 0) count += 1;

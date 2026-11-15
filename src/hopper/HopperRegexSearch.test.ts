@@ -19,6 +19,7 @@ import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const regexMatch = vi.hoisted(() => ({
   afterSettle: undefined as (() => void) | undefined,
@@ -252,7 +253,7 @@ it.each(
           stage: "analysis",
         });
       expect(original.operation).toBe(inventory);
-      original.resolveCleanup();
+      releaseOwnedCleanup(original);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
       await search.close();

@@ -38,7 +38,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -422,11 +422,7 @@ const requireEngineArchive = async (
                 },
               );
       if (primary === undefined) throw cleanup;
-      throw analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies([primary, cleanup]);
+      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     }
     if (cause instanceof ArtifactFileCancelled) {
       throw archiveCancellation(cause.fileCancellation.reason, options, {

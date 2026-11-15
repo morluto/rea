@@ -1,4 +1,3 @@
-import { readCdpRequestWillBeSent } from "./CdpNetworkEventFacts.js";
 import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
@@ -10,11 +9,7 @@ import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import { recordValue } from "./CdpCaptureValues.js";
-import {
-  CdpDocumentTracker,
-  type CdpDocumentIdentity,
-} from "./CdpTargetSession.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -59,7 +54,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   ]);
   originViolation = false;
   unknownRootIdentity = false;
-  document: CdpDocumentTracker | undefined = undefined;
+  document: CdpTargetDocument | undefined = undefined;
 
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -69,8 +64,16 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.allowedOrigins = allowedOrigins;
   }
 
-  beginAuthorizedFrame(document: CdpDocumentIdentity): void {
-    this.document = new CdpDocumentTracker(document);
+  /**
+   * Start capture for the authorized document. Root navigations reach the
+   * capture through the target session's document owner, not as raw events.
+   */
+  beginAuthorizedFrame(document: CdpTargetDocument): void {
+    this.document?.close();
+    this.document = document;
+    document.onNavigation((navigation) =>
+      handlers.handleRootNavigation(this, navigation),
+    );
     this.#coverageStarts.clear();
     this.originViolation = false;
     this.unknownRootIdentity = false;
@@ -140,32 +143,25 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
 
   ingest(event: CdpReceivedEvent): void {
     if (this.document !== undefined) {
-      if (event.method.startsWith("Network."))
-        this.markDomainEnabled("Network");
-      if (event.method.startsWith("Runtime."))
-        this.markDomainEnabled("Runtime");
+      if (event.domain === "Network" || event.domain === "Runtime")
+        this.markDomainEnabled(event.domain);
     }
-    if (event.registered?.method === "Page.frameNavigated") {
-      handlers.handleFrameNavigated(this, event.registered.payload);
-      return;
-    }
-    const params = recordValue(event.params);
-    if (params === undefined) return;
-    switch (event.method) {
+    const registered = event.registered;
+    switch (registered?.method) {
       case "Runtime.executionContextCreated":
-        handlers.handleExecutionContextCreated(this, params);
-        break;
+        handlers.handleExecutionContextCreated(this, registered.payload.facts);
+        return;
       case "Runtime.executionContextDestroyed":
-        handlers.handleExecutionContextDestroyed(this, params);
-        break;
-      case "Runtime.executionContextsCleared":
-        this.executionContextFrames.clear();
-        break;
+        handlers.handleExecutionContextDestroyed(this, registered.payload);
+        return;
       case "Debugger.scriptParsed":
-        handlers.handleScriptParsed(this, params);
-        break;
+        handlers.handleScriptParsed(this, registered.payload.facts);
+        return;
+      case "Runtime.consoleAPICalled":
+        handlers.handleConsoleAPICalled(this, registered.payload);
+        return;
       case "Network.requestWillBeSent": {
-        const facts = readCdpRequestWillBeSent(params);
+        const facts = registered.payload.facts;
         const requestId = facts.requestId;
         const previous =
           requestId === null ? undefined : this.network.get(requestId);
@@ -175,26 +171,26 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
             requestId,
             (this.#networkRequestOccurrences.get(requestId) ?? 0) + 1,
           );
-        break;
+        return;
       }
       case "Network.responseReceived":
-        handlers.handleResponseReceived(this, params);
-        break;
+        handlers.handleResponseReceived(this, registered.payload);
+        return;
       case "Network.loadingFinished":
-        handlers.handleLoadingFinished(this, params);
-        break;
-      case "Runtime.consoleAPICalled":
-        handlers.handleConsoleAPICalled(this, params);
-        break;
+        handlers.handleLoadingFinished(this, registered.payload);
+        return;
       case "Network.webSocketCreated":
-        handlers.handleWebSocketCreated(this, params);
-        break;
+        handlers.handleWebSocketCreated(this, registered.payload);
+        return;
       case "Network.webSocketFrameSent":
-        handlers.handleWebSocketFrame(this, params, "sent");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "sent");
+        return;
       case "Network.webSocketFrameReceived":
-        handlers.handleWebSocketFrame(this, params, "received");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "received");
+        return;
+      case "Runtime.executionContextsCleared":
+        this.executionContextFrames.clear();
+        return;
     }
   }
 

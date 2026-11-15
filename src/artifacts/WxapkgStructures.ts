@@ -15,6 +15,7 @@ import {
   type WxapkgIndexLayout,
   type WxapkgIndexLayoutFailure,
 } from "../domain/wxapkgFormat.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** The member table is a flat name/offset/size row list. */
 const MAX_TABLE_BYTES = 16 * 1024 * 1024;
@@ -25,7 +26,7 @@ const MAX_MEMBER_NAME_BYTES = 64 * 1024;
 /** Detecting prefix covers the fixed header, table head and encrypted magic. */
 const HEADER_PREFIX_BYTES = 64;
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 export const wxapkgFormatFailure = (detail: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("format", `wxapkg is malformed: ${detail}`);
