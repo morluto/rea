@@ -305,12 +305,15 @@ checkCounted(
 
 // A per-format failure class restates the ParseFailure algebra under its own
 // spelling and needs its own catch-site translation; parsers throw a
-// ParseFailureError (or a subclass of it) instead.
+// ParseFailureError instead. A subclass of ParseFailureError (such as
+// CaptureFormatError) keeps the shared kind and is not counted. The name
+// pattern covers format, parse, document, source, decode and syntax failures
+// built on any of the host's general error classes.
 checkCounted(
-  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "per-format failure class extending a host error (throw a ParseFailureError from src/domain/parseFailure)",
   "parser-format-failure-class",
   files,
-  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  /class \w*(?:Format|Parse|Document|Source|Decode|Decoding|Encoding|Syntax)(?:Failure|Error|Issue) extends (?:Error|TypeError|RangeError|SyntaxError)\b/gu,
   ["src/domain/parseFailure.ts"],
 );
 
