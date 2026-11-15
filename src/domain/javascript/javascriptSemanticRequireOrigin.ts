@@ -8,6 +8,10 @@ import {
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
+import {
+  createGlobalPathReader,
+  type GlobalReferenceRead,
+} from "./javascriptSemanticAmbientWrites.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
@@ -44,7 +48,6 @@ import {
 } from "./javascriptModuleInterop.js";
 import {
   ambientBindingMayObserveWriteAt,
-  ambientReplacementPrecedes,
   ambientPathMayObserveAt,
   semanticEffectMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
@@ -1624,23 +1627,32 @@ export const semanticOriginalGlobalProcessAt = (
   !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
   !ambientBindingMayObserveWriteAt(state, node, "process");
 
+const globalProcessReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  (site: t.Node) => GlobalReferenceRead
+>();
+
 /**
- * Whether a write or escape through the global process object at this source site may
- * still reach the original object: no replacement with a fresh object is
- * proven to run before it. Reads that need a definite identity ask
- * `semanticOriginalGlobalProcessAt` instead.
+ * Whether a write or escape through the global process object at this source
+ * site may still reach the original object: the global path reader does not
+ * prove a replacement with a fresh object before it. Reads that need a
+ * definite identity ask `semanticOriginalGlobalProcessAt` instead.
  */
 export const semanticEffectMayReachOriginalGlobalProcess = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  !ambientReplacementPrecedes(
-    state,
-    node,
-    ["global", "process"],
-    "process",
-    (value) => hasFreshProjectedReceiver(value, [], state),
+): boolean => {
+  let read = globalProcessReaders.get(state);
+  if (read === undefined) {
+    read = createGlobalPathReader(state, ["process"]);
+    globalProcessReaders.set(state, read);
+  }
+  const fact = read(node);
+  return (
+    fact.status !== "replacement" ||
+    !hasFreshProjectedReceiver(fact.value, [], state)
   );
+};
 
 /**
  * What a global process reference is used for. A `"read"` needs the original

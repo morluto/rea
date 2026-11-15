@@ -186,6 +186,16 @@ it.each([
     keys: ["kept"],
     why: "a fresh qualified replacement always runs before the write",
   },
+  {
+    source: `const original = process; process = {}; if (ready) process = original; process.env = {};`,
+    keys: [],
+    why: "a later conditional write may restore the original before the write",
+  },
+  {
+    source: `const host = ready ? globalThis : {}; host.process = {}; process.env = {};`,
+    keys: [],
+    why: "a write through a possible alias of the global object may not replace process",
+  },
 ])(
   "attributes process writes that may reach the original: $source ($why)",
   ({ source, keys }) => {
