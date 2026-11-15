@@ -82,7 +82,7 @@ describe("NativeAOT indexed MethodTable closure", () => {
 });
 
 describe("NativeAOT RTR directory regions", () => {
-  it("reads neither of two FROZEN_OBJECT_REGION sections and says so", () => {
+  it("reads neither of two FROZEN_OBJECT_REGION sections and reports partial", () => {
     const bytes = nativeAotPeFixture();
     const header = 0x600;
     // Declare a third RTR row repeating the frozen region row.
@@ -94,7 +94,9 @@ describe("NativeAOT RTR directory regions", () => {
       SUMMARY_BUDGET,
     );
     expect(parsed.summary).toMatchObject({
-      status: "complete",
+      status: "partial",
+      reason: { code: "ambiguous_frozen_object_region" },
+      truncated: false,
       method_tables: 3,
       frozen_strings: [],
       coverage: { frozen_string_candidates: 0 },

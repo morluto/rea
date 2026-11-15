@@ -1576,7 +1576,7 @@ export const parseNativeAotPe = (
   }
   const discovered = discoverTables(image, overlay, budget);
   // Repeated regions are ambiguous: the scan reads neither rather than
-  // choosing one by position.
+  // choosing one by position, and the report is partial.
   const frozenRegion = uniqueKeyed(byType, FROZEN_OBJECT_REGION);
   const frozen = frozenRegion.ok ? frozenRegion.value : undefined;
   const isRecoveredStringTable = (address: bigint): boolean => {
@@ -1622,9 +1622,11 @@ export const parseNativeAotPe = (
         }
       : discovered.tables.includedCount === 0
         ? { code: "no_system_object_root", ...hydrationAttachment }
-        : hydration === null
-          ? null
-          : nativeAotHydrationReason(hydration);
+        : hydration !== null
+          ? nativeAotHydrationReason(hydration)
+          : frozenRegion.ok
+            ? null
+            : { code: "ambiguous_frozen_object_region" };
   const reportLimitations = [
     "Only x64 PE32+ with RTR 9.1 is supported.",
     "No Ghidra database types, labels, functions, or bytes are created or changed.",
@@ -1813,8 +1815,7 @@ export const parseNativeAotPe = (
     (typesOmitted > 0 || frozenStringsOmitted > 0
       ? "response-budget"
       : undefined);
-  const partial =
-    truncated || hydration !== null || discovered.tables.includedCount === 0;
+  const partial = truncated || discoveryReason !== null;
   const publishedReason: NativeAotReason = discoveryReason ?? {
     code: "truncated",
     truncation_reason: truncationReason ?? "response-budget",
