@@ -7,6 +7,7 @@ import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  serializeCountedBaselines,
 } from "./counted-baseline.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
@@ -270,7 +271,8 @@ const baselinePath = join(
   root,
   "scripts/verify/architecture-guard-baselines.json",
 );
-const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const baselineText = await readFile(baselinePath, "utf8");
+const baselines = JSON.parse(baselineText);
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
@@ -661,19 +663,19 @@ checkCounted(
   [],
 );
 
-if (baselinesShrunk) {
-  const sorted = Object.fromEntries(
-    Object.entries(baselines).map(([key, counts]) => [
-      key,
-      Object.fromEntries(
-        Object.entries(counts).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ]),
-  );
-  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
+const canonicalBaselines = serializeCountedBaselines(baselines);
+if (canonicalBaselines !== baselineText) {
+  if (shrinkBaselines) {
+    await writeFile(baselinePath, canonicalBaselines);
+    console.log(
+      baselinesShrunk
+        ? `Lowered counted baselines in ${relative(root, baselinePath)}.`
+        : `Rewrote ${relative(root, baselinePath)} in its sorted form.`,
+    );
+  } else
+    failures.push(
+      `${relative(root, baselinePath)} is not in its written form (each guard's paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+    );
 }
 
 if (failures.length > 0) {

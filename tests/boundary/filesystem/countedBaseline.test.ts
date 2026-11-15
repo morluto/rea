@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  serializeCountedBaselines,
 } from "../../../scripts/verify/counted-baseline.mjs";
 
 it("rejects a file that gains copies or is missing from the baseline", () => {
@@ -89,4 +90,21 @@ it("removes a key when shrinking removes its last recorded count", () => {
   const compared = compareCountedBaseline(new Map(), gone, true);
   expect(recordLoweredBaseline(baselines, "gone", compared)).toBe(true);
   expect(baselines).toEqual({ kept: { "src/b.ts": 2 } });
+});
+
+it("writes each guard's paths in code-unit order and keeps guard order", () => {
+  const baselines = {
+    later: { "src/b.ts": 1, "src/Upper.ts": 2, "src/a.ts": 3 },
+    earlier: {},
+  };
+  expect(serializeCountedBaselines(baselines)).toBe(
+    `${JSON.stringify(
+      {
+        later: { "src/Upper.ts": 2, "src/a.ts": 3, "src/b.ts": 1 },
+        earlier: {},
+      },
+      null,
+      2,
+    )}\n`,
+  );
 });

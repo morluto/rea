@@ -36,3 +36,24 @@ export const recordLoweredBaseline = (baselines, key, compared) => {
   else baselines[key] = compared.baseline;
   return true;
 };
+
+const byCodeUnit = ([left], [right]) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * The baseline file's one written form: guard keys keep their order and each
+ * guard's paths are sorted by code unit. The guard rejects a file in any other
+ * form, so a hand edit or merge cannot leave an order the next
+ * `--shrink-baselines` would silently rewrite in an unrelated change.
+ */
+export const serializeCountedBaselines = (baselines) =>
+  `${JSON.stringify(
+    Object.fromEntries(
+      Object.entries(baselines).map(([key, counts]) => [
+        key,
+        Object.fromEntries(Object.entries(counts).sort(byCodeUnit)),
+      ]),
+    ),
+    null,
+    2,
+  )}\n`;
