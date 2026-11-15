@@ -1,6 +1,5 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   contractNamed,
   type CliSessionTarget,
@@ -69,11 +68,7 @@ const registerInventoryCommands = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  const run = runOnSessionTarget(
-    runProviderAnalysis,
-    logger,
-    ARTIFACT_GRAPH_PROVIDER.id,
-  );
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
   registerContractCommand(
     cli,
     logger,
