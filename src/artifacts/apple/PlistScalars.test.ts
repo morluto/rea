@@ -323,6 +323,14 @@ describe("binary plist UID widths", () => {
       }),
     );
 
+    // An eight-byte string length with only two bytes before the table.
+    const cutLength = Buffer.alloc(50);
+    cutLength.set([0x5f, 0x13, 0, 0], 8);
+    binaryPlistObjectTable(cutLength, [8], 12);
+    expect(() => estimateBinaryPlistExpansion(cutLength, 1024)).toThrow(
+      expect.objectContaining({ kind: "truncated" }),
+    );
+
     const inexact = binaryPlistWithUid(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
     expect(() => estimateBinaryPlistExpansion(inexact, 1024)).toThrow(
       "binary plist UID value 9007199254740992",

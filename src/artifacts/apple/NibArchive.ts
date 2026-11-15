@@ -70,11 +70,10 @@ export const decodeNibArchive = (
   bytes: Buffer,
   budget = new InterfaceBuilderDecodeBudget(DEFAULT_DECODE_BUDGET_BYTES),
 ): NibArchiveDocument => {
-  if (bytes.length < 50 || !hasNibArchiveSignature(bytes))
-    throw malformedInput(
-      "nib-archive",
-      "NIBArchive magic or header is invalid",
-    );
+  if (!hasNibArchiveSignature(bytes))
+    throw malformedInput("nib-archive", "NIBArchive magic is invalid");
+  if (bytes.length < 50)
+    throw truncatedInput("nib-archive", "NIBArchive header is truncated");
 
   const formatVersion = readU32(bytes, 10);
   const coderVersion = readU32(bytes, 14);

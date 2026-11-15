@@ -471,8 +471,18 @@ export const estimateBinaryPlistExpansion = (
       const width = 1 << (extended & 15);
       size = readInteger(cursor + 1, width);
       cursor += 1 + width;
+      if (cursor > objectsEnd)
+        throw truncatedInput(
+          "plist",
+          "binary plist extended object size is truncated",
+        );
+      if (size < 0)
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
     }
-    if (size < 0 || cursor + size * (type === 6 ? 2 : 1) > objectsEnd)
+    if (cursor + size * (type === 6 ? 2 : 1) > objectsEnd)
       throw truncatedInput("plist", "binary plist scalar object is truncated");
     let key = "";
     for (let index = 0; index < size; index += 1)
@@ -593,7 +603,14 @@ export const estimateBinaryPlistExpansion = (
       const integerSize = 1 << (extMarker & 0x0f);
       size = readInteger(cursor, integerSize);
       cursor += integerSize;
-      if (size < 0 || cursor > objectsEnd)
+      // The length record crossing the object area is missing bytes; a
+      // complete record whose value is not a safe length is invalid.
+      if (cursor > objectsEnd)
+        throw truncatedInput(
+          "plist",
+          "binary plist extended object size is truncated",
+        );
+      if (size < 0)
         throw malformedInput(
           "plist",
           "binary plist extended object size is invalid",

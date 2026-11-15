@@ -236,4 +236,6 @@ it("classifies NIBArchive input faults through ParseFailure", () => {
   expect(failureOf(valid.subarray(0, valid.length - 1))).toMatchObject({
     kind: "truncated",
   });
+  // Intact magic with a header cut short is missing bytes, not bad bytes.
+  expect(failureOf(valid.subarray(0, 20))).toMatchObject({ kind: "truncated" });
 });
