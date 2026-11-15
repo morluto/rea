@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { DEB_PACKAGE_TOOL_CONTRACTS } from "../../src/contracts/deb/debPackageToolContracts.js";
 import { debPackageSchema } from "../../src/domain/deb/debPackage.js";
 import {
   debPackageFixture,
@@ -13,9 +13,14 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const completeDebEvidenceSchema = toolContract(
-  "inspect_deb_package",
-).outputSchema.safeExtend({ normalized_result: debPackageSchema });
+const debContract = DEB_PACKAGE_TOOL_CONTRACTS.find(
+  (item) => item.name === "inspect_deb_package",
+);
+if (debContract === undefined)
+  throw new Error("Missing inspect_deb_package contract");
+const completeDebEvidenceSchema = debContract.outputSchema.safeExtend({
+  normalized_result: debPackageSchema,
+});
 
 cliTest(
   "inspects a fixture .deb without installing it or running maintainer scripts",

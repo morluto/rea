@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { DEB_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/deb/debPackageToolContracts.js";
 import { debPackageSchema } from "../../../src/domain/deb/debPackage.js";
 import {
   debPackageFixture,
@@ -15,9 +15,14 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const completeDebEvidenceSchema = toolContract(
-  "inspect_deb_package",
-).outputSchema.safeExtend({ normalized_result: debPackageSchema });
+const debContract = DEB_PACKAGE_TOOL_CONTRACTS.find(
+  (item) => item.name === "inspect_deb_package",
+);
+if (debContract === undefined)
+  throw new Error("Missing inspect_deb_package contract");
+const completeDebEvidenceSchema = debContract.outputSchema.safeExtend({
+  normalized_result: debPackageSchema,
+});
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
