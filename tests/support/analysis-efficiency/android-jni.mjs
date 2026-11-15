@@ -1,4 +1,5 @@
 /** Public SDK/stdio JNI investigation, checked against independent NDK/DEX facts. */
+import { selectedOutputContracts } from "./selected-output-contracts.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -721,10 +722,8 @@ const { StdioClientTransport } = await import(
 const { Ajv2020 } = await import(
   pathToFileURL(require.resolve("ajv/dist/2020.js"))
 );
-// Validate replies against the selected revision's contracts, not the harness checkout's.
-const { withCanonicalOutputSchema } = await import(
-  pathToFileURL(join(repo, "scripts/lib/canonical-output-schema.mjs")).href
-);
+const outputContracts = await selectedOutputContracts(repo);
+const { withCanonicalOutputSchema } = outputContracts;
 const environment = {
   PATH: process.env.PATH,
   JAVA_HOME: resolve(values["java-home"]),
@@ -741,7 +740,8 @@ const environment = {
         ? "android,session"
         : "android",
   REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-  // The run validates each result against its advertised output schema.
+  // The run validates each result against the selected revision's output contract.
+  ...outputContracts.environment,
 };
 const transport = new StdioClientTransport({
   command: process.execPath,
