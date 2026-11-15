@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import * as t from "@babel/types";
 import { createHash } from "node:crypto";
 import { decodeValidatedSourceMapLeaves } from "../javascript/sourceMaps/DecodedSourceMap.js";
@@ -935,9 +936,7 @@ const readBoundedText = async (
   };
   try {
     return {
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        joined,
-      ),
+      text: decodeStrictUtf8(joined, "preserve"),
       responseIdentity,
     };
   } catch {

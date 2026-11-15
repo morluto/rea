@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
   isJson,
   mediaTypeEssence,
@@ -235,11 +236,7 @@ export const captureNetworkBody = async (
     if (
       jsonBody &&
       !retained.equals(sourceBody) &&
-      !safeParseJson(
-        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-          retained,
-        ),
-      ).ok
+      !safeParseJson(decodeStrictUtf8(retained, "preserve")).ok
     )
       return {
         state: "unavailable",
