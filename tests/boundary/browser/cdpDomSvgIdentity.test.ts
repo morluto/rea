@@ -94,7 +94,7 @@ describe("CDP SVG identity at the snapshot boundary", () => {
     ]);
   });
 
-  it.each(["removed", "mismatched"])(
+  it.each(["removed", "mismatched", "malformed"])(
     "retains partial metadata when a candidate is %s",
     async (failure) => {
       const browser = await startBrowser({
@@ -116,7 +116,18 @@ describe("CDP SVG identity at the snapshot boundary", () => {
                   isSVG: true,
                 },
               }
-            : undefined,
+            : failure === "malformed" &&
+                command.method === "DOM.describeNode" &&
+                command.params.backendNodeId === 3
+              ? {
+                  node: {
+                    backendNodeId: 3,
+                    nodeType: 1,
+                    nodeName: "a",
+                    isSVG: "true",
+                  },
+                }
+              : undefined,
       });
       const result = await inspect(browser);
       if (!result.ok) throw result.error;

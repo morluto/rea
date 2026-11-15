@@ -13,7 +13,7 @@ it.each(["decode_signal_recording", "inspect_signal_decoders"])(
   "advertises valid target-free schemas and missing-tool diagnostics: %s",
   async (name) => {
     const harness = await createApplicationMcpHarness({
-      serverOptions: { environment: {} },
+      serverOptions: { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" } },
     });
     onTestFinished(harness.close);
     const tool = (await harness.client.listTools()).tools.find(

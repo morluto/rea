@@ -714,7 +714,7 @@ describe("CutterBridgeClient: scenario group 4", () => {
     directory = await mkdtemp(join(tmpdir(), "rea-cutter-command-responses-"));
     const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
     const token = "synthetic-cutter-bridge-token-for-test";
-    let response: unknown = { ok: true };
+    let response: unknown = { ok: true, execution_state: "complete" };
     server = authenticatedServer(token, sessionId, (request, respond) =>
       respond(
         request.kind === "ack" ? { ok: true, acknowledged: true } : response,
@@ -797,10 +797,10 @@ describe("CutterBridgeClient: scenario group 4", () => {
         },
       ],
     });
+    // Omitting execution_state never declares the command complete.
     response = { ok: true, unexpected: true };
-    // Valid schema responses can omit all optional fields; the fallback result is nullable.
     await expect(run()).resolves.toMatchObject({
-      executionState: "complete",
+      executionState: "unknown",
       error: null,
       message: null,
     });
@@ -877,7 +877,11 @@ describe("CutterBridgeClient: scenario group 5", () => {
           return;
         }
         if (malformed) respond("{", { raw: true });
-        else respond({ ok: true, output: "split 雪 ☃️" }, { fragment: true });
+        else
+          respond(
+            { ok: true, execution_state: "complete", output: "split 雪 ☃️" },
+            { fragment: true },
+          );
       },
     );
     const port = await listen(server);
