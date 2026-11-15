@@ -30,7 +30,7 @@ import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

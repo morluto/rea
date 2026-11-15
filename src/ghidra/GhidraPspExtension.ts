@@ -16,7 +16,7 @@ import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
 
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
   assertArtifactReadActive,

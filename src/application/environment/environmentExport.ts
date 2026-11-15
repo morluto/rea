@@ -19,7 +19,7 @@ import {
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";

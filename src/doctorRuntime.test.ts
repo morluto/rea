@@ -22,7 +22,7 @@ import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
-import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "./resources/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import * as configurationFiles from "./application/ClientConfigurationFiles.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";

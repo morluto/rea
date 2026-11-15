@@ -11,7 +11,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";

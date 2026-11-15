@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { processWorkerCleanup } from "../../process/OwnedWorkerRuntime.js";

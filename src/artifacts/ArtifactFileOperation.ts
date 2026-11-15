@@ -21,7 +21,7 @@ import type {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "./AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 
 /** Artifact projection plus the exact descriptor owner and physical operation outcome. */

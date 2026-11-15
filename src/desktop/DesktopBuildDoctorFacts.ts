@@ -28,7 +28,7 @@ import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.j
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,

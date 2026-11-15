@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";

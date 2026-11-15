@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { describe, expect, it } from "vitest";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {

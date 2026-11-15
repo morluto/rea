@@ -20,7 +20,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,

@@ -17,7 +17,7 @@ import {
   AnalysisOutputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   primaryAnalysisError,

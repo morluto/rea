@@ -48,7 +48,7 @@ import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import {
   type AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import { StagedOutputError } from "../filesystem/StagedOutputError.js";

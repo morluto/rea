@@ -6,7 +6,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import type {

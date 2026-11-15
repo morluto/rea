@@ -20,7 +20,7 @@ import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";

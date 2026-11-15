@@ -13,7 +13,7 @@ import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";

@@ -22,7 +22,7 @@ import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
 } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {

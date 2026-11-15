@@ -13,7 +13,7 @@ import {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 import { z } from "zod";
 

@@ -65,7 +65,7 @@ import {
 } from "./CommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";

@@ -1,5 +1,5 @@
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 
 /** Test-scoped real inspection leases; every retained owner is closed by the fixture. */

@@ -9,7 +9,7 @@ import type {
 import { writeTextParts } from "../application/JsonFiles.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

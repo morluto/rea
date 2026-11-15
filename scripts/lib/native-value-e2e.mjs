@@ -8,7 +8,7 @@ import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
 
 import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../dist/domain/evidence.js";

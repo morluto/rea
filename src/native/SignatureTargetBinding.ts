@@ -32,7 +32,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";

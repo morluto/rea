@@ -26,7 +26,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";

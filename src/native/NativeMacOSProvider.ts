@@ -46,7 +46,7 @@ import { observeNativeCalls } from "./NativeCallObservation.js";
 import { realpath, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 import { z } from "zod";

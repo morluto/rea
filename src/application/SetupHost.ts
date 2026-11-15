@@ -65,7 +65,7 @@ import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { bindRegularFileCleanup } from "./RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";

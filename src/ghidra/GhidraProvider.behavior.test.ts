@@ -29,7 +29,7 @@ import {
 } from "../process/ProcessOutputTokenScanner.js";
 import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   AnalysisError,
   primaryAnalysisError,

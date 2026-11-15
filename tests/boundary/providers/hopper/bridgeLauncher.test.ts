@@ -22,7 +22,7 @@ import { err, ok } from "../../../../src/domain/result.js";
 import { HopperReleaseError } from "../../../../src/application/HopperReleaseFeed.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";

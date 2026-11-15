@@ -32,7 +32,7 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
 } from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
