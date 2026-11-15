@@ -234,6 +234,16 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// Whether an abort error is a signal's own cancellation is decided by the
+// signal owner; a name comparison alone accepts another signal's abort.
+checkCounted(
+  "AbortError name comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  "abort-error-name",
+  files,
+  /\.name\s*===\s*["']AbortError["']/gu,
+  ["src/process/SignalAbort.ts"],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can
