@@ -39,8 +39,12 @@ import {
   readSliceCommandTable,
   type ReadAt,
 } from "../../domain/apple/machoLoadCommandReader.js";
-import { abortIfNeeded, ArtifactReaderFailure } from "../../resources/index.js";
-import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";
+import {
+  abortIfNeeded,
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
+import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;
@@ -849,14 +853,19 @@ const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
     Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
   );
   if (headers === undefined) return [];
-  const payloads = await locatePeResourcePayloads(
-    headers,
-    carrier.fileSize,
-    (offset, length) => readExact(carrier, offset, length),
-    RT_RCDATA,
-    RESOURCE_NAME,
-    MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  );
+  let payloads: Awaited<ReturnType<typeof locatePeResourcePayloads>>;
+  try {
+    payloads = await locatePeResourcePayloads(
+      headers,
+      carrier.fileSize,
+      (offset, length) => readExact(carrier, offset, length),
+      RT_RCDATA,
+      RESOURCE_NAME,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    );
+  } catch (cause) {
+    throw artifactParseFailure(cause, carrier.signal);
+  }
   return payloads.map(({ offset, bytes }) => {
     if (bytes > MAX_INSPECT_PE_FILE_BYTES) throw denoPeLimit();
     return { offset, length: bytes, embedding: "pe-resource" };

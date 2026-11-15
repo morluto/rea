@@ -1,5 +1,5 @@
-import { managedFailure } from "./ManagedReaderFailure.js";
-import type { CodedIndexName } from "./ManagedMetadataLayout.js";
+import { managedFailure } from "./managedReaderFailure.js";
+import type { CodedIndexName } from "./managedMetadataLayout.js";
 
 export interface RowSizeContext {
   readonly tableSize: (index: number) => number;

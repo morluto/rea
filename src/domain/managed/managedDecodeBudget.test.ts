@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   admitManagedProjection,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import { InternalInvariantError } from "../domain/internalInvariant.js";
+} from "./managedDecodeBudget.js";
+import { ManagedReaderFailure } from "./managedReaderFailure.js";
+import { InternalInvariantError } from "../internalInvariant.js";
 
 describe("managed projection admission", () => {
   it("charges decoded strings by their JSON bytes", () => {

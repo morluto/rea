@@ -6,25 +6,22 @@ import {
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
   type PeResourceIdentityDeclaration,
-} from "./PeResourceTreeFacts.js";
+} from "./peResourceTreeFacts.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
-import {
-  assertArtifactReadActive,
-  ArtifactReaderFailure,
-} from "../../resources/index.js";
-import type { ArtifactLimitBoundary } from "../../domain/artifactOperationError.js";
-import { jsonParts } from "../../domain/jsonSerialization.js";
+import type { ArtifactLimitBoundary } from "../artifactOperationError.js";
+import { jsonParts } from "../jsonSerialization.js";
 import type {
   InspectPeResourcesInput,
   PeResourceIdentity,
   PeResources,
-} from "../../domain/native/peResources.js";
+} from "../native/peResources.js";
+import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import {
   peFailure,
   readPeResourceLayout,
   requirePeRange,
-} from "./PeResourceLayout.js";
+} from "./peResourceLayout.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
 
@@ -35,9 +32,23 @@ type OccupiedRange = Range & {
 /** Complete PE resource result retained before a refusal. */
 export const PE_RESOURCE_METADATA_BYTES = 8 * 1024 * 1024;
 const METADATA_BYTES = PE_RESOURCE_METADATA_BYTES;
-const limit = (message: string, boundary: ArtifactLimitBoundary): never => {
-  throw new ArtifactReaderFailure("limit", message, { boundary });
+/** The fixed allowance for retained resource metadata. */
+const METADATA_LIMIT = "pe_resource_metadata_bytes";
+/** The caller-selected resource directory entry budget. */
+const ENTRY_LIMIT = "max_entries";
+const limit = (message: string, name: string, maximum: number): never => {
+  throw decodeLimit("pe", message, { name, maximum });
 };
+
+/** The bound a PE resource decode limit constrains: retained metadata or directory entries. */
+export const peResourceLimitBoundary = (
+  limit: LimitRef,
+): ArtifactLimitBoundary | undefined =>
+  limit.name === METADATA_LIMIT
+    ? "memory"
+    : limit.name === ENTRY_LIMIT
+      ? "capacity"
+      : undefined;
 /** Count bytes through the canonical bounded JSON writer. */
 const jsonBytes = (value: unknown, maximum: number): number => {
   let size = 0;
@@ -50,7 +61,12 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
-/** Decode the conventional type/name/language tree; never infer payload meaning or runtime loading. */
+/**
+ * Decode the conventional type/name/language tree; never infer payload
+ * meaning or runtime loading. Malformed structure and exhausted budgets are
+ * `ParseFailureError`s (`peResourceLimitBoundary` names a limit's bound); a
+ * caller's cancellation rethrows `signal.reason`.
+ */
 export const parsePeResources = async (
   bytes: Buffer,
   artifact: PeResources["artifact"],
@@ -59,7 +75,7 @@ export const parsePeResources = async (
   /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
   admittedLayout?: PeResourceLayout,
 ): Promise<PeResources> => {
-  assertArtifactReadActive(signal);
+  signal?.throwIfAborted();
   const layout = admittedLayout ?? readPeResourceLayout(bytes);
   const directories: PeResources["directories"] = [];
   const resources: PeResources["resources"] = [];
@@ -71,7 +87,8 @@ export const parsePeResources = async (
     if (metadataBytes + projectedBytes > METADATA_BYTES)
       limit(
         "PE resource metadata exceeds the 8 MiB complete-result allocation budget.",
-        "memory",
+        METADATA_LIMIT,
+        METADATA_BYTES,
       );
   };
   const accountBytes = (projectedBytes: number): void => {
@@ -154,7 +171,8 @@ export const parsePeResources = async (
     if (count > input.max_entries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
-        "capacity",
+        ENTRY_LIMIT,
+        input.max_entries,
       );
     examined += count;
     const directory = {
@@ -179,7 +197,7 @@ export const parsePeResources = async (
     for (let index = 0; index < count; index++) {
       if (index % 128 === 0) {
         await setImmediate();
-        assertArtifactReadActive(signal);
+        signal?.throwIfAborted();
       }
       const entry =
         header + PE_RESOURCE_DIRECTORY_BYTES + index * PE_RESOURCE_ENTRY_BYTES;
@@ -250,7 +268,7 @@ export const parsePeResources = async (
       const hash = createHash("sha256");
       for (let offset = 0; offset < range.bytes; offset += 1048576) {
         await setImmediate();
-        assertArtifactReadActive(signal);
+        signal?.throwIfAborted();
         hash.update(
           bytes.subarray(
             range.offset + offset,
@@ -290,9 +308,13 @@ export const parsePeResources = async (
       "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
     ],
   };
-  assertArtifactReadActive(signal);
+  signal?.throwIfAborted();
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
-    limit("PE resource result exceeds the 8 MiB allocation budget.", "memory");
+    limit(
+      "PE resource result exceeds the 8 MiB allocation budget.",
+      METADATA_LIMIT,
+      METADATA_BYTES,
+    );
   return report;
 };
 

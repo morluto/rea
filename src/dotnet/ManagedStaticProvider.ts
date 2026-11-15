@@ -41,7 +41,7 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { managedInspectionInputFailure } from "./ManagedReaderFailure.js";
+import { managedInspectionInputFailure } from "../domain/managed/managedReaderFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import {

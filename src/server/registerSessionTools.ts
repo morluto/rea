@@ -33,7 +33,6 @@ import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import { registerInvestigationTools } from "./registerInvestigationTools.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
@@ -485,7 +484,6 @@ export const registerSessionTools = (
     compareBundlesContract,
     options.artifactResources,
   );
-  registerInvestigationTools(server, session);
   registerUnknownTools({ server, session });
   registerContextTools(server, session);
 };

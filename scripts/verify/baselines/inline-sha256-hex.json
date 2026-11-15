@@ -38,7 +38,6 @@
   "src/desktop/BuildComputerController.ts": 1,
   "src/desktop/DesktopContentStore.ts": 1,
   "src/desktop/GpgvKeyCheck.ts": 1,
-  "src/dotnet/ManagedMetadataHeaps.ts": 1,
   "src/dotnet/ManagedSnapshot.ts": 1,
   "src/erlang/BeamParser.ts": 1,
   "src/evm/EvmoleInterfaceProvider.ts": 1,

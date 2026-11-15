@@ -26,7 +26,6 @@
   "src/server/registerFridaTools.ts": 9,
   "src/server/registerGdbTools.ts": 4,
   "src/server/registerGuidedWorkflowTool.ts": 1,
-  "src/server/registerInvestigationTools.ts": 2,
   "src/server/registerJavaScriptRuntimeObservationTools.ts": 2,
   "src/server/registerManagedWorkflowTools/compareManagedMembers.ts": 1,
   "src/server/registerManagedWorkflowTools/importManagedReconstruction.ts": 1,

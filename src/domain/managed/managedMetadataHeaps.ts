@@ -1,15 +1,14 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import { createHash } from "node:crypto";
-import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
+import { err, ok, type Result } from "../result.js";
 
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
 
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+} from "./managedMetadataLayout.js";
+import { managedFailure } from "./managedReaderFailure.js";
 
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {
@@ -389,10 +388,6 @@ export const metadataTokenFact = (raw: number): MetadataTokenFact => {
   const row = raw & 0x00ff_ffff;
   return { raw, table, row, token: metadataToken(table, row) };
 };
-
-/** Hash bytes without exposing their contents. */
-export const sha256Bytes = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Create a cursor bounded to one admitted metadata table row. */
 export const metadataRowCursor = (

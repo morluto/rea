@@ -1,30 +1,30 @@
 import { createHash } from "node:crypto";
 
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../result.js";
 
 import {
   appendManagedParseIssues,
   managedFailure,
   ManagedReaderFailure,
   readManagedValue,
-} from "./ManagedReaderFailure.js";
+} from "./managedReaderFailure.js";
 import type {
   ManagedMemberInspection,
   ManagedParseIssue,
-} from "../domain/managed/managedArtifact.js";
+} from "./managedArtifact.js";
 import {
   managedDecodeBudget,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "./managedDecodeBudget.js";
 import {
   readManagedTypeNesting,
   type ManagedTypeNesting,
-} from "./ManagedTypeNesting.js";
+} from "./managedTypeNesting.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
   type MetadataTableLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   readManagedCompressedUnsigned,
   decodeMetadataCodedIndex,
@@ -33,14 +33,14 @@ import {
   type MetadataTokenFact,
   metadataToken,
   readMetadataString,
-  sha256Bytes,
-} from "./ManagedMetadataHeaps.js";
-import { memberListTable } from "./ManagedMemberPointers.js";
+} from "./managedMetadataHeaps.js";
+import { memberListTable } from "./managedMemberPointers.js";
 import type {
   TypeMemberListEntry,
   TypeMemberListFacts,
-} from "./ManagedTypeMemberLists.js";
-import type { TypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
+} from "./managedTypeMemberLists.js";
+import type { TypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
 /** A renderable TypeDef projection paired with its original source row. */
@@ -862,7 +862,7 @@ export const readLocalSignatureFacts = (
     if (cursor !== blob.length)
       malformedSignature("Trailing LocalVarSig data", cursor);
     return ok({
-      raw_sha256: sha256Bytes(blob),
+      raw_sha256: sha256Hex(blob),
       has_context_dependent_types: contextDependent,
     });
   } catch (cause: unknown) {
@@ -1177,7 +1177,7 @@ const projectSignature = (
 ): ManagedSignature => {
   return {
     raw_length: blob.length,
-    raw_sha256: rawSha256 ?? sha256Bytes(blob),
+    raw_sha256: rawSha256 ?? sha256Hex(blob),
     resolved_sha256:
       decoded.kind === "unknown" || decoded.parse_status === "malformed"
         ? null

@@ -1,12 +1,12 @@
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
-} from "../domain/managed/managedArtifact.js";
+} from "./managedArtifact.js";
 import {
   METADATA_TABLE_NAMES,
   type ManagedMetadataLayout,
   type MetadataTableLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   readAssembly,
   readAssemblyReference,
@@ -15,15 +15,15 @@ import {
   readResource,
   managedMetadataTypeNames,
   type ManagedMetadataTypeNameLookup,
-} from "./ManagedMetadataInventoryRows.js";
-import { metadataToken } from "./ManagedMetadataHeaps.js";
-import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "./managedMetadataInventoryRows.js";
+import { metadataToken } from "./managedMetadataHeaps.js";
+import type { TypeMemberListFacts } from "./managedTypeMemberLists.js";
 import {
   appendManagedParseIssues,
   readManagedValue,
   uniqueManagedParseIssues,
-} from "./ManagedReaderFailure.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "./managedReaderFailure.js";
+import type { ManagedPeLayout } from "./managedPeReader.js";
 
 type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;

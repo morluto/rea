@@ -10,6 +10,7 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  translateArtifactFailure,
 } from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
@@ -55,7 +56,6 @@ import {
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 

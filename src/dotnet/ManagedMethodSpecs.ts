@@ -1,4 +1,4 @@
-import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -8,18 +8,21 @@ import {
   type SignatureTypeName,
   type DecodedMethod,
   type MemberCore,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   type MetadataTokenFact,
   metadataRowCursor,
   readMetadataBlob,
-} from "./ManagedMetadataHeaps.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import {
+  managedFailure,
+  readManagedValue,
+} from "../domain/managed/managedReaderFailure.js";
 
 /**
  * A MethodSpec row's Method column and instantiation blob: the generic
