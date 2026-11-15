@@ -1,4 +1,5 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
+import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
@@ -474,29 +475,8 @@ export const parseElfUnwindRanges = (
     end: number,
     signed: boolean,
   ): { readonly value: bigint; readonly next: number } | null => {
-    let result = 0n;
-    let shift = 0n;
-    let pos = offset;
-    let byte = 0;
-    while (pos < end && pos < bytes.length && shift <= 63n) {
-      byte = bytes[pos] ?? 0;
-      pos += 1;
-      // At bit 63 only one value bit remains; signed padding repeats that bit.
-      const payload = byte & 0x7f;
-      if (
-        shift === 63n &&
-        (signed ? payload !== 0 && payload !== 0x7f : payload > 1)
-      )
-        return null;
-      result |= BigInt(payload) << shift;
-      shift += 7n;
-      if ((byte & 0x80) === 0) {
-        // Ten-byte signed operands have 70 encoded bits, including sign padding.
-        if (signed && (byte & 0x40) !== 0) result |= -1n << shift;
-        return { value: result, next: pos };
-      }
-    }
-    return null;
+    const read = readLeb128(bytes, offset, end, signed ? SLEB64 : ULEB64);
+    return "failure" in read ? null : read;
   };
   const safeInt = (value: bigint): number | null =>
     value >= BigInt(Number.MIN_SAFE_INTEGER) &&
