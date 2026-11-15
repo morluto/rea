@@ -9,13 +9,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
@@ -54,7 +54,7 @@ const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-evm-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
 const client = new Client({ name: "evm-interface-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -369,11 +369,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const brokenLimiter = join(root.path, "broken-limiter");
@@ -463,11 +463,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const [name, encoding] of [
@@ -543,16 +543,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  root.releaseAfter(() => client.close());
+  root.releaseAfter(() => transport.close());
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -586,9 +583,13 @@ console.log(
   ),
 );
 if (failures.length !== 0)
-  throw new AggregateError(
-    failures,
-    "Offline EVM interface verification failed; cleanup failures retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline EVM interface verification failed; cleanup failures retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {

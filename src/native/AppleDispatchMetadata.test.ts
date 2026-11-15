@@ -468,6 +468,7 @@ describe("Imported class symbol byte identities", () => {
         provenance,
         "arm64",
         ["0x100000b00"],
+        true,
       );
       expect(result.swift_conformances).toMatchObject([
         {
@@ -500,6 +501,25 @@ describe("Imported class symbol byte identities", () => {
   );
 });
 
+describe("Imported class symbol candidate completeness", () => {
+  it("keeps binding coverage partial when the caller does not state the candidates are complete", () => {
+    const result = decodeAppleDispatchMetadata(
+      swiftExternalSwiftBindingImage("objc-class"),
+      100,
+      provenance,
+      "arm64",
+      ["0x100000b00"],
+    );
+    expect(result.objc_class_import_bindings).toEqual([
+      expect.objectContaining({ symbol: "_OBJC_CLASS_$_NSObject" }),
+    ]);
+    expect(result.objc_class_import_binding_coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("objc_class_import_addresses_complete"),
+    });
+  });
+});
+
 describe("Imported library byte identities", () => {
   it.each(["invalid bytes", "literal replacement character"] as const)(
     "keeps Swift and Objective-C library identity distinct for %s",
@@ -518,6 +538,7 @@ describe("Imported library byte identities", () => {
         provenance,
         "arm64",
         ["0x100000b00"],
+        true,
       );
       expect(result.swift_conformances).toMatchObject([
         {

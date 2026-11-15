@@ -464,7 +464,7 @@ it("attaches sender validation to the innermost handler after a long minified li
   addJavaScriptArtifactFiles(context);
   addElectronIpcBoundaries(
     context,
-    createElectronIpcContext(analysis, () => "app"),
+    createElectronIpcContext(analysis, () => "app", true),
   );
   const handlers = context.accumulator
     .nodes()
