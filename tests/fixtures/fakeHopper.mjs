@@ -1,4 +1,5 @@
 import { createServer } from "node:net";
+import { FAKE_HOPPER_REPLIES, fakeHopperReply } from "./fakeHopperReplies.mjs";
 
 const [
   socketPath,
@@ -91,105 +92,6 @@ const bridgeEventFixtureMessages = (request) => {
       return undefined;
   }
 };
-const enhancedFixtureResult = (method) => {
-  switch (method) {
-    case "list_segments":
-      return [
-        {
-          name: "__TEXT",
-          start: "0x1000",
-          end: "0x2000",
-          readable: true,
-          writable: false,
-          executable: true,
-        },
-      ];
-    case "list_documents":
-      return ["fixture"];
-    case "list_procedures":
-      return [{ address: "0x1000", value: "fixture" }];
-    case "list_strings":
-      return [{ address: "0x1000", value: "fixture" }];
-    case "procedure_pseudo_code":
-      return "return 0;";
-    case "rea_caller_scan_target":
-      return {
-        target: {
-          address: "0x1000",
-          name: "fixture",
-          symbol: null,
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no function body-extent observation.",
-          },
-        },
-        instructions: ["0x1000"],
-        instructions_complete: true,
-      };
-    case "rea_caller_base":
-      return {
-        target: {
-          address: "0x1000",
-          name: "fixture",
-          symbol: null,
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no function body-extent observation.",
-          },
-        },
-        instructions: ["0x1000"],
-        instructions_complete: true,
-        callers: [],
-        callers_complete: true,
-      };
-    case "rea_caller_scan_page":
-      return {
-        start: 0,
-        next: 0,
-        total: 0,
-        oversized: false,
-        items: [],
-      };
-    case "analyze_function": {
-      return {
-        procedure: {
-          address: "0x1000",
-          name: "fixture",
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no function body-extent observation.",
-          },
-          signature: null,
-          locals: [],
-        },
-        pseudocode: "return 0;",
-        assembly: ["ret"],
-        comments: [],
-        callers: [],
-        callees: [],
-        incoming_references: [],
-        outgoing_references: [],
-        referenced_strings: [],
-        referenced_names: [],
-        basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
-        native_api: null,
-        native_value_flow: null,
-        limitations: [],
-      };
-    }
-    case "search_strings":
-    case "search_procedures":
-      return [];
-    case "xrefs":
-      return ["0x1000"];
-    default:
-      return undefined;
-  }
-};
-
 const sendEchoWithProgress = (send, request) => {
   send({
     id: request.id,
@@ -356,25 +258,10 @@ const server = createServer((socket) => {
         });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
-      } else if (enhancedFixtureResult(request.method) !== undefined) {
-        send({ id: request.id, result: enhancedFixtureResult(request.method) });
-      } else if (request.method === "resolve_containing_procedure") {
+      } else if (Object.hasOwn(FAKE_HOPPER_REPLIES, request.method)) {
         send({
           id: request.id,
-          result: {
-            query_address: request.params.address,
-            found: true,
-            procedure: { address: "0x1000", name: "fixture" },
-          },
-        });
-      } else if (request.method === "procedure_references") {
-        send({
-          id: request.id,
-          result: {
-            procedure: { address: "0x1000", name: "fixture" },
-            direction: request.params.direction ?? "outgoing",
-            references: [],
-          },
+          result: fakeHopperReply(request.method, request.params ?? {}),
         });
       } else {
         sendEchoWithProgress(send, request);

@@ -1575,6 +1575,14 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
 
+A dictionary that declares a key more than once keeps one value in the JSON
+result, the last one. When `inspect_plist` decodes binary, XML or OpenStep
+source directly, it reads each dictionary's keys before they collapse and adds
+a limitation with the count of affected dictionaries and replaced values and the
+first repeated key names. Other plist readers may keep a different value. JSON
+sources and plists decoded through a `plutil` conversion are not checked:
+those parsers keep one value per key before REA sees the result.
+
 Known non-finite reals are reported as
 `{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
 These are canonical numeric labels, not a claim about original source spelling.
