@@ -201,7 +201,7 @@ const evmCommandContext = (
         remediationAction: `The EVMole worker's ${String(EVM_WORKER_HEAP_MIB)} MiB heap is fixed in this release; producer_limits and timeout_ms do not raise it. Select a smaller bytecode carrier; repeating the unchanged request is expected to fail the same way.`,
       },
     }),
-    dialect: (outcome, details) => {
+    dialect: (outcome, details, unclassified) => {
       if (outcome.kind === "launch-refused") {
         const reason = `Configured util-linux prlimit could not launch (${outcome.refusal.code}): ${limiter}. Check its executable/interpreter and host execute access.`;
         return new AnalysisCapabilityUnavailableError(
@@ -232,21 +232,8 @@ const evmCommandContext = (
             ),
           },
         );
-      return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
-        ...details,
-        diagnostics: {
-          ...evmWorkerDiagnostics(context),
-          reason: outcome.message,
-          failure_kind: outcome.kind,
-          // A stream failure is not an ordinary exit, but its recorded
-          // status remains evidence.
-          ...(outcome.output === undefined
-            ? {}
-            : {
-                exit_code: outcome.output.snapshot.exitCode ?? null,
-                signal: outcome.output.snapshot.signal ?? null,
-              }),
-        },
+      return unclassified(EVMOLE_PROVIDER_IDENTITY.id, {
+        diagnostics: evmWorkerDiagnostics(context),
       });
     },
   };
