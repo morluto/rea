@@ -3,7 +3,7 @@ import { ENVIRONMENT_MANIFEST_EXAMPLE } from "./analysisViewEnvironmentManifestE
 import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
 import { analysisViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "./toolContractTypes.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const RETAINED_EXAMPLE_ID = `ev_${"a".repeat(64)}`;
@@ -13,7 +13,7 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
   {
     name: "inspect_analysis_view",
     cli: true,
-    ...toolContractMetadata("inspect_analysis_view"),
+    ...toolContractMetadata("inspect_analysis_view", evidenceEffects),
     kind: "application",
     description:
       'Read summaries, selected facts, or pages from completed Evidence without rerunning analysis. Use the producing tool’s retained-view handoff for compatible selectors; the examples here are not exhaustive. Copy normalized_result.parent_evidence_id from a summary into source: {kind: "retained-evidence", evidence_id: "<parent_evidence_id>"}. Other sources are {kind: "inline", evidence: <complete Evidence>} or {kind: "evidence-file", path: "<absolute JSON path>", evidence_id?: "<record ID>"}; select an ID for a multi-record bundle. For native pseudocode use {source: {kind: "retained-evidence", evidence_id: "<parent_evidence_id>"}, view: {kind: "native", facet: "pseudocode", offset: 0, limit: 128}}; procedure_pseudo_code parents support this text facet, while other native function facets require analyze_function. Common views: {kind: "summary"} has no facet; {kind: "inventory", collection: "occurrences", logical_paths: ["package.json"], offset: 0, limit: 64} selects artifact paths; {kind: "capture", detail: "preview", offset: 0, limit: 20} pages saved network records; {kind: "managed-members", collection: "methods", offset: 0, limit: 64} pages managed members. Use the producer’s named kind for other families; compact schemas may omit nested shapes, so do not invent selectors. Text offsets/limits use UTF-16 code units; row pages count the selected retained collection. Preserve parent identity, null/unavailable values, source coverage, limitations and unknowns; exhausting pages does not prove complete discovery, runtime use or absence. Smaller pages can resolve delivery limits without repeating analysis; complete parent Evidence remains available for export.',
