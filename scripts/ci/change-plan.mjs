@@ -346,9 +346,10 @@ export function planChanges(request, repository) {
     event,
     tier,
     code: selected.code,
-    // The checked-out revision is the one whose tests run.
+    // The checked-out revision is the one whose tests run. Script and
+    // configuration files are listed so shared script modules can be traced.
     snapshot: {
-      list: () => repository.listFiles("HEAD", ["src", "tests"]),
+      list: () => repository.listFiles("HEAD", []),
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });

@@ -807,6 +807,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   expect(selected?.env).toEqual({
     MATRIX_SHARD: "${{ matrix.shard }}",
     CI_TEST_SELECTION: "${{ needs.changes.outputs.test_selection }}",
+    REA_CI_TEST_HISTORY: ".cache/ci-test-history/test-results.json",
   });
 
   const flags = await scopeFlags();
