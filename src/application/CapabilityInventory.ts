@@ -58,8 +58,8 @@ import {
   cleanupRetryRemediation,
   type AnalysisCleanupRetry,
 } from "../domain/analysisErrorRecovery.js";
-import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 import { offeredOperationAlternatives } from "./OperationAlternatives.js";
+import { isBundleResourceOperation } from "../ports/BundleResourceOperations.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),

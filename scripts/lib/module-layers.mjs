@@ -408,12 +408,16 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
       "CdpEndpoint.ts",
       "CdpScriptContextFacts.ts",
       "CdpTargetSessionOwner.ts",
+      "ElectronFileScope.ts",
       "protocol/CdpEvents.ts",
     ]),
     // The V8 inspector speaks the Chrome DevTools Protocol. It reuses
     // browser's CDP client (endpoint discovery, connection, target sessions
     // and captured value projection) instead of keeping a second client.
-    reason: "the V8 inspector reuses the browser provider's CDP client",
+    // For Electron targets it authorizes script files inside app.asar with
+    // browser's Electron file scope, which owns the ASAR descriptors.
+    reason:
+      "the V8 inspector reuses the browser provider's CDP client and Electron file scope",
   }),
   Object.freeze({
     from: "browser",

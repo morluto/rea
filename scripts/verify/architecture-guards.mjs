@@ -554,6 +554,8 @@ const PARSER_FOLDERS = [
   "src/model/",
   "src/native/",
   "src/python/",
+  // Shared artifact readers (ZIP, directory, ASAR header) live in resources.
+  "src/resources/",
   "src/rust/",
   "src/v8/",
   "src/wasm/",
@@ -572,11 +574,13 @@ const PARSER_FOLDERS = [
     "managed",
     "model",
     "native",
+    "pcap",
     "python",
     "rust",
     "v8",
     "wasm",
     "windows",
+    "zip",
   ].map((folder) => `src/domain/${folder}/`),
 ];
 const parserFiles = files.filter((file) =>
@@ -691,7 +695,7 @@ checkCounted(
 // AnalysisError has no push API. Composing dependency sets with
 // bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies, analysisErrorWithCloseRejection(s) for close rejections whose completion may be unknown, or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
