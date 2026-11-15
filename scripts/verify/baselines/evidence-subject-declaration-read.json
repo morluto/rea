@@ -1,13 +1,10 @@
 {
   "src/application/WorkflowEvidence.ts": 4,
-  "src/application/analysisView/AnalysisViewService.ts": 1,
-  "src/application/artifacts/ArtifactComparisonEvidence.ts": 3,
   "src/application/evm/EvmInterfaceService.ts": 1,
   "src/application/investigation/EvidenceLedger.ts": 2,
   "src/application/javascript/JavaScriptApplicationEvidenceGraph.ts": 2,
   "src/application/native/NativeDispatchMetadataInspection.ts": 1,
   "src/application/releaseExposure/ReleaseExposureService.ts": 1,
-  "src/application/wasm/WasmInterfaceComparisonService.ts": 2,
   "src/domain/analysisSnapshot.ts": 8,
   "src/domain/evidenceBundle.ts": 2,
   "src/domain/evidenceRecordSummary.ts": 1,
