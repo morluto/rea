@@ -595,10 +595,13 @@ const listedFile = (
 
 const interpreterLine = (bytes: Uint8Array): string | null => {
   if (bytes.length < 2 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return null;
-  const text = decodeUtf8(bytes.subarray(0, Math.min(bytes.length, 256)));
-  if (text === null) return null;
-  const line = text.split(/\r?\n/u)[0] ?? "";
-  const interpreter = line.slice(2).trim();
+  // Decode only the `#!` line, so bytes later in the script cannot hide it.
+  const newline = bytes.indexOf(0x0a);
+  const line = decodeUtf8(
+    bytes.subarray(2, newline === -1 ? bytes.length : newline),
+  );
+  if (line === null) return null;
+  const interpreter = line.replace(/\r$/u, "").trim();
   return interpreter.length === 0 ? null : interpreter;
 };
 

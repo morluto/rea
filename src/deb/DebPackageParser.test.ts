@@ -622,3 +622,25 @@ it("keeps an unreadable dependency alternative as an issue and reports partial c
   });
   expect(report.coverage.status).toBe("partial");
 });
+
+it("reads a maintainer script interpreter when later bytes are not UTF-8", () => {
+  const body = Buffer.concat([
+    Buffer.from("#!/bin/sh\n# ", "utf8"),
+    Buffer.alloc(300, 0xff),
+    Buffer.from("\nexit 0\n", "utf8"),
+  ]);
+  const report = parse(
+    debPackageFixture({
+      controlEntries: [
+        {
+          name: "./control",
+          content: "Package: hello\nVersion: 1.0\nArchitecture: all\n",
+        },
+        { name: "./postinst", content: body },
+      ],
+    }),
+  );
+  expect(report.control?.maintainer_scripts).toEqual([
+    { name: "postinst", interpreter: "/bin/sh", bytes: body.length },
+  ]);
+});
