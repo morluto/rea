@@ -15,7 +15,7 @@ import {
   opaqueCodeMayRebindBinding,
   semanticReferenceEffectsAtSite,
   semanticReferenceEffectsMayHaveChanged,
-  semanticReferenceMayHaveChangedAt,
+  semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
 } from "./javascriptSemanticEffectLog.js";
@@ -438,13 +438,13 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
         semanticEffectTimingWithinActivation,
       );
     },
-    referenceMayHaveChangedAt(site, referenceNode, propertyPath) {
-      return semanticReferenceMayHaveChangedAt(
+    mayObserve(read, target, path) {
+      return semanticReadMayObserveEffect(
         state,
         ambientRootPaths(state),
-        site,
-        referenceNode,
-        propertyPath,
+        read,
+        target,
+        path,
       );
     },
     *referencesSteps() {

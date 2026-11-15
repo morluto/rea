@@ -782,7 +782,7 @@ const resolvedRequestTarget = (
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;
   const capture = reference === expression ? site : expression;
-  if (index.referenceMayHaveChangedAt(capture, reference)) return undefined;
+  if (index.mayObserve(capture, reference)) return undefined;
   if (!requestInitializerPrecedesSite(reference, capture, bindings, index))
     return undefined;
   const evaluated = evaluateSemanticExpression(node, bindings);
@@ -850,7 +850,7 @@ const urlObjectRequestTarget = (
       isToString = true;
     }
   }
-  if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
+  if (!t.isIdentifier(target) || index.mayObserve(site, target))
     return undefined;
   const binding = index.bindingForReferenceAt(target);
   if (binding === undefined || seen.has(binding.bindingId)) return undefined;
@@ -1008,7 +1008,7 @@ export const finishSqliteStorageCalls = (
   for (const { node, name } of context.accumulator.pendingSqliteCalls) {
     const callee = unwrapJavaScriptExpression(node.callee).node;
     const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
-    const changed = index.referenceMayHaveChangedAt(node, callee);
+    const changed = index.mayObserve(node, callee);
     if (!changed && t.isIdentifier(callee) && provenance.status === "local")
       continue;
     const origin =
