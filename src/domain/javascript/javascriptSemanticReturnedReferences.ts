@@ -48,6 +48,7 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+import { semanticDirectInvocationArgument } from "./javascriptSemanticDirectInvocations.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -311,6 +312,18 @@ export const createSemanticReturnedReferences = (
           continue;
         }
         dependencies.set(binding, semanticBindingEffectGeneration(binding));
+        // A directly invoked function's parameter starts as its argument,
+        // which therefore did not escape at the call.
+        const argument = semanticDirectInvocationArgument(node, binding, state);
+        if (argument !== undefined)
+          enqueue(
+            argument,
+            current.path,
+            current.path?.length === 0 ? undefined : (current.readAt ?? node),
+            current.capturedSelections,
+            current.invocation,
+            current.classKind,
+          );
         if (current.path !== undefined) {
           if (
             sourceGenericInvocation &&

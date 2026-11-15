@@ -961,6 +961,36 @@ it.each([
     why: "an unknown callee still receives an escape",
   },
   {
+    source: `(function(get){ patch(get()) })(() => fs);`,
+    keys: [],
+    why: "a callable argument's result reaches the parameter's callers",
+  },
+  {
+    source: `(function(get){ get().readFileSync = custom })(() => fs);`,
+    keys: [],
+    why: "a write through a callable argument's result reaches its value",
+  },
+  {
+    source: `(function f(p){ patch(f["arguments"][0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `(function f(p){ patch(f.arguments[0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `function g(){ patch(g.caller.arguments[0]) } (function(p){ g() })(fs);`,
+    keys: [],
+    why: "a called sloppy function reaches its caller's arguments",
+  },
+  {
+    source: `function g(){ patch(g.caller) } (function(p){ "use strict"; g() })(fs);`,
+    keys: ["kept"],
+    why: "a strict function exposes no arguments property",
+  },
+  {
     source: `try { (function(p){ throw p })(fs); } catch (e) { patch(e) }`,
     keys: [],
     why: "a value thrown out of the callee reaches its caller's handler",

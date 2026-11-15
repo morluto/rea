@@ -8,10 +8,12 @@ import * as t from "@babel/types";
 
 import {
   runtimeFunctionParameters,
+  semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { javaScriptStrictnessAt } from "./javascriptSourceParser.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -22,7 +24,8 @@ import type {
  * header `(function (root, factory) { ... })(this, ...)`. `bound[i]` is the
  * parameter that argument `i` binds, `null` when nothing in the body can
  * reach it, and `undefined` when the body may reach it other than through a
- * plain parameter (a spread or rest list, `arguments` or direct `eval`).
+ * plain parameter (a spread or rest list, `arguments`, a sloppy function's
+ * `arguments` property or direct `eval`).
  */
 interface DirectInvocation {
   readonly call: t.CallExpression;
@@ -34,25 +37,43 @@ const directInvocations = new WeakMap<
   WeakMap<t.Function, DirectInvocation | null>
 >();
 
-const functionsNamingArguments = new WeakMap<
+interface ArgumentsReaders {
+  /** Functions whose subtree names `arguments`. */
+  readonly functions: WeakSet<t.Node>;
+  /** Whether any member read names `arguments` or `caller` by a static key. */
+  readonly functionProperties: boolean;
+}
+
+const argumentsReaders = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakSet<t.Node>
+  ArgumentsReaders
 >();
 
 /**
- * Whether `callee`'s subtree names `arguments`, so its activation's arguments
- * may be read other than by parameters. One program walk marks every
- * function around each `arguments` identifier (nested arrows included).
+ * Whether `callee`'s activation arguments may be read other than by its
+ * parameters: its subtree names `arguments`, or it is not strict and the
+ * program reads a function's `arguments`/`caller` property (`f["arguments"]`,
+ * `g.caller.arguments` from a function it calls). One program walk marks
+ * every function around each `arguments` identifier (nested arrows
+ * included) and notes those property reads.
  */
-const namesArguments = (
+const argumentsMayBeRead = (
   callee: t.Function,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  let marked = functionsNamingArguments.get(state);
-  if (marked === undefined) {
+  let readers = argumentsReaders.get(state);
+  if (readers === undefined) {
     const functions = new WeakSet<t.Node>();
+    let functionProperties = false;
     traverseJavaScriptAst(state.program, {
       enter: (node) => {
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          FUNCTION_ARGUMENT_PROPERTIES.has(
+            semanticStaticPropertyKey(node.property, node.computed) ?? "",
+          )
+        )
+          functionProperties = true;
         if (!t.isIdentifier(node, { name: "arguments" })) return;
         for (
           let current = state.parentsByNode.get(node);
@@ -62,11 +83,21 @@ const namesArguments = (
           if (t.isFunction(current)) functions.add(current);
       },
     });
-    marked = functions;
-    functionsNamingArguments.set(state, marked);
+    readers = { functions, functionProperties };
+    argumentsReaders.set(state, readers);
   }
-  return marked.has(callee);
+  return (
+    readers.functions.has(callee) ||
+    (readers.functionProperties &&
+      javaScriptStrictnessAt(callee, state.parentsByNode) !== "strict")
+  );
 };
+
+/** Sloppy-function properties that expose an active call's arguments. */
+const FUNCTION_ARGUMENT_PROPERTIES: ReadonlySet<string> = new Set([
+  "arguments",
+  "caller",
+]);
 
 /** The call that invokes function expression `callee` where it is defined. */
 const directCall = (
@@ -100,7 +131,7 @@ const computeDirectInvocation = (
       (parameter, index) => !t.isIdentifier(parameter) && index !== rest,
     ) ||
     semanticDirectEvalRecorded(state) ||
-    namesArguments(callee, state)
+    argumentsMayBeRead(callee, state)
   )
     return undefined;
   const spread = call.arguments.findIndex((argument) =>
