@@ -1,4 +1,4 @@
-import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import { z } from "zod";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";

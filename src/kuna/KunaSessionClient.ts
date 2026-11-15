@@ -379,6 +379,7 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #profile: AnalysisProfileCommitment | undefined;
   readonly #cache: KunaProjectCache;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #platform: NodeJS.Platform;
   readonly #runSlots: KunaRunSlots;
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
@@ -446,6 +447,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly cache: KunaProjectCache;
       readonly runSlots: KunaRunSlots;
       readonly environment: Readonly<NodeJS.ProcessEnv>;
+      readonly platform: NodeJS.Platform;
       readonly deadline: RegexMatchingDeadline;
       readonly heapRequest: RegexWorkerHeapRequest;
       readonly launcher?: KunaProcessLauncher;
@@ -456,6 +458,7 @@ export class KunaSessionClient implements AnalysisClient {
     this.#cache = dependencies.cache;
     this.#runSlots = dependencies.runSlots;
     this.#environment = dependencies.environment;
+    this.#platform = dependencies.platform;
     this.#launcher = dependencies.launcher;
     this.#commands = new KunaTargetCommands(target, {
       signal: this.#session.signal,
@@ -2029,6 +2032,7 @@ export class KunaSessionClient implements AnalysisClient {
     const kunaResources = createKunaResourceScope(parentResourceScope);
     try {
       const inspected = await inspectKunaInstallation(this.#environment, {
+        platform: this.#platform,
         resourceScope: kunaResources.owner,
         signal,
         ...(this.#launcher === undefined

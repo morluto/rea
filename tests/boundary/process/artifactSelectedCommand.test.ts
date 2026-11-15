@@ -1,4 +1,5 @@
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import {
   chmod,
   mkdir,
@@ -184,14 +185,6 @@ const createSelectedEngineFixture = async (
     input,
     kind === "firmware" ? "fixture-input-data" : "module.exports = 42;",
   );
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  if (platform === undefined || arch === undefined)
-    throw new Error("Missing host descriptors");
-  const restoreHost = () => {
-    Object.defineProperty(process, "platform", platform);
-    Object.defineProperty(process, "arch", arch);
-  };
   const launches: {
     cwd?: string;
     pid?: number;
@@ -207,7 +200,6 @@ const createSelectedEngineFixture = async (
     REA_SELECTED_ENVIRONMENT: "initial",
   };
   const launcher: typeof spawnOwnedProviderProcess = async (options) => {
-    restoreHost();
     const child = await spawnOwnedProviderProcess(options);
     launches.push({
       command: options.command,
@@ -224,12 +216,13 @@ const createSelectedEngineFixture = async (
   onTestFinished(() => fileSizeCeiling.mockRestore());
   const service =
     kind === "firmware"
-      ? new FirmwareAnalysisService(new FirmwareProvider(environment, launcher))
+      ? new FirmwareAnalysisService(
+          new FirmwareProvider(environment, launcher, SIMULATED_LINUX_X64),
+        )
       : new JavaScriptRecoveryService(
-          new WakaruProvider(environment, launcher),
+          new WakaruProvider(environment, launcher, SIMULATED_LINUX_X64),
         );
   onTestFinished(async () => {
-    restoreHost();
     await service.close();
     for (const launch of launches) {
       if (launch.pid !== undefined)
@@ -241,23 +234,13 @@ const createSelectedEngineFixture = async (
     }
   });
   let sequence = 0;
-  const execute = async () => {
-    Object.defineProperty(process, "platform", {
-      ...platform,
-      value: "linux",
-    });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
-    try {
-      return service instanceof FirmwareAnalysisService
-        ? await service.execute("inspect_firmware_regions", { path: input })
-        : await service.recover({
-            path: input,
-            output_directory: join(directory, `output-${sequence++}`),
-          });
-    } finally {
-      restoreHost();
-    }
-  };
+  const execute = async () =>
+    service instanceof FirmwareAnalysisService
+      ? service.execute("inspect_firmware_regions", { path: input })
+      : service.recover({
+          path: input,
+          output_directory: join(directory, `output-${sequence++}`),
+        });
   return {
     bin,
     command,
