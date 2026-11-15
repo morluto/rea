@@ -416,6 +416,11 @@ export interface ContractCliParameter {
    * with decimal integer tokens and caller-relative paths admitted.
    */
   readonly schema: z.ZodType;
+  /**
+   * The contract transforms this field; argv admits its inbound text and
+   * the contract refuses or normalizes it on admission.
+   */
+  readonly inbound: boolean;
   /** A bare flag sets true; it takes no value. */
   readonly booleanFlag: boolean;
   /** The option may repeat; each occurrence adds one array element. */
@@ -648,6 +653,32 @@ const assertArgvField = (
  * the same values as an optional one. Renderers such as Incur's help read
  * boolean flags and enum choices only through `optional`.
  */
+/**
+ * The inbound view of a transformed contract field, such as an endpoint or
+ * an origin list the contract normalizes: argv carries the text the
+ * contract transforms when it admits the input, as tools/list advertises
+ * it. Undefined when the field has no transform.
+ */
+const inboundView = (field: z.ZodType): z.ZodType | undefined => {
+  const inbound = (schema: z.ZodType): z.ZodType | undefined => {
+    if (schema instanceof z.ZodPipe && schema.out instanceof z.ZodTransform)
+      return inbound(schema.in as z.ZodType) ?? (schema.in as z.ZodType);
+    if (schema instanceof z.ZodArray) {
+      const element = inbound(schema.element as z.ZodType);
+      return element === undefined
+        ? undefined
+        : (schema.clone({ ...schema.def, element }) as z.ZodType);
+    }
+    return undefined;
+  };
+  const view = inbound(core(field));
+  if (view === undefined) return undefined;
+  // The contract applies its own default when it admits the input.
+  const optional = admitsOmission(field) ? view.optional() : view;
+  const description = field.description ?? view.description;
+  return description === undefined ? optional : optional.describe(description);
+};
+
 const argvOptional = (field: z.ZodType): z.ZodType => {
   if (!(field instanceof z.ZodExactOptional)) return field;
   const optional = (field.unwrap() as z.ZodType).optional();
@@ -1417,7 +1448,8 @@ export const describeContractCommand = <
       throw new Error(`${contract.name}.${field} is required on the CLI`);
 
   const parameter = (field: string): ContractCliParameter => {
-    const declared = shape[field]!;
+    const inbound = inboundView(shape[field]!);
+    const declared = inbound ?? shape[field]!;
     const projected = fieldProjections[field];
     const callerPath = callerPaths.has(field);
     const delivery = deliveryFields.has(field);
@@ -1504,6 +1536,7 @@ export const describeContractCommand = <
       alias: projected?.alias,
       description,
       schema,
+      inbound: inbound !== undefined,
       booleanFlag: value instanceof z.ZodBoolean,
       repeatable: value instanceof z.ZodArray,
       decimal: value instanceof z.ZodNumber,
@@ -1546,6 +1579,7 @@ export const describeContractCommand = <
         alias: projected.alias,
         description,
         schema,
+        inbound: false,
         booleanFlag: value instanceof z.ZodBoolean,
         repeatable: value instanceof z.ZodArray,
         decimal: value instanceof z.ZodNumber,

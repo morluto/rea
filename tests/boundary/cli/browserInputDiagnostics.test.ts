@@ -54,6 +54,8 @@ const invalidInputs = [
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Projected from its contract, so the issue names the CLI key.
+    cliPath: ["endpoint"],
     schema: listBrowserTargetsInputSchema,
   },
   {
@@ -76,6 +78,8 @@ const invalidInputs = [
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Projected from its contract, so the issue names the CLI key.
+    cliPath: ["endpoint"],
     schema: discoverWebMcpToolsInputSchema,
   },
 ];
@@ -182,7 +186,11 @@ describe("browser and Inspector CLI input diagnostics", () => {
         details: {
           operation: input.operation,
           issues: expect.arrayContaining([
-            { ...input.issue, message: owner.message },
+            {
+              ...input.issue,
+              path: "cliPath" in input ? input.cliPath : input.issue.path,
+              message: owner.message,
+            },
           ]),
         },
       });
@@ -195,11 +203,15 @@ describe("browser and Inspector CLI input diagnostics", () => {
   );
 
   cliTest.for([
-    ["list-browser-targets", "cdp_endpoint"],
-    ["list-javascript-runtime-targets", "inspector_endpoint"],
+    ["list-browser-targets", "cdp_endpoint", "endpoint"],
+    [
+      "list-javascript-runtime-targets",
+      "inspector_endpoint",
+      "inspector_endpoint",
+    ],
   ] as const)(
     "%s does not echo rejected endpoint credentials",
-    async ([command, field], { cli, workspace }) => {
+    async ([command, field, key], { cli, workspace }) => {
       const endpoint =
         "http://rea-diagnostic-user:rea-diagnostic-secret@127.0.0.1:9222/";
       const result = await cli.run({
@@ -223,7 +235,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
         details: {
           issues: [
             {
-              path: [field],
+              path: [key],
               reason: "invalid_value",
               message: owner.message,
             },
