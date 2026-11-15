@@ -2,7 +2,7 @@ import { isMachOFormat } from "../binaryTargetTypes.js";
 import { getEvidenceInputContract } from "../evidenceInputContract.js";
 import { managedNativeVerificationRequestSchema } from "./managedNativeVerificationSchemas.js";
 
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
@@ -63,7 +63,7 @@ const readNativeObservation = (
   const read = readEvidence(raw);
   if (!read.ok) return read;
   const evidence = read.value;
-  const format = evidence.subject?.format;
+  const format = evidenceFileTarget(evidence)?.format;
   const platform: ManagedNativePlatform = isMachOFormat(format)
     ? "mach-o"
     : format === "pe" || format === "elf"
