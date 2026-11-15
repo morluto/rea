@@ -506,6 +506,16 @@ export class HopperClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
+    // Admit the reply ceiling before acquiring anything: an invalid launch
+    // seed is a configuration refusal, not a failure after Hopper started.
+    try {
+      admitBridgeReplyLimit(
+        this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+      );
+    } catch (cause: unknown) {
+      if (!(cause instanceof ConfigurationError)) throw cause;
+      return err(cause);
+    }
     try {
       this.#resources.runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,

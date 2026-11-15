@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -294,6 +295,27 @@ describe("HopperClient reply framing", () => {
       });
     },
   );
+
+  it("refuses an invalid reply ceiling seed before launching Hopper", async () => {
+    const invalid = new ConfigurationError("invalid bridge.max_reply_bytes");
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      launcher,
+      startupTimeoutMs: 10_000,
+      bridgeMaxReplyBytes: {
+        get maximumBytes(): number {
+          throw invalid;
+        },
+        source: "setting",
+      },
+    });
+
+    const started = await client.start();
+
+    expect(started.ok ? undefined : started.error).toBe(invalid);
+    expect(launcher.processes, "no bridge was launched").toEqual([]);
+    expect((await client.close()).ok).toBe(true);
+  });
 
   it("bounds each reply by the ceiling its own request admitted", async () => {
     // The getter-backed runtime setting reads whichever caller admits next.
