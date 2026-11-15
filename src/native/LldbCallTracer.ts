@@ -49,6 +49,7 @@ import {
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
   signalProcessWithStartIdentity,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessIdentityObservation } from "../process/ProcessOwnership.js";
@@ -1590,9 +1591,17 @@ const ensureTerminated = async (
   identity: string | undefined,
 ): Promise<TargetTermination> => {
   if (pid === undefined) return "identity-unavailable";
+  // The target's parent (debugserver) reaps it, so a killed target can stay
+  // in the process table as a zombie. A PID that answers kill(pid, 0) is
+  // therefore not proof the target still runs: with its start identity, an
+  // exited (zombie or replaced) PID counts as terminated.
+  const exited = async (): Promise<boolean> =>
+    !alive(pid) ||
+    (identity !== undefined &&
+      (await observeProcessStartIdentityExit(pid, identity)) === "exited");
   let signalDisposition: Exclude<TargetTermination, "terminated"> | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (!alive(pid)) return "terminated";
+    if (await exited()) return "terminated";
     if (attempt === 10) {
       if (identity === undefined) signalDisposition = "identity-unavailable";
       else {
@@ -1612,7 +1621,7 @@ const ensureTerminated = async (
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return !alive(pid)
+  return (await exited())
     ? "terminated"
     : (signalDisposition ?? "identity-unavailable");
 };
