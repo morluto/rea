@@ -1,4 +1,16 @@
-import { GDB_PROVIDER_IDENTITY } from "./GdbProviderIdentity.js";
+import {
+  gdbMiConstText,
+  gdbMiResultHeader,
+  gdbMiResultsNamed,
+  parseGdbMiDoneRecord,
+  parseGdbMiResultRecord,
+  type GdbMiValue,
+} from "./GdbMiRecord.js";
+import {
+  GDB_PROVIDER_IDENTITY,
+  gdbReportedVersion,
+  type GdbProviderIdentity,
+} from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { classifyLaunchFailure } from "../process/launchFailure.js";
@@ -201,270 +213,51 @@ const truncateUtf8RecordPrefix = (line: string): string => {
   return `${utf8HeadExcerpt(line, budget).text}${RECENT_RECORD_TRUNCATION_MARKER}`;
 };
 
-/** Bound parser memory when a capped MI record contains extreme nesting. */
-const MAX_GDB_MI_NESTED_VALUE_FRAMES = 256;
-
-/** Parse a complete MI result record and retain the unique top-level groups list span. */
-const gdbMiGroupsListSpan = (
-  mi: string,
-): { readonly start: number; readonly end: number } | undefined => {
-  const prefix = /^(?:\d+)?\^done/u.exec(mi)?.[0];
-  if (prefix === undefined) return undefined;
-  const isNameCharacter = (character: string | undefined): boolean =>
-    character !== undefined &&
-    !/[=,{}[\]"\s]/u.test(character) &&
-    character.charCodeAt(0) >= 0x20;
-  const readName = (start: number): number => {
-    if (!isNameCharacter(mi[start])) return start;
-    let cursor = start;
-    while (isNameCharacter(mi[cursor])) cursor += 1;
-    return cursor;
-  };
-  const readString = (start: number): number | undefined => {
-    for (let cursor = start + 1; cursor < mi.length; cursor += 1) {
-      const character = mi[cursor];
-      if (character === '"') return cursor + 1;
-      if (character === "\\") {
-        cursor += 1;
-        const escaped = mi[cursor];
-        if (escaped === undefined) return undefined;
-        if (escaped === "x") {
-          const startHex = cursor + 1;
-          cursor = startHex;
-          while (/[0-9a-f]/iu.test(mi[cursor] ?? "")) cursor += 1;
-          if (cursor === startHex) return undefined;
-          cursor -= 1;
-        } else if (/[0-7]/u.test(escaped)) {
-          let digits = 1;
-          while (digits < 3 && /[0-7]/u.test(mi[cursor + 1] ?? "")) {
-            cursor += 1;
-            digits += 1;
-          }
-        } else if (!/^[abfnrtv\\'"?]$/u.test(escaped)) return undefined;
-      } else if (mi.charCodeAt(cursor) < 0x20) return undefined;
-    }
-    return undefined;
-  };
-  const stack: {
-    readonly kind: "list" | "tuple";
-    readonly close: "]" | "}";
-    readonly groupInventory: boolean;
-    readonly groupStart: number | undefined;
-    readonly groupTuple: boolean;
-    phase: "first" | "afterComma" | "afterItem";
-    listItems: "result" | "value" | undefined;
-    groupIdSeen: boolean;
-  }[] = [];
-  let groupSpan: { start: number; end: number } | undefined;
-  let groupSeen = false;
-  let cursor = prefix.length;
-  let valueStart = -1;
-  let pendingGroupList = false;
-
-  const completeValue = (): void => {
-    const parent = stack.at(-1);
-    if (parent !== undefined) parent.phase = "afterItem";
-  };
-
-  const beginValue = (): boolean => {
-    const character = mi[cursor];
-    if (pendingGroupList && character !== "[") return false;
-    if (character === '"') {
-      const end = readString(cursor);
-      if (end === undefined) return false;
-      cursor = end;
-      completeValue();
-      return true;
-    }
-    if (character === "[" || character === "{") {
-      const kind = character === "[" ? "list" : "tuple";
-      const groupInventory = pendingGroupList;
-      if (groupInventory && kind !== "list") return false;
-      if (stack.length >= MAX_GDB_MI_NESTED_VALUE_FRAMES) return false;
-      const parent = stack.at(-1);
-      const groupTuple = kind === "tuple" && parent?.groupInventory === true;
-      pendingGroupList = false;
-      cursor += 1;
-      stack.push({
-        kind,
-        close: kind === "list" ? "]" : "}",
-        groupInventory,
-        groupStart: groupInventory ? valueStart : undefined,
-        groupTuple,
-        phase: "first",
-        listItems: undefined,
-        groupIdSeen: false,
-      });
-      return true;
-    }
-    return false;
-  };
-
-  while (true) {
-    const frame = stack.at(-1);
-    if (frame === undefined) {
-      if (cursor === mi.length) break;
-      if (mi[cursor] !== ",") return undefined;
-      cursor += 1;
-      const nameEnd = readName(cursor);
-      if (nameEnd === cursor || mi[nameEnd] !== "=") return undefined;
-      const name = mi.slice(cursor, nameEnd);
-      if (name === "groups") {
-        if (groupSeen) return undefined;
-        groupSeen = true;
-        valueStart = nameEnd + 1;
-        pendingGroupList = true;
-      }
-      cursor = nameEnd + 1;
-      if (!beginValue()) return undefined;
-      continue;
-    }
-
-    if (frame.phase === "afterItem") {
-      if (mi[cursor] === ",") {
-        cursor += 1;
-        frame.phase = "afterComma";
-        continue;
-      }
-      if (mi[cursor] !== frame.close) return undefined;
-      if (frame.groupTuple && !frame.groupIdSeen) return undefined;
-      cursor += 1;
-      stack.pop();
-      if (frame.groupInventory) {
-        if (frame.groupStart === undefined) return undefined;
-        groupSpan = { start: frame.groupStart, end: cursor };
-      }
-      completeValue();
-      continue;
-    }
-
-    if (frame.phase === "first" && mi[cursor] === frame.close) {
-      if (frame.groupTuple && !frame.groupIdSeen) return undefined;
-      cursor += 1;
-      stack.pop();
-      if (frame.groupInventory) {
-        if (frame.groupStart === undefined) return undefined;
-        groupSpan = { start: frame.groupStart, end: cursor };
-      }
-      completeValue();
-      continue;
-    }
-    if (frame.phase === "first" || frame.phase === "afterComma") {
-      if (frame.kind === "tuple") {
-        const nameEnd = readName(cursor);
-        if (nameEnd === cursor || mi[nameEnd] !== "=") return undefined;
-        if (frame.groupTuple && mi.slice(cursor, nameEnd) === "id") {
-          if (frame.groupIdSeen || mi[nameEnd + 1] !== '"') return undefined;
-          frame.groupIdSeen = true;
-        }
-        cursor = nameEnd + 1;
-        if (!beginValue()) return undefined;
-        continue;
-      }
-
-      const nameEnd = readName(cursor);
-      const itemIsResult = nameEnd > cursor && mi[nameEnd] === "=";
-      const itemKind = itemIsResult ? "result" : "value";
-      if (frame.listItems !== undefined && frame.listItems !== itemKind)
-        return undefined;
-      frame.listItems = itemKind;
-      if (frame.groupInventory && (itemIsResult || mi[cursor] !== "{"))
-        return undefined;
-      if (itemIsResult) cursor = nameEnd + 1;
-      if (!beginValue()) return undefined;
-      continue;
-    }
-
-    return undefined;
+const containsResultNamed = (value: GdbMiValue, name: string): boolean => {
+  switch (value.kind) {
+    case "const":
+      return false;
+    case "list":
+      return value.values.some((item) => containsResultNamed(item, name));
+    case "tuple":
+    case "result-list":
+      return value.results.some(
+        (result) =>
+          result.name === name || containsResultNamed(result.value, name),
+      );
   }
-
-  return groupSpan;
 };
 
-/** Parse the complete GDB MI inferior inventory without guessing missing PIDs. */
+/**
+ * Read the live PIDs of a complete `-list-thread-groups` reply without
+ * guessing. The record must hold exactly one top-level `groups` list of
+ * tuples, each with one `id` constant, no nested `groups`, and at most one
+ * decimal `pid`; a group without `pid` has no live process.
+ */
 export const gdbThreadGroupPids = (
   mi: string,
 ): readonly string[] | undefined => {
-  const groupsSpan = gdbMiGroupsListSpan(mi);
-  if (groupsSpan === undefined) return undefined;
-  const start = groupsSpan.start + 1;
-  let squareDepth = 1;
-  let objectDepth = 0;
-  let quoted = false;
-  let escaped = false;
+  const parsed = parseGdbMiResultRecord(mi);
+  if (!parsed.ok || parsed.value.resultClass !== "done") return undefined;
+  const groupsValues = gdbMiResultsNamed(parsed.value.results, "groups");
+  const groups = groupsValues[0];
+  if (groupsValues.length !== 1 || groups?.kind !== "list") return undefined;
   const pids: string[] = [];
-  let fieldStart = start;
-  let pidStart: number | undefined;
-  let hasLivePid = false;
-  let currentPid: string | undefined;
-  for (let index = start; index < mi.length; index += 1) {
-    const character = mi[index];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') {
-        quoted = false;
-        if (pidStart !== undefined) {
-          const pid = mi.slice(pidStart, index);
-          if (!/^[1-9]\d*$/u.test(pid)) return undefined;
-          hasLivePid = true;
-          currentPid = pid;
-          pidStart = undefined;
-        }
-      }
-      continue;
-    }
-    if (
-      (mi[index - 1] === "{" || mi[index - 1] === ",") &&
-      mi.startsWith("groups=", index)
-    )
-      return undefined;
-    if (character === '"') {
-      if (
-        squareDepth === 1 &&
-        objectDepth === 1 &&
-        mi.slice(fieldStart, index) === "pid="
-      ) {
-        if (hasLivePid) return undefined;
-        pidStart = index + 1;
-      }
-      quoted = true;
-      continue;
-    }
-    if (character === "[") squareDepth += 1;
-    else if (character === "]") {
-      squareDepth -= 1;
-      if (squareDepth === 0) {
-        if (objectDepth !== 0 || index + 1 !== groupsSpan.end) return undefined;
-        return pids;
-      }
-    } else if (character === "{") {
-      if (squareDepth === 1 && objectDepth === 0) {
-        hasLivePid = false;
-        currentPid = undefined;
-        fieldStart = index + 1;
-      }
-      objectDepth += 1;
-    } else if (character === "}") {
-      if (squareDepth === 1 && objectDepth === 1) {
-        const field = mi.slice(fieldStart, index);
-        if (field.startsWith("pid=") && !/^pid="[1-9]\d*"$/u.test(field))
-          return undefined;
-      }
-      objectDepth -= 1;
-      if (objectDepth < 0) return undefined;
-      if (squareDepth === 1 && objectDepth === 0 && hasLivePid) {
-        if (currentPid === undefined) return undefined;
-        pids.push(currentPid);
-      }
-    } else if (character === "," && squareDepth === 1 && objectDepth === 1) {
-      const field = mi.slice(fieldStart, index);
-      if (field.startsWith("pid=") && !/^pid="[1-9]\d*"$/u.test(field))
-        return undefined;
-      fieldStart = index + 1;
-    }
+  for (const group of groups.values) {
+    if (group.kind !== "tuple") return undefined;
+    const ids = gdbMiResultsNamed(group.results, "id");
+    if (ids.length !== 1 || ids[0]?.kind !== "const") return undefined;
+    if (containsResultNamed(group, "groups")) return undefined;
+    const pidValues = gdbMiResultsNamed(group.results, "pid");
+    if (pidValues.length === 0) continue;
+    const pid =
+      pidValues.length === 1 && pidValues[0] !== undefined
+        ? gdbMiConstText(pidValues[0])
+        : undefined;
+    if (pid === undefined || !/^[1-9]\d*$/u.test(pid)) return undefined;
+    pids.push(pid);
   }
-  return undefined;
+  return pids;
 };
 
 const verifyGdbInferiorOutputSink = async (
@@ -529,6 +322,8 @@ const gdbErrorMessage = (cause: unknown): string =>
 interface GdbSession {
   readonly id: string;
   readonly miVersion: "mi3" | "mi2";
+  /** Identity for this session's Evidence; version is set from -gdb-version. */
+  provider: GdbProviderIdentity;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
   /** Confirms target disposition and any durable sink before process cleanup. */
@@ -871,6 +666,7 @@ export class GdbSessionManager {
     const session: GdbSession = {
       id,
       miVersion,
+      provider: GDB_PROVIDER_IDENTITY,
       launched,
       supervisor,
       detachInferior: () => this.#detachInferior(session),
@@ -982,13 +778,31 @@ export class GdbSessionManager {
         throw new AnalysisCancelledError("start_gdb_session", {
           cause: signal.reason,
         });
+      // -gdb-version loads nothing, so it may precede the auto-load setting.
+      const reported = await this.#request(
+        session,
+        "-gdb-version",
+        signal,
+        "start_gdb_session",
+      );
+      // The version is text: a lossy decode would report replacement text.
+      if (
+        reported.completion_status === "complete" &&
+        !reported.output_truncated &&
+        reported.output_invalid_utf8 !== true &&
+        parseGdbMiDoneRecord(reported.mi).ok
+      )
+        session.provider = {
+          ...GDB_PROVIDER_IDENTITY,
+          version: gdbReportedVersion(reported.records),
+        };
       const autoLoad = await this.#request(
         session,
         "-gdb-set auto-load off",
         signal,
         "start_gdb_session",
       );
-      if (!/^\d+\^done(?:,|$)/u.test(autoLoad.mi)) {
+      if (!parseGdbMiDoneRecord(autoLoad.mi).ok) {
         throw new AnalysisCapabilityUnavailableError(
           "gdb",
           "start_gdb_session",
@@ -1005,7 +819,7 @@ export class GdbSessionManager {
         if (
           configured.completion_status !== "complete" ||
           configured.output_truncated ||
-          !/^\d+\^done(?:,|$)/u.test(configured.mi)
+          !parseGdbMiDoneRecord(configured.mi).ok
         )
           throw new AnalysisCapabilityUnavailableError(
             "gdb",
@@ -1024,7 +838,7 @@ export class GdbSessionManager {
             ? miStringField(observed.mi, "inferior_tty_terminal")
             : undefined;
         if (
-          !/^\d+\^done(?:,|$)/u.test(observed.mi) ||
+          !parseGdbMiDoneRecord(observed.mi).ok ||
           reportedTty !== inferiorTty
         )
           throw new AnalysisCapabilityUnavailableError(
@@ -1098,7 +912,7 @@ export class GdbSessionManager {
       const startupEvidence =
         startupEvidencePayload === undefined
           ? undefined
-          : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+          : createEvidence(undefined, session.provider, {
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -1281,64 +1095,60 @@ export class GdbSessionManager {
               "gdb_console",
               command,
             );
-            const evidence = createEvidence(
-              undefined,
-              { id: "gnu.gdb", name: "GNU GDB", version: null },
-              {
-                predicateType: "rea.debugger.console-observation",
-                operation: "gdb_console",
-                parameters: { session_id: sessionId, command },
-                result: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_limits === undefined
-                    ? {}
-                    : { output_limits: result.output_limits }),
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                rawResult: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_limits === undefined
-                    ? {}
-                    : { output_limits: result.output_limits }),
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                subjectUnavailableReason:
-                  "The active GDB inferior identity is not established by the debugger session identifier.",
-                limitations: [
-                  ...(result.mi.length === 0
-                    ? [
-                        "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
-                      ]
-                    : []),
-                  "MI records are returned as decoded text; their semantics depend on GDB version and target.",
-                  ...gdbRetainedOutputLimitations(result, this.#commandOutput),
-                  ...(result.output_invalid_utf8
-                    ? [
-                        "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
-                      ]
-                    : []),
-                  "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-                ],
+            const evidence = createEvidence(undefined, session.provider, {
+              predicateType: "rea.debugger.console-observation",
+              operation: "gdb_console",
+              parameters: { session_id: sessionId, command },
+              result: {
+                command,
+                mi: result.mi,
+                records: [...result.records],
+                console: result.console,
+                target: result.target,
+                log: result.log,
+                output_truncated: result.output_truncated,
+                ...(result.output_limits === undefined
+                  ? {}
+                  : { output_limits: result.output_limits }),
+                ...(result.output_invalid_utf8
+                  ? { output_invalid_utf8: true as const }
+                  : {}),
+                completion_status: result.completion_status,
               },
-            );
+              rawResult: {
+                command,
+                mi: result.mi,
+                records: [...result.records],
+                console: result.console,
+                target: result.target,
+                log: result.log,
+                output_truncated: result.output_truncated,
+                ...(result.output_limits === undefined
+                  ? {}
+                  : { output_limits: result.output_limits }),
+                ...(result.output_invalid_utf8
+                  ? { output_invalid_utf8: true as const }
+                  : {}),
+                completion_status: result.completion_status,
+              },
+              subjectUnavailableReason:
+                "The active GDB inferior identity is not established by the debugger session identifier.",
+              limitations: [
+                ...(result.mi.length === 0
+                  ? [
+                      "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
+                    ]
+                  : []),
+                "MI records are returned as decoded text; their semantics depend on GDB version and target.",
+                ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                ...(result.output_invalid_utf8
+                  ? [
+                      "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
+                    ]
+                  : []),
+                "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+              ],
+            });
             return ok({ result, evidence });
           } catch (cause) {
             if (cause instanceof ConfigurationError) return err(cause);
@@ -1357,26 +1167,19 @@ export class GdbSessionManager {
                 ...processExit.partial,
                 command,
               };
-              const evidence = createEvidence(
-                undefined,
-                { id: "gnu.gdb", name: "GNU GDB", version: null },
-                {
-                  predicateType: "rea.debugger.console-observation",
-                  operation: "gdb_console",
-                  parameters: { session_id: sessionId, command },
-                  result: { ...result, records: [...result.records] },
-                  rawResult: { ...result, records: [...result.records] },
-                  subjectUnavailableReason:
-                    "The active GDB inferior identity is not established by the debugger session identifier.",
-                  limitations: [
-                    "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
-                    ...gdbRetainedOutputLimitations(
-                      result,
-                      this.#commandOutput,
-                    ),
-                  ],
-                },
-              );
+              const evidence = createEvidence(undefined, session.provider, {
+                predicateType: "rea.debugger.console-observation",
+                operation: "gdb_console",
+                parameters: { session_id: sessionId, command },
+                result: { ...result, records: [...result.records] },
+                rawResult: { ...result, records: [...result.records] },
+                subjectUnavailableReason:
+                  "The active GDB inferior identity is not established by the debugger session identifier.",
+                limitations: [
+                  "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
+                  ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                ],
+              });
               const stopped = await this.#stopDebuggerOnly(session);
               if (stopped.status === "incomplete")
                 return err(
@@ -1516,7 +1319,7 @@ export class GdbSessionManager {
             if (
               groups.completion_status !== "complete" ||
               groups.output_truncated ||
-              !/^\d+\^done(?:,|$)/u.test(groups.mi)
+              !parseGdbMiDoneRecord(groups.mi).ok
             )
               throw new Error(
                 "GDB could not confirm its complete, untruncated inferior list before shutdown.",
@@ -1799,10 +1602,8 @@ export class GdbSessionManager {
           }
         }
       }
-      const match = /^(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
-        line,
-      );
-      if (match === null) continue;
+      const header = gdbMiResultHeader(line);
+      if (header === undefined) continue;
       if (invalidUtf8) {
         this.#failProtocol(
           session,
@@ -1810,7 +1611,7 @@ export class GdbSessionManager {
         );
         return;
       }
-      const token = Number(match[1]);
+      const { token } = header;
       const pending =
         session.pending.get(token) ??
         [...session.pending.values()].find(
@@ -1818,13 +1619,16 @@ export class GdbSessionManager {
         );
       if (pending === undefined) continue;
       if (token === pending.completionToken) {
-        if (match[2] !== "done") {
+        if (header.resultClass !== "done") {
           this.#failProtocol(session, "GDB command completion query failed.");
           continue;
         }
       } else {
         pending.terminalRecord = line;
-        if (match[2] === "running" && pending.completionToken === undefined) {
+        if (
+          header.resultClass === "running" &&
+          pending.completionToken === undefined
+        ) {
           // ^running and *stopped describe inferior execution, not completion
           // of an outer CLI command such as a multi-run command file. GDB
           // processes this read-only query after returning to its command loop.
@@ -1917,7 +1721,7 @@ export class GdbSessionManager {
     const partialObservation =
       partial === undefined
         ? undefined
-        : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        : createEvidence(undefined, session.provider, {
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -1982,7 +1786,7 @@ export class GdbSessionManager {
     if (
       groups.completion_status !== "complete" ||
       groups.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(groups.mi)
+      !parseGdbMiDoneRecord(groups.mi).ok
     )
       throw new Error("GDB could not confirm its inferior state.");
     const inferiorPids = gdbThreadGroupPids(groups.mi);
@@ -2006,7 +1810,7 @@ export class GdbSessionManager {
     if (
       observedTty.completion_status !== "complete" ||
       observedTty.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(observedTty.mi) ||
+      !parseGdbMiDoneRecord(observedTty.mi).ok ||
       miStringField(observedTty.mi, "inferior_tty_terminal") !==
         session.inferiorTty
     )
@@ -2026,7 +1830,7 @@ export class GdbSessionManager {
     if (
       detached.completion_status !== "complete" ||
       detached.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(detached.mi)
+      !parseGdbMiDoneRecord(detached.mi).ok
     )
       throw new Error("GDB did not confirm inferior detachment.");
     session.knownInferiorIdentities.clear();
@@ -2139,7 +1943,7 @@ export class GdbSessionManager {
             ),
           },
         );
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        const evidence = createEvidence(undefined, session.provider, {
           predicateType:
             operation === "start_gdb_session"
               ? "rea.debugger.startup-observation"
@@ -2232,7 +2036,7 @@ export class GdbSessionManager {
             : {}),
           completion_status: "unknown",
         };
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        const evidence = createEvidence(undefined, session.provider, {
           predicateType: "rea.debugger.console-observation",
           operation: "gdb_console",
           parameters: {
@@ -2320,79 +2124,16 @@ export class GdbSessionManager {
 const miQuote = (value: string): string =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\r", "\\r").replaceAll("\n", "\\n").replaceAll("\t", "\\t")}"`;
 
-/** @internal Decode one unambiguous GDB MI C-string field. */
+/** @internal Decode the only result of a `^done` record, a C-string field. */
 export const miStringField = (
   record: string,
   field: string,
 ): string | undefined => {
-  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const valuePattern = `((?:\\\\.|[^"\\\\])*)`;
-  const fieldPattern = new RegExp(
-    `(?:^|,)${escapedField}="${valuePattern}"`,
-    "gu",
-  );
-  const matches = [...record.matchAll(fieldPattern)];
-  if (matches.length !== 1) return undefined;
-  const match = new RegExp(
-    `^\\d+\\^done,${escapedField}="${valuePattern}"$`,
-    "u",
-  ).exec(record);
-  const raw = match?.[1];
-  if (raw === undefined) return undefined;
-  const bytes: number[] = [];
-  for (let index = 0; index < raw.length;) {
-    const character = raw[index]!;
-    if (character !== "\\") {
-      const codePoint = raw.codePointAt(index);
-      if (
-        codePoint === undefined ||
-        (codePoint >= 0xd800 && codePoint <= 0xdfff)
-      )
-        return undefined;
-      const value = String.fromCodePoint(codePoint);
-      bytes.push(...Buffer.from(value, "utf8"));
-      index += value.length;
-      continue;
-    }
-    const escaped = raw[++index]!;
-    const simple: Readonly<Record<string, number>> = {
-      a: 7,
-      b: 8,
-      f: 12,
-      n: 10,
-      r: 13,
-      t: 9,
-      v: 11,
-      "\\": 92,
-      '"': 34,
-      "'": 39,
-      "?": 63,
-    };
-    const simpleByte = simple[escaped];
-    if (simpleByte !== undefined) {
-      bytes.push(simpleByte);
-      index += 1;
-      continue;
-    }
-    if (escaped === "x") {
-      const hex = /^[0-9a-f]+/iu.exec(raw.slice(index + 1))?.[0];
-      if (hex === undefined) return undefined;
-      bytes.push(Number.parseInt(hex, 16) & 0xff);
-      index += hex.length;
-      index += 1;
-      continue;
-    }
-    if (/[0-7]/u.test(escaped)) {
-      const octal = `${escaped}${/^[0-7]{0,2}/u.exec(raw.slice(index + 1))![0]}`;
-      bytes.push(Number.parseInt(octal, 8) & 0xff);
-      index += octal.length;
-      continue;
-    }
-    return undefined;
-  }
-  const decoded = Buffer.from(bytes).toString("utf8");
-  return Buffer.from(decoded, "utf8").equals(Buffer.from(bytes))
-    ? decoded
+  const parsed = parseGdbMiDoneRecord(record);
+  if (!parsed.ok) return undefined;
+  const [only, ...rest] = parsed.value.results;
+  return only?.name === field && rest.length === 0
+    ? gdbMiConstText(only.value)
     : undefined;
 };
 

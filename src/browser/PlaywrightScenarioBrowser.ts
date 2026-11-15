@@ -16,7 +16,6 @@ import { join } from "node:path";
 import type {
   Browser,
   BrowserContext,
-  CDPSession,
   ConnectOverCDPOptions,
   Page,
   chromium,
@@ -37,7 +36,11 @@ import {
   settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
-import { admitCdpReply } from "./protocol/CdpCommands.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -404,10 +407,10 @@ const findConnectedPage = async (
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      let session: CDPSession;
+      let session: PlaywrightCdpSession;
       try {
         session = await withScenarioCommandDeadline(
-          () => context.newCDPSession(page),
+          () => newPlaywrightCdpSession(context, page, OPERATION),
           commandTimeoutMs,
           "command",
           "Target.attachToTarget",
@@ -418,15 +421,11 @@ const findConnectedPage = async (
       }
       try {
         throwIfScenarioCancelled(signal);
-        const { targetInfo } = admitCdpReply(
+        const { targetInfo } = await withScenarioCommandDeadline(
+          () => session.send("Target.getTargetInfo"),
+          commandTimeoutMs,
+          "command",
           "Target.getTargetInfo",
-          await withScenarioCommandDeadline(
-            () => session.send("Target.getTargetInfo"),
-            commandTimeoutMs,
-            "command",
-            "Target.getTargetInfo",
-          ),
-          OPERATION,
         );
         throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
@@ -455,7 +454,7 @@ class AttachedScenarioEnvironmentOwner {
 
   private constructor(
     private readonly page: Page,
-    private readonly session: CDPSession,
+    private readonly session: PlaywrightCdpSession,
     private readonly commandTimeoutMs: number,
   ) {}
 
@@ -465,10 +464,10 @@ class AttachedScenarioEnvironmentOwner {
     commandTimeoutMs: number,
     retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
-    let session: CDPSession;
+    let session: PlaywrightCdpSession;
     try {
       session = await withScenarioCommandDeadline(
-        () => context.newCDPSession(page),
+        () => newPlaywrightCdpSession(context, page, OPERATION),
         commandTimeoutMs,
         "command",
         "Target.attachToTarget",
@@ -517,6 +516,18 @@ class AttachedScenarioEnvironmentOwner {
     );
   }
 
+  /**
+   * Record a restore obligation once the browser answered the override. A
+   * success whose result fails its schema was still applied by the browser,
+   * so it keeps the obligation; only a rejected or unanswered command does not.
+   */
+  #override(command: Promise<unknown>, applied: () => void): Promise<void> {
+    return command.then(applied, (cause: unknown) => {
+      if (cause instanceof CdpMalformedReply) applied();
+      throw cause;
+    });
+  }
+
   async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
@@ -537,41 +548,44 @@ class AttachedScenarioEnvironmentOwner {
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
     await this.#command(
-      this.session
-        .send("Emulation.setDeviceMetricsOverride", {
+      this.#override(
+        this.session.send("Emulation.setDeviceMetricsOverride", {
           width: environment.viewport.width,
           height: environment.viewport.height,
           deviceScaleFactor: environment.viewport.device_scale_factor,
           mobile: false,
           dontSetVisibleSize: true,
-        })
-        .then(() => {
-          this.#deviceMetricsOverride = true;
         }),
+        () => {
+          this.#deviceMetricsOverride = true;
+        },
+      ),
       "Emulation.setDeviceMetricsOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setLocaleOverride", {
+      this.#override(
+        this.session.send("Emulation.setLocaleOverride", {
           locale: environment.locale,
-        })
-        .then(() => {
-          this.#localeOverride = true;
         }),
+        () => {
+          this.#localeOverride = true;
+        },
+      ),
       "Emulation.setLocaleOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setTimezoneOverride", {
+      this.#override(
+        this.session.send("Emulation.setTimezoneOverride", {
           timezoneId: environment.timezone,
-        })
-        .then(() => {
-          this.#timezoneOverride = true;
         }),
+        () => {
+          this.#timezoneOverride = true;
+        },
+      ),
       "Emulation.setTimezoneOverride",
     );
     throwIfScenarioCancelled(signal);
@@ -579,11 +593,14 @@ class AttachedScenarioEnvironmentOwner {
     // Keep scenario actions usable in the selected background page without
     // Playwright's connection-wide focus override on unrelated pages.
     await this.#command(
-      this.session
-        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
-        .then(() => {
-          this.#focusOverride = true;
+      this.#override(
+        this.session.send("Emulation.setFocusEmulationEnabled", {
+          enabled: true,
         }),
+        () => {
+          this.#focusOverride = true;
+        },
+      ),
       "Emulation.setFocusEmulationEnabled",
     );
     throwIfScenarioCancelled(signal);

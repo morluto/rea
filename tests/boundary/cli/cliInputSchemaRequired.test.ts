@@ -321,6 +321,9 @@ describe("web module CLI advertised input schema", () => {
       args({ manifestPath: resolve("manifest.json"), scriptIndex: 0 }),
     ).toBe(true);
     expect(args({ manifestPath: "", scriptIndex: 0 })).toBe(false);
+    expect(args({ manifestPath: "./manifest.json", scriptIndex: 0 })).toBe(
+      true,
+    );
     expect(args({ manifestPath: "manifest\u0000.json", scriptIndex: 0 })).toBe(
       false,
     );
@@ -352,12 +355,12 @@ describe("web source location CLI advertised input schema", () => {
 
     expect(args(valid)).toBe(true);
     expect(args({ ...valid, manifestPath: "" })).toBe(false);
-    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(false);
+    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(true);
     expect(
       args({ ...valid, manifestPath: `${resolve("manifest.json")}\u0000` }),
     ).toBe(false);
     expect(args({ ...valid, sourceMapPath: "" })).toBe(false);
-    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(true);
     expect(
       args({ ...valid, sourceMapPath: `${resolve("app.js.map")}\u0000` }),
     ).toBe(false);

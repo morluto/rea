@@ -7,7 +7,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
-import type { BrowserContext, CDPSession, Page } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -16,8 +16,14 @@ import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.j
 import {
   admitCdpReply,
   CdpMalformedReply,
-  type CdpSendResult,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
 import {
   releaseLateScenarioCommand,
   scenarioCommandPending,
@@ -75,21 +81,15 @@ type StorageSeed = {
   session: [string, string][];
 };
 
-type StorageTransportSend = (
-  method: string,
-  params?: Record<string, unknown>,
-  timeoutMs?: number,
-) => Promise<unknown>;
-
 interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
   /** Replies of registered commands are admitted by their result schemas. */
-  readonly send: <M extends string>(
+  readonly send: <M extends CdpCommand>(
     method: M,
-    params?: Record<string, unknown>,
+    params?: CdpCommandParams<M>,
     timeoutMs?: number,
-  ) => Promise<CdpSendResult<M>>;
+  ) => Promise<CdpCommandResult<M>>;
   readonly contexts: Map<
     number,
     z.infer<typeof storageContextSchema>["context"]
@@ -139,7 +139,7 @@ export class PlaywrightScenarioStorage {
   #removeListeners: () => void = () => undefined;
 
   private constructor(
-    private readonly cdp: CDPSession,
+    private readonly cdp: PlaywrightCdpSession,
     private readonly signal: AbortSignal | undefined,
     private readonly commandTimeoutMs: number,
     private readonly ownsContext: boolean,
@@ -160,8 +160,12 @@ export class PlaywrightScenarioStorage {
       return undefined;
 
     const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
-    const connection = context.newCDPSession(page);
-    let cdp: CDPSession;
+    const connection = newPlaywrightCdpSession(
+      context,
+      page,
+      "capture_browser_scenario",
+    );
+    let cdp: PlaywrightCdpSession;
     try {
       cdp = await withPlaywrightExecutionBoundary(
         () =>
@@ -178,7 +182,7 @@ export class PlaywrightScenarioStorage {
       if (signal?.aborted === true) {
         let detached = false;
         const lateCleanup = async (): Promise<void> => {
-          let session: CDPSession;
+          let session: PlaywrightCdpSession;
           try {
             session = await connection;
           } catch {
@@ -235,15 +239,11 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-    const rootInfo = admitCdpReply(
+    const rootInfo = await withScenarioCommandDeadline(
+      () => this.cdp.send("Target.getTargetInfo"),
+      this.commandTimeoutMs,
+      "command",
       "Target.getTargetInfo",
-      await withScenarioCommandDeadline(
-        () => this.cdp.send("Target.getTargetInfo"),
-        this.commandTimeoutMs,
-        "command",
-        "Target.getTargetInfo",
-      ),
-      "capture_browser_scenario",
     );
     if (this.#closed) return;
     const root = this.createTarget(
@@ -251,8 +251,7 @@ export class PlaywrightScenarioStorage {
       rootInfo.targetInfo.targetId,
       (method, params, timeoutMs = this.commandTimeoutMs) =>
         withScenarioCommandDeadline(
-          () =>
-            this.cdp.send(method as Parameters<CDPSession["send"]>[0], params),
+          () => this.cdp.send(method, params),
           timeoutMs,
           "command",
           method,
@@ -330,17 +329,12 @@ export class PlaywrightScenarioStorage {
   private createTarget(
     parentId: string | undefined,
     topLevelTargetId: string,
-    send: StorageTransportSend,
+    send: StorageTarget["send"],
   ): StorageTarget {
     return {
       parentId,
       topLevelTargetId,
-      send: async (method, params, timeoutMs) =>
-        admitCdpReply(
-          method,
-          await send(method, params, timeoutMs),
-          "capture_browser_scenario",
-        ),
+      send,
       contexts: new Map(),
       scripts: new Map(),
       ready: Promise.resolve(),
@@ -373,11 +367,11 @@ export class PlaywrightScenarioStorage {
     });
   }
 
-  private sendObserved<M extends string>(
+  private sendObserved<M extends CdpCommand>(
     target: StorageTarget,
     method: M,
-    params?: Record<string, unknown>,
-  ): Promise<CdpSendResult<M>> {
+    params?: CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     return withPlaywrightExecutionBoundary(
       () => target.send(method, params),
       undefined,
@@ -595,7 +589,7 @@ export class PlaywrightScenarioStorage {
       event.targetInfo.type === "iframe"
         ? parent.topLevelTargetId
         : event.targetInfo.targetId,
-      async (method, params = {}, timeoutMs = this.commandTimeoutMs) => {
+      async (method, params, timeoutMs = this.commandTimeoutMs) => {
         const id = ++this.#sequence;
         let rejectReply: ((error: Error) => void) | undefined;
         const reply = new Promise<unknown>((resolve, reject) => {
@@ -607,7 +601,7 @@ export class PlaywrightScenarioStorage {
             "Target.sendMessageToTarget",
             {
               sessionId,
-              message: JSON.stringify({ id, method, params }),
+              message: JSON.stringify({ id, method, params: params ?? {} }),
             },
             timeoutMs,
           );
@@ -618,7 +612,7 @@ export class PlaywrightScenarioStorage {
             "command",
             method,
           );
-          return result;
+          return admitCdpReply(method, result, "capture_browser_scenario");
         } catch (cause: unknown) {
           rejectReply?.(
             cause instanceof Error

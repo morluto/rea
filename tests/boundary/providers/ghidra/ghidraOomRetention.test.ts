@@ -138,6 +138,7 @@ describe.skipIf(process.platform === "win32")(
             observed_oome: [
               {
                 stream: "stderr",
+                area: "heap",
                 line: expect.stringContaining("java.lang.OutOfMemoryError"),
               },
             ],

@@ -18,7 +18,7 @@ import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpConnection } from "./CdpConnection.js";
-import { recordValue } from "./CdpCaptureValues.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 import {
   parseCdpDiscoveryTargets,
   type CdpDiscoveryTarget,
@@ -65,14 +65,6 @@ interface CdpDiscoveryResponseLimits {
   readonly bytes: number;
   readonly timeoutMs: number;
 }
-
-const browserSocketVersionSchema = z.object({
-  protocolVersion: z.string().min(1),
-  product: z.string().min(1),
-  revision: z.string(),
-  userAgent: z.string(),
-  jsVersion: z.string(),
-});
 
 /** Validated direct CDP WebSocket bound to one discovered page target. */
 interface CdpPageWebSocketEndpoint {
@@ -234,25 +226,16 @@ export const discoverCdpBrowserSocket = async (
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<CdpEndpointDiscovery> => {
-  const versionInput = await connection.send(
-    "Browser.getVersion",
-    {},
-    undefined,
-    signal,
+  const version = await discoveryReply(
+    connection.send("Browser.getVersion", {}, undefined, signal),
+    operation,
   );
-  const targetsInput = await connection.send(
-    "Target.getTargets",
-    {},
-    undefined,
-    signal,
-  );
-  const version = parseCdpEndpointValue(
-    browserSocketVersionSchema,
-    versionInput,
+  const { targetInfos } = await discoveryReply(
+    connection.send("Target.getTargets", {}, undefined, signal),
     operation,
   );
   const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
-    recordValue(targetsInput)?.targetInfos,
+    targetInfos,
     operation,
     "browser-socket",
   );
@@ -275,6 +258,25 @@ export const discoverCdpBrowserSocket = async (
       attached: target.attached,
     })),
   };
+};
+
+/**
+ * Discovery answers the same question over HTTP and over a browser socket, so
+ * a malformed discovery reply is an invalid endpoint response on both paths.
+ */
+const discoveryReply = async <Reply>(
+  reply: Promise<Reply>,
+  operation: BrowserObservationOperation,
+): Promise<Reply> => {
+  try {
+    return await reply;
+  } catch (cause: unknown) {
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    throw new BrowserObservationError(operation, "invalid_endpoint_response", {
+      cause,
+      ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+    });
+  }
 };
 
 const sanitizeTargetTitle = (value: string, targetUrl: string): string => {

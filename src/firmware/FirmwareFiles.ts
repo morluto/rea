@@ -6,11 +6,11 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
-  AnalysisCancelledError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import {
@@ -50,8 +50,7 @@ const throwIfFirmwareInventoryCancelled = (
   signal: AbortSignal | undefined,
   operation: string,
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 /** Own all firmware reads, including rejected admission and final descriptor cleanup. */
