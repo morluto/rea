@@ -4,31 +4,18 @@ import {
   resolvePwntoolsLimits,
   type PwntoolsProducerLimits,
 } from "../../domain/native/pwntoolsResourceLimits.js";
-import {
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
-  AnalysisError,
-  type AnalysisCapturedOutput,
-} from "../../domain/analysisErrorBase.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisOutputError,
-  AnalysisTimeoutError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
+import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import type { ProviderFailureDialect } from "../../providers/classifyProviderFailure.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import {
@@ -107,62 +94,153 @@ const DEFAULT_CONTEXT = {
   providerId: PWNTOOLS_PROVIDER_IDENTITY.id,
 };
 
-/** Keep read, engine, output and owned-lifecycle failure reasons distinct. */
-export const pwntoolsDecoderFailure = (
-  cause: unknown,
+/** One pwntools phase, with the evidence its owned reports left. */
+interface PwntoolsPhase {
+  readonly phase: string;
+  readonly path: string;
+  readonly executablePath: string;
+  readonly failureEvidence: PwntoolsFailureEvidence;
+  readonly context: PwntoolsFailureContext;
+}
+
+/**
+ * pwntools' failure dialect for one phase of a decoder or debugger operation;
+ * `classifyProviderFailure` keeps read, engine, output and owned-lifecycle
+ * failure reasons distinct.
+ */
+export const pwntoolsFailureDialect = (
   phase: string,
   path: string,
   executablePath = path,
   failureEvidence: PwntoolsFailureEvidence = {},
   context: PwntoolsFailureContext = DEFAULT_CONTEXT,
-): AnalysisError => {
-  const error = classifyPwntoolsDecoderFailure(
-    cause,
+): ProviderFailureDialect => {
+  const state: PwntoolsPhase = {
     phase,
     path,
     executablePath,
     failureEvidence,
     context,
-  );
-  if (phase === "artifact-read") {
-    const observation = completedStableArtifactObservation(cause, path);
-    if (observation !== undefined) error.retainPartialObservation(observation);
-  }
-  return error;
+  };
+  const limits = context.producerLimits ?? resolvePwntoolsLimits();
+  return {
+    providerId: context.providerId,
+    operation: context.operation,
+    command: () => pwntoolsCommandContext(state, limits),
+    commandCleanup: (failure) => {
+      const output = combinedPwntoolsOutput(failure.snapshot, context);
+      return new ProviderCleanupError(
+        context.providerId,
+        failure.resources,
+        {
+          reason: failure.cleanupFailure,
+          ...(output === undefined ? {} : { captured_output: { ...output } }),
+          previous_error: {
+            failure_kind: failure.reason,
+            message: failure.message,
+            exit_code: failure.snapshot?.exitCode ?? null,
+            signal: failure.snapshot?.signal ?? null,
+            stdout: failure.snapshot?.stdout.text ?? null,
+            stderr: failure.snapshot?.stderr.text ?? null,
+          },
+        },
+        { operation: context.operation, cause: failure },
+      );
+    },
+    // Only the configuration phase checks the selected Python by path.
+    recognise: (cause) =>
+      phase === "configuration" && cause instanceof Error && "code" in cause
+        ? pwntoolsUnavailable(
+            `Selected Python executable is unavailable (${String(cause.code)}): ${path}. Check the caller-selected path and execute access.`,
+            path,
+            String(cause.code),
+            undefined,
+            context,
+          )
+        : undefined,
+    ...(phase === "artifact-read"
+      ? {
+          file: {
+            path,
+            description: "object",
+            retainCompletedIdentity: true,
+            fileSize: (limit, details) =>
+              new AnalysisInputError(
+                context.operation,
+                {
+                  ...details,
+                  userMessage: `${limit.message} ${pwntoolsInputLimitFact(limits.input_bytes, context.inputBytesSource)} ${pwntoolsBudgetRecovery(limits)}`,
+                  remediationAction: pwntoolsInputLimitRecovery(
+                    limits.input_bytes,
+                    context.inputBytesSource,
+                  ),
+                  limit: analysisSettingLimit(
+                    "pwntools.max_input_bytes",
+                    limits.input_bytes,
+                    context.inputBytesSource,
+                  ),
+                },
+                [
+                  {
+                    path: ["path"],
+                    reason: "out_of_range",
+                    message: `${limit.message} REA_PWNTOOLS_MAX_INPUT_BYTES defaults to ${String(PWNTOOLS_LIMITS.input_bytes)} bytes.`,
+                  },
+                ],
+              ),
+          },
+        }
+      : {}),
+    observedOutput: context.precedingOutput,
+    unclassified: (cause, details) =>
+      new ProviderAdapterError(context.providerId, context.operation, {
+        ...details,
+        cause,
+        diagnostics: {
+          ...pwntoolsPhaseDiagnostics(state),
+          reason: cause instanceof Error ? cause.message : String(cause),
+        },
+      }),
+  };
 };
 
-const classifyPwntoolsDecoderFailure = (
-  cause: unknown,
-  phase: string,
-  path: string,
-  executablePath: string,
-  failureEvidence: PwntoolsFailureEvidence,
-  context: PwntoolsFailureContext,
-): AnalysisError => {
+/** The owned Python bridge's dialect: its reserved exits and selected budgets. */
+const pwntoolsCommandContext = (
+  state: PwntoolsPhase,
+  limits: PwntoolsProducerLimits,
+): ProviderOutcomeContext => {
+  const { executablePath, failureEvidence, context } = state;
   const limitReport = failureEvidence.limits;
-  const limits = context.producerLimits ?? resolvePwntoolsLimits();
   const budgetRecovery = pwntoolsBudgetRecovery(limits);
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof OwnedCommandFailure) {
-    const currentOutput =
-      cause.snapshot === null
-        ? undefined
-        : capturedPwntoolsOutput(cause.snapshot);
-    const combinedOutput =
-      context.precedingOutput === undefined
-        ? currentOutput
-        : currentOutput === undefined
-          ? context.precedingOutput
-          : {
-              stdout: `[core decoder]\n${context.precedingOutput.stdout}\n[debugger]\n${currentOutput.stdout}`,
-              stderr: `[core decoder]\n${context.precedingOutput.stderr}\n[debugger]\n${currentOutput.stderr}`,
-              truncated:
-                context.precedingOutput.truncated || currentOutput.truncated,
-            };
-    const outputOptions = {
-      ...(combinedOutput === undefined
+  const reportFailure =
+    limitReport?.failure === null || limitReport === undefined
+      ? ""
+      : ` Effective limit report unavailable: ${limitReport.failure}`;
+  const reportedLimits = limitReport?.limits ?? null;
+  const allowance = fileSizeAllowance(
+    limitReport?.limits?.file_size_bytes,
+    limits.file_bytes,
+  );
+  const fileSizeRecovery = `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`;
+  const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
+  const deadline = nativeDeadlineRecovery({
+    timeoutMs,
+    parameter: "pwntools_timeout_ms",
+    cliFlag: "--pwntools-timeout-ms",
+    defaultMs: PWNTOOLS_LIMITS.command_timeout_ms,
+    phase: "pwntools command deadline",
+    unchanged: budgetRecovery,
+  });
+  return {
+    operation: context.operation,
+    capturedOutput: (snapshot) =>
+      combinedPwntoolsOutput(snapshot, context) ??
+      capturedPwntoolsOutput(snapshot),
+    details: {
+      // A failure before any output still reports the earlier stage's output.
+      ...(context.precedingOutput === undefined
         ? {}
-        : { capturedOutput: combinedOutput }),
+        : { capturedOutput: context.precedingOutput }),
       ...(failureEvidence.finalizationFailures === undefined
         ? {}
         : {
@@ -171,261 +249,128 @@ const classifyPwntoolsDecoderFailure = (
                 failureEvidence.finalizationFailures,
             },
           }),
-    };
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
-        context.providerId,
-        cause.resources,
-        {
-          reason: cause.cleanupFailure,
-          ...(combinedOutput === undefined
-            ? {}
-            : {
-                captured_output: { ...combinedOutput },
-              }),
-          previous_error: {
-            failure_kind: cause.reason,
-            message: cause.message,
-            exit_code: cause.snapshot?.exitCode ?? null,
-            signal: cause.snapshot?.signal ?? null,
-            stdout: cause.snapshot?.stdout.text ?? null,
-            stderr: cause.snapshot?.stderr.text ?? null,
-          },
-        },
-        { operation: context.operation, cause },
-      );
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(context.operation, {
-        ...outputOptions,
-        cause:
-          cause.cancellation === undefined
-            ? cause.cause
-            : cause.cancellation.reason,
-      });
-    if (cause.reason === "timeout") {
-      const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
-      return new AnalysisTimeoutError(context.operation, timeoutMs, {
-        ...outputOptions,
-        ...nativeDeadlineRecovery({
-          timeoutMs,
-          setting: "pwntools_timeout_ms",
-          cliFlag: "--pwntools-timeout-ms",
-          defaultMs: PWNTOOLS_LIMITS.command_timeout_ms,
-          phase: "pwntools command deadline",
-          unchanged: budgetRecovery,
-        }),
-      });
-    }
-    if (cause.reason === "output-limit")
-      return new AnalysisOutputError(context.operation, cause.message, {
-        ...outputOptions,
-        userMessage: `${cause.message} ${budgetRecovery}`,
-        remediationAction: budgetRecovery,
-      });
-    if (
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGXFSZ" ||
-        (failureEvidence.marker?.resource === "file-size" &&
-          cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
-          cause.snapshot.signal === null))
-    ) {
-      const allowance = fileSizeAllowance(
-        limitReport?.limits?.file_size_bytes,
-        limits.file_bytes,
-      );
-      return new AnalysisResourceConstraintError(
-        context.operation,
-        "file-size",
-        (cause.snapshot.signal === "SIGXFSZ"
-          ? "Owned Python terminated with SIGXFSZ; the exact signal cause is unknown."
-          : "The owned Python bridge reported EFBIG while writing a file; the exact write failure cause is unknown.") +
-          (limitReport?.failure === null || limitReport === undefined
-            ? ""
-            : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          ` ${allowance}`,
-        limitReport?.limits ?? null,
-        {
-          ...outputOptions,
-          remediationAction: `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`,
-        },
-      );
-    }
-    if (cause.reason === "process" && cause.snapshot?.signal === "SIGXCPU")
-      return new AnalysisResourceConstraintError(
-        context.operation,
-        "cpu",
-        "Owned Python terminated with SIGXCPU; the exact signal cause is unknown." +
-          (limitReport?.failure === null || limitReport === undefined
-            ? ""
-            : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          ` Selected producer_limits.cpu_seconds is ${String(limits.cpu_seconds)} seconds; inherited tighter limits remain enforced.`,
-        limitReport?.limits ?? null,
-        {
-          ...outputOptions,
-          remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call (CLI --producer-limits JSON) when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
-        },
-      );
-    if (
-      cause.reason === "process" &&
-      failureEvidence.marker?.resource === "memory" &&
-      cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT &&
-      cause.snapshot.signal === null
-    )
-      return new AnalysisResourceConstraintError(
-        context.operation,
-        "memory",
-        "The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause is unknown." +
-          (limitReport?.failure === null || limitReport === undefined
-            ? ""
-            : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          ` The selected producer_limits.address_space_bytes allowance is ${String(limits.address_space_bytes)} bytes; tighter inherited limits remain enforced.`,
-        limitReport?.limits ?? null,
-        {
-          ...outputOptions,
-          remediationAction: `Review the reported worker memory limits and available host memory. ${budgetRecovery}`,
-        },
-      );
-  }
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    "syscall" in cause &&
-    typeof cause.syscall === "string" &&
-    cause.syscall.startsWith("spawn ")
-  )
-    return pwntoolsUnavailable(
-      `Selected Python could not launch (${String(cause.code)}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
-      executablePath,
-      String(cause.code),
-      undefined,
-      context,
-    );
-  if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        context.operation,
-        path,
-        cause.message,
-        {
-          cause,
-        },
-      );
-    if (cause.reason === "cancelled") {
-      const error = new AnalysisCancelledError(context.operation, {
-        cause: artifactFileCancellationCause(cause),
-        cleanup: cause.cleanup,
-        partialObservation: cause.partialObservation,
-        capturedOutput: context.precedingOutput,
-      });
-      bindArtifactFileCleanup(cause, error);
-      return error;
-    }
-    if (
-      cause.reason === "limit" ||
-      cause.reason === "path" ||
-      cause.reason === "format"
-    )
-      return new AnalysisInputError(
-        context.operation,
-        {
-          cause,
-          ...stableArtifactInputRecovery(cause),
-          ...(cause.reason === "limit"
-            ? {
-                userMessage: `${cause.message} ${pwntoolsInputLimitFact(limits.input_bytes, context.inputBytesSource)} ${budgetRecovery}`,
-                remediationAction: pwntoolsInputLimitRecovery(
-                  limits.input_bytes,
-                  context.inputBytesSource,
-                ),
-                limit: analysisSettingLimit(
-                  "pwntools.max_input_bytes",
-                  limits.input_bytes,
-                  context.inputBytesSource,
-                ),
-              }
-            : {}),
-        },
-        [
-          {
-            path: ["path"],
-            reason:
-              cause.reason === "limit" ? "out_of_range" : "invalid_format",
-            message:
-              cause.reason === "limit"
-                ? `${cause.message} REA_PWNTOOLS_MAX_INPUT_BYTES defaults to ${String(PWNTOOLS_LIMITS.input_bytes)} bytes.`
-                : cause.message,
-          },
-        ],
-      );
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (phase === "configuration")
-      return pwntoolsUnavailable(
-        `Selected Python executable is unavailable (${String(cause.code)}): ${path}. Check the caller-selected path and execute access.`,
-        path,
-        String(cause.code),
-        undefined,
-        context,
-      );
-    if (
-      phase === "artifact-read" &&
-      (cause.code === "EACCES" || cause.code === "EPERM")
-    )
-      return new AnalysisAccessDeniedError(
-        context.operation,
-        path,
-        cause.code,
-        {
-          cause,
-        },
-      );
-    if (
-      phase === "artifact-read" &&
-      (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-    )
-      return new AnalysisInputError(context.operation, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected object could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(context.providerId, context.operation, {
-    cause,
-    diagnostics: {
-      phase,
-      path,
-      ...(failureEvidence.finalizationFailures === undefined
-        ? {}
-        : {
-            receipt_finalization_failures: failureEvidence.finalizationFailures,
-          }),
-      ...(context.precedingOutput === undefined
-        ? {}
-        : { preceding_output: { ...context.precedingOutput } }),
-      reason: cause instanceof Error ? cause.message : String(cause),
-      ...(failureEvidence.marker === undefined
-        ? {}
-        : { resource_failure_marker: { ...failureEvidence.marker } }),
-      ...(cause instanceof OwnedCommandFailure
-        ? {
-            failure_kind: cause.reason,
-            exit_code: cause.snapshot?.exitCode ?? null,
-            signal: cause.snapshot?.signal ?? null,
-            stdout: cause.snapshot?.stdout.text ?? null,
-            stderr: cause.snapshot?.stderr.text ?? null,
-            ...(cause.snapshot === null
-              ? {}
-              : {
-                  captured_output: {
-                    ...capturedPwntoolsOutput(cause.snapshot),
-                  },
-                }),
-          }
-        : {}),
     },
-  });
+    timeout: {
+      ms: timeoutMs,
+      userMessage: deadline.userMessage,
+      remediationAction: deadline.remediationAction,
+      limit: deadline.limit,
+    },
+    outputLimit: {
+      limits: {
+        output_bytes: limits.output_bytes,
+        diagnostic_bytes: limits.diagnostic_bytes,
+      },
+      recovery: { remediationAction: budgetRecovery },
+    },
+    resourceSignal: (signal) =>
+      signal === "SIGXFSZ"
+        ? {
+            limits: reportedLimits,
+            detail: `${reportFailure} ${allowance}`.trim(),
+            recovery: { remediationAction: fileSizeRecovery },
+          }
+        : {
+            limits: reportedLimits,
+            detail:
+              `${reportFailure} Selected producer_limits.cpu_seconds is ${String(limits.cpu_seconds)} seconds; inherited tighter limits remain enforced.`.trim(),
+            recovery: {
+              remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call (CLI --producer-limits JSON) when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
+            },
+          },
+    dialect: (outcome, details) => {
+      if (outcome.kind === "launch-refused")
+        return pwntoolsUnavailable(
+          `Selected Python could not launch (${outcome.refusal.code}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
+          executablePath,
+          outcome.refusal.code,
+          undefined,
+          context,
+        );
+      // A reserved exit means a resource failure only when the bridge's
+      // marker names that resource.
+      const reservedExit =
+        outcome.kind === "exited" && outcome.signal === null
+          ? outcome.exitCode
+          : undefined;
+      const marked = failureEvidence.marker?.resource;
+      if (
+        marked === "file-size" &&
+        reservedExit === PWNTOOLS_FILE_SIZE_FAILURE_EXIT
+      )
+        return new AnalysisResourceConstraintError(
+          context.operation,
+          "file-size",
+          `The owned Python bridge reported EFBIG while writing a file; the exact write failure cause is unknown.${reportFailure} ${allowance}`,
+          reportedLimits,
+          { ...details, remediationAction: fileSizeRecovery },
+        );
+      if (marked === "memory" && reservedExit === PWNTOOLS_MEMORY_FAILURE_EXIT)
+        return new AnalysisResourceConstraintError(
+          context.operation,
+          "memory",
+          `The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause is unknown.${reportFailure} The selected producer_limits.address_space_bytes allowance is ${String(limits.address_space_bytes)} bytes; tighter inherited limits remain enforced.`,
+          reportedLimits,
+          {
+            ...details,
+            remediationAction: `Review the reported worker memory limits and available host memory. ${budgetRecovery}`,
+          },
+        );
+      // The shared owner already carries the command's output as
+      // `details.capturedOutput`; diagnostics keep only the exit facts.
+      const snapshot = outcome.output?.snapshot;
+      return new ProviderAdapterError(context.providerId, context.operation, {
+        ...details,
+        diagnostics: {
+          ...pwntoolsPhaseDiagnostics(state),
+          reason: outcome.message,
+          failure_kind:
+            outcome.cause instanceof OwnedCommandFailure
+              ? outcome.cause.reason
+              : outcome.kind,
+          exit_code: snapshot?.exitCode ?? null,
+          signal: snapshot?.signal ?? null,
+        },
+      });
+    },
+  };
+};
+
+/** Diagnostics every unrecognised pwntools failure reports. */
+const pwntoolsPhaseDiagnostics = ({
+  phase,
+  path,
+  failureEvidence,
+  context,
+}: PwntoolsPhase) => ({
+  phase,
+  path,
+  ...(failureEvidence.finalizationFailures === undefined
+    ? {}
+    : { receipt_finalization_failures: failureEvidence.finalizationFailures }),
+  ...(context.precedingOutput === undefined
+    ? {}
+    : { preceding_output: { ...context.precedingOutput } }),
+  ...(failureEvidence.marker === undefined
+    ? {}
+    : { resource_failure_marker: { ...failureEvidence.marker } }),
+});
+
+/** The debugger's output follows the core decoder's when both ran. */
+const combinedPwntoolsOutput = (
+  snapshot: ProviderProcessSnapshot | null,
+  context: PwntoolsFailureContext,
+): AnalysisCapturedOutput | undefined => {
+  const current =
+    snapshot === null ? undefined : capturedPwntoolsOutput(snapshot);
+  const preceding = context.precedingOutput;
+  if (preceding === undefined || current === undefined)
+    return current ?? preceding;
+  return {
+    stdout: `[core decoder]\n${preceding.stdout}\n[debugger]\n${current.stdout}`,
+    stderr: `[core decoder]\n${preceding.stderr}\n[debugger]\n${current.stderr}`,
+    truncated: preceding.truncated || current.truncated,
+  };
 };
 
 /** Report caller-selected engine absence with its actual configuration and host constraint. */

@@ -19,7 +19,6 @@ cliTest(
     const cliResult = await driver.run({
       arguments: ["analyze-javascript-application", root, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -57,5 +56,4 @@ cliTest(
       ),
     ).toBe(true);
   },
-  20_000,
 );

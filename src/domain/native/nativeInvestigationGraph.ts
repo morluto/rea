@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
@@ -367,8 +366,7 @@ export const joinInterfaceBuilderDispatch = (
       (candidate) =>
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
-        (className === null ||
-          objcImplementationClassName(candidate) === className),
+        (className === null || candidate.class_name === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;

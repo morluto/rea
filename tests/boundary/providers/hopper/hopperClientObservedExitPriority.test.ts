@@ -91,12 +91,12 @@ describe("Hopper startup failure priority", () => {
     if (!(error instanceof HopperProcessError)) return;
     expect(error.exitCode).toBe(3);
     expect(error.stage).toBe("launch");
-  }, 30_000);
+  });
 
   it("reports the same launcher exit without any cancellation", async () => {
     const error = await start("never");
     expect(error._tag).toBe("HopperProcessError");
-  }, 30_000);
+  });
 
   it("keeps cancellation first when its abort handler causes the later launcher exit", async () => {
     const controller = new AbortController();
@@ -117,5 +117,5 @@ describe("Hopper startup failure priority", () => {
     } finally {
       await client.close().catch(() => undefined);
     }
-  }, 30_000);
+  });
 });

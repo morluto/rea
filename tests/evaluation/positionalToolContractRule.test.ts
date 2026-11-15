@@ -131,6 +131,36 @@ describe("canonical catalog source composition", () => {
     );
   });
 
+  it("discovers groups composed as flattened static object values", () => {
+    const sources = new Map([
+      [
+        sourcePath("toolContracts.ts"),
+        `
+        import { FIRST } from "./first.js";
+        import { SECOND as second } from "./second.js";
+        const GROUPS = { FIRST, ...{ renamed: second } } as const;
+        export const TOOL_CONTRACTS: readonly unknown[] = Object.values(GROUPS).flat();
+      `,
+      ],
+      [sourcePath("first.ts"), 'export const FIRST = [{name: "first"}];'],
+      [sourcePath("second.ts"), 'export const SECOND = [{name: "second"}];'],
+    ]);
+    expect(
+      collectToolCatalogSources(sourcePath("toolContracts.ts"), (path) => {
+        const source = sources.get(path);
+        if (source === undefined)
+          throw new Error(`Unexpected source read: ${path}`);
+        return source;
+      }),
+    ).toEqual(
+      new Map([
+        [sourcePath("toolContracts"), new Set(["TOOL_CONTRACTS"])],
+        [sourcePath("first"), new Set(["FIRST"])],
+        [sourcePath("second"), new Set(["SECOND"])],
+      ]),
+    );
+  });
+
   it("accepts official computed definitions while discovering imported catalog groups", () => {
     const actual = collectToolCatalogSources(
       fileURLToPath(
@@ -173,6 +203,9 @@ describe("canonical catalog source composition", () => {
 
   it.each([
     "export const TOOL_CONTRACTS = buildCatalog();",
+    "export const TOOL_CONTRACTS = Object.values(groups).flat();",
+    "const groups = buildGroups(); export const TOOL_CONTRACTS = Object.values(groups).flat();",
+    "const groups = { get X() { return []; } }; export const TOOL_CONTRACTS = Object.values(groups).flat();",
     "export const OTHER = [];",
     "const alias = alias; export const TOOL_CONTRACTS = [...alias];",
     "export const TOOL_CONTRACTS = [...unresolved];",

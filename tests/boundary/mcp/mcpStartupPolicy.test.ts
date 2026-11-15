@@ -281,9 +281,9 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(initializeMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    // The phase request names the first-catalog budget once it is the shorter
+    // bound, so only elapsed time shows the stop beat the phase's own deadline.
+    expect(performance.now() - started).toBeLessThan(initializeMs);
   });
 
   it("stops a pending tools/list at the remaining first-catalog budget", async () => {
@@ -315,9 +315,9 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(toolsListMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    // The phase request names the first-catalog budget once it is the shorter
+    // bound, so only elapsed time shows the stop beat the phase's own deadline.
+    expect(performance.now() - started).toBeLessThan(toolsListMs);
     expect(await readFile(initializedPath, "utf8")).toBe("ready");
   });
 

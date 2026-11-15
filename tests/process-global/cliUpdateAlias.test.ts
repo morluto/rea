@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 import { createCli } from "../../src/cli.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
+import { HOST_PLATFORM } from "../../src/platform/HostPlatform.js";
 
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),
@@ -105,9 +106,14 @@ it.each(["json", "jsonl", "yaml", "toon", "md"])(
       { owner: "selected-update-host" },
       "structured",
     );
-    expect(mocks.host).toHaveBeenLastCalledWith(undefined, undefined, {
-      REA_SELECTED_UPDATE: "original",
-    });
+    expect(mocks.host).toHaveBeenLastCalledWith(
+      undefined,
+      undefined,
+      {
+        REA_SELECTED_UPDATE: "original",
+      },
+      HOST_PLATFORM.platform,
+    );
     expect(mocks.dependencyInstall).not.toHaveBeenCalled();
   },
 );

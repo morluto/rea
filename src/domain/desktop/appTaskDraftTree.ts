@@ -10,11 +10,7 @@ import {
   zipLeavesOutAt,
   zipView,
 } from "./zipView.js";
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "../isRecord.js";
 
 /**
  * The entry a pointer into a zip view goes into, when it has a view and both

@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { WindowsShortcutPort } from "./WindowsShortcutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -121,8 +122,7 @@ const validReport = (
   if (complete !== (report.issues.length === 0)) return false;
   if (complete && report.coverage.failing_offset !== null) return false;
   if (!complete && report.coverage.reason === null) return false;
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   if (!inside(report.header.location)) return false;
   if (report.id_list !== null && !inside(report.id_list.location)) return false;
   if (report.link_info !== null && !inside(report.link_info.location))

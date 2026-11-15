@@ -36,7 +36,7 @@ export const connectGhidraMcp = async (
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
     readonly delivery?: ToolResultDelivery;
-    readonly environment?: Readonly<Record<string, string>>;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
 ) => {

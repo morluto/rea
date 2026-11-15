@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
@@ -11,7 +12,7 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -31,7 +32,9 @@ const connect = async () => {
     { kind: "session", session },
     {
       androidAnalysis: fixture.provider,
-      environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+      environment: {
+        REA_MCP_TOOL_FAMILIES: "android,application,session",
+      },
     },
   );
   const client = new Client({
@@ -81,14 +84,11 @@ it("keeps exact class and selected-method facts in summaries with readable compl
     "inspect_android_method",
   ] as const) {
     const definition = catalog.find((tool) => tool.name === name);
-    if (definition?.outputSchema === undefined)
-      throw new Error(`Missing ${name} schema`);
+    if (definition === undefined) throw new Error(`Missing ${name} schema`);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     const args = {
       path: apk,
       class_name: "fixture.Target",
@@ -149,12 +149,12 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const contract = ANDROID_TOOL_CONTRACTS.find(
     (candidate) => candidate.name === "inspect_android_class",
   );
-  if (wire?.outputSchema === undefined || contract === undefined)
+  if (wire === undefined || contract === undefined)
     throw new Error("Missing inspect_android_class contract");
   const validateOutput = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
+  }).compile(canonicalOutputSchema(wire.name));
   const apkSha256 = createHash("sha256")
     .update(await readFile(apk))
     .digest("hex");

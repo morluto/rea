@@ -25,11 +25,11 @@ module.syncBuiltinESMExports();
 const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
 await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
 `;
-      const result = await processes.run(
-        process.execPath,
-        ["--input-type=module", "--eval", source],
-        { timeoutMs: 20_000 },
-      );
+      const result = await processes.run(process.execPath, [
+        "--input-type=module",
+        "--eval",
+        source,
+      ]);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
       expect(result.stderr).toContain("source build and verifier scripts");
@@ -86,7 +86,7 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", source],
-      { env: { ...process.env, TSX_DISABLE_CACHE: "1" }, timeoutMs: 20_000 },
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     const observation = z
@@ -151,7 +151,7 @@ await withVerifierCleanup(async () => {
     const result = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", source],
-      { timeoutMs: 20_000, env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -233,7 +233,7 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       [workspace.path("probe.mjs")],
-      { cwd: workspace.root, timeoutMs: 20_000 },
+      { cwd: workspace.root },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({

@@ -1,7 +1,5 @@
-import { open, readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 
-export const NATIVE_ARTIFACTS = ["jq", "sharex.exe", "freedos.edlin.exe"];
 const normalized = (value) => value.normalized_result;
 
 const retainedEntryViews = async (
@@ -232,41 +230,4 @@ export const measureNativeEntry = async ({
   } finally {
     await call("close_binary", {});
   }
-};
-
-export const nativeEntrySeed = async (artifact, path) => {
-  if (artifact === "jq") {
-    const file = await open(path, "r");
-    let header;
-    try {
-      header = (await file.read(Buffer.alloc(32), 0, 32, 0)).buffer;
-    } finally {
-      await file.close();
-    }
-    if (header.subarray(0, 6).toString("hex") !== "7f454c460201")
-      throw new Error("Expected ELF64 little endian entry seed");
-    return `0x${header.readBigUInt64LE(24).toString(16)}`;
-  }
-  if (artifact === "sharex.exe") {
-    const bytes = await readFile(path);
-    const pe = bytes.readUInt32LE(0x3c);
-    const optional = pe + 24;
-    if (
-      bytes.subarray(pe, pe + 4).toString("hex") !== "50450000" ||
-      bytes.readUInt16LE(pe + 4) !== 0x8664 ||
-      bytes.readUInt16LE(optional) !== 0x20b ||
-      bytes.readUInt32LE(optional + 108) <= 14 ||
-      bytes.readUInt32LE(optional + 112 + 14 * 8) !== 0 ||
-      bytes.readUInt32LE(optional + 116 + 14 * 8) !== 0
-    )
-      throw new Error(
-        "Expected the pinned native PE32+ entry seed without CLR metadata",
-      );
-    const address =
-      bytes.readBigUInt64LE(optional + 24) +
-      BigInt(bytes.readUInt32LE(optional + 16));
-    return `0x${address.toString(16)}`;
-  }
-  if (artifact === "freedos.edlin.exe") return undefined;
-  throw new Error("Select a pinned native artifact");
 };

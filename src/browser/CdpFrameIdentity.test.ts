@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "./CdpFrameIdentity.js";
+import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
+import { receiveCdpEvent, type CdpEvent } from "./CdpConnection.js";
+import { cdpFrameEvent } from "./protocol/CdpEvents.js";
+
+/** Frame facts as the connection's registered event schema parses them. */
+const cdpFrameEventFacts = (event: CdpEvent) => {
+  const frame = cdpFrameEvent(receiveCdpEvent(event));
+  if (frame === undefined)
+    throw new Error(`${event.method} is not a frame event`);
+  return frame.facts;
+};
 
 describe("CDP frame identity ownership", () => {
   it.each([

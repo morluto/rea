@@ -415,6 +415,7 @@ it.each(["image", "digest"] as const)(
       ok: false,
       error: {
         reason: "integrity",
+        integrityCheck: "member-identity",
         detail: expect.stringContaining(fault.path),
         cause: {
           reason: "integrity",

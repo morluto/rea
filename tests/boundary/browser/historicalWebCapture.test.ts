@@ -283,7 +283,7 @@ it("excludes declared binary lengths through CLI, MCP and retained capture pages
       });
     }
   }
-}, 60_000);
+});
 
 it("reads actual upstream HAR packages in an owned process and retains selected producer order", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-history-har-"));

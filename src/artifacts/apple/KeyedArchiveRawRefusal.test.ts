@@ -9,7 +9,6 @@ import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 

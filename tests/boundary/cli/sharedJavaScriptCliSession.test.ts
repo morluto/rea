@@ -922,15 +922,6 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
   expect(session.processId()).toBeUndefined();
 });
 
-const requireSharedCli = (cli: {
-  sharedCliRun?: (invocation: CliInvocation) => Promise<CliResult>;
-}): ((invocation: CliInvocation) => Promise<CliResult>) => {
-  const run = cli.sharedCliRun;
-  if (run === undefined)
-    throw new Error("cliTest did not provide a shared CLI session");
-  return run;
-};
-
 const normalized = (result: CliResult) =>
   z
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
@@ -957,12 +948,12 @@ const writeApplication = async (prefix: string): Promise<string> => {
 cliTest(
   "matches a fresh CLI process and reuses that process for the same environment",
   async ({ cli, cliCommandSession }) => {
-    const sharedCliRun = requireSharedCli(cli);
     const fresh = await cli.run({
+      freshProcess: true,
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const shared = await sharedCliRun({
+    const shared = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -971,7 +962,7 @@ cliTest(
     expect(shared.stderr).toBe(fresh.stderr);
     const pid = cliCommandSession.processId();
     expect(pid).toEqual(expect.any(Number));
-    const again = await sharedCliRun({
+    const again = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -979,10 +970,11 @@ cliTest(
     expect(cliCommandSession.processId()).toBe(pid);
 
     const freshInvalid = await cli.run({
+      freshProcess: true,
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "not-a-level" },
     });
-    const sharedInvalid = await sharedCliRun({
+    const sharedInvalid = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "not-a-level" },
     });
@@ -992,7 +984,7 @@ cliTest(
     expect(sharedInvalid.stderr).toBe(freshInvalid.stderr);
     expect(cliCommandSession.processId()).not.toBe(pid);
 
-    const restored = await sharedCliRun({
+    const restored = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -1005,13 +997,13 @@ cliTest(
 cliTest(
   "reuses one CLI process across JavaScript application directories",
   async ({ cli, cliCommandSession }) => {
-    const sharedCliRun = requireSharedCli(cli);
     const firstRoot = await writeApplication("rea-shared-cli-");
     const fresh = await cli.run({
+      freshProcess: true,
       arguments: analyzeArguments(firstRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const shared = await sharedCliRun({
+    const shared = await cli.run({
       arguments: analyzeArguments(firstRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -1022,10 +1014,11 @@ cliTest(
 
     const secondRoot = await writeApplication("rea-shared-cli-next-");
     const freshNext = await cli.run({
+      freshProcess: true,
       arguments: analyzeArguments(secondRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const sharedNext = await sharedCliRun({
+    const sharedNext = await cli.run({
       arguments: analyzeArguments(secondRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });

@@ -33,7 +33,7 @@ export const assertArtifactFileSelectedSource = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `${diagnosticLabel} source identity changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }),
@@ -45,6 +45,7 @@ export const assertArtifactFileSelectedSource = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `${diagnosticLabel} source identity changed: ${path}`,
+      { integrityCheck: "container-identity" },
     );
 };
 
@@ -147,7 +148,7 @@ export class ArtifactFileSource {
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} carrier changed after inventory`,
-        undefined,
+        { integrityCheck: "container-identity" },
         artifactIntegrityDetails(
           ".",
           { algorithm: "sha256", digest: expectedSha256 },
@@ -167,6 +168,7 @@ export class ArtifactFileSource {
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} source identity changed: ${this.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(signal);
     return source;

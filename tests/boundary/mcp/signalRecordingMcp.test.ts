@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -19,11 +20,12 @@ it.each(["decode_signal_recording", "inspect_signal_decoders"])(
     const tool = (await harness.client.listTools()).tools.find(
       (tool) => tool.name === name,
     );
-    if (tool?.outputSchema === undefined)
-      throw new Error("Signal tool missing");
+    if (tool === undefined) throw new Error("Signal tool missing");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = tool.inputSchema;
-    const outputSchema: Record<string, unknown> = tool.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      tool.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const input =

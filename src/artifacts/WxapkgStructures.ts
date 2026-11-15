@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
@@ -15,6 +16,7 @@ import {
   type WxapkgIndexLayout,
   type WxapkgIndexLayoutFailure,
 } from "../domain/wxapkgFormat.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** The member table is a flat name/offset/size row list. */
 const MAX_TABLE_BYTES = 16 * 1024 * 1024;
@@ -25,24 +27,18 @@ const MAX_MEMBER_NAME_BYTES = 64 * 1024;
 /** Detecting prefix covers the fixed header, table head and encrypted magic. */
 const HEADER_PREFIX_BYTES = 64;
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 export const wxapkgFormatFailure = (detail: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("format", `wxapkg is malformed: ${detail}`);
 
-/** Reserve buffers, JS rows and escaped name projections before allocating. */
-class WxapkgDirectoryBudget {
-  #remaining = DIRECTORY_BUDGET_BYTES;
-  reserve(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw artifactFixedLimitFailure(
-        "wxapkg directory representation",
-        DIRECTORY_BUDGET_BYTES,
-        "bytes",
-      );
-    this.#remaining -= bytes;
-  }
-}
+/** Buffers, JS rows and escaped name projections, reserved before allocating. */
+const directoryLimit = (): Error =>
+  artifactFixedLimitFailure(
+    "wxapkg directory representation",
+    DIRECTORY_BUDGET_BYTES,
+    "bytes",
+  );
 
 export interface WxapkgHeader {
   readonly info: number;
@@ -137,8 +133,8 @@ export const readWxapkgFileTable = async (
       MAX_TABLE_BYTES,
       "bytes",
     );
-  const budget = new WxapkgDirectoryBudget();
-  budget.reserve(readBytes);
+  const budget = new Budget(DIRECTORY_BUDGET_BYTES);
+  budget.charge(readBytes, directoryLimit);
   const table = await readArtifactFileBytes(
     handle,
     tableStart,
@@ -165,7 +161,7 @@ export const readWxapkgFileTable = async (
     )
       throw wxapkgFormatFailure("member row exceeds the table");
     // Row storage plus the reader's owned entries/map; charge before decode.
-    budget.reserve(512 + nameLength * 24);
+    budget.charge(512 + nameLength * 24, directoryLimit);
     let declaredPath: string;
     try {
       declaredPath = UTF8.decode(table.subarray(cursor, cursor + nameLength));

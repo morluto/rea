@@ -86,7 +86,7 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
     { kind: "session", session },
     {
       apktoolAnalysis: provider,
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   );
   onTestFinished(() => server.close());

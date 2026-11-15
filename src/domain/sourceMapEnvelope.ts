@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRecord } from "./isRecord.js";
 
 /** Artifact source declarations do not require generated-position decoding. */
 type SourceMapRecord = Readonly<Record<string, unknown>>;
@@ -52,9 +53,6 @@ export const sourceMapJsonText = (text: string): string => {
   const newline = withoutBom.search(/[\r\n]/u);
   return newline === -1 ? "" : withoutBom.slice(newline);
 };
-
-const isRecord = (value: unknown): value is SourceMapRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Classify section ownership once; an external URL takes precedence over map. */
 export const classifySourceMapSection = (

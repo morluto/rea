@@ -1,4 +1,4 @@
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
@@ -63,11 +63,11 @@ export const traceNativeUiAction = async (
         : uiExecution.error;
     if (secondary.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           secondary,
           "trace_native_ui_action",
-        ).bindCleanupDependencies([primary, secondary]),
+        ),
       );
     if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
     return err(primary);
@@ -77,8 +77,8 @@ export const traceNativeUiAction = async (
     (uiExecution.error._tag === "AnalysisCancelledError" ||
       uiExecution.error.cleanupIncomplete)
   )
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );
