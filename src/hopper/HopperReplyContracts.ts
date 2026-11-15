@@ -86,7 +86,8 @@ const callerScanTargetSchema = z.strictObject({
  * domain schemas. A reply is validated once here, before any consumer reads it.
  */
 export const hopperReplySchemas = {
-  // The startup handshake also authenticates run_id (parseHopperServerInfo).
+  // parseHopperServerInfo reads the startup handshake through this contract
+  // and binds run_id to the launch.
   health: z.looseObject({
     name: z.literal("REA Hopper bridge"),
     version: z.string(),
