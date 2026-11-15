@@ -2305,6 +2305,22 @@ export const describeContractCommand = <
         viewDelivery === undefined
           ? undefined
           : (decoded.value[rename("view")] as AnalysisViewRequest | undefined);
+      // The view's own refusal comes first, as in full admission, where the
+      // contract admits the view before the delivery rules apply.
+      if (view !== undefined) {
+        const checked = shape.view!.safeParse(view);
+        if (!checked.success)
+          return err(
+            analysisInputErrorFromIssues(
+              contract.name,
+              checked.error.issues.map((issue) => ({
+                ...issue,
+                path: ["view", ...issue.path],
+              })),
+              { view },
+            ),
+          );
+      }
       const detail = decoded.value[rename("detail")] as
         | "complete"
         | "summary"
