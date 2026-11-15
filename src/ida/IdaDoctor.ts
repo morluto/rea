@@ -8,7 +8,11 @@ import {
 } from "./IdaConfiguration.js";
 import type { Result } from "../domain/result.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { inspectIdaWorkspaceReadiness } from "./IdaWorkspaceReadiness.js";
+import {
+  admitIdaConfiguration,
+  IDA_WORKSPACE_ROOT_REMEDIATION,
+  type IdaAdmission,
+} from "./IdaAdmission.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 
 /** Client settings consulted by this readiness probe. */
@@ -30,14 +34,14 @@ export const inspectIdaRegistration = async (
             ...(signal === undefined ? {} : { signal }),
           }));
   const valid = parsed?.ok === true;
+  const admission =
+    parsed?.ok === true ? await admitIdaConfiguration(parsed.value) : undefined;
   const workspaceChecks =
-    parsed?.ok === true && parsed.value.mode === "headless"
-      ? [await inspectPrivateWorkspace(parsed.value.workspaceRoot)]
-      : [];
+    admission === undefined ? [] : privateWorkspaceChecks(admission);
   return {
     id: "ida",
     configured: path !== undefined,
-    available: valid && workspaceChecks.every(({ ok }) => ok),
+    available: admission?.admitted === true,
     providerVersion: null,
     registrationEnvironment:
       valid && path !== undefined ? { REA_IDA_MCP_CONFIG: path } : {},
@@ -66,35 +70,49 @@ export const inspectIdaRegistration = async (
   };
 };
 
-const inspectPrivateWorkspace = async (
-  workspaceRoot: string | undefined,
-): Promise<DoctorProviderCheck> => {
-  const { privacy, unusable } =
-    await inspectIdaWorkspaceReadiness(workspaceRoot);
-  return {
-    name: "private_workspace",
-    ok: privacy.available && unusable === undefined,
-    code: !privacy.available
-      ? privacy.code
-      : unusable === undefined
-        ? null
-        : "invalid_configuration",
-    detail: !privacy.available
-      ? privacy.reason
-      : (unusable ??
-        `Private workspace authority is available (${privacy.proof}) under ${workspaceRoot ?? "the system temporary directory"}.`),
-    remediation: !privacy.available
-      ? privacy.remediation
-      : unusable === undefined
-        ? null
-        : "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/providers/ida-provider.md.",
-    classification:
-      !privacy.available && privacy.code === "runtime_missing"
-        ? "missing_dependency"
-        : !privacy.available && privacy.code === "runtime_unavailable"
-          ? "runtime_failure"
-          : unusable !== undefined
-            ? "config_drift"
+/** Project IDA's admission into the doctor's private workspace check. */
+const privateWorkspaceChecks = (
+  admission: IdaAdmission,
+): readonly DoctorProviderCheck[] => {
+  if (admission.admitted)
+    return admission.workspace === undefined
+      ? []
+      : [
+          {
+            name: "private_workspace",
+            ok: true,
+            code: null,
+            detail: `Private workspace authority is available (${admission.workspace.proof}) under ${admission.workspace.root ?? "the system temporary directory"}.`,
+            remediation: null,
+            classification: "unsupported_host",
+          },
+        ];
+  const { refusal } = admission;
+  if (refusal.kind === "workspace_unusable")
+    return [
+      {
+        name: "private_workspace",
+        ok: false,
+        code: "invalid_configuration",
+        detail: refusal.reason,
+        remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
+        classification: "config_drift",
+      },
+    ];
+  const { privacy } = refusal;
+  return [
+    {
+      name: "private_workspace",
+      ok: false,
+      code: privacy.code,
+      detail: privacy.reason,
+      remediation: privacy.remediation,
+      classification:
+        privacy.code === "runtime_missing"
+          ? "missing_dependency"
+          : privacy.code === "runtime_unavailable"
+            ? "runtime_failure"
             : "unsupported_host",
-  };
+    },
+  ];
 };
