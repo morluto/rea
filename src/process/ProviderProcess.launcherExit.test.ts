@@ -11,6 +11,7 @@ import {
 } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const JAVA = "/usr/lib/jvm/java-21-openjdk-amd64/bin/java";
 
@@ -165,14 +166,25 @@ it.each([
     const launcher = launcherChild();
     const host = hostFor(launcher, launcherRow("/usr/bin/other"), lifecycle);
     const { supervisor, results } = supervise(launcher, host);
-    const waited = vi.spyOn(supervisor, "waitForExit");
+    // A mismatch is not exit proof: the stop stays pending through the
+    // launcher's grace and reports incomplete only once it ends without exit.
+    let endGrace: (exited: boolean) => void = () => undefined;
+    const waited = vi.spyOn(supervisor, "waitForExit").mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          endGrace = resolve;
+        }),
+    );
+    let settled = false;
+    const stopping = supervisor.stop({ killGraceMs: 50 }).finally(() => {
+      settled = true;
+    });
+    await waitFor(() => expect(waited.mock.calls).toEqual([[50]]));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    endGrace(false);
+    const stopped = await stopping;
 
-    const stopped = await supervisor.stop({ killGraceMs: 50 });
-
-    // A mismatch is not exit proof: the launcher gets its grace before the
-    // stop reports incomplete.
-    expect(waited.mock.calls).toEqual([[50]]);
-    await expect(waited.mock.results[0]?.value).resolves.toBe(false);
     expect(stopped).toEqual({
       status: "incomplete",
       reason: `owned launcher command identity did not match (observed=/usr/bin/other; expected=${JAVA})`,
