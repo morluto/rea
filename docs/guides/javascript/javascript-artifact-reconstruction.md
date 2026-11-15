@@ -831,6 +831,14 @@ caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
 
+Member-mutation analysis also has a fixed work allowance of 524,288 alias
+states per source. It is not a `semantic_precision` field. A source whose alias
+histories exceed it is refused with a `resource_constraint` that names the
+fixed work allowance, instead of exhausting the worker heap. Static facts the
+worker had not yet reported are not kept, because a partial mutation index
+would let later reads keep stale values. Raising `max_heap_mb`,
+`analysis_timeout_ms` or `semantic_precision` does not admit the same source.
+
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
 Babel and JSON parser calls cannot be preempted mid-call, so their input byte

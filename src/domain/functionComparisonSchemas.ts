@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { coverageStatusSchema } from "./coverage.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { nativeAddressSchema } from "./native/nativeAddress.js";
@@ -36,8 +37,7 @@ const functionDimensionContextShape = {
   right_count: z.int().min(0).nullable(),
   evidence_links: z.array(evidenceIdSchema).min(2),
   limitations: z.array(z.string()),
-  discovery_status: z
-    .enum(["complete", "partial", "unknown"])
+  discovery_status: coverageStatusSchema
     .describe(
       "Static call discovery coverage for the compared observations; omission means unreported.",
     )

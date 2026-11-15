@@ -12,6 +12,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalysisError,
@@ -89,7 +90,7 @@ export const debuggerAdmissionRecovery = (
 export const fixedDeadlineGuidance = (
   what: string,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): AnalysisTimeoutRecovery => ({
   userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
   remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -98,11 +99,7 @@ export const fixedDeadlineGuidance = (
 export const configurableDeadlineGuidance = (
   what: string,
   admission: DebuggerAdmissionLimit,
-): {
-  readonly userMessage: string;
-  readonly remediationAction: string;
-  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
-} => {
+): AnalysisTimeoutRecovery => {
   const recovery = debuggerAdmissionRecovery(admission);
   const limit = debuggerAnalysisLimit(admission);
   return {

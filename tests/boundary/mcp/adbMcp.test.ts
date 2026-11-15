@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -367,11 +368,7 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
       { serial: "exact-serial", source_token: "18446744073709551615" },
     ],
   });
-  const listingSchema = tools.find(
-    ({ name }) => name === "list_adb_devices",
-  )?.outputSchema;
-  if (listingSchema === undefined)
-    throw new Error("Missing listing output schema");
+  const listingSchema = canonicalOutputSchema("list_adb_devices");
   const validation = createMcpSchemaValidation();
   onTestFinished(() => validation.clear());
   expect(validation.assertions.validateSchema(listingSchema)).toBe(true);

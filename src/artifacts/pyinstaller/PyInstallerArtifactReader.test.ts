@@ -1144,9 +1144,7 @@ it("rejects a stored member whose declared size disagrees with its bytes", async
   );
   await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
     reason: "integrity",
-    message: expect.stringContaining(
-      "Stored CArchive member size disagrees with its table entry",
-    ),
+    integrityCheck: "layout-consistency",
   });
 });
 

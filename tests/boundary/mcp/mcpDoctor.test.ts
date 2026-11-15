@@ -23,11 +23,10 @@ import {
 } from "../../../src/mcpDoctor.js";
 import {
   DEFAULT_CATALOG_IDENTITY,
-  FULL_CATALOG_IDENTITY,
   catalogIdentityForToolFamilies,
   createCatalogIdentity,
 } from "../../../src/catalogIdentity.js";
-import { compactPresentationForMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
 import { ok } from "../../../src/domain/result.js";
@@ -145,68 +144,22 @@ const assertStatusCatalogIdentity = async (
 
 const catalogProfiles = [
   {
-    name: "default compact input",
-    cliParity: false,
-    environment: {
-      REA_MCP_INPUT_SCHEMA_PROFILE: undefined,
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-    },
-    identity: createCatalogIdentity({
-      compactPresentation:
-        compactPresentationForMcpInputSchemaProfile(undefined),
-    }),
-  },
-  {
-    name: "full",
+    name: "default",
     cliParity: true,
     environment: {
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: undefined,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: undefined,
     },
-    identity: FULL_CATALOG_IDENTITY,
+    identity: DEFAULT_CATALOG_IDENTITY,
   },
   {
-    name: "compact",
-    cliParity: false,
+    name: "spelled compact input and compact output schemas",
+    cliParity: true,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-    },
-    identity: createCatalogIdentity({
-      compactPresentation:
-        compactPresentationForMcpInputSchemaProfile("compact"),
-    }),
-  },
-  {
-    name: "output schemas off",
-    cliParity: false,
-    environment: {
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
-    },
-    identity: createCatalogIdentity({ outputSchemaProfile: "off" }),
-  },
-  {
-    name: "output schemas compact",
-    cliParity: false,
-    environment: {
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
     },
     identity: createCatalogIdentity({ outputSchemaProfile: "compact" }),
-  },
-  {
-    name: "compact input and output schemas off",
-    cliParity: true,
-    environment: {
-      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
-    },
-    identity: createCatalogIdentity({
-      compactPresentation:
-        compactPresentationForMcpInputSchemaProfile("compact"),
-      outputSchemaProfile: "off",
-    }),
   },
 ];
 
@@ -262,20 +215,18 @@ describe("production MCP doctor", () => {
         import { RECORDED_CATALOG_DIGEST_PROFILES as profiles } from "./dist/recordedCatalogDigests.js";
         import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES as budgetBytes } from "./dist/config/mcpInputSchemaProfile.js";
         assert.ok(Object.isFrozen(profiles));
-        for (const input of ["full", "compact"]) {
-          assert.ok(Object.isFrozen(profiles[input]));
-          for (const output of ["full", "compact", "off"]) {
-            const identity = createCatalogIdentity({compactPresentation: input === "compact" ? { budgetBytes } : undefined, outputSchemaProfile: output});
-            assert.equal(identity.digests, profiles[input][output]);
-            assert.ok(Object.isFrozen(identity.digests));
-          }
+        assert.deepEqual(Object.keys(profiles).sort(), ["compact", "off"]);
+        for (const output of ["compact", "off"]) {
+          const identity = createCatalogIdentity({ outputSchemaProfile: output });
+          assert.equal(identity.digests, profiles[output]);
+          assert.ok(Object.isFrozen(identity.digests));
         }
         const selection = { budgetBytes: 1 };
         const custom = createCatalogIdentity({compactPresentation: selection, outputSchemaProfile: "off"});
         selection.budgetBytes = budgetBytes;
         const expected = createCatalogDigests(undefined, undefined, { budgetBytes: 1 }, "off");
         assert.deepEqual(custom.digests, expected);
-        assert.notEqual(custom.digests.tools_sha256, profiles.compact.off.tools_sha256);
+        assert.notEqual(custom.digests.tools_sha256, profiles.off.tools_sha256);
         assert.equal(custom.digests, custom.digests);
       `,
       ],
@@ -336,7 +287,7 @@ describe("production MCP doctor", () => {
         result.inventory?.tools.observed,
       );
       expect(result.inventory?.tools.expected).toBe(
-        FULL_CATALOG_IDENTITY.counts.mcp_tools,
+        DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
       );
       expect(result.identity?.expected_catalog_digest).toBe(
         identity.digests.combined_sha256,
@@ -354,7 +305,7 @@ describe("production MCP doctor", () => {
 
 describe("production MCP doctor family scopes", () => {
   it.each([
-    { families: "session", output: "full", cliParity: false },
+    { families: "session", output: "off", cliParity: false },
     { families: "session,application", output: "compact", cliParity: true },
   ] as const)(
     "reports a selected family scope healthy with its own inventory and digest ($output)",
@@ -362,7 +313,6 @@ describe("production MCP doctor family scopes", () => {
       const environment = {
         ...process.env,
         REA_MCP_TOOL_FAMILIES: families,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
       };
       const result = await runProductionMcpDoctor({
@@ -387,7 +337,7 @@ describe("production MCP doctor family scopes", () => {
         request_flow: { tool: "binary_session", ok: true },
       });
       const identity = catalogIdentityForToolFamilies(
-        compactPresentationForMcpInputSchemaProfile("compact"),
+        COMPACT_INPUT_SCHEMA_PRESENTATION,
         output,
         new Set(families.split(",")),
       );
@@ -609,7 +559,7 @@ describe("production MCP doctor output", () => {
 describe("production MCP doctor probe validation", () => {
   // The default lists no output schemas and `compact` lists widened ones; the
   // doctor validates the reply against the canonical contract under each.
-  it.each([undefined, "compact", "full"] as const)(
+  it.each([undefined, "compact"] as const)(
     "reports schema-invalid probes and mismatched inventory from the child (output profile %s)",
     async (outputProfile) => {
       const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
@@ -681,11 +631,11 @@ describe("production MCP doctor probe validation", () => {
         });
         expect(result.healthy).toBe(mode === "valid");
         expect(result.inventory?.tools.observed).toBe(
-          FULL_CATALOG_IDENTITY.counts.mcp_tools +
+          DEFAULT_CATALOG_IDENTITY.counts.mcp_tools +
             (mode === "inventory" ? 1 : 0),
         );
         expect(result.inventory?.prompts.observed).toBe(
-          FULL_CATALOG_IDENTITY.counts.mcp_prompts,
+          DEFAULT_CATALOG_IDENTITY.counts.mcp_prompts,
         );
         expect(result.checks).toContainEqual({
           name: "initialize",
@@ -710,8 +660,8 @@ describe("production MCP doctor probe validation", () => {
           });
         if (mode === "inventory") {
           expect(result.inventory?.tools).toMatchObject({
-            expected: FULL_CATALOG_IDENTITY.counts.mcp_tools,
-            observed: FULL_CATALOG_IDENTITY.counts.mcp_tools + 1,
+            expected: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+            observed: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools + 1,
             missing: [removedToolName],
             unexpected: ["doctor_unexpected_fixture"],
             duplicates: ["doctor_unexpected_fixture"],

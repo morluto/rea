@@ -2,7 +2,9 @@ import { expect, it } from "vitest";
 
 import {
   compareCountedBaseline,
+  reconcileBaselineFile,
   recordLoweredBaseline,
+  serializeCountedBaselines,
 } from "../../../scripts/verify/counted-baseline.mjs";
 
 it("rejects a file that gains copies or is missing from the baseline", () => {
@@ -89,4 +91,45 @@ it("removes a key when shrinking removes its last recorded count", () => {
   const compared = compareCountedBaseline(new Map(), gone, true);
   expect(recordLoweredBaseline(baselines, "gone", compared)).toBe(true);
   expect(baselines).toEqual({ kept: { "src/b.ts": 2 } });
+});
+
+it("writes each guard's paths in code-unit order and keeps guard order", () => {
+  const baselines = {
+    later: { "src/b.ts": 1, "src/Upper.ts": 2, "src/a.ts": 3 },
+    earlier: {},
+  };
+  expect(serializeCountedBaselines(baselines)).toBe(
+    `${JSON.stringify(
+      {
+        later: { "src/Upper.ts": 2, "src/a.ts": 3, "src/b.ts": 1 },
+        earlier: {},
+      },
+      null,
+      2,
+    )}\n`,
+  );
+});
+
+it("rejects an unsorted baseline file unless shrinking, which rewrites it", () => {
+  const baselines = { guard: { "src/a.ts": 1, "src/b.ts": 2 } };
+  const written = serializeCountedBaselines(baselines);
+  const unsorted = `${JSON.stringify(
+    { guard: { "src/b.ts": 2, "src/a.ts": 1 } },
+    null,
+    2,
+  )}\n`;
+  expect(reconcileBaselineFile(written, baselines, false)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(written, baselines, true)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(unsorted, baselines, false)).toEqual({
+    action: "reject",
+  });
+  // No count was lowered; shrinking still writes the sorted form.
+  expect(reconcileBaselineFile(unsorted, baselines, true)).toEqual({
+    action: "write",
+    text: written,
+  });
 });

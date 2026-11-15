@@ -97,7 +97,7 @@ const afterValidation = async <T>(
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed ${stage}: ${path}`,
-        { cause },
+        { cause, integrityCheck: "container-identity" },
       );
     throw cause;
   }
@@ -226,6 +226,7 @@ const readStableArtifactChunks = async <Value>(
         throw new ArtifactReaderFailure(
           "integrity",
           `Artifact changed before open: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       assertArtifactReadActive(signal);
       // A raced descriptor size must not allocate beyond the selected budget.
@@ -284,6 +285,7 @@ const readStableArtifactChunks = async <Value>(
         throw new ArtifactReaderFailure(
           "integrity",
           `Artifact changed during read: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       assertArtifactReadActive(signal);
       return complete(bytes, hash.digest("hex"), count, initial);
@@ -305,6 +307,7 @@ export const assertStableArtifactState = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Artifact changed since acquisition: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   assertArtifactReadActive(signal);
 };

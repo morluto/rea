@@ -16,7 +16,6 @@ import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
@@ -209,16 +208,6 @@ it.each([
     eager: false,
   },
   {
-    name: "full deferred",
-    environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-    eager: false,
-  },
-  {
-    name: "output-full deferred",
-    environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
-    eager: false,
-  },
-  {
     name: "output-compact eager",
     environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
     eager: true,
@@ -290,33 +279,18 @@ registerHooks({
   },
 );
 
-it.each([
-  { mode: "legacy", profile: "full" },
-  { mode: "auto", profile: "full" },
-  { mode: "legacy", profile: "compact" },
-  { mode: "auto", profile: "compact" },
-] as const)(
-  "serves $profile discovery and canonical handlers over $mode negotiation",
-  async ({ mode, profile }) => {
+it.each([{ mode: "legacy" }, { mode: "auto" }] as const)(
+  "serves discovery and canonical handlers over $mode negotiation",
+  async ({ mode }) => {
     const recorded = JSON.parse(
-      await readFile(
-        profile === "full"
-          ? "dist/mcp-catalog-full.json"
-          : "dist/mcp-catalog.json",
-        "utf8",
-      ),
+      await readFile("dist/mcp-catalog.json", "utf8"),
     );
-    const { client, stderr } = await connect(mode, {
-      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-    });
+    const { client, stderr } = await connect(mode, {});
     const before = await client.listTools();
     // Compare independently composed canonical SDK registrations as well as
     // recorded artifacts. Listing every explicit family selects eager startup
     // with the same inventory, without target analysis or provider acquisition.
     const eager = await connect(mode, {
-      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: TOOL_FAMILY_DEFINITIONS.map(({ id }) => id).join(
         ",",
       ),
@@ -331,44 +305,10 @@ it.each([
     expect(before.tools.map(withoutOutput)).toEqual(
       recorded.tools.map(withoutOutput),
     );
-    const outputs = new Map(
-      (mode === "auto" ? recorded.tools : GENERATED_MCP_TOOL_CATALOG).map(
-        (tool: { name: string; outputSchema?: unknown }) => [
-          tool.name,
-          tool.outputSchema,
-        ],
-      ),
-    );
-    for (const tool of before.tools)
-      expect(tool.outputSchema, tool.name).toEqual(outputs.get(tool.name));
-    const contractProjection = (tool: {
-      name: string;
-      title?: string | undefined;
-      description?: string | undefined;
-      inputSchema: unknown;
-      outputSchema?: unknown;
-      annotations?: unknown;
-    }) => ({
-      name: tool.name,
-      title: tool.title,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
-      annotations: tool.annotations,
-    });
-    if (profile === "full" && mode === "legacy")
-      expect(
-        new Map(
-          before.tools.map((tool) => [tool.name, contractProjection(tool)]),
-        ),
-      ).toEqual(
-        new Map(
-          GENERATED_MCP_TOOL_CATALOG.map((tool) => [
-            tool.name,
-            contractProjection(tool),
-          ]),
-        ),
-      );
+    // The default output profile omits the recorded output schemas.
+    expect(
+      before.tools.filter(({ outputSchema }) => outputSchema !== undefined),
+    ).toEqual([]);
     expect((await client.listPrompts()).prompts).toEqual(
       PROMPT_CONTRACTS.map((prompt) => ({
         name: prompt.name,
@@ -456,7 +396,6 @@ it.each(["legacy", "auto"] as const)(
 it("composes a scoped registration instead of serving the recorded catalog", async () => {
   const { client, stderr } = await connect("legacy", {
     REA_MCP_TOOL_FAMILIES: "session",
-    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   });
   const advertised = (await client.listTools()).tools
     .map(({ name }) => name)
@@ -491,11 +430,7 @@ globalThis.Date = class extends NativeDate {
   }
 };
 `)}`;
-  const { client } = await connect(
-    "legacy",
-    { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
-    [`--import=${hook}`],
-  );
+  const { client } = await connect("legacy", {}, [`--import=${hook}`]);
   await client.listTools();
   await writeFile(clock, "2021-01-01T00:00:00.000Z");
   const first = await artifactMcpCall(client, {
@@ -816,39 +751,30 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([
-  {},
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
-])("preserves the configured catalog profile %j", async (environment) => {
-  const { client } = await connect("legacy", environment);
-  const before = await client.listTools();
-  const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
-  expect(before.tools).toHaveLength(catalog.tools.length);
-  // Output schemas are omitted unless `full` is selected.
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE !== "full"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools.map((tool: { name: string }) => ({
-          ...tool,
-          outputSchema: GENERATED_MCP_TOOL_CATALOG.find(
-            ({ name }) => name === tool.name,
-          )?.outputSchema,
-        }));
-  expect(before.tools).toEqual(expected);
-  const toolDefinition = before.tools.find(
-    ({ name }) => name === "list_unknowns",
-  );
-  if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
-  const result = await client.callTool(
-    { name: "list_unknowns", arguments: {} },
-    { toolDefinition },
-  );
-  expect(result.isError).not.toBe(true);
-  expect(await client.listTools()).toEqual(before);
-});
+it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
+  "preserves the configured catalog profile %j",
+  async (environment) => {
+    const { client } = await connect("legacy", environment);
+    const before = await client.listTools();
+    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+    expect(before.tools).toHaveLength(catalog.tools.length);
+    // The deferred server omits the recorded output schemas from listings.
+    const expected = catalog.tools.map(
+      ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
+    );
+    expect(before.tools).toEqual(expected);
+    const toolDefinition = before.tools.find(
+      ({ name }) => name === "list_unknowns",
+    );
+    if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
+    const result = await client.callTool(
+      { name: "list_unknowns", arguments: {} },
+      { toolDefinition },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(await client.listTools()).toEqual(before);
+  },
+);
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
@@ -1200,7 +1126,6 @@ it("distinguishes an exhausted production discovery page from an unmatched query
     "auto",
     {
       REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     },
     ["--max-old-space-size=1024"],
   );

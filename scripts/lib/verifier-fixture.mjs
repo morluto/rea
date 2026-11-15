@@ -93,6 +93,26 @@ export class VerifierFixture {
   }
 
   /**
+   * Close resources the verifier is done with before the fixture is released,
+   * such as an auxiliary MCP client. Each cleanup runs now, in order, even
+   * after an earlier one fails. One that fails stays registered, so `release`
+   * retries it and keeps the root until it confirms; the failures are thrown.
+   */
+  async closeEarly(cleanups) {
+    const failures = [];
+    for (const cleanup of cleanups) {
+      const once = this.releaseAfter(onceConfirmed(cleanup));
+      try {
+        await once();
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Verifier cleanup failed");
+  }
+
+  /**
    * Keep the root for good: something that may still use its files cannot be
    * confirmed stopped and has no cleanup this fixture could retry (an owned
    * command whose cleanup is incomplete). Every release then fails, naming
