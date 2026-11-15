@@ -233,7 +233,7 @@ const targetB = fixtureTargets.secondary.path;
 const largeTarget = fixtureTargets.large.path;
 const targetHashA = fixtureTargets.primary.sha256;
 const targetHashB = fixtureTargets.secondary.sha256;
-const serverEnvironment = process.env;
+const serverEnvironment = { ...process.env };
 serverEnvironment.REA_ANALYSIS_PROVIDER = "auto";
 delete serverEnvironment.HOPPER_TARGET_PATH;
 delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
