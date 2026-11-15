@@ -15,6 +15,7 @@ import type {
 } from "../domain/webBundleAnalysis.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
+import { unavailableWebScriptRecovery } from "../domain/webBundleScriptAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
@@ -25,6 +26,7 @@ import {
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
+import { javaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 
 const origin = "https://app.example.test";
 const noSourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {
@@ -82,6 +84,112 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
     dimension: "javascript_analysis",
     reason: expect.stringContaining("deadline"),
     affected_script_keys: [captured.scripts.items[1]?.script_key],
+  });
+});
+
+it("keeps the selected allowance and its recovery for a refused script", async () => {
+  const captured = inspection(["fetch('/kept');", "fetch('/refused');"]);
+  const allowance = { aliasStates: 64, source: "runtime" } as const;
+  const refusal = javaScriptMemberMutationRefusal(
+    "analyze_web_bundle",
+    allowance,
+  );
+  const received: unknown[] = [];
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script, _timeout, _signal, _precision, selected) => {
+      received.push(selected);
+      return script.script_key === captured.scripts.items[1]?.script_key
+        ? err({ error: refusal, completed: null })
+        : ok(analyzeCapturedWebScript(script));
+    },
+    close: async () => {},
+  }));
+  expect((await analyzer.reserve()).ok).toBe(true);
+  const result = await analyzer.analyze(
+    captured,
+    noSourceMaps,
+    input,
+    undefined,
+    allowance,
+  );
+  analyzer.releaseReservation();
+  if (!result.ok) throw result.error;
+  expect(received).toEqual([allowance, allowance]);
+  expect(result.value.unknowns).toContainEqual({
+    dimension: "javascript_analysis",
+    reason: expect.stringContaining("resource_constraint"),
+    affected_script_keys: [captured.scripts.items[1]?.script_key],
+    limit: refusal.limit,
+    remediation: refusal.remediationAction,
+  });
+  expect(refusal.limit).toMatchObject({
+    setting: "javascript.member_mutation_alias_states",
+    effective_value: 64,
+    source: "runtime",
+  });
+});
+
+it("keeps a refused script's parse and text facts beside its refusal", async () => {
+  const refused = [
+    "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
+    ...Array.from(
+      { length: 4 },
+      (_, index) =>
+        `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+    ),
+    "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/hidden'); return m; }",
+  ].join(" ");
+  const captured = inspection(["fetch('/kept');", refused]);
+  const allowance = { aliasStates: 8, source: "runtime" } as const;
+  const refusal = javaScriptMemberMutationRefusal(
+    "analyze_web_bundle",
+    allowance,
+  );
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script, _timeout, _signal, precision, selected) => {
+      const facts = analyzeCapturedWebScript(script, precision, selected);
+      // The worker parent states the refusal from the allowance it sent.
+      return ok(
+        facts.status === "unavailable"
+          ? { ...facts, ...unavailableWebScriptRecovery(refusal) }
+          : facts,
+      );
+    },
+    close: async () => {},
+  }));
+  expect((await analyzer.reserve()).ok).toBe(true);
+  const result = await analyzer.analyze(
+    captured,
+    noSourceMaps,
+    input,
+    undefined,
+    allowance,
+  );
+  analyzer.releaseReservation();
+  if (!result.ok) throw result.error;
+  const refusedKey = captured.scripts.items[1]?.script_key;
+  expect(result.value.completeness).toMatchObject({
+    status: "partial",
+    parsed_scripts: 2,
+    parse_failures: 0,
+  });
+  expect(result.value.inferences).toContainEqual(
+    expect.objectContaining({
+      kind: "bundle_runtime",
+      value: "webpack",
+      basis: [expect.objectContaining({ script_key: refusedKey })],
+    }),
+  );
+  expect(result.value.observations.endpoints.map(({ value }) => value)).toEqual(
+    ["/kept"],
+  );
+  expect(result.value.unknowns).toContainEqual({
+    dimension: "javascript_analysis",
+    reason: expect.stringContaining("resource_constraint"),
+    affected_script_keys: [refusedKey],
+    limit: refusal.limit,
+    remediation: refusal.remediationAction,
+    refused_phase: "member-mutations",
   });
 });
 

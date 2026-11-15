@@ -82,6 +82,10 @@ import {
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  type JavaScriptMemberMutationAllowance,
+} from "./javascriptSemanticWorkAllowance.js";
+import {
   semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
@@ -188,11 +192,17 @@ interface AddBindingInput {
 export const analyzeJavaScriptSemantics = (
   source: string,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): JavaScriptSemanticIr => {
   const file = parseJavaScriptSource(source);
   return file === null
     ? failedJavaScriptSemanticIr()
-    : analyzeParsedJavaScriptSemantics(file, "import", precision);
+    : analyzeParsedJavaScriptSemantics(
+        file,
+        "import",
+        precision,
+        memberMutationAllowance,
+      );
 };
 
 /** Recover lexical references, optionally for one name, without evaluating values or provenance. */
@@ -414,6 +424,7 @@ export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): JavaScriptSemanticIr =>
   completeSemanticSteps(
     analyzeParsedJavaScriptSemanticsSteps(
@@ -421,6 +432,7 @@ export const analyzeParsedJavaScriptSemantics = (
       staticImportResolutionMode,
       undefined,
       precision,
+      memberMutationAllowance,
     ),
   );
 
@@ -435,11 +447,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   expressionNodeBudget?: number,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptSemanticIr> {
   const state = createState(
     file.program,
     staticImportResolutionMode,
     precision,
+    memberMutationAllowance,
   );
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexSemanticAmbientWritesSteps(state);
@@ -543,8 +557,14 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
   program: t.Program,
   hostContext?: "commonjs-wrapper",
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptReceiverIndex> {
-  const state = createState(program, "import", precision);
+  const state = createState(
+    program,
+    "import",
+    precision,
+    memberMutationAllowance,
+  );
   if (hostContext === "commonjs-wrapper") {
     const scope = currentSemanticScope(state.scopes);
     const binding: JavaScriptSemanticBindingState = {
@@ -1200,6 +1220,7 @@ const createState = (
   program: t.Program,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance: JavaScriptMemberMutationAllowance = DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
 ): JavaScriptSemanticAnalysisState => {
   const root: JavaScriptSemanticScopeState = {
     scopeId: semanticScopeId("program", program),
@@ -1211,6 +1232,7 @@ const createState = (
   };
   return {
     precision: resolveJavaScriptSemanticPrecision(precision),
+    memberMutationAllowance,
     arrayIterationUnknown: false,
     memberMutationFactsComplete: false,
     program,

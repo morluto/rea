@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { coverageStatusSchema } from "../coverage.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 
@@ -175,7 +176,7 @@ export const nugetNupkgSchema = z.strictObject({
   coverage: z.strictObject({
     // Unknown when the central directory leaves member-region bytes
     // unaccounted for: local entries it omits may exist there.
-    status: z.enum(["complete", "unknown"]),
+    status: coverageStatusSchema,
     entries: uint,
     examined_nuspec_bytes: uint,
   }),
