@@ -67,11 +67,11 @@ import {
 } from "../../process/ProviderDeadline.js";
 import {
   readJavaScriptAnalysisTransfer,
-  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   javaScriptForwardedTransferRemediation,
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
 import {
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
   JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,

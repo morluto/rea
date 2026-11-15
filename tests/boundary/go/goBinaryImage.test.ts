@@ -285,6 +285,48 @@ it("refuses mapped pointer lengths outside the file instead of rounding 64-bit a
   expect(() => readGoBinaryImage(length.bytes)).toThrowError(/limit|length/i);
 });
 
+it.each(["inline", "pointer"] as const)(
+  "classifies impossible %s string extents before the decoding allowance",
+  (encoding) => {
+    for (const length of [1048577n, 0xffffffffffffffffn]) {
+      const fixture = createGoBinaryFixture({ encoding });
+      if (encoding === "pointer") fixture.bytes.writeBigUInt64LE(length, 1544);
+      else {
+        let value = length;
+        let at = fixture.headerOffset + 32;
+        do {
+          const byte = Number(value & 127n);
+          value >>= 7n;
+          fixture.bytes[at++] = byte | (value === 0n ? 0 : 128);
+        } while (value !== 0n);
+      }
+      expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(
+        expect.objectContaining({ kind: "malformed" }),
+      );
+    }
+  },
+);
+
+it("validates pointer mapping before a smaller caller allowance", () => {
+  const fixture = createGoBinaryFixture({ encoding: "pointer" });
+  fixture.bytes.writeBigUInt64LE(0x10fffn, 1536);
+  expect(() =>
+    readGoBinaryImage(fixture.bytes, { budgets: { max_build_info_bytes: 1 } }),
+  ).toThrowError(expect.objectContaining({ kind: "malformed" }));
+});
+
+it.each(["inline", "pointer"] as const)(
+  "preserves resource refusal for physically valid %s strings",
+  (encoding) => {
+    const fixture = createGoBinaryFixture({ encoding });
+    expect(() =>
+      readGoBinaryImage(fixture.bytes, {
+        budgets: { max_build_info_bytes: 1 },
+      }),
+    ).toThrowError(BinaryResourceFailure);
+  },
+);
+
 it.each(["file bytes", "zero-fill"])(
   "refuses a header-backed PE module descriptor contradicted by %s",
   (alias) => {

@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
@@ -19,16 +20,14 @@ import type {
   MachoImageFacts,
   MachoSlice,
 } from "../../domain/apple/dylibResolution.js";
-import {
-  machoArchitectureName,
-  machoCpuSubtypeBase,
-} from "../../domain/apple/machoCpuIdentity.js";
+import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
   legacyMachoPlatform,
   type MachoVersionMinPlatform,
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
+  fatSliceOverlapReason,
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
@@ -52,22 +51,13 @@ export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
  * byte cap alone would retain about a million dependency results. Stop before
  * those results are kept or traced.
  */
-export const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
 /**
  * Symbol names are validated and then discarded. Distinct one-byte strings
  * stay under the 16 MiB byte budgets while retaining one cache entry per
  * offset, so stop before that map and those decodes grow.
  */
-export const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
-
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_ID_DYLIB = 0xd;
-const LC_LAZY_LOAD_DYLIB_INFO = 0x3a;
-const LC_RPATH = 0x8000001c;
-const LC_DYLD_ENVIRONMENT = 0x27;
-const LC_CODE_SIGNATURE = 0x1d;
-const LC_BUILD_VERSION = 0x32;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const CPU_TYPE_ARM64 = 0x0100000c;
 
@@ -220,7 +210,7 @@ export const readMachoContainer = async (
       return {
         kind: "issue",
         status: "malformed",
-        reason: overlapReason(overlap),
+        reason: fatSliceOverlapReason(overlap),
       };
     // Identity is only malformed through a slice range issue, which the
     // returned rangeIssues retain.
@@ -299,11 +289,6 @@ const rangeValidSlices = (
 ): FatSliceDeclaration[] =>
   header.slices.filter((_, index) => header.rangeIssues[index] === null);
 
-const overlapReason = (
-  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
-): string =>
-  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
-
 /**
  * Apple lipo stores one hidden ARM64 row after the declared 32-bit FAT table.
  * It is only admitted from the single table-to-first-slice slot cctools
@@ -340,7 +325,7 @@ const readAppleHiddenArm64Row = async (
     rangeIssue:
       overlap === null
         ? validateFatSlice(declaration, fileSize, end)
-        : overlapReason(overlap),
+        : fatSliceOverlapReason(overlap),
   };
 };
 
@@ -578,12 +563,12 @@ const readSlice = async (
   // Each command decodes as it is framed, so a defect in an earlier command
   // keeps precedence over a later framing defect.
   const framed = frameLoadCommands(table, ({ command, body, index }) => {
-    if (command === LC_SEGMENT || command === LC_SEGMENT_64) {
-      const span = readSegmentSpan(body, command === LC_SEGMENT_64);
+    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
+      const span = readSegmentSpan(body, command === LC.SEGMENT_64);
       if (span === undefined) unreadableSegment ??= index;
       else segments.push(span);
     }
-    if (command === LC_LAZY_LOAD_DYLIB_INFO) {
+    if (command === LC.LAZY_LOAD_DYLIB_INFO) {
       lazyInfoCount += 1;
       if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
         throw new MachoFormatIssue(
@@ -759,20 +744,20 @@ const decodeCommand = (
   | { readonly kind: "parsed"; readonly value: MachoDependency }
   | LazyLoadDylibInfoCommand
   | undefined => {
-  if (command === LC_ID_DYLIB) {
+  if (command === LC.ID_DYLIB) {
     slice.install_name = commandString(body, 24, index);
     return;
   }
-  if (command === LC_RPATH) {
+  if (command === LC.RPATH) {
     slice.rpaths.push(commandString(body, 12, index));
     return;
   }
-  if (command === LC_DYLD_ENVIRONMENT) {
+  if (command === LC.DYLD_ENVIRONMENT) {
     slice.dyld_environment.push(commandString(body, 12, index));
     return;
   }
-  if (command === LC_CODE_SIGNATURE) {
-    if (readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true) === null)
+  if (command === LC.CODE_SIGNATURE) {
+    if (readMachoLinkeditDataCommand(LC.CODE_SIGNATURE, body, true) === null)
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} is too short for LC_CODE_SIGNATURE`,
@@ -780,7 +765,7 @@ const decodeCommand = (
     slice.code_signature_present = true;
     return;
   }
-  if (command === LC_BUILD_VERSION) {
+  if (command === LC.BUILD_VERSION) {
     if (body.byteLength < 24)
       throw new MachoFormatIssue(
         "malformed",
@@ -807,7 +792,7 @@ const decodeCommand = (
     slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
     return;
   }
-  if (command === LC_LAZY_LOAD_DYLIB_INFO)
+  if (command === LC.LAZY_LOAD_DYLIB_INFO)
     return decodeLazyLoadDylibInfoCommand(body, index);
   const name = machoDependencyCommand(command);
   if (name !== null)

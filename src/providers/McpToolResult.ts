@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 /** Borrow the dictionary shape; selected payloads receive JSON validation in the adapter. */
 const structuredContentSchema = z.custom<Record<string, unknown>>((value) => {
@@ -25,15 +27,27 @@ export const mcpTextBlocks = (
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
 
-/** Preserve ordinary text when the selected upstream payload is not valid JSON. */
-export const parseMcpJsonOrText = (text: string): JsonValue => {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return text;
-  }
+/**
+ * What a tool's single text block carries. Each tool declares it; malformed
+ * JSON is never reinterpreted as ordinary text.
+ */
+export type McpTextReplyKind = "json" | "text";
+
+/** Text declared as JSON did not parse. */
+export interface McpMalformedJsonText {
+  readonly reason: "malformed_json";
+  readonly cause: unknown;
+}
+
+/** Decode one text block as its declared reply kind. */
+export const decodeMcpTextReply = (
+  text: string,
+  kind: McpTextReplyKind,
+): Result<JsonValue, McpMalformedJsonText> => {
+  if (kind === "text") return ok(text);
+  const parsed = safeParseJson(text);
+  if (!parsed.ok) return err({ reason: "malformed_json", cause: parsed.cause });
   // A parsed JSON value must satisfy the same admission rules as structured
-  // evidence. Validation failures cannot change its meaning into ordinary text.
-  return jsonValueSchema.parse(value);
+  // evidence; a validation failure is not a reason to treat it as text.
+  return ok(jsonValueSchema.parse(parsed.value));
 };

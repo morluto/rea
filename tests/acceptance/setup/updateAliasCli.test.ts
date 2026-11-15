@@ -46,7 +46,6 @@ cliTest(
       cli.run({
         arguments: arguments_,
         cwd: home,
-        timeoutMs: 20_000,
         environment: {
           USERPROFILE: home,
           PATH: [

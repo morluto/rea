@@ -192,9 +192,7 @@ const readByteString = (
 ): Result<Uint8Array, PyInstallerFailure> => {
   const length = readInt32(cursor);
   if (!length.ok) return length;
-  const bytes = readBytes(cursor, length.value);
-  if (!bytes.ok) return bytes;
-  return ok(bytes.value);
+  return readBytes(cursor, length.value);
 };
 
 const readLong = (

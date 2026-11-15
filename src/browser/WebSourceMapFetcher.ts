@@ -40,9 +40,12 @@ import { resolveJavaScriptSourceMapUrl } from "../domain/javascript/javascriptSo
 import { jsonByteLength } from "../domain/jsonSerialization.js";
 import {
   inspectSourceMapValue,
-  SourceMapFormatFailure,
+  isSourceMapLimit,
+  isSourceMapSectionOverlap,
+  sourceMapLimitFailure,
   type SourceMapLeaf,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
+import type { ParseFailureError } from "../domain/parseFailure.js";
 import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -60,10 +63,6 @@ export interface WebSourceMapRequest {
 
 interface SourceMapFetchHost {
   readonly fetch: typeof fetch;
-  /** Fetch-operation deadline; injectable so boundary regressions stay fast. */
-  readonly timeoutMs?: number;
-  /** Maximum response bytes retained across this operation. */
-  readonly maxResponseBytes?: number;
 }
 
 // Source maps are normally fetched as a small part of a larger inspection.
@@ -125,12 +124,10 @@ export const fetchWebSourceMaps = async (
   const limits = selectedSourceMapLimits(input.source_map_limits);
   const items: WebSourceMapItem[] = [];
   const operationController = new AbortController();
-  const fetchTimeoutMs =
-    host.timeoutMs ??
-    selectedBrowserDeadlineMs(
-      input.source_map_fetch_timeout_ms,
-      SOURCE_MAP_FETCH_TIMEOUT_MS,
-    );
+  const fetchTimeoutMs = selectedBrowserDeadlineMs(
+    input.source_map_fetch_timeout_ms,
+    SOURCE_MAP_FETCH_TIMEOUT_MS,
+  );
   const fetchDeadlineLimitation =
     sourceMapFetchDeadlineLimitation(fetchTimeoutMs);
   const timeout = setTimeout(
@@ -271,7 +268,7 @@ export const fetchWebSourceMaps = async (
           ),
         ),
       );
-    if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
+    if (isSourceMapLimit(cause))
       limitation = sourceMapOutputLimitation(
         requests.length - items.length,
         limits,
@@ -631,10 +628,7 @@ const fetchOne = async (
       try {
         await cancelUnreadResponse(response, fetchedUrl, cause, signal);
       } catch (cleanupCause: unknown) {
-        if (
-          cause instanceof SourceMapFormatFailure &&
-          cause.reason === "limit"
-        ) {
+        if (isSourceMapLimit(cause)) {
           const error = sourceMapOutputError(
             cause,
             budget.decodedRecords.limits,
@@ -695,7 +689,7 @@ const fetchOne = async (
     const body = await readBoundedText(
       response,
       budget,
-      host.maxResponseBytes ?? budget.decodedRecords.limits.fetchBytes,
+      budget.decodedRecords.limits.fetchBytes,
       signal,
       fetchedUrl,
     );
@@ -712,7 +706,8 @@ const fetchOne = async (
         budget: budget.decodedRecords,
       },
     );
-  } catch (caught: unknown) {
+  } catch (failure: unknown) {
+    let caught = failure;
     if (caught instanceof SourceMapPendingFetch) {
       if (caught.cause instanceof SourceMapDeadlineError) {
         // Native fetch reports abort completion asynchronously. Check the next
@@ -737,8 +732,7 @@ const fetchOne = async (
     const cause =
       caught instanceof SourceMapResponseCleanup ? caught.cause : caught;
     if (cause instanceof AnalysisError) throw cause;
-    if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
-      throw cause;
+    if (isSourceMapLimit(cause)) throw cause;
     if (
       signal?.aborted === true &&
       !(signal.reason instanceof SourceMapDeadlineError)
@@ -876,7 +870,8 @@ const readBoundedText = async (
       if (value !== undefined) chunks.push(value);
       bytes += nextBytes;
     }
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     // Fetch can error its body with the abort reason before read cancellation.
     // A confirmed errored stream is already terminal and needs only its lock released.
     await Promise.resolve();
@@ -1218,7 +1213,7 @@ const normalizeSourceMap = (
     context.budget.expandedBytes = retainedBytesBeforeMap;
     context.budget.records = recordsBeforeMap;
     context.budget.resolvedSourceBytes = resolvedSourceBytesBeforeMap;
-    if (cause instanceof SourceMapFormatFailure && cause.reason === "limit") {
+    if (isSourceMapLimit(cause)) {
       return emptySourceMapItem(
         request,
         "fetch_failed",
@@ -1235,8 +1230,7 @@ const normalizeSourceMap = (
     return emptySourceMapItem(
       request,
       "invalid",
-      cause instanceof SourceMapFormatFailure &&
-        cause.reason === "section-overlap"
+      isSourceMapSectionOverlap(cause)
         ? cause.message
         : "Source-map JSON mappings could not be decoded safely.",
       fetchedUrl,
@@ -1488,14 +1482,15 @@ const consumeExpandedBytes = (
 
 const expandedOutputFailure = (
   limits: SourceMapLimits,
-): SourceMapFormatFailure =>
-  new SourceMapFormatFailure(
-    "limit",
-    `Expanded source-map evidence exceeds public representation admission. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`,
+): ParseFailureError<"limit"> =>
+  sourceMapLimitFailure(
+    `Expanded source-map evidence exceeds public representation admission.`,
+    "output_bytes",
+    limits.outputBytes,
   );
 
 const sourceMapOutputError = (
-  cause: SourceMapFormatFailure,
+  cause: ParseFailureError<"limit">,
   limits: SourceMapLimits,
   options?: AnalysisErrorOptions,
 ): AnalysisResourceConstraintError =>
@@ -1509,10 +1504,11 @@ const sourceMapOutputError = (
 
 const resolvedSourceLimitFailure = (
   limits: SourceMapLimits,
-): SourceMapFormatFailure =>
-  new SourceMapFormatFailure(
-    "limit",
-    `Resolved source-map identities exceed decoder representation admission. ${sourceMapLimitRecovery("fetch_bytes", limits.fetchBytes)}`,
+): ParseFailureError<"limit"> =>
+  sourceMapLimitFailure(
+    `Resolved source-map identities exceed decoder representation admission.`,
+    "fetch_bytes",
+    limits.fetchBytes,
   );
 
 const artifactMetadataBytes = (mediaType: string, text: string): number =>

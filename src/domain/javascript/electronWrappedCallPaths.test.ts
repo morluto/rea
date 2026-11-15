@@ -1,6 +1,6 @@
 import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it("retains switch selection on a direct bridge exposure", () => {
   const result = analyzeJavaScriptStaticSource(`

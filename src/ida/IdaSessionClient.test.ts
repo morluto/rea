@@ -11,6 +11,7 @@ import {
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   createIdaTarget,
   RecordingIdaMcp,
@@ -780,7 +781,6 @@ describe("attached IDA regex supervision", () => {
         await client.close();
       }
     },
-    15_000,
   );
   it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
     const { producer, client } = await fixture();
@@ -826,7 +826,7 @@ describe("attached IDA regex supervision", () => {
     } finally {
       await client.close();
     }
-  }, 15_000);
+  });
 });
 
 describe("attached IDA function failure handling", () => {
@@ -915,16 +915,26 @@ describe("attached IDA function failure handling", () => {
       { procedure: "main" },
       { signal: controller.signal },
     );
-    await started;
-    controller.abort();
-    const close = client.close();
-    expect(producer.closes).toBe(0);
-    release?.();
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
-    expect((await close).ok).toBe(true);
-    expect(producer.closes).toBe(1);
+    try {
+      await awaitAcknowledgement(started, call, "IDA read-only call");
+      controller.abort();
+      const close = client.close();
+      expect(producer.closes).toBe(0);
+      release?.();
+      const result = await call;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect((await close).ok).toBe(true);
+      expect(producer.closes).toBe(1);
+    } finally {
+      controller.abort();
+      release?.();
+      try {
+        await call;
+      } finally {
+        await client.close();
+      }
+    }
   });
 });
 
@@ -2322,7 +2332,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   );
   const executing = client.execute("health", {});
   try {
-    await started;
+    await awaitAcknowledgement(started, executing, "IDA HTTP acquisition");
     const result = await executing;
     expect(result).toMatchObject({
       ok: false,

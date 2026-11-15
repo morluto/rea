@@ -115,10 +115,12 @@ it("retains completed body identity when map interpretation reaches its deadline
       return text;
     });
   try {
-    const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-      timeoutMs: 1_000,
-      fetch: () => Promise.resolve(response),
-    });
+    const result = await fetchWebSourceMaps(
+      [request(1)],
+      { ...input, source_map_fetch_timeout_ms: 1_000 },
+      undefined,
+      { fetch: () => Promise.resolve(response) },
+    );
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       status: "unavailable",

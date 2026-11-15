@@ -12,6 +12,7 @@ import {
 } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { DshCordisDocument } from "../../../src/application/DshCordisPatch.js";
 
 import {
   configureClientConfiguration,
@@ -35,6 +36,37 @@ const command = currentClientRegistrationCommand({
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
+
+it("normalizes DSH expression identity on Windows and accepts a literal alias override", () => {
+  const document = new DshCordisDocument(`- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        env:
+          rea_ghidra_startup_timeout_ms: !!js process.env.STARTUP
+          caller_value: keep
+`);
+  const selected = document.environment({}, "effective", "win32");
+  expect(selected.ok).toBe(true);
+  if (!selected.ok) throw selected.error;
+  expect([...selected.value.unresolvedSettings]).toEqual([
+    "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  ]);
+  expect(selected.value.values).toEqual({ caller_value: "keep" });
+
+  const overridden = document.environment(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000" },
+    "effective",
+    "win32",
+  );
+  expect(overridden.ok).toBe(true);
+  if (!overridden.ok) throw overridden.error;
+  expect([...overridden.value.unresolvedSettings]).toEqual([]);
+  expect(overridden.value.values).toEqual({
+    caller_value: "keep",
+    REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000",
+  });
+});
 
 const dshClient = (
   env: Parameters<typeof supportedClients>[2],

@@ -31,6 +31,7 @@ import {
 import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
   artifactCommandOutput,
   type ArtifactAnalysisRuntime,
@@ -51,7 +52,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -427,7 +428,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               "Packet limits count input packets before display filtering. Filtered results do not establish whole-capture or device traffic absence. Two-pass reassembly cannot recover bytes missing from the recording or beyond the read limit.",
               "Repeated field values remain ordered string arrays; raw packet bytes are included only when explicitly selected as a supported field. Export index/score metadata are omitted. All stderr, including warnings on exit zero, is retained.",
               "A private empty personal configuration is used. Installed libraries, global configuration and dissector plugins are trusted and not fully fingerprinted. File-only analysis and disabled name resolution do not constitute an OS sandbox.",
-              "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
+              ARTIFACT_PRODUCER_LIMITATION,
             ],
           }),
         );
@@ -455,14 +456,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     return this.#resources.finish(
       result,
       (execution) =>
-        createEvidence(execution.subject ?? undefined, execution.provider, {
+        createAnalysisExecutionEvidence(
           operation,
-          parameters: input,
-          result: execution.result,
-          confidence: "observed",
-          locations: execution.locations,
-          limitations: execution.limitations,
-        }),
+          input,
+          execution,
+          "observed",
+        ),
       operation,
       options?.signal,
     );
@@ -474,11 +473,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
     observedOutput: AnalysisCapturedOutput | undefined,
-    operation = OPERATION,
+    operation: string,
     limits: {
       readonly output_bytes: number;
       readonly command_timeout_ms: number;
-    } = LIMITS,
+    },
   ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)

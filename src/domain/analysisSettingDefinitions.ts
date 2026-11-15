@@ -559,16 +559,6 @@ export const ANALYSIS_SETTINGS = {
     operations: windowsChangeTimeOperations,
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
-/** Launch seeds `update_analysis_settings` can replace. Startup must not reject them. */
-export const runtimeAnalysisEnvironmentNames = (): ReadonlySet<string> =>
-  new Set(
-    Object.values(ANALYSIS_SETTINGS).flatMap((definition) =>
-      definition.updateMode === "runtime" && "environment" in definition
-        ? [definition.environment]
-        : [],
-    ),
-  );
-
 export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];

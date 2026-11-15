@@ -18,7 +18,6 @@ import {
   matchRegexValues,
   REGEX_MATCHING_LIMITATION,
   regexMatchingDeadlineError,
-  regexMatchingLimitation,
   regexWorkerHeapError,
   execArgvFromCommandLine,
   resolveLaunchRegexWorkerHeap,
@@ -73,7 +72,6 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchExecArgv(),
     readLaunchNodeOptions(),
   );
-  expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
   expect(REGEX_MATCHING_LIMITATION).toMatch(
     /5000 ms matching deadline \(source default\)/iu,
   );

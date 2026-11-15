@@ -175,7 +175,23 @@ it.each([false, true])(
   async (malformed) => {
     const directory = await privateDirectory();
     const currentFile = "/selected/\uFFFD";
-    await writeDescriptor(directory, SESSION, 9, TOKEN, { currentFile });
+    let connections = 0;
+    const server = authenticatedServer(
+      TOKEN,
+      SESSION,
+      (request, respond) => {
+        respond({ ok: true, session_id: request.session_id });
+      },
+      true,
+    );
+    server.on("connection", () => {
+      connections += 1;
+    });
+    const port = await listen(server);
+    await writeDescriptor(directory, SESSION, port, TOKEN, {
+      currentFile,
+      maxRequestBytes: 8192,
+    });
     const path = join(directory, `cutter-${process.pid}-${SESSION}.json`);
     if (malformed) {
       const bytes = await readFile(path);
@@ -192,9 +208,13 @@ it.each([false, true])(
       );
     }
     const client = clientFor(directory, "8192");
-    const descriptors = await client.listDescriptors();
-    expect(descriptors).toHaveLength(malformed ? 0 : 1);
-    if (!malformed) expect(descriptors[0]?.current_file).toBe(currentFile);
+    const result = await client.listSessions();
+    expect(result.discovery_status).toBe(
+      malformed ? "no_live_bridge_found" : "sessions_found",
+    );
+    expect(result.sessions).toHaveLength(malformed ? 0 : 1);
+    if (!malformed) expect(result.sessions[0]?.current_file).toBe(currentFile);
+    expect(connections).toBe(malformed ? 0 : 1);
   },
 );
 

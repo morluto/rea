@@ -47,7 +47,7 @@ type ProcessIdentitySnapshot = Pick<
 >;
 
 /** Prove that forkpty completed session setup and installed the run token. */
-export const isInitializedPtyRoot = (options: {
+const isInitializedPtyRoot = (options: {
   readonly rootPid: number;
   readonly expectedRunId: string;
   readonly before: ProcessIdentitySnapshot;

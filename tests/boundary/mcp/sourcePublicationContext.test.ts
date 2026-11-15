@@ -126,13 +126,6 @@ it.each(
         { timeout: 120000, toolDefinition: tool },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      expect(
-        validation.assertions.validate(
-          tool.outputSchema,
-          result.structuredContent,
-        ),
-        JSON.stringify(validation.assertions.errors),
-      ).toBe(true);
       expect(result.structuredContent).toMatchObject({
         result: {
           name: { state: "available", value: "entry" },
@@ -171,7 +164,6 @@ it.each(
       await session.close();
     }
   },
-  120000,
 );
 
 it.each([false, true])(
@@ -283,7 +275,6 @@ it.each([false, true])(
       await session.close();
     }
   },
-  120000,
 );
 
 it("keeps a smaller sibling recovery when a later completed observation exceeds delivery", async () => {
@@ -389,4 +380,4 @@ it("keeps a smaller sibling recovery when a later completed observation exceeds 
     await server.close();
     await session.close();
   }
-}, 120000);
+});

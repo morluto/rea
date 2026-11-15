@@ -18,11 +18,11 @@ import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
-export const FIT_MAX_IMAGES = 1024;
-export const FIT_MAX_HASH_NODES_PER_IMAGE = 8;
-export const FIT_MAX_CONFIGURATIONS = 1024;
+const FIT_MAX_IMAGES = 1024;
+const FIT_MAX_HASH_NODES_PER_IMAGE = 8;
+const FIT_MAX_CONFIGURATIONS = 1024;
 /** Bounds configuration references and their limitations across the FIT. */
-export const FIT_MAX_CONFIGURATION_REFERENCES = 16_384;
+const FIT_MAX_CONFIGURATION_REFERENCES = 16_384;
 
 type FitNode = Devicetree["nodes"][number];
 type FitProperty = FitNode["properties"][number];

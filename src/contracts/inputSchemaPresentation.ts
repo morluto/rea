@@ -8,6 +8,7 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
+  schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -180,6 +181,79 @@ const isBooleanSchema = (schema: unknown): boolean =>
   isObject(schema) &&
   (schema.type === "boolean" || isBooleanLiteralSchema(schema));
 
+const isObjectKeyword = (key: string) => schemaMaps.has(key);
+const isArrayKeyword = (key: string) => schemaArrays.has(key);
+const isChildKeyword = (key: string) => schemaChildren.has(key);
+
+/**
+ * Remove every instance default below a schema, not only the one this keyword
+ * carries, keeping the entries at `kept`. A nested default belongs to the group
+ * that declares it: outside that group a client that fills it would send an
+ * object a strict sibling refuses. A default a reference still targets stays
+ * caller data; dropping it would leave that reference dangling.
+ */
+const omitNestedDefaults = (
+  schema: unknown,
+  kept: ReadonlySet<string> = new Set(),
+  path: readonly string[] = [],
+): unknown => {
+  if (Array.isArray(schema))
+    return schema.map((child, index) =>
+      omitNestedDefaults(child, kept, [...path, String(index)]),
+    );
+  if (!isObject(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema).flatMap(([key, value]) => {
+      const childPath = [...path, key];
+      if (kept.has(JSON.stringify(childPath))) return [[key, value]];
+      if (key === "default") return [];
+      return [
+        [
+          key,
+          isObjectKeyword(key) && isObject(value)
+            ? Object.fromEntries(
+                Object.entries(value).map(([name, child]) => [
+                  name,
+                  omitNestedDefaults(child, kept, [...childPath, name]),
+                ]),
+              )
+            : isArrayKeyword(key) && Array.isArray(value)
+              ? value.map((child, index) =>
+                  omitNestedDefaults(child, kept, [
+                    ...childPath,
+                    String(index),
+                  ]),
+                )
+              : isChildKeyword(key)
+                ? Array.isArray(value)
+                  ? value.map((child, index) =>
+                      omitNestedDefaults(child, kept, [
+                        ...childPath,
+                        String(index),
+                      ]),
+                    )
+                  : omitNestedDefaults(value, kept, childPath)
+                : value,
+        ],
+      ];
+    }),
+  );
+};
+
+/** Every path into a `default` that a reference inside `schema` targets. */
+const referencedDefaultPaths = (
+  schema: Readonly<Record<string, unknown>>,
+): ReadonlySet<string> => {
+  const kept = new Set<string>();
+  for (const { target } of new JsonSchemaReferences(schema).references()) {
+    if (target.kind !== "target") continue;
+    const defaultAt = target.path.indexOf("default");
+    if (defaultAt < 0) continue;
+    kept.add(JSON.stringify(target.path.slice(0, defaultAt + 1)));
+  }
+  return kept;
+};
+
 const preserveSharedDefault = (
   schema: Record<string, unknown>,
   branches: readonly unknown[],
@@ -195,21 +269,6 @@ const preserveSharedDefault = (
   )
     schema.default = defaults[0];
 };
-
-/** Schema children, excluding definitions when following validation dependencies. */
-const normalizationChildren = (
-  schema: Readonly<Record<string, unknown>>,
-  definitions: boolean,
-): unknown[] =>
-  Object.entries(schema).flatMap(([key, value]) => {
-    if (schemaMaps.has(key) && isObject(value))
-      return !definitions && (key === "$defs" || key === "definitions")
-        ? []
-        : Object.values(value);
-    if (schemaArrays.has(key) && Array.isArray(value)) return value;
-    if (schemaChildren.has(key)) return Array.isArray(value) ? value : [value];
-    return [];
-  });
 
 const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
   typeof schema.const === "boolean" ||
@@ -247,7 +306,9 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     if (seen.has(entry.schema)) continue;
     seen.add(entry.schema);
     entries.push({ schema: entry.schema, scope });
-    for (const schema of normalizationChildren(entry.schema, true))
+    for (const schema of schemaSubschemas(entry.schema, {
+      includeDefinitions: true,
+    }))
       pending.push({ schema, scope });
   }
   const indexed = new Map<JsonSchemaScope | undefined, WeakMap<object, Fact>>();
@@ -305,7 +366,9 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
       }
     }
     if (!ignoresSiblings)
-      for (const child of normalizationChildren(schema, false))
+      for (const child of schemaSubschemas(schema, {
+        includeDefinitions: false,
+      }))
         factAt(child, scope)?.dependents.add(fact);
     if (!ignoresSiblings)
       for (const key of [
@@ -599,14 +662,19 @@ const flattenRootObjectUnion = (
   const required = sharedRequiredProperties(branches);
   // A default lifted out of an input group can make a client send a field
   // rejected by another strict group. Keep it only when every group owns the
-  // property and supplies the same default.
+  // property and supplies the same default. A property some group omits takes
+  // its nested defaults too: filling only the inner property would otherwise
+  // still send an object that sibling group refuses. A default the nested
+  // property carries inside a group that does accept the parent stays, so
+  // callers keep that guidance.
   for (const [name, schemas] of variants) {
-    const defaults = branches.map((branch) => {
-      const property = isObject(branch.properties)
-        ? branch.properties[name]
-        : undefined;
-      return isObject(property) ? property.default : undefined;
-    });
+    const properties = branches.map((branch) =>
+      isObject(branch.properties) ? branch.properties[name] : undefined,
+    );
+    const ownedByEveryGroup = properties.every(isObject);
+    const defaults = properties.map((property) =>
+      isObject(property) ? property.default : undefined,
+    );
     if (
       defaults.every(
         (value) => value !== undefined && isDeepStrictEqual(value, defaults[0]),
@@ -615,11 +683,16 @@ const flattenRootObjectUnion = (
       continue;
     const withoutDefaults: unknown[] = [];
     for (const schema of schemas) {
-      let withoutDefault = schema;
-      if (isObject(schema) && Object.hasOwn(schema, "default")) {
-        const { default: _default, ...rest } = schema;
-        withoutDefault = rest;
-      }
+      const withoutDefault = ownedByEveryGroup
+        ? isObject(schema) && Object.hasOwn(schema, "default")
+          ? Object.fromEntries(
+              Object.entries(schema).filter(([key]) => key !== "default"),
+            )
+          : schema
+        : omitNestedDefaults(
+            schema,
+            isObject(schema) ? referencedDefaultPaths(schema) : new Set(),
+          );
       if (
         !withoutDefaults.some((known) =>
           isDeepStrictEqual(known, withoutDefault),

@@ -2,7 +2,10 @@ import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import type { ElfNotes } from "../../domain/native/elfNotes.js";
+import { createHash } from "node:crypto";
+import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
+import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import { parseElfNotes } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -11,22 +14,17 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = ELF_NOTES_PROVIDER;
-const report: ElfNotes = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
+const path = "/artifacts/app";
+const bytes = elfNoteFixture({ ownership: "none" });
+const report = parseElfNotes(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  tables: [],
-  entries: [],
-  coverage: { status: "complete", examined_tables: 0, examined_entries: 0 },
-  limitations: ["No PT_NOTE program header or SHT_NOTE section was declared."],
-};
+  inspectElfNotesInputSchema.parse({ path }),
+);
 
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;

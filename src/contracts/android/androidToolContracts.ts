@@ -15,7 +15,7 @@ import {
   androidMethodSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";

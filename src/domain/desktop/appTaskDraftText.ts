@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -161,7 +162,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
     )
       continue;
     const selector = `[name=${after.name}][@${key}=${value}]`;
-    const pointer = `${parent}/children/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+    const pointer = `${parent}/children/${escapeJsonPointerToken(selector)}`;
     if (
       resolvePointer(ends.baseline, pointer, "xml") === before &&
       resolvePointer(ends.final, pointer, "xml") === after

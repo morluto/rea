@@ -307,9 +307,7 @@ const projectWrite = (
   bundle: EvidenceBundle,
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
-  written.ok
-    ? ok(evidenceBundleExportReceipt(bundle, written.value))
-    : err(written.error);
+  written.ok ? ok(evidenceBundleExportReceipt(bundle, written.value)) : written;
 
 /** Standalone bundle discovery shares the same read owner as import and comparison. */
 export const inspectEvidenceBundleCommand = async (

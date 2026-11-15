@@ -169,7 +169,7 @@ export const decodeOpenStepQuotedString = (token: string): string => {
 export type OpenStepPropertyListCode = (typeof OPEN_STEP_SYNTAX_CODES)[number];
 
 /** OpenStep syntax refusal. `code` is the contract; `position` is the source offset. */
-export class OpenStepPropertyListError extends Error {
+class OpenStepPropertyListError extends Error {
   readonly _tag = "OpenStepPropertyListError";
 
   constructor(

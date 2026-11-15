@@ -531,8 +531,7 @@ is inflated and searched; other payload codecs are unsupported and name
 `external_decompression` as the next probe. See
 [Linux kernel build config](../guides/native/kernel-build-config.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
-3.15 headers are qualified but their marshal layout is not pinned)
+Inspect a CPython 3.7–3.15 `.pyc` header and nested marshal code objects
 without executing bytecode or installing Python:
 
 ```bash
@@ -690,6 +689,12 @@ A snapshot retains successful analysis results for later queries. REA reuses
 an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
+
+Malformed snapshot headers or entries remain integrity failures. The diagnostic
+keeps the first schema issue's location and message, plus the number of further
+issues, rather than replacing it with a constant validation reason. File-selection
+and JSON-syntax failures remain distinct; internal exception objects and stacks
+are not serialized into the public error.
 
 A binary CLI replay reports the current invocation's selected path while leaving
 the saved Evidence and snapshot query unchanged. See
@@ -1339,7 +1344,15 @@ bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.
 `stderr_bytes` counts all observed bytes, including omitted output;
 `stderr_truncated` indicates that output exceeded the retention limit. The same
 diagnostics appear inside the report when `--full-output` is selected. Log
-truncation alone does not change the diagnostic health or exit status.
+truncation alone does not change the diagnostic health or exit status. More than
+32 MiB of combined child stdout and stderr stops the child and fails the check
+in progress.
+
+Doctor owns the server's process group on POSIX hosts, or its Job Object on
+Windows. Before reporting, it stops that process family, including POSIX
+descendants in other process groups that inherited its run token. If that
+cleanup cannot be confirmed, the report keeps its earlier checks and adds a
+failed `cleanup` check with the reason and retained run identifier.
 
 The default terminal format is TOON. Use `--json` when saving results for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,

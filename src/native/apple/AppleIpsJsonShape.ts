@@ -1,6 +1,6 @@
 import type { InspectAppleIpsInput } from "../../domain/native/appleIps.js";
 import {
-  AppleIpsFormatFailure,
+  APPLE_IPS_FORMAT,
   AppleIpsResourceFailure,
   type AppleIpsFixedBoundary,
 } from "./AppleIps.errors.js";
@@ -10,6 +10,10 @@ import {
   type JsonShape,
   type LosslessJson,
 } from "./losslessJson.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 
 /** IPS JSON is at most a handful of levels deep; deeper input is not a crash report shape. */
 const MAX_IPS_JSON_DEPTH = 64;
@@ -89,6 +93,7 @@ const threadShape = (
             "symbolLocation",
             "inline",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.frames,
       },
@@ -109,6 +114,7 @@ const threadShape = (
         beforeRest: take.registers,
       },
     },
+    beforeUnlisted: unlistedKeys,
   };
 };
 
@@ -192,6 +198,7 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
             "name",
             "path",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.images,
       },
@@ -227,14 +234,14 @@ export const consumeJson = (
       maxDepth: MAX_IPS_JSON_DEPTH,
     });
     if (!/^[\u0020\u0009\u000a\u000d]*$/u.test(text.slice(parsed.end)))
-      throw new AppleIpsFormatFailure(
-        "malformed",
+      throw malformedInput(
+        APPLE_IPS_FORMAT,
         `${label} has trailing JSON text after the first complete value`,
       );
     return parsed.value;
   } catch (cause) {
     if (
-      cause instanceof AppleIpsFormatFailure ||
+      cause instanceof ParseFailureError ||
       cause instanceof AppleIpsResourceFailure
     )
       throw cause;
@@ -246,6 +253,6 @@ export const consumeJson = (
       );
     const message =
       cause instanceof LosslessJsonFailure ? cause.message : String(cause);
-    throw new AppleIpsFormatFailure("malformed", `${label}: ${message}`);
+    throw malformedInput(APPLE_IPS_FORMAT, `${label}: ${message}`);
   }
 };

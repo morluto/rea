@@ -4,6 +4,13 @@ Pushes to main automatically open or refresh a Release Please PR with the next
 version and changelog. Review its migration notes and wait for its current CI
 checks to pass. Merging that PR into main starts publication automatically.
 
+The push caused by merging a same-repository Release Please PR skips proposal
+generation: the separate merged-release workflow owns tag creation and
+publication. This avoids looking for the new version's tag before that workflow
+has created it. The next ordinary main push resumes proposals. API lookup
+failures and missing release boundaries on ordinary pushes or manual preparation
+still fail closed.
+
 The Release workflow validates the merged release metadata and ancestry before
 creating a tag. npm and MCP Registry publication use the exact reviewed merge
 SHA returned by Release Please. Before either registry is published, the release
@@ -156,7 +163,13 @@ resume bot regeneration. The label does not freeze the base branch: new base
 commits require re-inventorying and re-reviewing the notes.
 
 Update both the release branch's `CHANGELOG.md` and the PR body, preserving
-Release Please's surrounding metadata. Before creating a release, the workflow
+Release Please's surrounding metadata. Keep Author readiness declarations and
+other PR metadata outside the first and last standalone `---` notes delimiters.
+The version heading must start the notes within those delimiters (or use Release
+Please's generated component wrapper). The checker uses Release Please's parser
+to verify that publication will extract the reviewed notes.
+
+Before creating a release, the workflow
 checks an inventory when present, requires its target to equal the reviewed
 merge's first parent, and compares the freshly fetched PR body to the changelog.
 It rejects changes outside the release metadata paths and stale credit records

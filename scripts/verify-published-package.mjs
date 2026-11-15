@@ -99,8 +99,7 @@ async function verifyPublishedUpdate({
     environment,
   );
 
-  await commands.exec(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -118,7 +117,7 @@ async function verifyPublishedUpdate({
   );
 
   const npmRoot = (
-    await commands.exec("npm", ["root", "--global"], {
+    await commands.execNpm(["root", "--global"], {
       cwd: canaryRoot,
       env: environment,
       timeout: 30000,
@@ -186,8 +185,7 @@ if (result.status === "failed") process.exitCode = 1;
 }
 
 async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
-  const { stdout } = await commands.exec(
-    "npm",
+  const { stdout } = await commands.execNpm(
     ["view", "rea-agents", "versions", "--json"],
     { cwd, env: environment, timeout: 30000, maxBuffer: 16 * 1024 * 1024 },
   );

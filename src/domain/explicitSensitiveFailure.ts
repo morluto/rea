@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "./jsonPointer.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
@@ -54,7 +55,7 @@ const redactSensitivePointer = (
 ): string => {
   let parent = "";
   for (const segment of pointer.split("/").slice(1)) {
-    const decoded = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const decoded = unescapeJsonPointerToken(segment);
     const child = `${parent}/${segment}`;
     if (text(decoded) !== decoded || text(child) !== child) return parent;
     parent = child;

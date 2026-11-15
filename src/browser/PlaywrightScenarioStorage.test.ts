@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
@@ -59,7 +61,8 @@ class FakeCdp extends EventEmitter {
     if (method === "Storage.getStorageKey")
       return { storageKey: this.storageKey };
     if (method === "Page.getFrameTree") return { frameTree: this.frameTree };
-    if (method === "Debugger.evaluateOnCallFrame") return {};
+    if (method === "Debugger.evaluateOnCallFrame")
+      return { result: { type: "undefined" } };
     return {};
   }
 
@@ -311,6 +314,25 @@ it.each([
     await owner?.close();
   },
 );
+
+it("preserves a malformed frame-tree reply in the projected storage failure", async () => {
+  const cdp = new FakeCdp();
+  cdp.frameTree = undefined;
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  emitSeedPause(cdp, "");
+  try {
+    await owner?.settle();
+    throw new Error("Expected malformed frame-tree failure");
+  } catch (error) {
+    expect(error).toBeInstanceOf(BrowserObservationError);
+    if (!(error instanceof BrowserObservationError)) throw error;
+    expect(projectAnalysisError(error).message).toContain(
+      "CDP Page.getFrameTree returned a malformed result at /frameTree",
+    );
+  }
+  await owner?.close();
+});
 
 it("leaves a known unseeded frame origin unchanged", async () => {
   const cdp = new FakeCdp();

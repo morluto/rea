@@ -49,20 +49,6 @@ export const requiredRecord = (value: unknown): UnknownRecord => {
   return record;
 };
 
-/** Require producer source text; an absent source is distinct from an empty script. */
-export const requiredScriptSource = (
-  value: unknown,
-  operation: BrowserObservationOperation,
-): string => {
-  const source = cdpStringValue(recordValue(value)?.scriptSource);
-  if (source === undefined)
-    throw new BrowserObservationError(operation, "protocol_error", {
-      detail:
-        "Debugger.getScriptSource returned malformed source text: scriptSource must be a string.",
-    });
-  return source;
-};
-
 export const isHttpUrl = (value: string | undefined): boolean => {
   if (value === undefined) return false;
   try {

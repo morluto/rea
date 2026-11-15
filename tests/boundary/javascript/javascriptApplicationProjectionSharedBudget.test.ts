@@ -28,7 +28,7 @@ vi.mock("node:v8", async (importOriginal) => {
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { estimateJavaScriptStaticApplicationProjection } from "../../../src/domain/javascript/javascriptApplicationProjectionResources.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
-import { analyzeJavaScriptStaticSource } from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../fixtures/javascriptStaticAnalysis.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "../../../src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";

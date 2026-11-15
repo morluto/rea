@@ -79,8 +79,11 @@ it("preserves a selected comparison source digest contradiction through failed c
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     blocked = false;
-    await resources.close();
-    close.mockRestore();
+    try {
+      await resources.close();
+    } finally {
+      close.mockRestore();
+    }
   }
 });
 
@@ -841,7 +844,6 @@ describe("managed comparison post-admission read failures", () => {
       const result = await compareManagedMemberPaths(
         { leftPath, rightPath },
         {
-          resolveTarget: parseBinaryTarget,
           readSnapshot: async (path, operation, options) => {
             if (path === (side === "left" ? leftPath : rightPath)) {
               const failure = Object.assign(new Error(`read failed: ${code}`), {

@@ -54,7 +54,7 @@ const counts = (solves: readonly SolveRecord[]) => {
 };
 
 /** The band the finished solves place the task in: 0 or 3 of 3 decide it, else 1 to 3 of 5 keep it. */
-export const bandOf = (solves: readonly SolveRecord[]): Band => {
+const bandOf = (solves: readonly SolveRecord[]): Band => {
   const { done, passes } = counts(solves);
   if (done >= ALL_SOLVES)
     return passes === 0

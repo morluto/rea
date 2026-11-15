@@ -1,11 +1,9 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import {
-  indexJavaScriptBindingsSteps,
-  indexJavaScriptBindingsWithReceiversSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,

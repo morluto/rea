@@ -7,6 +7,7 @@ import {
   PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
+  PYTHON_PYC_SLICE_MAGIC,
   pythonPycMarshalProfile,
   type PythonPycLimits,
   type PythonPyc,
@@ -49,6 +50,8 @@ const TYPE_ASCII_INTERNED = 0x41;
 const TYPE_SMALL_TUPLE = 0x29;
 const TYPE_SHORT_ASCII = 0x7a;
 const TYPE_SHORT_ASCII_INTERNED = 0x5a;
+/** CPython 3.14 slice constants; `PYTHON_PYC_SLICE_MAGIC` gates the tag. */
+const TYPE_SLICE = 0x3a;
 const TYPES_WITHOUT_REFERENCE_SLOTS = new Set([
   TYPE_NULL,
   TYPE_NONE,
@@ -87,6 +90,8 @@ type MarshalValue =
   | { readonly kind: "list"; readonly items: MarshalValue[] }
   | { readonly kind: "set"; readonly items: MarshalValue[] }
   | { readonly kind: "frozenset"; readonly items: MarshalValue[] }
+  /** CPython 3.14+ slice constant: start, stop, and step. */
+  | { readonly kind: "slice"; readonly items: MarshalValue[] }
   | {
       readonly kind: "dict";
       readonly items: [MarshalValue, MarshalValue][];
@@ -131,7 +136,8 @@ const isContainer = (value: MarshalValue): boolean =>
   value.kind === "list" ||
   value.kind === "set" ||
   value.kind === "frozenset" ||
-  value.kind === "dict";
+  value.kind === "dict" ||
+  value.kind === "slice";
 
 const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
   if (value.kind === "dict") {
@@ -143,7 +149,8 @@ const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
     value.kind === "tuple" ||
     value.kind === "list" ||
     value.kind === "set" ||
-    value.kind === "frozenset"
+    value.kind === "frozenset" ||
+    value.kind === "slice"
   )
     return value.items;
   return [];
@@ -198,7 +205,7 @@ const sha256 = (bytes: Buffer): string => {
   return digest;
 };
 
-/** Decode one bounded CPython 3.7–3.13 pyc without executing bytecode. */
+/** Decode one bounded CPython 3.7–3.15 pyc without executing bytecode. */
 export const parsePythonPyc = (
   bytes: Buffer,
   artifact: { path: string; sha256: string; bytes: number },
@@ -234,8 +241,8 @@ export const parsePythonPyc = (
     }`;
     return unsupported(
       identity === null
-        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.13.`
-        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13.`,
+        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`
+        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`,
     );
   }
   const flags = bytes.readUInt32LE(4);
@@ -258,6 +265,7 @@ export const parsePythonPyc = (
     magic,
     input,
     mapped.negative_code_fields === "rejected",
+    magic >= PYTHON_PYC_SLICE_MAGIC,
   );
   const root = reader.readObject(0);
   if (reader.offset !== marshal.length)
@@ -353,6 +361,8 @@ class MarshalReader {
     readonly magic: number,
     readonly input: PythonPycLimits,
     readonly rejectNegativeCodeFields: boolean,
+    /** Marshal slice constants exist from CPython 3.14a1 magic 3608. */
+    readonly acceptSlices: boolean,
   ) {}
 
   readObject(depth: number): MarshalValue {
@@ -382,7 +392,13 @@ class MarshalReader {
         : undefined;
     if (slot !== undefined) this.#intern.push(undefined);
     const value = this.readTyped(type, depth, slot);
-    if (slot !== undefined && this.#intern[slot] === undefined)
+    // A slice with a TYPE_NULL member yields no object, as in CPython, so
+    // its reserved slot stays invalid for later references.
+    if (
+      slot !== undefined &&
+      this.#intern[slot] === undefined &&
+      value.kind !== "null"
+    )
       this.#intern[slot] = value;
     return value;
   }
@@ -483,6 +499,12 @@ class MarshalReader {
         return this.dict(depth, slot);
       case TYPE_CODE:
         return { kind: "code", value: this.code(depth) };
+      case TYPE_SLICE:
+        if (!this.acceptSlices)
+          return malformed(
+            `Unsupported marshal type 0x3a before CPython magic ${PYTHON_PYC_SLICE_MAGIC}.`,
+          );
+        return this.slice(depth);
       default:
         return malformed(`Unsupported marshal type 0x${type.toString(16)}.`);
     }
@@ -921,6 +943,22 @@ class MarshalReader {
   }
 
   /**
+   * CPython 3.14 reserves a slice's reference slot before reading its start,
+   * stop, and step, so a reference back into the slice is still invalid. A
+   * null member leaves the slice without a value instead of failing here;
+   * the enclosing container or top-level read reports it, as in CPython.
+   */
+  slice(depth: number): MarshalValue {
+    const items: MarshalValue[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const item = this.readObject(depth + 1);
+      if (item.kind === "null") return item;
+      items.push(item);
+    }
+    return { kind: "slice", items };
+  }
+
+  /**
    * CPython registers tuples and lists before reading items, so a container
    * can refer to itself. The same object is what later TYPE_REF entries see.
    */
@@ -1058,8 +1096,12 @@ class MarshalReader {
       // A tuple still being read has missing items; CPython cannot hash it.
       if (mode === "hash" && this.#readingTuples.has(frame.value))
         frame.failed = true;
+      // Slices hash and compare through start, stop, and step since CPython
+      // 3.12, so they walk like a tuple but never equal one.
       const items =
-        frame.value.kind === "tuple" || frame.value.kind === "frozenset"
+        frame.value.kind === "tuple" ||
+        frame.value.kind === "frozenset" ||
+        frame.value.kind === "slice"
           ? frame.value.items
           : undefined;
       if (items === undefined) {
@@ -1233,7 +1275,8 @@ class MarshalReader {
     const expanded = this.#expandedContainerSize(childExpanded);
     if (expanded > this.input.max_string_bytes) this.#keyTooLarge(expanded);
     const ordered = value.kind === "frozenset" ? [...parts].sort() : parts;
-    const kind = value.kind === "tuple" ? "T" : "F";
+    const kind =
+      value.kind === "tuple" ? "T" : value.kind === "slice" ? "L" : "F";
     const descriptor = `${kind}:${ordered.join(",")}`;
     // Charge the descriptor that is stored, not the unmaterialized expansion.
     // A linear reference chain stays within the file budget; repeating one
@@ -1370,7 +1413,9 @@ class MarshalReader {
                 malformed("Code object is missing equality material.")
               ).constsTuple,
             ]
-          : value.kind === "tuple" || value.kind === "frozenset"
+          : value.kind === "tuple" ||
+              value.kind === "frozenset" ||
+              value.kind === "slice"
             ? value.items
             : [];
       gray.add(identity);
@@ -1781,6 +1826,8 @@ const buildConstSummary = (value: MarshalValue): PythonPycConst => {
       return { kind: "dict", length: value.items.length };
     case "ellipsis":
       return { kind: "ellipsis" };
+    case "slice":
+      return { kind: "slice" };
     case "complex":
       return {
         kind: "complex",

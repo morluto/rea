@@ -15,10 +15,12 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -93,7 +95,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           cause: options.signal.reason,
         }),
       );
-    if (this.#closed) return err(new AnalysisCancelledError(operation));
+    if (this.#closed)
+      return err(cancelledBy(operation, OwnerCancellation.ownerClosed));
     if (this.#active.size >= SQLITE_DATABASE_LIMITS.concurrentInspections)
       return err(
         new AnalysisResourceConstraintError(
@@ -278,7 +281,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         throw new AnalysisCancelledError(operation, {
           cause: options.signal.reason,
         });
-      if (this.#closed) throw new AnalysisCancelledError(operation);
+      if (this.#closed)
+        throw cancelledBy(operation, OwnerCancellation.ownerClosed);
       root = await this.createRuntime();
       phase = "artifact-read";
       const snapshot = await captureSqliteDatabaseSnapshot(
@@ -537,14 +541,12 @@ const completedSqliteEvidence = (
   input: InspectSqliteDatabaseInput,
   execution: AnalysisExecution,
 ) =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
+  createAnalysisExecutionEvidence(
     operation,
-    parameters: sqliteInspectionParameters(input),
-    result: execution.result,
-    confidence: "observed",
-    locations: execution.locations,
-    limitations: execution.limitations,
-  });
+    sqliteInspectionParameters(input),
+    execution,
+    "observed",
+  );
 
 const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
   const parsed = inspectSqliteDatabaseInputSchema.safeParse(input);

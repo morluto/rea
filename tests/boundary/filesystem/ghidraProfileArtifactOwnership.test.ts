@@ -7,6 +7,7 @@ import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
 import {
   readFile,
@@ -391,15 +392,21 @@ it("joins whole provider resolution before shutdown and gates the next admission
     opens++;
   };
   const resolving = provider.resolveAnalysisProfile(target);
-  await entered.promise;
-  const count = opens;
-  let closed = false;
-  const closing = provider.closeOwnedResources().then((result) => {
-    closed = true;
-    return result;
-  });
-  const next = provider.resolveAnalysisProfile(target);
+  let closing: ReturnType<typeof provider.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof provider.resolveAnalysisProfile> | undefined;
   try {
+    await awaitAcknowledgement(
+      entered.promise,
+      resolving,
+      "profile resolution",
+    );
+    const count = opens;
+    let closed = false;
+    closing = provider.closeOwnedResources().then((result) => {
+      closed = true;
+      return result;
+    });
+    next = provider.resolveAnalysisProfile(target);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(opens).toBe(count);
@@ -421,7 +428,11 @@ it("joins whole provider resolution before shutdown and gates the next admission
     expect(provider.hasPendingOwnedResources()).toBe(false);
   } finally {
     release.resolve();
-    await Promise.all([resolving, closing, next]);
+    await Promise.allSettled([
+      resolving,
+      ...(closing ? [closing] : []),
+      ...(next ? [next] : []),
+    ]);
     await provider.closeOwnedResources();
   }
 });

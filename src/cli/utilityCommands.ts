@@ -1,6 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
@@ -21,7 +21,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
+import {
+  nativeUiObservationInputSchema,
+  nativeUiScenarioInputSchema,
+} from "../domain/native/nativeUiObservation.js";
 import {
   nativeCommandTimeoutField,
   nativeUiDeadlineField,
@@ -49,28 +52,25 @@ export const registerUtilityCommands = (
   registerReferenceSourceCommand(cli, logger, environment);
 };
 
-/** Decimal argv text; the shared deadline field owns the bounds and help. */
-const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
-  cliDecimalField(field);
-
-// Decimal tokens only, for the same reason as cliNativeDeadline.
+// Decimal tokens only; shared fields own their bounds and defaults.
+const nativeUiScopeFields = nativeUiObservationInputSchema.shape;
 const nativeUiScopeOptions = {
-  pid: cliIntegerArgument(1).describe("Existing application PID"),
-  windowId: cliIntegerArgument(1).describe(
-    "Exact selected application window ID",
+  pid: cliDecimalField(
+    nativeUiScopeFields.pid.describe("Existing application PID"),
   ),
-  screenshot: z
-    .boolean()
-    .default(true)
-    .describe("Capture only the selected window"),
-  accessibility: z
-    .boolean()
-    .default(true)
-    .describe("Read the selected window accessibility tree"),
-  maxNodes: cliIntegerArgument(1)
-    .default(500)
-    .describe("Maximum accessibility nodes per capture"),
-  nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
+  windowId: cliDecimalField(
+    nativeUiScopeFields.window_id.describe(
+      "Exact selected application window ID",
+    ),
+  ),
+  screenshot: nativeUiScopeFields.screenshot,
+  accessibility: nativeUiScopeFields.accessibility,
+  maxNodes: cliDecimalField(
+    nativeUiScopeFields.max_nodes.describe(
+      "Maximum accessibility nodes per capture",
+    ),
+  ),
+  nativeUiDeadlineMs: cliDecimalField(nativeUiDeadlineField),
 };
 
 const nativeUiScope = (options: {
@@ -208,7 +208,7 @@ const registerNativeCommands = (
         path: localPathStringSchema.describe("Mach-O or app path"),
       }),
       options: z.object({
-        nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+        nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
       }),
       run: ({ args, options }) =>
         logCliCommand(logger, command, () =>
@@ -229,13 +229,12 @@ const registerNativeCommands = (
       path: localPathStringSchema.describe("App or Mach-O path"),
     }),
     options: z.object({
-      relativePath: z
-        .string()
+      relativePath: localPathStringSchema
         .optional()
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
@@ -263,7 +262,7 @@ const registerNativeCommands = (
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     options: z.object({
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "demangle-swift", () =>
@@ -368,11 +367,15 @@ const registerReferenceSourceCommand = (
           .describe(
             "Complete committed graph or compact historical-source summary",
           ),
-        outlineDepth: cliIntegerArgument(0)
-          .optional()
-          .describe(
-            "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
-          ),
+        outlineDepth: cliDecimalField(
+          z
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
+            ),
+        ),
       })
       .superRefine((options, context) => {
         if (options.outlineDepth !== undefined && options.detail !== "summary")

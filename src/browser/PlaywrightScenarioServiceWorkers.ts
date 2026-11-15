@@ -24,6 +24,7 @@ import {
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
+import type { CdpSendParams, CdpSendResult } from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 // Restoration performs several sequential CDP mutations before the transport's
@@ -46,7 +47,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const scriptResponse = z.object({ identifier: z.string() });
 const restorationResponse = z.object({
   result: z.object({ value: z.literal("policy_owned").nullable() }),
 });
@@ -218,8 +218,10 @@ export class PlaywrightScenarioServiceWorkers {
       if (this.#closed) return;
       await this.send(target.id, "Page.enable");
       if (this.#closed) return;
-      const added = scriptResponse.parse(
-        await this.send(target.id, "Page.addScriptToEvaluateOnNewDocument", {
+      const added = await this.send(
+        target.id,
+        "Page.addScriptToEvaluateOnNewDocument",
+        {
           runImmediately: true,
           source: `(() => {
           if (!("serviceWorker" in navigator)) return;
@@ -240,7 +242,7 @@ export class PlaywrightScenarioServiceWorkers {
           }});
           Object.defineProperty(prototype, "register", { ...descriptor, configurable: true, value: register });
         })()`,
-        }),
+        },
       );
       target.identifier = added.identifier;
       if (!this.#closed)
@@ -261,11 +263,11 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
-  private send(
+  private send<M extends string>(
     id: string,
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
-  ): Promise<unknown> {
+    method: M,
+    params: CdpSendParams<M> = {} as CdpSendParams<M>,
+  ): Promise<CdpSendResult<M>> {
     if (this.#session === undefined)
       throw new BrowserObservationError(OPERATION, "disconnected");
     return this.#session.connection.send(method, params, id);
@@ -389,14 +391,10 @@ export class PlaywrightScenarioServiceWorkers {
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
     this.#setup.abort();
     const restoration = (this.#restoration ??= this.restore());
-    void restoration.then(
-      () => {
-        if (this.#restoration === restoration) this.#restoration = undefined;
-      },
-      () => {
-        if (this.#restoration === restoration) this.#restoration = undefined;
-      },
-    );
+    const clearRestoration = (): void => {
+      if (this.#restoration === restoration) this.#restoration = undefined;
+    };
+    void restoration.then(clearRestoration, clearRestoration);
     // Restoration completion does not discharge a stop request that arrived
     // after that restoration began. Both paths share the owner's stop latch.
     const completion = restoration.then(() => this.fulfillStopRequest());
@@ -427,14 +425,10 @@ export class PlaywrightScenarioServiceWorkers {
       this.#loadingStopped = true;
     })();
     this.#stopPromise = stopping;
-    void stopping.then(
-      () => {
-        if (this.#stopPromise === stopping) this.#stopPromise = undefined;
-      },
-      () => {
-        if (this.#stopPromise === stopping) this.#stopPromise = undefined;
-      },
-    );
+    const clearStop = (): void => {
+      if (this.#stopPromise === stopping) this.#stopPromise = undefined;
+    };
+    void stopping.then(clearStop, clearStop);
     return stopping;
   }
 

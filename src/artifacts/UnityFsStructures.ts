@@ -1,9 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import {
-  assertArtifactFileRange,
-  readArtifactFileBytes,
-} from "./ArtifactFileRange.js";
+import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../gpu/Lz4Block.js";
 import {
   BinaryFormatFailure,
@@ -139,15 +136,20 @@ export const readUnityFsHeader = async (
     );
   if (facts.declaredSize > BigInt(size))
     throw unityFsFormatFailure("declared size exceeds the file");
+  if (facts.declaredSize < BigInt(facts.afterFixed))
+    throw unityFsFormatFailure("declared size excludes the header");
+  const declaredSize = Number(facts.declaredSize);
+  if (facts.compressedBlocksInfoSize > declaredSize - facts.afterFixed)
+    throw unityFsFormatFailure(
+      "declared blocks-info exceeds the bundle extent",
+    );
   const blocksInfoAtEnd = (facts.flags & UNITYFS_FLAG_BLOCKS_INFO_AT_END) !== 0;
-  if (blocksInfoAtEnd && facts.compressedBlocksInfoSize > size)
-    throw unityFsFormatFailure("declared blocks-info exceeds the file");
   const compression = facts.flags & UNITYFS_FLAG_COMPRESSION_MASK;
   const common = {
     formatVersion: facts.formatVersion,
     playerVersion: facts.playerVersion,
     engineVersion: facts.engineVersion,
-    declaredSize: Number(facts.declaredSize),
+    declaredSize,
     flags: facts.flags,
     compressedBlocksInfoSize: facts.compressedBlocksInfoSize,
     uncompressedBlocksInfoSize: facts.uncompressedBlocksInfoSize,
@@ -176,14 +178,24 @@ export const readUnityFsHeader = async (
   const position = layout.headerAligned
     ? align16(facts.afterFixed)
     : facts.afterFixed;
+  if (position > declaredSize)
+    throw unityFsFormatFailure("declared size excludes the padded header");
+  const blocksInfoOffset = blocksInfoAtEnd
+    ? declaredSize - facts.compressedBlocksInfoSize
+    : position;
+  if (
+    blocksInfoOffset < position ||
+    facts.compressedBlocksInfoSize > declaredSize - blocksInfoOffset
+  )
+    throw unityFsFormatFailure(
+      "declared blocks-info exceeds the bundle extent",
+    );
   return {
     ...common,
     layout: {
       status: "available",
       afterHeader: position,
-      blocksInfoOffset: blocksInfoAtEnd
-        ? size - facts.compressedBlocksInfoSize
-        : position,
+      blocksInfoOffset,
       dataPadding: layout.dataPadding,
     },
   };
@@ -376,7 +388,6 @@ const parseNodes = async (
 const resolveDataStart = (
   header: UnityFsHeader,
   blocks: readonly UnityFsBlock[],
-  size: number,
 ): number => {
   const layout = header.layout;
   if (layout.status !== "available")
@@ -392,16 +403,17 @@ const resolveDataStart = (
     (total, block) => total + block.compressedSize,
     0,
   );
-  const dataEnd = header.blocksInfoAtEnd ? layout.blocksInfoOffset : size;
+  const dataEnd = header.blocksInfoAtEnd
+    ? layout.blocksInfoOffset
+    : header.declaredSize;
   if (dataStart < 0 || dataStart + compressedTotal > dataEnd)
-    throw unityFsFormatFailure("declared data area exceeds the file");
+    throw unityFsFormatFailure("declared data area exceeds the bundle extent");
   return dataStart;
 };
 
 export const readUnityFsBlocksInfo = async (
   handle: FileHandle,
   header: UnityFsHeader,
-  size: number,
   signal?: AbortSignal,
 ): Promise<UnityFsBlocksInfo> => {
   const layout = header.layout;
@@ -410,11 +422,6 @@ export const readUnityFsBlocksInfo = async (
       "unavailable",
       "UnityFS directory layout is unavailable",
     );
-  assertArtifactFileRange(
-    layout.blocksInfoOffset,
-    header.compressedBlocksInfoSize,
-    size,
-  );
   if (
     header.compressedBlocksInfoSize > MAX_TABLE_BYTES ||
     header.uncompressedBlocksInfoSize > MAX_TABLE_BYTES
@@ -428,7 +435,7 @@ export const readUnityFsBlocksInfo = async (
     handle,
     layout.blocksInfoOffset,
     header.compressedBlocksInfoSize,
-    size,
+    header.declaredSize,
     signal,
   );
   const table = await decodeBlocksInfoTable(header, compressed, signal);
@@ -440,6 +447,6 @@ export const readUnityFsBlocksInfo = async (
     dataHash: table.subarray(0, 16).toString("hex"),
     blocks,
     nodes,
-    dataStart: resolveDataStart(header, blocks, size),
+    dataStart: resolveDataStart(header, blocks),
   };
 };

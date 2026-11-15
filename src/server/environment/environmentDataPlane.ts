@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -26,14 +27,11 @@ export type RpcMethods = (
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const pointerSegment = (segment: string | number): string =>
-  String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {
   const issue = error.issues[0];
   const pointer = (issue?.path ?? [])
-    .map((segment) => `/${pointerSegment(segment)}`)
+    .map((segment) => `/${escapeJsonPointerToken(String(segment))}`)
     .join("");
   return invalidParams(
     `${pointer === "" ? "the document" : pointer} ${issue?.message ?? "is not a rea-state/v1 document"}`,

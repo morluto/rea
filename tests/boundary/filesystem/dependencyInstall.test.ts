@@ -140,7 +140,7 @@ describe("dependency install freshness", () => {
     const cached = await runTurbo(root);
     expect(cached.status, cached.stderr).toBe(0);
     expect(`${cached.stdout}${cached.stderr}`).toMatch(/cache hit/u);
-  }, 60_000);
+  });
 
   it("preserves caller resource controls in strict cached builds without hashing their values", async () => {
     const root = await createBuildCacheFixture();
@@ -173,7 +173,7 @@ describe("dependency install freshness", () => {
     expect(cached.status, `${cached.stdout}${cached.stderr}`).toBe(0);
     expect(`${cached.stdout}${cached.stderr}`).toMatch(/cache hit/u);
     expect(`${cached.stdout}${cached.stderr}`).not.toMatch(/cache miss/u);
-  }, 60_000);
+  });
 });
 
 const createBuildCacheFixture = async (): Promise<string> => {

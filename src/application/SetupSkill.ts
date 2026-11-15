@@ -420,8 +420,8 @@ export const validateCanonicalSkillDirectories = async (
 const canonicalSkillFiles = async (
   home: string,
   clientIds: readonly string[],
-  environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
   resources?: ArtifactResourceScope,
 ): Promise<readonly CanonicalSkillFile[]> => {
   const destinations = skillDestinations(

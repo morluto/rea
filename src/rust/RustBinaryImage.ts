@@ -1,9 +1,9 @@
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
   type BinaryContainer,
   type ImageSection,
 } from "../native/metadata/BinaryContainer.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
@@ -13,7 +13,7 @@ import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
-  RustAuditableFormatFailure,
+  RUST_AUDITABLE_FORMAT,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 
@@ -59,10 +59,8 @@ const readContainer = (bytes: Buffer) => {
   try {
     return readBinaryContainer(bytes);
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure)
-      throw new RustAuditableFormatFailure(cause.kind, cause.message, {
-        cause,
-      });
+    // A container format failure is already a ParseFailureError; it keeps
+    // its own kind and facts instead of being restated as a Rust failure.
     if (cause instanceof BinaryResourceFailure)
       throw new RustAuditableResourceFailure(
         {
@@ -85,21 +83,21 @@ const dependencySection = (
   const expected = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
   const matches = sections.filter((section) => section.name === expected);
   if (matches.length > 1)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Image contains more than one dependency section",
     );
   const section = matches[0];
   if (section === undefined) return null;
   if (section.compressed)
-    throw new RustAuditableFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      RUST_AUDITABLE_FORMAT,
       "Compressed dependency sections are unsupported",
       { undecodedContent: true },
     );
   if (!section.file_backed)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section is not file-backed",
     );
   return section;

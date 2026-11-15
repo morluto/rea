@@ -97,14 +97,14 @@ export const evmHostSupported = (
   platform: NodeJS.Platform,
   arch: string,
 ): boolean => platform === "linux" && arch === "x64";
-export const EVM_PRLIMIT_COMMAND_DEFAULT = "/usr/bin/prlimit";
+const EVM_PRLIMIT_COMMAND_DEFAULT = "/usr/bin/prlimit";
 
-export interface EvmLimiterProbeFileSystem {
+interface EvmLimiterProbeFileSystem {
   access(path: string, mode: number): Promise<void>;
   stat(path: string): Promise<{ isFile(): boolean }>;
 }
 
-export interface EvmLimiterProbeOptions {
+interface EvmLimiterProbeOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly fs?: EvmLimiterProbeFileSystem;
@@ -254,7 +254,7 @@ type PendingEvmCleanup = {
   root:
     | { readonly owner: EvmRuntimeRoot; readonly lease: AnalysisCleanupLease }
     | undefined;
-  process: { readonly lease: AnalysisCleanupLease } | undefined;
+  process: AnalysisCleanupLease | undefined;
 };
 
 const ownerCleanupMarker = (
@@ -468,7 +468,6 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     let processOwner: ProviderProcessSupervisor | undefined;
-    let processLease: AnalysisCleanupLease | undefined;
     let processCleanup:
       | {
           readonly reason: string;
@@ -643,7 +642,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           retainCleanup: (owner, cleanup) => {
             processOwner = owner;
-            processLease = processLeaseFor(owner);
+            processLeaseFor(owner);
             processCleanup = {
               reason: cleanup.reason,
               resources:
@@ -830,7 +829,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         cause.cleanupOwner !== undefined
       ) {
         processOwner = cause.cleanupOwner;
-        processLease = processLeaseFor(cause.cleanupOwner);
+        processLeaseFor(cause.cleanupOwner);
       }
       let fileFailure: EvmFileSizeFailureEvidence | undefined;
       let markerCleanupFailure: ArtifactReaderFailure | undefined;
@@ -968,7 +967,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           root === undefined || rootOwnerLease === undefined
             ? undefined
             : { owner: root, lease: rootOwnerLease },
-        process: { lease },
+        process: lease,
       };
       if (processCleanup === undefined) {
         const owners = [lease, rootOwnerLease].filter(
@@ -1118,7 +1117,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (pending === undefined) return undefined;
     if (pending.process !== undefined) {
       try {
-        await pending.process.lease.release();
+        await pending.process.release();
       } catch (cause: unknown) {
         const failure = evmCleanupFailure(
           pending.input,
@@ -1126,7 +1125,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           [
             ...new Set([
               ...(pending.root === undefined ? [] : [pending.root.owner.path]),
-              ...(pending.process.lease.cleanupResources ?? []),
+              ...(pending.process.cleanupResources ?? []),
             ]),
           ],
           cause instanceof Error ? cause.message : String(cause),
@@ -1136,7 +1135,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         bindEvmCleanupOwners(
           failure,
           [
-            pending.process.lease,
+            pending.process,
             ...(pending.root === undefined ? [] : [pending.root.lease]),
           ],
           pending.result.ok ? undefined : pending.result.error,

@@ -14,7 +14,6 @@ import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
-import type { Evidence } from "../../domain/evidence.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -86,7 +85,7 @@ export const classifyBuildCapture = (
 };
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
-export const canonicalTemplateRules = (
+const canonicalTemplateRules = (
   rules: readonly TemplateRule[],
 ): TemplateRule[] => TEMPLATE_RULES.filter((rule) => rules.includes(rule));
 
