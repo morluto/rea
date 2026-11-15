@@ -751,7 +751,7 @@ export const observeSettlement = async ({
   readonly ownershipEvidence: ProcessOwnershipEvidenceOwner;
   readonly settleMs: number;
   readonly recordEvent?: RecordProcessCaptureEvent;
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly signal?: AbortSignal | undefined;
   readonly ownershipHost?: ProcessOwnershipHost;
   readonly onLiveProgress?: (() => void) | undefined;
