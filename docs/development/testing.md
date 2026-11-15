@@ -308,6 +308,23 @@ limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
+The grammar rules are not evidence that an engine accepts a pattern.
+`npm run verify:advertised-schemas` lists tools from the built package's stdio
+entry in every input, output and catalog profile, then compiles each distinct
+advertised regular expression (`pattern` values and `patternProperties` keys)
+with the engines clients run: V8 (plain, `u`, `v`), Go `regexp` (RE2), C++
+RE2, Python `re`, and Rust `regex` and `fancy-regex` through the Rust
+`jsonschema` crate. A refusal names the engine, its error, and each tool,
+schema path and profile that advertises the pattern. Go is the host
+toolchain, run with `GOTOOLCHAIN=local` so it is never downloaded. The other
+engines are pinned, hash-checked wheels listed in
+`scripts/verify/advertised-schemas/requirements.txt`; nothing installs them on
+a developer machine. To check them locally, install that file into a virtual
+environment with `pip install --require-hashes -r` and set
+`REA_SCHEMA_ENGINES_PYTHON` to its interpreter. A missing engine is reported
+as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
+into a failure.
+
 The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
 coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
