@@ -6,7 +6,8 @@
  *
  * The order follows docs/architecture/architecture.mermaid: domain and
  * contracts at the centre, the process/filesystem foundation, the ports
- * that providers implement and application consumes, provider adapters,
+ * that providers implement and application consumes, the shared provider
+ * core (src/providers), provider adapters,
  * shared application workflows, production composition, then the CLI and
  * MCP entry points.
  */
@@ -15,6 +16,7 @@ export const LAYER_ORDER = Object.freeze([
   "contracts",
   "foundation",
   "ports",
+  "providerCore",
   "providers",
   "application",
   "composition",
@@ -41,8 +43,11 @@ export const UNIT_LAYERS = Object.freeze(
       "logger.ts",
     ]),
     ...units("ports", ["ports"]),
-    // Every unit here except the shared provider core (`providers`) is a
-    // provider folder; see PROVIDER_CORE and providerBoundaryFacts.
+    // The shared provider core (src/providers): deferred client owners and
+    // failure attribution that every provider folder may import. It may not
+    // import a provider folder.
+    ...units("providerCore", ["providers"]),
+    // Every unit here is a provider folder; see providerBoundaryFacts.
     ...units("providers", [
       "adb",
       "android",
@@ -75,7 +80,6 @@ export const UNIT_LAYERS = Object.freeze(
       "native",
       "objdump",
       "pcap",
-      "providers",
       "python",
       "reference",
       "rizin",
@@ -205,12 +209,8 @@ export const layerGraphFacts = (imports, files = []) => {
   };
 };
 
-/** The shared provider core that every provider folder may import. */
-export const PROVIDER_CORE = "providers";
-
-/** Whether a unit is a provider folder (not the shared provider core). */
-export const isProviderUnit = (unit) =>
-  UNIT_LAYERS[unit] === "providers" && unit !== PROVIDER_CORE;
+/** Whether a unit is a provider folder. */
+export const isProviderUnit = (unit) => UNIT_LAYERS[unit] === "providers";
 
 const ENTRY_IMPORTER_LAYERS = new Set([
   "application",
@@ -240,7 +240,8 @@ const sortedCounts = (counts) =>
  * Provider boundary facts, counted per unit pair.
  *
  * A provider folder may import the domain, contracts, foundation and ports
- * layers, the shared provider core and its own files. An import of another
+ * layers, the shared provider core (its own layer, below providers) and its
+ * own files. An import of another
  * provider folder is an explicit, recorded exception (for example inspector
  * reusing browser's CDP helpers): `crossProvider` counts them per pair, and a
  * pair that is not in the baseline fails. Application, composition and the

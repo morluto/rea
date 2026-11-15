@@ -168,6 +168,16 @@ describe("provider boundaries", () => {
     });
   });
 
+  it("keeps the shared provider core below every provider folder", () => {
+    expect(UNIT_LAYERS.providers).toBe("providerCore");
+    expect(
+      layerGraphFacts([
+        edge("src/ghidra/A.ts", "src/providers/Core.js"),
+        edge("src/providers/Core.ts", "src/ghidra/A.js"),
+      ]).upward,
+    ).toEqual({ "providers -> ghidra": 1 });
+  });
+
   it("skips only the exact declared file-to-file exception", () => {
     expect(
       layerGraphFacts([
