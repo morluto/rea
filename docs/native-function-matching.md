@@ -76,7 +76,8 @@ resolved correspondence. Provider limitations remain accessible.
 inventories cover either binary; `left_inventory_completeness` and
 `right_inventory_completeness` stay `unknown`, so a function missing from both
 inventories is outside this result. `partial` means at least one supplied row
-has no exact counterpart.
+remains unpaired (`only_left`/`only_right`) or unresolved (repeated candidates
+that cannot be paired uniquely).
 
 Default `detail: "summary"` retains complete matching Evidence in MCP and returns
 counts, both identities and coverage. Query its `parent_evidence_id`:
