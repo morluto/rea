@@ -856,6 +856,25 @@ Zed you use and refuses. Zed's comments and formatting are preserved. These
 locations follow each client's documentation and source; no installed client
 was run to verify loading.
 
+## MCPorter
+
+`rea setup --client mcporter` and `rea mcp add --agent mcporter` write
+`mcpServers.rea` into MCPorter's home file: the file `MCPORTER_CONFIG` names,
+otherwise the first existing of `$XDG_CONFIG_HOME/mcporter/mcporter.json[c]`
+(an absolute `XDG_CONFIG_HOME` only) and `~/.mcporter/mcporter.json[c]`. A new
+file goes to the XDG path when `XDG_CONFIG_HOME` is set, as
+`mcporter config add --scope home` does. A relative `MCPORTER_CONFIG` depends on
+the directory each MCPorter command runs from, so REA refuses writes to
+MCPorter and doctor and update report its registration as `unknown` while
+still covering every other client. Uninstall stops until it is repaired,
+because it cannot tell whether that file holds REA's row.
+
+MCPorter imports Claude Code, Claude Desktop, Codex, Cursor, Windsurf, OpenCode
+and VS Code registrations by default, so setup never selects it from detection,
+and doctor reports it only when its file holds a `rea` row or you select it.
+Update and uninstall refresh and remove the row REA wrote. A project
+`config/mcporter.json` entry with the same name overrides the home file.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
