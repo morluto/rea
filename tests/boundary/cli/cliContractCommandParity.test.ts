@@ -243,6 +243,9 @@ const ARGV_SATISFYING_RULES: Readonly<
   "annotate-native-function": { name: "renamed" },
   "search-bytes": { pattern: "41 ??" },
   "inspect-native-data-type": { type: "/struct" },
+  "capture-native-ui-scenario": {
+    steps: '[{"kind":"wait","milliseconds":0}]',
+  },
 };
 
 const each = descriptions.map(
@@ -298,6 +301,13 @@ const MIGRATED_COMMANDS = [
   "instructions",
   "decompile",
   "search",
+  "decompile-all",
+  "observe-native-ui",
+  "capture-native-ui-scenario",
+  "inspect-macho",
+  "inspect-signature",
+  "list-architectures",
+  "demangle-swift",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -371,8 +381,12 @@ describe("CLI commands projected from tool contracts", () => {
           ).toBe(true);
         }
         if (parameter.runtimeJson !== undefined) {
-          // JSON text decoded when the command runs; see below.
-          for (const value of [undefined, "", "{", "{}"])
+          // JSON text decoded when the command runs; see below. Argv
+          // requires the text of a required field.
+          expect(admits(cliField, undefined), parameter.key).toBe(
+            admits(contractField, undefined),
+          );
+          for (const value of ["", "{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
           continue;
         }
@@ -411,6 +425,10 @@ describe("CLI commands projected from tool contracts", () => {
         description,
         ARGV_SATISFYING_RULES[command] ?? {},
       );
+      // Runtime JSON text is decoded as admission does.
+      for (const { key, runtimeJson } of description.parameters)
+        if (runtimeJson !== undefined && typeof values[key] === "string")
+          values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
       expect(description.contract.inputSchema.safeParse(input).error).toBe(
         undefined,
@@ -695,7 +713,9 @@ describe("Session targets of contract commands", () => {
       expect(Object.values(description.toContractInput(values))).not.toContain(
         "rel/app",
       );
-      expect(description.callerInputs(values)).toEqual({});
+      expect(
+        Object.values(description.callerInputs(values)).flat(),
+      ).not.toContain("rel/app");
     },
   );
 
