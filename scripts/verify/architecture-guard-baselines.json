@@ -419,7 +419,7 @@
     "src/browser/WebSourceMapFetcher.ts": 2,
     "src/browser/history/HistoricalCaptureDecoder.ts": 1,
     "src/cli/desktopCaptureCommands.ts": 1,
-    "src/cutter/CutterBridgeClient.ts": 2,
+    "src/cutter/CutterBridgeClient.ts": 1,
     "src/desktop/ScreenJudgeProcess.ts": 1,
     "src/domain/explicitSensitiveFailure.ts": 1,
     "src/evm/EvmoleInterfaceProvider.ts": 6,
