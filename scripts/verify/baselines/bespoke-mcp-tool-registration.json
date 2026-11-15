@@ -1,6 +1,4 @@
 {
-  "src/server/registerApplicationTools/coverage.ts": 1,
-  "src/server/registerApplicationTools/environmentBundle.ts": 1,
   "src/server/registerBinaryDiagnosticsTools.ts": 1,
   "src/server/registerBrowserScenarioTool.ts": 1,
   "src/server/registerBrowserTools.ts": 8,
@@ -14,10 +12,6 @@
   "src/server/registerGdbTools.ts": 4,
   "src/server/registerGuidedWorkflowTool.ts": 1,
   "src/server/registerJavaScriptRuntimeObservationTools.ts": 2,
-  "src/server/registerManagedWorkflowTools/compareManagedMembers.ts": 1,
-  "src/server/registerManagedWorkflowTools/importManagedReconstruction.ts": 1,
-  "src/server/registerManagedWorkflowTools/projectManagedApplicationGraph.ts": 1,
-  "src/server/registerManagedWorkflowTools/verifyManagedNativeBoundaries.ts": 1,
   "src/server/registerNativeFunctionMatchingTool.ts": 1,
   "src/server/registerResetInvestigationTool.ts": 1,
   "src/server/registerReverseEngineeringTools.ts": 2,

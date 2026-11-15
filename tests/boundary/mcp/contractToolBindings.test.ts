@@ -94,6 +94,56 @@ mcpTest(
   },
 );
 
+mcpTest(
+  "runs a value binding under analysis admission only when it declares it",
+  async ({ mcp }) => {
+    const ran: string[] = [];
+    const admitted: string[] = [];
+    const refusal = (operation: string) =>
+      new AnalysisInputError(operation, undefined, [
+        { path: [], reason: "invalid_value", message: `${operation} refusal` },
+      ]);
+    const value = (operation: string) => () => {
+      ran.push(operation);
+      return Promise.resolve(err(refusal(operation)));
+    };
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        evaluate_reconstruction_coverage: {
+          admission: "application",
+          admitted: true,
+          value: value("evaluate_reconstruction_coverage"),
+        },
+        search_guidance: {
+          admission: "application",
+          value: value("search_guidance"),
+        },
+      },
+      {
+        logger: silentLogger,
+        withAdmittedAnalysis: async (operationName) => {
+          admitted.push(operationName);
+          return err(refusal("admission"));
+        },
+      },
+    );
+    const client = await mcp.connect(server);
+    const call = async (name: string) =>
+      parseMcpToolError(await client.callTool({ name, arguments: {} }));
+
+    expect(await call("evaluate_reconstruction_coverage")).toMatchObject({
+      error: { details: { operation: "admission" } },
+    });
+    expect(await call("search_guidance")).toMatchObject({
+      error: { details: { operation: "search_guidance" } },
+    });
+    expect(admitted).toEqual(["evaluate_reconstruction_coverage"]);
+    expect(ran).toEqual(["search_guidance"]);
+  },
+);
+
 type Operation = () => Promise<never>;
 type DevicetreeBinding = NonNullable<
   ContractToolBindings["inspect_devicetree"]
