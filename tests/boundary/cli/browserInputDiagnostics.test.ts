@@ -192,7 +192,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
           issues: expect.arrayContaining([
             {
               ...input.issue,
-              path: "cliPath" in input ? input.cliPath : input.issue.path,
+              path: input.cliPath,
               message: owner.message,
             },
           ]),
