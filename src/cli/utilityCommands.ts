@@ -1,3 +1,4 @@
+import { contractNamed } from "./contractCliDescription.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
@@ -29,7 +30,7 @@ import { nativeCommandTimeoutField } from "../domain/native/nativeDeadlines.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import {
   registerContractCommand,
   runOnSessionTarget,
@@ -69,7 +70,7 @@ const registerNativeUiCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("observe_native_ui"),
+    contractNamed(NATIVE_TOOL_CONTRACTS, "observe_native_ui"),
     {
       command: CLI_COMMANDS.observeNativeUi,
       description:
@@ -82,7 +83,7 @@ const registerNativeUiCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("capture_native_ui_scenario"),
+    contractNamed(NATIVE_TOOL_CONTRACTS, "capture_native_ui_scenario"),
     {
       command: CLI_COMMANDS.captureNativeUiScenario,
       description:
@@ -130,7 +131,7 @@ const registerNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("inspect_macho"),
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_macho"),
     {
       command: CLI_COMMANDS.inspectMacho,
       description: "Run inspect_macho without launching Hopper",
@@ -146,7 +147,7 @@ const registerNativeCommands = (
     registerContractCommand(
       cli,
       logger,
-      toolContract(tool),
+      contractNamed(NATIVE_TOOL_CONTRACTS, tool),
       {
         command,
         description: `Run ${tool} without launching Hopper`,
@@ -190,7 +191,7 @@ const registerNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("demangle_swift"),
+    contractNamed(NATIVE_TOOL_CONTRACTS, "demangle_swift"),
     {
       command: CLI_COMMANDS.demangleSwift,
       description: "Demangle Swift symbols without Hopper",
