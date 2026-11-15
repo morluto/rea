@@ -791,6 +791,8 @@ For Cline's CLI, setup writes `mcpServers.rea` into
 `~/.cline/data/settings/cline_mcp_settings.json`; set `CLINE_MCP_SETTINGS_PATH`
 to select another file. Otherwise `CLINE_DATA_DIR` selects the data directory,
 then `CLINE_DIR` selects the root containing `data`; blank overrides are ignored.
+Cline resolves a relative override against its own working directory, so REA
+refuses one until it is made absolute.
 Setup and `mcp add --agent cline-cli` share this native path selection. Entries carry
 `command`, `args`, and `env`; stdio is the default transport. Setup preserves
 every other server and top-level key when it upserts `rea`, and refuses a
@@ -892,8 +894,9 @@ not written by REA.
 
 Setup and `rea mcp add` write `mcpServers.rea` into `~/.junie/mcp/mcp.json`, or
 `$JUNIE_HOME/mcp/mcp.json` when `JUNIE_HOME` is set (Junie CLI honors it; the
-JetBrains plugin reads `~/.junie`). Junie loads that file only while its default
-MCP locations are enabled. Setup, `rea mcp add` and doctor all refuse or report
+JetBrains plugin reads `~/.junie`). A relative `JUNIE_HOME` depends on Junie's
+working directory, so REA refuses it until it is made absolute. Junie loads that
+file only while its default MCP locations are enabled. Setup, `rea mcp add` and doctor all refuse or report
 a registration Junie would not load: `JUNIE_MCP_DEFAULT_LOCATIONS=false`, or
 `mcp-default-locations: false` in `~/.junie/config.json` unless
 `JUNIE_CONFIG_DEFAULT_LOCATIONS=false` skips that file. While

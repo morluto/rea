@@ -1,5 +1,6 @@
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 
+import { err, ok, type Result } from "../domain/result.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 
 /**
@@ -75,3 +76,28 @@ export const vscodeUserDirectory = (
         : resolve(env.VSCODE_CWD || process.cwd(), userData);
   return join(absoluteUserData, "User");
 };
+
+/** A client path REA cannot place, and the user's recovery. */
+export interface ClientRootFailure {
+  readonly path: string;
+  readonly message: string;
+}
+
+/**
+ * A client folder or file named by an environment variable that the client
+ * resolves against its own working directory. Setup cannot know that
+ * directory, so only an absolute value selects a location; a relative one is
+ * refused rather than resolved against REA's directory.
+ */
+export const absoluteClientRoot = (
+  path: string,
+  variable: string,
+  client: string,
+  platform: NodeJS.Platform,
+): Result<string, ClientRootFailure> =>
+  (platform === "win32" ? win32 : posix).isAbsolute(path)
+    ? ok(path)
+    : err({
+        path,
+        message: `${variable} is relative, so the location ${client} reads depends on its working directory. Set an absolute ${variable} before configuring ${client}.`,
+      });

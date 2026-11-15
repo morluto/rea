@@ -59,3 +59,28 @@ it("keeps an unresolved native home unavailable to setup", () => {
   );
   expect(client.configPath).toBe("");
 });
+
+it.each(["CLINE_MCP_SETTINGS_PATH", "CLINE_DATA_DIR", "CLINE_DIR"])(
+  "refuses a relative %s instead of resolving it against REA's directory",
+  (variable) => {
+    const client = cline("/home/x", "linux", {
+      // A lower-precedence absolute override must not hide the refusal.
+      CLINE_DIR: "/ignored",
+      [variable]: "relative/cline",
+    });
+    expect(client.configPathError).toBe(
+      `${variable} is relative, so the location Cline CLI reads depends on its working directory. Set an absolute ${variable} before configuring Cline CLI.`,
+    );
+    expect(client.configPath).toBe("relative/cline");
+  },
+);
+
+it("refuses a drive-relative Windows CLINE_DATA_DIR", () => {
+  expect(
+    cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: "D:\\cline" }).configPath,
+  ).toBe("D:\\cline\\settings\\cline_mcp_settings.json");
+  expect(
+    cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: "D:cline" })
+      .configPathError,
+  ).toContain("CLINE_DATA_DIR is relative");
+});
