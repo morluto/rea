@@ -58,6 +58,8 @@ it.each([
   ["list_strings", {}],
   ["procedure_callers", { procedure: "main" }],
   ["xrefs", { address: "0x1000" }],
+  ["procedure_assembly", { procedure: "0x1000" }],
+  ["analyze_function", { procedure: "0x1000" }],
 ] as const)(
   "retries %s after a reset exposes an invalid project deadline",
   async (operation, parameters) => {
@@ -102,3 +104,44 @@ it.each([
     }
   },
 );
+
+it("refuses analyze_function on a reused export when its call-graph deadline is invalid", async () => {
+  const snapshot = {
+    revision: 1,
+    overrides: { "kuna.project_timeout_ms": 1000 },
+  } as const;
+  const fixture = await runWithAnalysisOperationSnapshot(snapshot, () =>
+    session(
+      "rea-kuna-deadline-dossier-",
+      {},
+      { REA_KUNA_PROJECT_TIMEOUT_MS: "invalid" },
+    ),
+  );
+  const client = runWithAnalysisOperationSnapshot(snapshot, () =>
+    fixture.open(),
+  );
+  try {
+    // Build the export under the override, without reading the call graph.
+    const exported = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute(
+        "procedure_assembly",
+        { procedure: "0x1000" },
+        { signal: AbortSignal.timeout(3000) },
+      ),
+    );
+    expect(exported).toMatchObject({ ok: true });
+    // The dossier's call relationships need a graph scan the reset refuses.
+    const refused = await client.execute("analyze_function", {
+      procedure: "0x1000",
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ConfigurationError",
+        settings: [{ setting: "REA_KUNA_PROJECT_TIMEOUT_MS" }],
+      },
+    });
+  } finally {
+    await client.close();
+  }
+});
