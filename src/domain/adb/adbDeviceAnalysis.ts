@@ -492,7 +492,16 @@ const client = z.strictObject({
 });
 
 export const adbDeviceObservationSchema = z.strictObject({
-  serial: z.string().min(1),
+  /**
+   * The serial `adb devices` reports, or null when the transport has none. AOSP
+   * `transport.cpp append_transport()` prints the literal `(no serial number)` in
+   * that column for a transport registered without one (`client/usb_linux.cpp`
+   * keeps an empty serial during early bringup, http://b/20883914). That text is a
+   * display placeholder, not an identity: it names no device, so it is not repeated
+   * here as one.
+   */
+  serial: z.string().min(1).nullable(),
+  serial_status: z.enum(["reported", "not_reported"]),
   state: adbDeviceStateSchema,
   transport: z.enum(["usb", "tcp", "unknown"]),
   product: z.string().nullable(),

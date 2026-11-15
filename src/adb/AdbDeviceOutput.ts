@@ -116,7 +116,10 @@ export const parseAdbDevicesOutput = (
       if (rawLine.trim() !== "") unparsed.add(rawLine);
       continue;
     }
-    const serial = match[1]!;
+    // The placeholder names no device; two transports without a serial would otherwise be
+    // indistinguishable, and the text cannot be passed to any device operation.
+    const placeholder = match[1]! === "(no serial number)";
+    const serial = placeholder ? null : match[1]!;
     const remainder = match[2]!.slice(state.length);
     const usb = metadataValue(remainder, "usb");
     // AOSP appends the authoritative field last; earlier metadata may contain
@@ -127,7 +130,7 @@ export const parseAdbDevicesOutput = (
       transportToken,
       rawLine,
     );
-    const isEmulator = /^emulator-\d+$/u.test(serial);
+    const isEmulator = serial !== null && /^emulator-\d+$/u.test(serial);
     const kind = isEmulator
       ? ("emulator" as const)
       : usb !== null
@@ -135,11 +138,14 @@ export const parseAdbDevicesOutput = (
         : ("unknown" as const);
     devices.push({
       serial,
+      serial_status: placeholder ? "not_reported" : "reported",
       state,
       transport:
         usb !== null
           ? "usb"
-          : isEmulator || serial.includes(":") || isAdbMdnsTcpSerial(serial)
+          : isEmulator ||
+              (serial !== null &&
+                (serial.includes(":") || isAdbMdnsTcpSerial(serial)))
             ? "tcp"
             : "unknown",
       product: metadataValue(remainder, "product"),
