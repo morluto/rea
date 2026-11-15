@@ -199,7 +199,7 @@ it("retains valid completed capture Evidence on late cancellation and preserves 
   if (!invalid.ok) expect(invalid.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("projects completed raw capture facts on failure through the caller's selection and sensitivity rules", async () => {
+it("projects completed raw capture facts on failure through the sensitivity rules", async () => {
   const report = fixture();
   report.artifact.path = "/private-marker/capture.har";
   report.limitations = ["private-marker producer limitation"];
@@ -218,7 +218,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
       sensitive_values: ["private-marker"],
     },
     undefined,
-    { capture: "./capture.har" },
   );
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -226,7 +225,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "inspect_web_network_capture",
-    caller_input_path: "./capture.har",
     parameters: { record_ordinals: [0] },
     subject: { local_path: "" },
     normalized_result: {
@@ -234,6 +232,8 @@ it("projects completed raw capture facts on failure through the caller's selecti
       records: [{ ordinal: 0 }],
     },
   });
+  // Caller spellings belong to the CLI delivery, not the service.
+  expect(partial.caller_input_path).toBeUndefined();
   expect(JSON.stringify(partial)).not.toContain("private-marker");
 });
 
