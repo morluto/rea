@@ -12,6 +12,13 @@ export interface SchemaAnnotations {
    * selects the alternative by this property's literal value.
    */
   readonly rootDiscriminator?: string;
+  /**
+   * This object is a complete producer result the caller passes back
+   * unchanged. Its advertised form omits the repeated result fields and keeps
+   * only its description plus that instruction; runtime validation still
+   * parses the complete canonical observation.
+   */
+  readonly completeObservation?: true;
 }
 
 const annotations = z.registry<SchemaAnnotations>();
@@ -38,4 +45,18 @@ export const presentRootDiscriminator = <
     rootDiscriminator: discriminator,
   });
   return schema;
+};
+
+/**
+ * Advertise a copy of `schema` as a complete producer result to pass back
+ * unchanged. The shared result schema itself keeps its full advertised form
+ * wherever else it appears, such as the producer's output schema.
+ */
+export const presentCompleteObservation = <Schema extends z.ZodType>(
+  schema: Schema,
+): Schema => {
+  // The clone inherits the source's annotations and description.
+  const annotated = schema.clone();
+  annotations.add(annotated, { completeObservation: true });
+  return annotated;
 };

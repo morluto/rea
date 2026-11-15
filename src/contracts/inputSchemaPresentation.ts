@@ -51,22 +51,6 @@ const describeSchema = (
   propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
-  // These operands are complete producer results, not fields an agent builds.
-  // Their owner keeps full canonical validation; only their wire declaration
-  // omits the repeated result schema. Analyst-authored controls stay explicit.
-  if (schema.type === "object" && schema["x-rea-complete-observation"] === true)
-    return {
-      type: "object",
-      description: [
-        propertyDescription ??
-          (typeof schema.description === "string"
-            ? schema.description
-            : undefined),
-        "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
-      ]
-        .filter((text) => text !== undefined)
-        .join(" "),
-    };
   const scope = references.enter(schema, inherited);
   const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {

@@ -435,14 +435,12 @@
     "src/contracts/guidedWorkflowSchemas.ts": 1,
     "src/contracts/managed/managedToolContracts.ts": 1,
     "src/domain/analysisView/environmentManifestView.ts": 1,
-    "src/domain/browserScenarioDiffValues.ts": 2,
     "src/domain/desktop/appBuild.ts": 1,
     "src/domain/flutter/flutterBuildAnalysis.ts": 1,
     "src/domain/il2cpp/il2cppMetadata.ts": 1,
     "src/domain/native/functionDossier.ts": 1,
     "src/domain/portableBundleName.ts": 1,
     "src/domain/sqlite/sqliteDatabase.ts": 1,
-    "src/domain/stringPatterns.ts": 1,
-    "src/domain/webCaptureDiffSchemas.ts": 2
+    "src/domain/stringPatterns.ts": 1
   }
 }
