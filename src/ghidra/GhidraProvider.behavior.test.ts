@@ -37,7 +37,6 @@ import {
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
@@ -53,6 +52,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
   fixtureDosLoadImage,
@@ -6566,9 +6569,8 @@ it("reuses readiness only inside its active task and provider lifetime", async (
 it.each(["retry", "physical", "cleanup", "close"] as const)(
   "handles %s during an abandoned installation inspection",
   async (outcome) => {
-    const entered = createDeferred<void>();
-    const aborted = createDeferred<void>();
-    const release = createDeferred<void>();
+    const javaInspection = phaseGate();
+    const inspectionAbort = phaseArrival();
     const base = installationHost();
     let probes = 0;
     let denyCleanup = outcome === "cleanup";
@@ -6582,11 +6584,14 @@ it.each(["retry", "physical", "cleanup", "close"] as const)(
       probeJava: async (command, environment, options) => {
         probes++;
         if (probes === 1) {
-          options.signal?.addEventListener("abort", () => aborted.resolve(), {
-            once: true,
-          });
-          entered.resolve();
-          await release.promise;
+          options.signal?.addEventListener(
+            "abort",
+            () => inspectionAbort.arrive(),
+            {
+              once: true,
+            },
+          );
+          await javaInspection.hold();
           if (outcome === "physical") return err(physical);
           if (outcome === "cleanup") {
             options.resourceOwner?.retain(
@@ -6617,15 +6622,15 @@ it.each(["retry", "physical", "cleanup", "close"] as const)(
     let second: ReturnType<typeof ghidra.inspectAvailability> | undefined;
     let closing: ReturnType<typeof ghidra.closeOwnedResources> | undefined;
     try {
-      await awaitAcknowledgement(entered.promise, first, "Java inspection");
+      await javaInspection.reached(first, "Java inspection");
       controller.abort("first inspection");
-      await awaitAcknowledgement(aborted.promise, first, "inspection abort");
+      await inspectionAbort.reached(first, "inspection abort");
       second = ghidra.inspectAvailability();
       void second.catch(() => undefined);
       await Promise.resolve();
       expect(probes).toBe(1);
       if (outcome === "close") closing = ghidra.closeOwnedResources();
-      release.resolve();
+      javaInspection.release();
       if (outcome === "retry") {
         await expect(first).rejects.toMatchObject({
           _tag: "AnalysisCancelledError",
@@ -6654,7 +6659,7 @@ it.each(["retry", "physical", "cleanup", "close"] as const)(
       }
     } finally {
       controller.abort();
-      release.resolve();
+      javaInspection.release();
       await Promise.allSettled([first, second, closing]);
       denyCleanup = false;
       expect((await ghidra.closeOwnedResources()).ok).toBe(true);
