@@ -31,10 +31,12 @@ import {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { parseFunctionDossier } from "../domain/native/functionDossier.js";
+import { addressedValueSchema } from "../domain/native/nativeInventory.js";
 import {
-  parseNativeInventoryCount,
-  addressedValueSchema,
-} from "../domain/native/nativeInventory.js";
+  listProceduresFact,
+  listStringsFact,
+} from "../domain/native/nativeOperationFacts.js";
+import { executeFact } from "./AnalysisOperationFacts.js";
 import {
   parseSegments,
   projectBinaryOverview,
@@ -239,14 +241,7 @@ export class EnhancedTools {
       case "inspect_native_api":
         return this.#inspectNativeApi(call.input, signal);
       case "trace_feature":
-        return traceLiteralFeature(
-          (name, arguments_, operationSignal) =>
-            this.#call(name, arguments_, operationSignal),
-          (name, arguments_, operationSignal) =>
-            this.#observe(name, arguments_, operationSignal),
-          call.input,
-          signal,
-        );
+        return traceLiteralFeature(this.#observed, call.input, signal);
       case "trace_call_path":
         return traceCallPath(
           (name, arguments_, operationSignal, selectorOrigin) =>
@@ -754,11 +749,12 @@ export class EnhancedTools {
       signal,
     );
     if (!document.ok) return document;
+    const options = signal === undefined ? {} : { signal };
     const [segmentsResult, proceduresResult, stringsResult] = await Promise.all(
       [
         this.#call("list_segments", {}, signal),
-        this.#call("list_procedures", {}, signal),
-        this.#call("list_strings", {}, signal),
+        executeFact(this.#observed, listProceduresFact, {}, options),
+        executeFact(this.#observed, listStringsFact, {}, options),
       ],
     );
     if (!segmentsResult.ok && !permitsCapabilityFallback(segmentsResult.error))
@@ -770,24 +766,14 @@ export class EnhancedTools {
       ? parseSegments(segmentsResult.value)
       : undefined;
     if (segments !== undefined && !segments.ok) return segments;
-    const procedureCount = parseNativeInventoryCount(
-      proceduresResult.value,
-      "list_procedures",
-    );
-    if (!procedureCount.ok) return procedureCount;
-    const stringCount = parseNativeInventoryCount(
-      stringsResult.value,
-      "list_strings",
-    );
-    if (!stringCount.ok) return stringCount;
 
     return ok(
       withOverviewInventoryCoverage(
         projectBinaryOverview({
           document: document.value,
           ...(segments?.ok ? { segments: segments.value } : {}),
-          procedure_count: procedureCount.value,
-          string_count: stringCount.value,
+          procedure_count: proceduresResult.value.fact.length,
+          string_count: stringsResult.value.fact.length,
         }),
       ),
     );
@@ -819,6 +805,12 @@ export class EnhancedTools {
           ),
         );
   }
+
+  /** This tool's port: every call goes through `#observe`'s cancellation checks. */
+  readonly #observed: AnalysisOperationPort = {
+    execute: (name, arguments_, options) =>
+      this.#observe(name, arguments_, options?.signal, options?.selectorOrigin),
+  };
 
   async #call(
     name: AnalysisOperation,
