@@ -34,6 +34,7 @@ import {
 } from "./WebBundleAnalysisWorkerProtocol.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface WebBundleScriptAnalyzer {
   (
@@ -135,7 +136,7 @@ const analyzeJob = async (
       script = includedWebScriptSchema.parse(decoded);
     } catch (cause) {
       throw new WebBundleWorkerInputError(
-        `Web bundle worker source is not a valid included script: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Web bundle worker source is not a valid included script: ${errorMessage(cause)}`,
       );
     }
     await send({ kind: "phase", id: request.id, phase: "analyze" });
@@ -153,7 +154,7 @@ const analyzeJob = async (
     } catch (cause) {
       if (cause instanceof AnalysisResourceConstraintError) throw cause;
       throw new WebBundleWorkerOutputError(
-        `Web bundle analyzer returned an invalid result: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Web bundle analyzer returned an invalid result: ${errorMessage(cause)}`,
       );
     }
     // A refused script crosses with its partial facts; the parent states the
@@ -227,9 +228,7 @@ const analyzeJob = async (
       cause.cleanupLeases !== undefined &&
       cause.cleanupLeases.length > 0;
     // The parent owns resource-error formatting; send the canonical reason.
-    const rawMessage =
-      refusal?.reason ??
-      (cause instanceof Error ? cause.message : String(cause));
+    const rawMessage = refusal?.reason ?? errorMessage(cause);
     await send({
       kind: "failure",
       id: request.id,

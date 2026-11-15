@@ -23,6 +23,7 @@ import {
   withArtifactRegularFile,
 } from "../resources/index.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Installed processor code and data, distinct from REA's analysis-extension ABI. */
 export const ghidraPspExtensionSchema = z.strictObject({
@@ -241,9 +242,7 @@ const GHIDRA_PSP_INSPECTION_DIALECT: ProviderFailureDialect = {
     const { cause: primary } = artifactFilePrimaryFacts(cause);
     const admission =
       primary instanceof GhidraAdmissionError ? primary : undefined;
-    const identity =
-      admission?.code ??
-      (primary instanceof Error ? primary.message : String(primary));
+    const identity = admission?.code ?? errorMessage(primary);
     const reason = `PSP_EXTENSION_UNAVAILABLE: ${identity} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
     return new AnalysisCapabilityUnavailableError(
       "ghidra",

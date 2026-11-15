@@ -39,6 +39,7 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Keep typed cleanup history and one canonical output owner, including after resolution. */
 export const createSqliteCleanupError = (
@@ -177,7 +178,7 @@ export const sqliteDatabaseDialect = (
         diagnostics: {
           phase,
           path,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
             ? {
                 failure_kind: cause.reason,

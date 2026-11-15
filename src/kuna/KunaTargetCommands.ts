@@ -46,6 +46,7 @@ import {
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface WorkspaceRoot {
   readonly root: PrivateRuntimeRoot;
@@ -317,7 +318,7 @@ export class KunaTargetCommands {
           const failure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [owned.root.path],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { cause },
           );
           owned.cleanup.bindCleanupError(failure);
@@ -449,7 +450,7 @@ export class KunaTargetCommands {
           ? cause
           : new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
               cause,
-              userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+              userMessage: `Kuna workspace failed: ${errorMessage(cause)}`,
             }),
         owned,
       );
@@ -470,7 +471,7 @@ export class KunaTargetCommands {
         const cleanup = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           [owned.root.path],
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: "kuna:workspace" },
         );
         owned.cleanup.bindCleanupError(cleanup);
