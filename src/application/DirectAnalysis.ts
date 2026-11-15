@@ -95,7 +95,7 @@ import {
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { BUNDLE_RESOURCE_OPERATIONS } from "./binary/BundleResourceSession.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.

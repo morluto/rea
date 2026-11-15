@@ -11,7 +11,7 @@ import {
   createProcessTerminalFinalizer,
   retainTerminalObservationFailure,
 } from "./ProcessTerminalObservation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   captureInspectionFailures,
   describeProcessCaptureExecutionFailure,
@@ -486,9 +486,11 @@ const retainSamplingFailure = (
     retainCaptureInspectionCancellations(error, inspection);
   if (error.secondaryFailures.includes(secondary)) return error;
   if (secondary.cleanupIncomplete)
-    return analysisErrorWithCleanupFailure(error, secondary, "capture_process")
-      .bindCleanupDependencies([error, secondary])
-      .retainSecondaryFailure(secondary);
+    return analysisErrorWithCleanupDependencies(
+      error,
+      secondary,
+      "capture_process",
+    ).retainSecondaryFailure(secondary);
   return error.retainSecondaryFailure(secondary);
 };
 
@@ -1076,11 +1078,11 @@ export const captureProcessScenario = async (
         ? cause
         : capture.error instanceof ProcessCaptureError
           ? capture.error.withFinalization({ cleanupFailure: cause })
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               capture.error,
               cause,
               "capture_process_scenario",
-            ).bindCleanupDependencies([capture.error, cause]),
+            ),
     );
   }
   return capture;

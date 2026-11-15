@@ -15,7 +15,7 @@ import {
   type RegularFileReadOptions,
 } from "../process/RegularFileRead.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
@@ -280,11 +280,7 @@ export const managedCleanupError = (
         failure.retainPartialObservation(observation);
     }
     return failure instanceof AnalysisError
-      ? analysisErrorWithCleanupFailure(
-          failure,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([failure, cleanup])
+      ? analysisErrorWithCleanupDependencies(failure, cleanup, operation)
       : cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
@@ -307,11 +303,7 @@ export const managedCleanupError = (
         ),
         { partialObservation: cause.partialObservation },
       );
-      return analysisErrorWithCleanupFailure(
-        cancelled,
-        error,
-        operation,
-      ).bindCleanupDependencies([cancelled, error]);
+      return analysisErrorWithCleanupDependencies(cancelled, error, operation);
     }
     return error;
   }

@@ -8,6 +8,7 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewReq
 import type { CallerInputPaths } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { schemaAnnotations } from "../domain/schemaAnnotations.js";
 import { isRecord } from "../domain/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -927,13 +928,6 @@ const renameConstraint = (
   );
 };
 
-/**
- * The union keyword naming a root discriminator: checked with the delivery,
- * left to the contract when the projection omits the discriminator, or the
- * option that selects the input branch.
- */
-const ROOT_DISCRIMINATOR = "x-rea-root-discriminator";
-
 const projectObjectConstraints = (
   contract: ProjectedContract,
   rename: (field: string) => string,
@@ -945,15 +939,22 @@ const projectObjectConstraints = (
   for (const keyword of Object.keys(metadata))
     if (
       !ROOT_ANNOTATIONS.has(keyword) &&
-      !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword) &&
-      !(
-        keyword === ROOT_DISCRIMINATOR &&
-        discriminatorFields.has(String(metadata[keyword]))
-      )
+      !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword)
     )
       throw new Error(
         `${contract.name} input keyword ${keyword} has no CLI projection`,
       );
+  // A root discriminator is checked with the delivery, left to the contract
+  // when the projection omits the discriminator, or is the option that
+  // selects the input branch.
+  const { rootDiscriminator } = schemaAnnotations(contract.inputSchema) ?? {};
+  if (
+    rootDiscriminator !== undefined &&
+    !discriminatorFields.has(rootDiscriminator)
+  )
+    throw new Error(
+      `${contract.name} root discriminator ${rootDiscriminator} has no CLI projection`,
+    );
   const projected: Record<string, unknown> = {};
   for (const keyword of OBJECT_CONSTRAINTS) {
     const value = metadata[keyword];

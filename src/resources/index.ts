@@ -5,6 +5,18 @@
  * here when a new outside use needs it.
  */
 export {
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+  readAsarHeader,
+  resolveAsarHeaderAdmission,
+} from "./AsarHeader.js";
+export type {
+  AsarHeaderExtents,
+  FinalAsarHeaderProbeObservation,
+} from "./AsarHeader.js";
+export {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
