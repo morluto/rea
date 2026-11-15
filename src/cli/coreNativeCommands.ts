@@ -1,32 +1,13 @@
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
-import { localPathStringSchema } from "../domain/localPath.js";
-
 import {
   addressOrProcedureGuidance,
   dataTypeSelectorGuidance,
   equalSelectorGuidance,
-  resolveCliAnalysisSelector,
 } from "./analysisSelector.js";
-
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import {
-  directAnalysisOptionsFromCli,
-  nativeOpenOptionFields,
-  nativeTarget,
-  snapshotSelectionOption,
-} from "./options.js";
+import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  cliEvidenceDeliveryInputError,
-  publishCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
@@ -116,7 +97,7 @@ export const registerCoreNativeCommands = (
     },
     run,
   );
-  registerProcedureReferencesCommand(cli, logger, runDirectAnalysis);
+  registerProcedureSelectorCommands(cli, logger, run);
   registerContractCommand(
     cli,
     logger,
@@ -223,7 +204,6 @@ export const registerCoreNativeCommands = (
       },
       run,
     );
-  registerNativeApiCommand(cli, logger, runDirectAnalysis);
   const evidenceTarget = "Target path used to bind the result evidence";
   registerContractCommand(
     cli,
@@ -275,116 +255,67 @@ export const registerCoreNativeCommands = (
   );
 };
 
-const registerProcedureReferencesCommand = (
+/**
+ * Register the native commands whose procedure is given positionally or,
+ * for symbols beginning with a dash, as `--procedure`.
+ */
+const registerProcedureSelectorCommands = (
   cli: CliInstance,
   logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  run: ReturnType<typeof runDirectOnTarget>,
 ): void => {
-  cli.command(CLI_COMMANDS.procedureReferences, {
-    description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("Local executable path"),
-      procedure: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Procedure name or provider address. ${addressOrProcedureGuidance}`,
-        ),
-    }),
-    options: z.object({
-      procedure: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
-        ),
-      direction: z
-        .enum(["incoming", "outgoing"])
-        .default("outgoing")
-        .describe("Reference direction. Defaults to outgoing."),
-      snapshot: snapshotSelectionOption,
-      ...analysisEvidenceDeliveryOptions,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.procedureReferences, async () => {
-          const delivery = {
-            providerId: "auto",
-            operation: "procedure_references",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const invalid = cliEvidenceDeliveryInputError(delivery);
-          if (invalid !== undefined) return projectAnalysisError(invalid);
-          const result = await runDirectAnalysis(
-            args.path,
-            "procedure_references",
-            {
-              procedure: resolveCliAnalysisSelector(
-                args.procedure,
-                options.procedure,
-                "procedure",
-                "procedure_references",
-                "native",
-              ),
-              direction: options.direction,
-            },
-            {
-              ...directAnalysisOptionsFromCli(logger, options),
-              signal,
-              includeEvidenceSources: options.evidence_output !== undefined,
-            },
-          );
-          return publishCliAnalysisEvidence(result, delivery);
-        }),
-      ),
-  });
-};
-
-const registerNativeApiCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.inspectNativeApi, {
-    description: `Reconstruct one native function API boundary with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      address: z
-        .string()
-        .optional()
-        .describe(`Procedure name or address. ${addressOrProcedureGuidance}`),
-    }),
-    options: z.object({
-      procedure: z
-        .string()
-        .optional()
-        .describe(
-          `Procedure selector; use this option for symbols beginning with a dash. ${addressOrProcedureGuidance}`,
-        ),
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-native-api", () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_api",
-          {
-            procedure: resolveCliAnalysisSelector(
-              args.address,
-              options.procedure,
-              "procedure",
-              "inspect_native_api",
-              "native",
-            ),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "procedure_references"),
+    {
+      command: CLI_COMMANDS.procedureReferences,
+      description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("Local executable path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      evidenceDelivery: true,
+      omit: noDocument,
+      fields: {
+        procedure: {
+          description: `Procedure name or provider address. ${addressOrProcedureGuidance}`,
+        },
+        direction: {
+          description: "Reference direction. Defaults to outgoing.",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_api"),
+    {
+      command: CLI_COMMANDS.inspectNativeApi,
+      description: `Reconstruct one native function API boundary with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("App or program path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure selector; use this option for symbols beginning with a dash. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      fields: {
+        procedure: {
+          name: "address",
+          description: `Procedure name or address. ${addressOrProcedureGuidance}`,
+        },
+      },
+    },
+    run,
+  );
 };
