@@ -51,13 +51,24 @@ const expectRootInputError = async (
     environment: ENVIRONMENT,
   });
   expect(rejected.exitCode).toBe(1);
+  // The contract's root syntax is checked at argv parsing; facts about the
+  // selected file are checked by the analysis. Both name the CLI option.
+  if (reason === "invalid_format") {
+    expect(rejected.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        { path: "root.0", message: expect.stringContaining(message) },
+      ],
+    });
+    return;
+  }
   expect(rejected.json).toMatchObject({
     error: "Analysis failed",
     code: "invalid_request",
     details: {
       issues: [
         {
-          path: ["roots", 0],
+          path: ["root", 0],
           reason,
           message: expect.stringContaining(message),
         },

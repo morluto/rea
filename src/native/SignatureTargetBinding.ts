@@ -13,8 +13,10 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -31,6 +33,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
@@ -62,9 +65,7 @@ const signatureReadFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof RegularFileOperationCancelled)
-    return new AnalysisCancelledError("inspect_signature", {
-      cause: cause.reason,
-    });
+    return cancelledBy("inspect_signature", carriedReason(cause.reason));
   if (cause instanceof AnalysisError) return cause;
   const code =
     cause instanceof Error && "code" in cause ? cause.code : undefined;
@@ -120,12 +121,10 @@ export const withSignatureTarget = async (
             ? signatureReadFailure(target, cause)
             : snapshotFailure(target, "create", cause);
         return err(
-          signal?.aborted
+          isAborted(signal)
             ? analysisErrorWithCancellation(
                 cause === signal.reason ? undefined : failure,
-                new AnalysisCancelledError("inspect_signature", {
-                  cause: signal.reason,
-                }),
+                cancelledBy("inspect_signature", signal),
               )
             : failure,
         );
@@ -146,63 +145,62 @@ export const withSignatureTarget = async (
         ),
         resource: root.path,
       };
-      let result: Result<InspectSignature, AnalysisError>;
-      try {
-        const binding = await bindSignatureTarget(
-          target,
-          join(root.path, basename(target.path)),
-          children,
-          signal,
-        );
-        if (!binding.ok) result = binding;
-        else {
+      let completed: InspectSignature | undefined;
+      const finalized = await runOwned(
+        async (): Promise<Result<InspectSignature, AnalysisError>> => {
           try {
-            result = await inspect(binding.value);
-          } catch (cause: unknown) {
-            result = err(
-              new AnalysisOutputError(
-                "inspect_signature",
-                "Native output parsing failed",
-                { cause },
-              ),
+            const binding = await bindSignatureTarget(
+              target,
+              join(root.path, basename(target.path)),
+              children,
+              signal,
             );
+            if (!binding.ok) return binding;
+            try {
+              return await inspect(binding.value);
+            } catch (cause: unknown) {
+              return err(
+                new AnalysisOutputError(
+                  "inspect_signature",
+                  "Native output parsing failed",
+                  { cause },
+                ),
+              );
+            }
+          } catch (cause: unknown) {
+            return err(signatureReadFailure(target, cause));
           }
-        }
-      } catch (cause: unknown) {
-        result = err(signatureReadFailure(target, cause));
-      }
-      const cleanup = await resources.release(owner);
-      if (signal?.aborted)
-        result = err(
-          analysisErrorWithCancellation(
-            result.ok ? undefined : result.error,
-            new AnalysisCancelledError("inspect_signature", {
-              cause: signal.reason,
-              ...(result.ok ? { partialObservation: result.value } : {}),
-            }),
-          ),
-        );
-      if (cleanup.kind === "failed") {
-        const failure = signatureCleanupFailure(
-          target,
-          [root.path],
-          cleanup.cause,
-          "cleanup",
-          result.ok ? result.value : undefined,
-        );
-        new AnalysisCleanupLeaseGroup(failure, [owner.lease]);
-        return combineCleanupFailure(result, failure);
-      }
-      return result;
+        },
+        {
+          providerId: NATIVE_MACOS_PROVIDER_IDENTITY.id,
+          operation: "inspect_signature",
+          signal,
+          inspectPrimary: (primary) => {
+            if (primary.ok) completed = primary.value;
+          },
+          close: async () => {
+            const cleanup = await resources.release(owner);
+            if (cleanup.kind === "failed")
+              throw signatureCleanupFailure(
+                target,
+                [root.path],
+                cleanup.cause,
+                "cleanup",
+                completed,
+              );
+          },
+          cleanupLeases: [owner.lease],
+          partial: (inspected) => inspected,
+        },
+      );
+      return finalizedResult(finalized);
     });
   } catch (cause: unknown) {
     const primary = signatureReadFailure(target, cause);
-    const outcome = signal?.aborted
+    const outcome = isAborted(signal)
       ? analysisErrorWithCancellation(
           cause === signal.reason ? undefined : primary,
-          new AnalysisCancelledError("inspect_signature", {
-            cause: signal.reason,
-          }),
+          cancelledBy("inspect_signature", signal),
         )
       : primary;
     const retained =
@@ -217,26 +215,17 @@ export const withSignatureTarget = async (
         "retry",
       );
       bindArtifactFileCleanup(cause, failure);
-      return combineCleanupFailure(err(outcome), failure);
+      return err(
+        analysisErrorWithCleanupFailure(
+          outcome,
+          failure,
+          "inspect_signature",
+        ).bindCleanupDependencies([outcome, failure]),
+      );
     }
     return err(outcome);
   }
 };
-
-/** Each composed error follows the exact primary and secondary cleanup owners. */
-const combineCleanupFailure = <T>(
-  primary: Result<T, AnalysisError>,
-  cleanup: AnalysisError,
-): Result<T, AnalysisError> =>
-  primary.ok
-    ? err(cleanup)
-    : err(
-        analysisErrorWithCleanupFailure(
-          primary.error,
-          cleanup,
-          "inspect_signature",
-        ).bindCleanupDependencies([primary.error, cleanup]),
-      );
 
 const signatureCleanupFailure = (
   target: BinaryTarget,
@@ -434,47 +423,47 @@ const bindSignatureTarget = async (
       return err(signatureReadFailure(target, cause));
     }
   };
-  let result = await perform();
-  const cleanupFailures: {
-    readonly owner: SignatureOwner;
-    readonly cause: unknown;
-  }[] = [];
-  for (const owner of [snapshotOwner, sourceOwner]) {
-    if (owner === undefined) continue;
-    const cleanup = await resources.release(owner);
-    if (cleanup.kind === "failed")
-      cleanupFailures.push({ owner, cause: cleanup.cause });
-  }
-  if (result.ok && signal?.aborted)
-    result = err(
-      new AnalysisCancelledError("inspect_signature", {
-        cause: signal.reason,
-        diagnostics: {
-          snapshot_binding: {
-            identity: result.value.identity,
-            snapshot_path: result.value.snapshotPath,
-          },
+  return finalizedResult(
+    await runOwned(perform, {
+      providerId: NATIVE_MACOS_PROVIDER_IDENTITY.id,
+      operation: "inspect_signature",
+      signal,
+      close: async () => {
+        const failed: SignatureOwner[] = [];
+        const causes: unknown[] = [];
+        for (const owner of [snapshotOwner, sourceOwner]) {
+          if (owner === undefined) continue;
+          const cleanup = await resources.release(owner);
+          if (cleanup.kind === "failed") {
+            failed.push(owner);
+            causes.push(cleanup.cause);
+          }
+        }
+        if (failed.length === 0) return;
+        const cleanup = signatureCleanupFailure(
+          target,
+          failed.map((owner) => owner.resource),
+          new AggregateError(
+            causes,
+            "Signature snapshot file handles could not be closed",
+          ),
+          "close",
+        );
+        // Only the leases that failed hold resources; they alone resolve it.
+        new AnalysisCleanupLeaseGroup(
+          cleanup,
+          failed.map((owner) => owner.lease),
+        );
+        throw cleanup;
+      },
+      diagnostics: (binding) => ({
+        snapshot_binding: {
+          identity: binding.identity,
+          snapshot_path: binding.snapshotPath,
         },
       }),
-    );
-  if (cleanupFailures.length > 0) {
-    const cause = new AggregateError(
-      cleanupFailures.map(({ cause: failure }) => failure),
-      "Signature snapshot file handles could not be closed",
-    );
-    const cleanup = signatureCleanupFailure(
-      target,
-      cleanupFailures.map(({ owner }) => owner.resource),
-      cause,
-      "close",
-    );
-    new AnalysisCleanupLeaseGroup(
-      cleanup,
-      cleanupFailures.map(({ owner }) => owner.lease),
-    );
-    result = combineCleanupFailure(result, cleanup);
-  }
-  return result;
+    }),
+  );
 };
 
 /** Reject target drift across signature command captures. */

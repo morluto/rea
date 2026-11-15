@@ -344,3 +344,24 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
   expect(projected).toMatchObject({ code: "capability_unavailable" });
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
+
+it.each(["configuration", "artifact", "producer"] as const)(
+  "reports a cancelled %s-phase read as the caller's cancellation with the earlier command output",
+  (phase) => {
+    const reason = { stopped: "caller" };
+    const observedOutput = { stdout: "earlier", stderr: "", truncated: false };
+    const failure = wabtFailure(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: reason,
+      }),
+      phase,
+      "/selected.wasm",
+      { commandTimeoutMs: 1234, observedOutput },
+    );
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+      capturedOutput: observedOutput,
+    });
+  },
+);
