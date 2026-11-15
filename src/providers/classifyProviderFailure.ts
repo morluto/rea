@@ -23,6 +23,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   classifyProviderOutcome,
@@ -107,6 +108,8 @@ export interface ProviderFailureDialect {
     read: CleanupFailedRead,
     primary: AnalysisError | undefined,
   ) => AnalysisError;
+  /** Facts this provider reports with a cancelled read, such as its path. */
+  readonly diagnostics?: Readonly<Record<string, JsonValue>>;
   /** Output a finished command left before a later read was cancelled. */
   readonly observedOutput?: AnalysisCapturedOutput | undefined;
   /** What the provider reports for a cause none of the above recognised. */
@@ -123,34 +126,50 @@ type CleanupFailedCommand = OwnedCommandFailure & {
 const cleanupFailedRead = (cause: unknown): cause is CleanupFailedRead =>
   cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined;
 
-/** A read's cancellation: the producing phase's interruption, else a cancellation. */
+/**
+ * A read's cancellation: the producing phase's interruption, else a
+ * cancellation. Either keeps what the read had already established, the
+ * output a finished command left, and the provider's facts about the read.
+ */
 const readCancellation = (
   reason: unknown,
+  read: ArtifactReaderFailure,
   dialect: ProviderFailureDialect,
-  details: Omit<AnalysisErrorOptions, "cause">,
-): AnalysisError =>
-  dialect.interruption?.(details) ??
-  cancelledBy(dialect.operation, carriedReason(reason), details);
+  details: Omit<AnalysisErrorOptions, "cause"> = {},
+): AnalysisError => {
+  const reported = {
+    ...details,
+    ...(read.partialObservation === undefined
+      ? {}
+      : { partialObservation: read.partialObservation }),
+    ...(dialect.observedOutput === undefined
+      ? {}
+      : { capturedOutput: dialect.observedOutput }),
+    ...(dialect.diagnostics === undefined
+      ? {}
+      : { diagnostics: { ...details.diagnostics, ...dialect.diagnostics } }),
+  };
+  return (
+    dialect.interruption?.(reported) ??
+    cancelledBy(dialect.operation, carriedReason(reason), reported)
+  );
+};
 
 /** What a read whose cleanup failed reports apart from that cleanup. */
 const readPrimary = (
   read: CleanupFailedRead,
   dialect: ProviderFailureDialect,
 ): AnalysisError | undefined => {
-  const observed =
-    dialect.observedOutput === undefined
-      ? {}
-      : { capturedOutput: dialect.observedOutput };
   if (read instanceof ArtifactFileCleanupFailure) {
     const outcome = read.fileCleanupFailure.outcome;
     if (outcome.kind === "failed")
       return classifyProviderFailure(outcome.cause, dialect);
     const cancellation = artifactFileCompletion(read)?.cancellation;
     if (cancellation !== undefined)
-      return readCancellation(cancellation.reason, dialect, observed);
+      return readCancellation(cancellation.reason, read, dialect);
   }
   return read.reason === "cancelled"
-    ? readCancellation(artifactFileCancellationCause(read), dialect, observed)
+    ? readCancellation(artifactFileCancellationCause(read), read, dialect)
     : undefined;
 };
 
@@ -202,17 +221,9 @@ const fileFailure = (
       const { cause: _reader, ...cancellationDetails } = details;
       return readCancellation(
         artifactFileCancellationCause(physical),
+        physical,
         dialect,
-        {
-          ...cancellationDetails,
-          // What the reader had already established stays reported.
-          ...(physical.partialObservation === undefined
-            ? {}
-            : { partialObservation: physical.partialObservation }),
-          ...(dialect.observedOutput === undefined
-            ? {}
-            : { capturedOutput: dialect.observedOutput }),
-        },
+        cancellationDetails,
       );
     }
     if (file === undefined) return undefined;
