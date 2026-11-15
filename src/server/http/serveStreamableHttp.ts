@@ -29,6 +29,7 @@ import {
   writeWebResponse,
 } from "./nodeHttpBridge.js";
 import { listenHttpServer } from "./listenHttpServer.js";
+import { markTransportOwnerClose } from "../transportOwnerClose.js";
 import {
   StreamableHttpHostAllowlistError,
   StreamableHttpListenError,
@@ -297,6 +298,15 @@ class LiveSession {
   }
 }
 
+/**
+ * End a session REA chose to end (replacement or shutdown). A DELETE closes
+ * the same transport through the SDK; only that close is the client's.
+ */
+const closeAsOwner = (session: LiveSession): Promise<void> => {
+  markTransportOwnerClose(session.transport);
+  return session.transport.close();
+};
+
 /** Owns the single connected server and the transport of its current session. */
 export class McpSessionSlot {
   #live: LiveSession | undefined;
@@ -361,7 +371,7 @@ export class McpSessionSlot {
     ) {
       if (this.#closed) return SHUTTING_DOWN();
       this.logger?.info("MCP HTTP session replaced by a new client");
-      await open.transport.close();
+      await closeAsOwner(open);
     }
     if (this.#closed) return SHUTTING_DOWN();
     const session = await this.#current();
@@ -377,7 +387,7 @@ export class McpSessionSlot {
     const open = this.#live;
     // The session stays owned until its shutdown succeeds, so a retry can finish it.
     try {
-      await open?.transport.close();
+      if (open !== undefined) await closeAsOwner(open);
     } catch (cause: unknown) {
       // Shutdown may have joined a handover that already started its bounded
       // drain. Retry that timeout with shutdown's completion-based wait.

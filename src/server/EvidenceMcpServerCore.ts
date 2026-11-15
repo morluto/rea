@@ -28,6 +28,7 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { transportClosedByOwner } from "./transportOwnerClose.js";
 import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
@@ -673,9 +674,10 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
-      const disconnected = this.closing
-        ? OwnerCancellation.ownerClosed
-        : new CallerAbort("client-disconnected");
+      const disconnected =
+        this.closing || transportClosedByOwner(this.transport)
+          ? OwnerCancellation.ownerClosed
+          : new CallerAbort("client-disconnected");
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
         validation.cancel(disconnected);
