@@ -175,6 +175,16 @@ it("counts defaults in template substitutions and after postfix updates", () => 
   expect(
     optionalFactDefaultCount("const ratio = i-- / (report.count ?? 0);"),
   ).toBe(1);
+  // A non-null assertion completes its operand; a prefix `!` starts one.
+  expect(
+    optionalFactDefaultCount("const ratio = value! / (report.count ?? 0);"),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("const ratio = f()! / (report.count ?? 0);"),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("const ok = !/(report.count ?? 0)/u.test(s);"),
+  ).toBe(0);
 });
 
 it("does not let a nested expression's marker exempt an outer default", () => {
