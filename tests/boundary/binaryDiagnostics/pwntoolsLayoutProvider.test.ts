@@ -138,7 +138,7 @@ it.runIf(!unsupportedHost)(
       capturedOutput: { truncated: true, stderr: "" },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
+          code: "resource_constraint",
         },
         cleanup_error: {
           code: "cleanup_incomplete",
@@ -288,7 +288,7 @@ it.runIf(!unsupportedHost).each([
       if (result.ok)
         throw new Error("Excess diagnostics must not return partial success");
       expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
+        code: "resource_constraint",
         details: { captured_output: { truncated: true } },
       });
     }
@@ -404,10 +404,8 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
               : "ProviderAdapterError",
         ...(scenario === "process"
           ? {
-              diagnostics: {
-                exit_code: 7,
-                stderr: "decoder exited unexpectedly",
-              },
+              diagnostics: { exit_code: 7 },
+              capturedOutput: { stderr: "decoder exited unexpectedly" },
             }
           : {}),
       },

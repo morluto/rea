@@ -315,6 +315,8 @@ const pwntoolsCommandContext = (
             remediationAction: `Review the reported worker memory limits and available host memory. ${budgetRecovery}`,
           },
         );
+      // The shared owner already carries the command's output as
+      // `details.capturedOutput`; diagnostics keep only the exit facts.
       const snapshot = outcome.output?.snapshot;
       return new ProviderAdapterError(context.providerId, context.operation, {
         ...details,
@@ -327,11 +329,6 @@ const pwntoolsCommandContext = (
               : outcome.kind,
           exit_code: snapshot?.exitCode ?? null,
           signal: snapshot?.signal ?? null,
-          stdout: snapshot?.stdout.text ?? null,
-          stderr: snapshot?.stderr.text ?? null,
-          ...(snapshot === undefined
-            ? {}
-            : { captured_output: { ...capturedPwntoolsOutput(snapshot) } }),
         },
       });
     },

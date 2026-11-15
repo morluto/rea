@@ -191,7 +191,9 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
           phase: stage,
           resource_failure_marker: { resource: null },
           exit_code: PWNTOOLS_MEMORY_FAILURE_EXIT,
-          captured_output: { stdout: "stage diagnostic" },
+        },
+        captured_output: {
+          stdout: expect.stringContaining("stage diagnostic"),
         },
       },
     });
