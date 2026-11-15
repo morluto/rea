@@ -15,6 +15,8 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -93,7 +95,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           cause: options.signal.reason,
         }),
       );
-    if (this.#closed) return err(new AnalysisCancelledError(operation));
+    if (this.#closed)
+      return err(cancelledBy(operation, OwnerCancellation.ownerClosed));
     if (this.#active.size >= SQLITE_DATABASE_LIMITS.concurrentInspections)
       return err(
         new AnalysisResourceConstraintError(
@@ -278,7 +281,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         throw new AnalysisCancelledError(operation, {
           cause: options.signal.reason,
         });
-      if (this.#closed) throw new AnalysisCancelledError(operation);
+      if (this.#closed)
+        throw cancelledBy(operation, OwnerCancellation.ownerClosed);
       root = await this.createRuntime();
       phase = "artifact-read";
       const snapshot = await captureSqliteDatabaseSnapshot(

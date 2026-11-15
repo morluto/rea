@@ -334,7 +334,7 @@ export function* readElfSectionDirectory(
 export function* readPeSectionDirectory(
   fileSize: number,
 ): Generator<NativeReadRequest, NativeSectionDirectory, Buffer> {
-  const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true);
+  const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true, "pe");
   if (dos.u16(0) !== 0x5a4d) reject("Missing DOS MZ header");
   const evidence = parseMzHeaderEvidence(dos.bytes, fileSize);
   const observed = evidence.windowsHeader;
@@ -348,7 +348,11 @@ export function* readPeSectionDirectory(
       throw new BinaryFormatFailure("unsupported", limitation);
   }
   const pe = observed.offset;
-  const coff = new BinaryReader(yield request(fileSize, BigInt(pe), 24n), true);
+  const coff = new BinaryReader(
+    yield request(fileSize, BigInt(pe), 24n),
+    true,
+    "pe",
+  );
   const confirmed = withMzWindowsHeaderSignature(
     dos.bytes,
     fileSize,

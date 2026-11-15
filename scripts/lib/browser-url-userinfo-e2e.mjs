@@ -166,7 +166,7 @@ async function loadFixturePage(connection, url) {
         }),
       ]);
     assert.equal(
-      (await connection.send("Page.getFrameTree")).frameTree.frame.url,
+      (await connection.send("Page.getFrameTree")).root.url.url,
       url,
     );
   } finally {

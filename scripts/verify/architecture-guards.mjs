@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCountedBaseline } from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -161,6 +162,163 @@ check(
     "src/domain/webBundleAnalyzerInspection.ts",
   ],
 );
+
+// Counted baselines record the remaining copies of a pattern that has one
+// owner. A file may not gain copies and a baseline may not grow; when copies
+// are removed, `--shrink-baselines` lowers the recorded counts (and never
+// raises them) so the next removal cannot be undone silently.
+const baselinePath = join(
+  root,
+  "scripts/verify/architecture-guard-baselines.json",
+);
+const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const shrinkBaselines = process.argv.includes("--shrink-baselines");
+let baselinesShrunk = false;
+const checkCounted = (label, key, selected, pattern, owners) => {
+  const counts = new Map();
+  for (const file of selected) {
+    if (owners.includes(file.path)) continue;
+    const count = file.content.match(pattern)?.length ?? 0;
+    if (count > 0) counts.set(file.path, count);
+  }
+  const compared = compareCountedBaseline(
+    counts,
+    baselines[key] ?? {},
+    shrinkBaselines,
+  );
+  const lines = (differences) =>
+    differences
+      .map(
+        ({ path, count, allowed }) =>
+          `  ${path}: ${count} (baseline ${allowed})`,
+      )
+      .join("\n");
+  if (compared.grown.length > 0)
+    failures.push(
+      `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
+    );
+  if (compared.baseline !== (baselines[key] ?? {})) {
+    baselines[key] = compared.baseline;
+    baselinesShrunk = true;
+  }
+  if (compared.stale.length > 0)
+    failures.push(
+      `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
+    );
+};
+
+// Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
+// direct construction can omit or replace the caller's reason.
+checkCounted(
+  "direct AnalysisCancelledError construction (use cancelledBy from src/domain/analysisErrorCore)",
+  "analysis-cancelled-constructor",
+  files,
+  /new AnalysisCancelledError\(/gu,
+  ["src/domain/analysisErrorCore.ts"],
+);
+
+// Byte-format parsers read untrusted input. Bounds, truncation and failure
+// kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
+// the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
+const PARSER_FOLDERS = [
+  "src/android/",
+  "src/apkSignature/",
+  "src/artifacts/",
+  "src/dotnet/",
+  "src/electron/",
+  "src/erlang/",
+  "src/evm/",
+  "src/firmware/",
+  "src/flutter/",
+  "src/go/",
+  "src/gpu/",
+  "src/il2cpp/",
+  "src/model/",
+  "src/native/",
+  "src/python/",
+  "src/rust/",
+  "src/v8/",
+  "src/wasm/",
+  ...[
+    "android",
+    "apkSignature",
+    "apple",
+    "electron",
+    "erlang",
+    "evm",
+    "firmware",
+    "flutter",
+    "go",
+    "gpu",
+    "il2cpp",
+    "managed",
+    "model",
+    "native",
+    "python",
+    "rust",
+    "v8",
+    "wasm",
+    "windows",
+  ].map((folder) => `src/domain/${folder}/`),
+];
+const parserFiles = files.filter((file) =>
+  PARSER_FOLDERS.some((folder) => file.path.startsWith(folder)),
+);
+
+// An unchecked Buffer or DataView read throws a bare RangeError past the end,
+// which a catch site cannot tell from a host stack or string limit.
+checkCounted(
+  "raw Buffer or DataView numeric read (use BinaryReader from src/native/metadata/BinaryContainer)",
+  "raw-buffer-read",
+  files,
+  /\.(?:read(?:Big)?U?Int(?:8|16|32|64)?(?:LE|BE)?|readBigUint64(?:LE|BE)|readUint(?:8|16|32)(?:LE|BE)?|read(?:Float|Double)(?:LE|BE)|get(?:Big)?(?:Uint|Int)(?:8|16|32|64)|getFloat(?:32|64))\(/gu,
+  ["src/native/metadata/BinaryContainer.ts"],
+);
+
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-plain-throw",
+  parserFiles,
+  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  [],
+);
+
+// A per-format failure class restates the ParseFailure algebra under its own
+// spelling and needs its own catch-site translation; parsers throw a
+// ParseFailureError (or a subclass of it) instead.
+checkCounted(
+  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-format-failure-class",
+  files,
+  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  ["src/domain/parseFailure.ts"],
+);
+
+// JSON.parse keeps the last of repeated member names without saying so; a
+// parser of artifact content must state its duplicate-member policy
+// (src/domain/jsonDuplicateMember.ts finds a repeated name).
+checkCounted(
+  "plain JSON.parse of parser input (state the duplicate-member policy; see src/domain/jsonDuplicateMember)",
+  "parser-json-parse",
+  parserFiles,
+  /JSON\.parse\(/gu,
+  [],
+);
+
+if (baselinesShrunk) {
+  const sorted = Object.fromEntries(
+    Object.entries(baselines).map(([key, counts]) => [
+      key,
+      Object.fromEntries(
+        Object.entries(counts).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        ),
+      ),
+    ]),
+  );
+  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
+  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
+}
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);

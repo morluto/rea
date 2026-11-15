@@ -287,6 +287,19 @@ Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
 
+A byte-format parser reports failure with `ParseFailureError` from
+`src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
+`limit`, with the format and, when known, the offset and field. Read bounded
+fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
+raises that failure instead of a bare `RangeError`. Providers project the
+failure with `parseFailureAnalysisError` rather than their own `instanceof`
+ladder; a `limit` stays with its producer, which knows the budget to name.
+`scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
+`DataView` reads, plain `Error` throws in parser folders, and plain `JSON.parse`
+of parser input against `scripts/verify/architecture-guard-baselines.json`. A
+file may not exceed its count; after removing copies, run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines`.
+
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
 provider cannot accept the artifact. Report the reason at the affected boundary
@@ -564,6 +577,18 @@ Zod's tuple projection omits implicit length bounds and Draft 2020-12 `items`,
 which some clients require even alongside `prefixItems`. Tuples with a rest
 schema also need explicit minimum lengths. Check parser/schema parity for empty,
 short, overlong, and malformed values in both input and output projections.
+
+A CLI command for a tool contract is described by `describeContractCommand` in
+[`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
+and rendered for the CLI framework by `registerContractCommand` in
+[`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+The projection names only what the CLI spells differently: positionals,
+caller-relative path fields, option renames and short flags, CLI help wording,
+omitted optional fields with a reason, and whether the contract's cross-field
+rules refuse at argv parsing or at the service's contract parse. Field schemas
+and decimal argv tokens are derived, and
+`tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
+command admits what its contract admits.
 
 CLI translations must reuse the canonical semantic fields, enum membership and
 list bounds. Document transport differences such as relative path spelling and

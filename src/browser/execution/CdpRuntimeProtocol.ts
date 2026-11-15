@@ -54,12 +54,3 @@ export const runtimeListenersSchema = z.object({
     }),
   ),
 });
-/** Runtime document IDs; frame URLs are interpreted by CdpCaptureDocuments. */
-export const runtimeFrameTreeSchema = z.object({
-  frameTree: z.object({
-    frame: z.object({
-      id: z.string().min(1),
-      loaderId: z.string().optional(),
-    }),
-  }),
-});

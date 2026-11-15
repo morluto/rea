@@ -70,6 +70,7 @@ export interface PeLoadConfigFixtureOptions {
   /** In-section callbacks when `callbacks` is present. Defaults to the rich trio. */
   readonly callbackCount?: number;
   readonly zeroFillCallback?: boolean;
+  readonly rawDataRange?: readonly [number, number];
   readonly securityCookie?: "mapped" | "zero";
   readonly directoryCount?: number;
   readonly malformed?: PeLoadConfigFixtureMalformed;
@@ -146,11 +147,12 @@ export const peLoadConfigImage = (
       const rawStart =
         options.malformed === "raw-data-inverted"
           ? layout.rawDataRva + layout.rawDataSize
-          : layout.rawDataRva;
+          : (options.rawDataRange?.[0] ?? layout.rawDataRva);
       const rawEnd =
         options.malformed === "raw-data-inverted"
           ? layout.rawDataRva
-          : layout.rawDataRva + layout.rawDataSize;
+          : (options.rawDataRange?.[1] ??
+            layout.rawDataRva + layout.rawDataSize);
       writeVa(tlsAt, vaOf(rawStart));
       writeVa(tlsAt + pointerWidth, vaOf(rawEnd));
       writeVa(tlsAt + pointerWidth * 2, vaOf(layout.indexRva));
