@@ -180,6 +180,15 @@ const isBooleanSchema = (schema: unknown): boolean =>
   ((schema.type === "boolean" && !hasReference(schema)) ||
     isBooleanLiteralSchema(schema));
 
+/**
+ * Whether a union collapses to `type: "boolean"` once a branch changes. The
+ * decision reads the canonical branches, so a branch that becomes boolean only
+ * because presentation relaxed its reference keeps the union, and pointers into
+ * the union stay resolvable (see `throughRemovableLocation`).
+ */
+const collapsesToBoolean = (branches: readonly unknown[]): boolean =>
+  branches.length > 0 && branches.every(isBooleanSchema);
+
 const isObjectKeyword = (key: string) => schemaMaps.has(key);
 const isArrayKeyword = (key: string) => schemaArrays.has(key);
 const isChildKeyword = (key: string) => schemaChildren.has(key);
@@ -316,7 +325,7 @@ const throughRemovableLocation = (
         (step.keyword === "anyOf" &&
           isObject(value) &&
           Array.isArray(value.anyOf) &&
-          value.anyOf.every(isBooleanSchema)))
+          collapsesToBoolean(value.anyOf)))
     )
       return true;
     value =
@@ -678,11 +687,7 @@ const normalizeAdvertisedSchema = (
       }
       continue;
     }
-    if (
-      branchesChanged &&
-      schemas.length > 0 &&
-      schemas.every(isBooleanSchema)
-    ) {
+    if (branchesChanged && collapsesToBoolean(branches)) {
       node.type = "boolean";
       preserveSharedDefault(node, schemas);
       delete node[combinator];

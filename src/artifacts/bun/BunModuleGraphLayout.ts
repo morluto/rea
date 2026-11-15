@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -29,8 +30,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const SEGMENT_64_HEADER_BYTES = 72;
 const SEGMENT_32_HEADER_BYTES = 56;
 const SECTION_64_BYTES = 80;
@@ -512,11 +511,11 @@ const machOClaims = async (
     const read = cursor.read(commands.subarray(cursor.nextOffset));
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
-    if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
+    if (cmd === LC.SEGMENT_64 || cmd === LC.SEGMENT)
       for (const claim of segmentClaims(
         commands.subarray(offset, offset + size),
         littleEndian,
-        cmd === LC_SEGMENT_64,
+        cmd === LC.SEGMENT_64,
         imageOffset,
         Math.min(fileSize, imageOffset + imageLimit),
       ))
