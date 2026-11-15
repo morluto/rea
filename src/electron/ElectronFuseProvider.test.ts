@@ -28,7 +28,10 @@ import {
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { readElectronFuseImage } from "./ElectronFuseReader.js";
+import {
+  ELECTRON_FUSE_LIMITS,
+  readElectronFuseImage,
+} from "./ElectronFuseReader.js";
 
 const provider = new ElectronFuseProvider();
 
@@ -292,18 +295,6 @@ describe("ELF embedded ASAR integrity applicability", () => {
 });
 
 describe("Electron fuse reader resource boundaries", () => {
-  it("rejects invalid scan window sizes before allocating or scanning", async () => {
-    const root = await createTestTempDirectory(
-      "rea-electron-fuses-window-limit-",
-    );
-    const path = join(root, "window");
-    await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
-    for (const chunkBytes of [0, -1, 1.5, 256 * 1024 + 1])
-      await expect(readElectronFuseImage(path, { chunkBytes })).rejects.toThrow(
-        /chunkBytes must be an integer between/,
-      );
-  });
-
   it("rejects overlapping universal Mach-O slices before repeated searching", async () => {
     const root = await createTestTempDirectory("rea-electron-fuses-overlap-");
     const image = universalFuseImage().bytes;
@@ -336,11 +327,15 @@ describe("Electron fuse path and container admission", () => {
     const root = await createTestTempDirectory("rea-electron-fuses-window-");
     const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
     const path = join(root, "window");
-    await writeFile(path, image.bytes);
-    const read = await readElectronFuseImage(path, { chunkBytes: 20 });
-    expect(read.slices[0]?.sentinels[0]?.sentinel_offset).toBe(
-      image.sentinelOffset,
+    const sentinelOffset = ELECTRON_FUSE_LIMITS.chunkBytes - 8;
+    const bytes = Buffer.alloc(
+      sentinelOffset + image.bytes.length - image.sentinelOffset,
     );
+    image.bytes.copy(bytes, 0, 0, image.sentinelOffset);
+    image.bytes.copy(bytes, sentinelOffset, image.sentinelOffset);
+    await writeFile(path, bytes);
+    const read = await readElectronFuseImage(path);
+    expect(read.slices[0]?.sentinels[0]?.sentinel_offset).toBe(sentinelOffset);
     expect(read.slices[0]?.sentinels[0]?.fuses).toHaveLength(8);
   });
 

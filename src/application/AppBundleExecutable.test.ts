@@ -141,3 +141,43 @@ describe("app bundle program directory containment", () => {
     }
   });
 });
+
+describe("app bundle Info.plist repeated keys", () => {
+  const bundleWith = async (dict: string) => {
+    const root = await createTestTempDirectory("rea-app-plist-repeat-");
+    const bundle = join(root, "Fixture.app");
+    await mkdir(join(bundle, "Contents", "MacOS"), { recursive: true });
+    await writeFile(
+      join(bundle, "Contents", "Info.plist"),
+      `<plist version="1.0"><dict>${dict}</dict></plist>`,
+    );
+    for (const name of ["First", "Last"])
+      await writeFile(
+        join(bundle, "Contents", "MacOS", name),
+        "inert fixture; never executed",
+      );
+    return bundle;
+  };
+
+  it("refuses an Info.plist that declares CFBundleExecutable twice", async () => {
+    const bundle = await bundleWith(
+      "<key>CFBundleExecutable</key><string>First</string><key>CFBundleExecutable</key><string>Last</string>",
+    );
+    const result = await resolveAppleBundleExecutable(bundle);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok ? "" : result.error.message).toContain(
+      "Info.plist may declare CFBundleExecutable more than once",
+    );
+  });
+
+  it("still opens a bundle whose unrelated key repeats", async () => {
+    const bundle = await bundleWith(
+      "<key>CFBundleExecutable</key><string>First</string><key>CFBundleName</key><string>A</string><key>CFBundleName</key><string>B</string>",
+    );
+    const result = await resolveAppleBundleExecutable(bundle);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { executable: join(bundle, "Contents", "MacOS", "First") },
+    });
+  });
+});

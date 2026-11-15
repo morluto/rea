@@ -5,16 +5,23 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { ghidraBridgeSourcesDigest } from "./GhidraBridgeSources.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 
-// Digests commit to the current shared policy, including the instruction
-// status, load-image relocation-symbol, procedure search, byte-search and
-// bit-field base-type, runtime value-flow budgets and inventory-search revisions that prevent reuse of snapshots with earlier
-// results.
-const RAW_DIGESTS = {
-  "6502": "51160ff6e94cb32eaeb87ac248915afb3bc17e33b11a1a101222344dd3907c6f",
-  "x86-disabled-analyzer":
-    "94e93961a699cf9250844d53fe95802c72063c08656fc308b3fed523dd86ea1c",
-} as const;
+// A profile digest is the digest of its committed parameters; these tests pin
+// the parameters (semantic revisions and the bridge sources) rather than a
+// literal hash that every bridge or marker change would have to re-record.
+const expectCommittedProfile = (
+  profile: ReturnType<typeof createAnalysisProfile> | null | undefined,
+): void => {
+  if (profile == null) throw new Error("Expected an analysis profile");
+  expect(profile.parameters).toMatchObject({
+    bridge_sources_sha256: ghidraBridgeSourcesDigest(),
+  });
+  expect(profile.digest).toBe(
+    createAnalysisProfile(profile.provider, profile.parameters).digest,
+  );
+};
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: "/ghidra", ...environment });
@@ -34,12 +41,12 @@ const raw = (architecture: "6502" | "x86", entryPoint: string): BinaryTarget =>
     entryPointSource: entryPoint,
   }) as unknown as BinaryTarget;
 
-describe("raw-binary analysis profile digest", () => {
+describe("raw-binary analysis profile commitments", () => {
   it("commits the 6502 raw profile to the current shared policy", async () => {
     const ghidra = new GhidraProvider(configFor({}), silentLogger, {}, host);
     const resolved = await ghidra.resolveAnalysisProfile(raw("6502", "0x8001"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(RAW_DIGESTS["6502"]);
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
       target_format: "raw-binary",
       loader: "BinaryLoader",
@@ -72,9 +79,7 @@ describe("raw-binary analysis profile digest", () => {
     );
     const resolved = await ghidra.resolveAnalysisProfile(raw("x86", "0x1000"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(
-      RAW_DIGESTS["x86-disabled-analyzer"],
-    );
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
       inventory_search_projection: "provider-inventory-facts-v1",
       value_flow_effect_scope: "pcode-load-store-explicit-v1",

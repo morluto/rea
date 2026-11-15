@@ -66,7 +66,7 @@ processTest(
     const result = await processes.run(
       process.execPath,
       ["-e", "process.exit(0)", file],
-      { env: minimalSpawnEnvironment(), timeoutMs: 15_000 },
+      { env: minimalSpawnEnvironment() },
     );
     expect(result.exitCode).toBe(0);
   },
@@ -161,7 +161,7 @@ processTest.skipIf(process.platform !== "linux")(
       processes.run(
         process.execPath,
         ["-e", script, "x".repeat(payloadBytes)],
-        { env: environment, timeoutMs: 15_000 },
+        { env: environment },
       );
     if (accepted !== undefined) {
       const result = await run(accepted);

@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
@@ -35,35 +36,22 @@ import {
 } from "./GhidraFileArtifacts.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-const sourceIdentitySchema = z
+const sourceSchema = z
   .object({
     file: z.string().regex(/^program-[a-f0-9-]{36}\.gzf$/),
     sha256: digest,
+    kind: z.enum(["initial-analysis", "retained"]),
   })
   .strict();
-const sourceSchema = sourceIdentitySchema.extend({
-  kind: z.enum(["initial-analysis", "retained"]),
-});
 type CheckpointSource = z.infer<typeof sourceSchema>;
-const manifestIdentitySchema = z.object({
-  target_sha256: digest,
-  base_profile_digest: digest,
-});
-const manifestSchema = z.union([
-  manifestIdentitySchema
-    .extend({ version: z.literal(2), source: sourceSchema })
-    .strict(),
-  // Earlier local checkpoints have no initial-generation proof. Retain their
-  // data, binding their identity to the verified content rather than guessing.
-  manifestIdentitySchema
-    .extend({ version: z.literal(1), source: sourceIdentitySchema })
-    .strict()
-    .transform((value) => ({
-      ...value,
-      version: 2 as const,
-      source: { ...value.source, kind: "retained" as const },
-    })),
-]);
+const manifestSchema = z
+  .object({
+    version: z.literal(2),
+    target_sha256: digest,
+    base_profile_digest: digest,
+    source: sourceSchema,
+  })
+  .strict();
 const stateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("initial-analysis") }).strict(),
   z.object({ kind: z.literal("retained"), sha256: digest }).strict(),
@@ -217,7 +205,8 @@ export class GhidraCheckpoint {
   #source: CheckpointSource | null | undefined;
   #state: GhidraCheckpointSelection["state"];
   readonly #pendingRemoval = new Set<string>();
-  readonly #cleanupFailures = new Set<ProviderCleanupError>();
+  /** Reported by every removal failure until a retry removes every file. */
+  #cleanupRelease = new AnalysisCleanupRelease();
   #publishedInput: string | undefined;
   constructor(
     readonly selection: GhidraCheckpointSelection,
@@ -419,12 +408,11 @@ export class GhidraCheckpoint {
           },
           { cause },
         );
-        this.#cleanupFailures.add(error);
-        throw error;
+        throw this.#cleanupRelease.bind(error);
       }
     }
-    for (const failure of this.#cleanupFailures) failure.resolveCleanup();
-    this.#cleanupFailures.clear();
+    this.#cleanupRelease.confirm();
+    this.#cleanupRelease = new AnalysisCleanupRelease();
   }
   async close(): Promise<void> {
     await this.retryCleanup();

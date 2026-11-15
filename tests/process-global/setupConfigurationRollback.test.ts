@@ -156,6 +156,7 @@ import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
 
 const ownReadHandle = async (path: string) => {
@@ -854,18 +855,25 @@ it("uninstall close joins a publication already admitted by its host", async () 
     configPath: path,
     format: "json",
   });
-  await arrived.promise;
   let closed = false;
-  const closing = host.close?.().then((result) => {
-    closed = true;
-    return result;
-  });
+  let closing: ReturnType<NonNullable<typeof host.close>> | undefined;
   try {
+    await awaitAcknowledgement(
+      arrived.promise,
+      removal,
+      "configuration publication",
+    );
+    closing = host.close?.().then((result) => {
+      closed = true;
+      return result;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
   } finally {
     release.resolve();
+    await Promise.allSettled([removal, ...(closing ? [closing] : [])]);
+    await host.close?.();
   }
   expect((await removal).status).toBe("failed");
   expect(await closing).toBeUndefined();
@@ -1035,7 +1043,11 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await arrived.promise;
+    await awaitAcknowledgement(
+      arrived.promise,
+      removal,
+      "configuration publication",
+    );
     state.initialCleanupFailure = new RegularFileCleanupFailure({
       path: other,
       owner,

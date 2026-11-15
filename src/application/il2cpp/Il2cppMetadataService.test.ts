@@ -16,6 +16,7 @@ import type { Il2cppSeedWriterPort } from "./Il2cppSeedWriterPort.js";
 import { toolContract } from "../../contracts/toolContracts.js";
 import { z } from "zod";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity = {
   id: "fixture-il2cpp",
@@ -290,9 +291,9 @@ it("closes both ports and keeps combined cleanup incomplete until both owners re
     "metadata-reader",
     "seed-output",
   ]);
-  output.resolveCleanup();
+  releaseOwnedCleanup(output);
   expect(failure.cleanupIncomplete).toBe(true);
-  metadata.resolveCleanup();
+  releaseOwnedCleanup(metadata);
   expect(failure.cleanupIncomplete).toBe(false);
 });
 it.each([

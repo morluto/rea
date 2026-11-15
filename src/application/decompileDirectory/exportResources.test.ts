@@ -92,6 +92,7 @@ it("retains the source failure's parsed facts and cancellation identity", () => 
       resolvedPath: "/resolved/source",
       boundary: "capacity",
       admission,
+      integrityCheck: "read-coverage",
     },
     details,
   );
@@ -100,10 +101,8 @@ it("retains the source failure's parsed facts and cancellation identity", () => 
     original,
   );
   expect(published.cancellation?.reason).toBe(reason);
-  expect(published.userMessage).toBe(original.userMessage);
-  expect(published.resolvedPath).toBe(original.resolvedPath);
-  expect(published.boundary).toBe(original.boundary);
-  expect(published.admission).toEqual(admission);
+  expect(published.primaryFacts()).toEqual(original.primaryFacts());
+  expect(published.integrityCheck).toBe("read-coverage");
   expect(published.details).toEqual(details);
   expect(published.cause).toBe(original);
 });

@@ -7,6 +7,7 @@ import type {
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
@@ -54,9 +55,7 @@ export const executeProviderOperation = async <
   confidence: "observed" | "derived",
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(operation, options.signal));
   const request = schema.safeParse({ operation, input });
   if (!request.success)
     return err(
@@ -86,8 +85,7 @@ export const completeProviderEvidence = (
 ): Result<Evidence, AnalysisCancelledError> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(evidence.operation, {
-        cause: signal.reason,
+      cancelledBy(evidence.operation, signal, {
         partialObservation: evidence,
         ...(capturedOutput === undefined ? {} : { capturedOutput }),
       }),

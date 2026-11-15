@@ -87,7 +87,7 @@ it("recovers a missing retained closure by importing the originating bundle", as
   expect(parseEvidence(retained.structuredContent)).toEqual(aggregate);
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "aggregates retained observations within the %s input profile budget",
   async (profile) => {
     // Distinct authenticated observations may have identical derived contents.

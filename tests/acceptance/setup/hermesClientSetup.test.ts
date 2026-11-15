@@ -61,7 +61,6 @@ for (const [version, keyStyle] of [
           arguments: arguments_,
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: profile },
-          timeoutMs: 20_000,
         });
       const setup = [
         "setup",
@@ -141,7 +140,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment: { USERPROFILE: home, HERMES_HOME: profile },
-        timeoutMs: 20_000,
       });
     const setup = ["setup", "--client", "hermes", "--skill=false", "--json"];
     const preview = await run([...setup, "--dry-run"]);
@@ -223,7 +221,6 @@ cliTest(
           REA_CLIENT_PROFILE_HOME: home,
           HERMES_HOME: " ${REA_CLIENT_PROFILE_HOME}/profile ",
         },
-        timeoutMs: 20_000,
       });
     const planned = await run([
       "setup",
@@ -333,7 +330,6 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
                   ? root
                   : undefined,
           },
-          timeoutMs: 20_000,
         });
       const plan = await run([
         "setup",
@@ -468,7 +464,6 @@ for (const selection of [
           LOCALAPPDATA: join(home, "AppData", "Local"),
           HERMES_HOME: root,
         },
-        timeoutMs: 20_000,
       });
       if (selection === "missing") {
         expect(plan.exitCode).toBe(1);
@@ -573,7 +568,6 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
             LOCALAPPDATA: join(home, "AppData", "Local"),
             HERMES_HOME: root,
           },
-          timeoutMs: 20_000,
         });
         expect(plan.exitCode, plan.stdout).toBe(0);
         expect(plan.json).toMatchObject({
@@ -650,7 +644,6 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           arguments: args,
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: root },
-          timeoutMs: 20_000,
         });
       const rejected = await run([
         "setup",
@@ -720,7 +713,6 @@ cliTest.skipIf(process.platform === "win32")(
           HERMES_HOME: "$REA_HERMES_PROFILE",
           REA_HERMES_PROFILE: override,
         },
-        timeoutMs: 20_000,
       });
     const planned = await run([
       "setup",
@@ -783,7 +775,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment: { USERPROFILE: home, HERMES_HOME: override },
-        timeoutMs: 20_000,
       });
     const setup = await run(["setup", "--client", "hermes", "--yes", "--json"]);
     expect(setup.exitCode).not.toBe(0);

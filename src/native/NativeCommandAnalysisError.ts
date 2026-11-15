@@ -10,10 +10,12 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  type AnalysisTimeoutRecovery,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
@@ -31,10 +33,7 @@ import {
 /** Operation-owned text for a command deadline or unavailable requirement. */
 export interface NativeCommandFailurePresentation {
   readonly unavailableMessage?: string;
-  readonly timeoutRecovery?: {
-    readonly userMessage: string;
-    readonly remediationAction: string;
-  };
+  readonly timeoutRecovery?: AnalysisTimeoutRecovery;
 }
 
 /** Translate the command owner's facts once, preserving capture and cleanup authority. */
@@ -115,7 +114,7 @@ export const translateNativeCommandFailure = (
             ...(presentation.timeoutRecovery ??
               nativeDeadlineRecovery({
                 timeoutMs,
-                setting: "native_command_timeout_ms",
+                parameter: "native_command_timeout_ms",
                 cliFlag: "--native-command-timeout-ms",
                 defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
                 phase: "macOS native command deadline",
@@ -124,7 +123,20 @@ export const translateNativeCommandFailure = (
           })
         : cancellationPrimary && cancelled !== undefined
           ? cancelled
-          : new ProviderAdapterError(IDENTITY.id, operation, options);
+          : // The ownership helper's compiler deadline is a retryable timeout
+            // with its own setting, not a provider failure.
+            darwin?.compileTimeout !== undefined
+            ? new AnalysisTimeoutError(
+                operation,
+                darwin.compileTimeout.timeoutMs,
+                {
+                  ...options,
+                  userMessage: darwin.compileTimeout.userMessage,
+                  remediationAction: darwin.compileTimeout.remediationAction,
+                  limit: darwin.compileTimeout.limit,
+                },
+              )
+            : new ProviderAdapterError(IDENTITY.id, operation, options);
     return retainProcessInspectionCleanup(
       preparation,
       bindCleanup(error),
@@ -151,11 +163,11 @@ export const translateNativeCommandFailure = (
           reason: failure.cleanupFailure,
           resources: [...failure.cleanupResources],
         };
-  const errorOptions = {
-    cause: failure,
+  const errorOptionsWithoutCause = {
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
     ...(cleanup === undefined ? {} : { cleanup }),
   };
+  const errorOptions = { cause: failure, ...errorOptionsWithoutCause };
   if (failure.reason === "unavailable") {
     const reason =
       presentation.unavailableMessage ??
@@ -169,12 +181,17 @@ export const translateNativeCommandFailure = (
   }
   if (failure.reason === "cancelled")
     return bindCleanup(
-      new AnalysisCancelledError(operation, {
-        ...errorOptions,
-        ...(failure.cancellation === undefined
-          ? {}
-          : { cause: failure.cancellation.reason }),
-      }),
+      cancelledBy(
+        operation,
+        carriedReason(
+          failure.cancellation === undefined
+            ? failure
+            : failure.cancellation.reason,
+        ),
+        {
+          ...errorOptionsWithoutCause,
+        },
+      ),
     );
   if (failure.reason === "timeout")
     return bindCleanup(
@@ -183,7 +200,7 @@ export const translateNativeCommandFailure = (
         ...(presentation.timeoutRecovery ??
           nativeDeadlineRecovery({
             timeoutMs,
-            setting: "native_command_timeout_ms",
+            parameter: "native_command_timeout_ms",
             cliFlag: "--native-command-timeout-ms",
             defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
             phase: "macOS native command deadline",

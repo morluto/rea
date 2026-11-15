@@ -19,7 +19,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
       readBinaryContainer(control).load_regions,
     );
 
-    const image = openImageSteps(goNamed, undefined).next();
+    const image = openImageSteps(goNamed).next();
     expect(image.done).toBe(true);
     if (!image.done)
       throw new Error("container admission unexpectedly yielded");
@@ -39,7 +39,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
       ),
     ).toHaveLength(fault === "duplicate" ? 2 : 1);
 
-    const controlImage = openImageSteps(control, undefined).next();
+    const controlImage = openImageSteps(control).next();
     expect(controlImage.done).toBe(true);
     if (!controlImage.done)
       throw new Error("control container admission unexpectedly yielded");

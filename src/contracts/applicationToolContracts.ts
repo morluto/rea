@@ -10,7 +10,7 @@ import {
   sourceToBundlePageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { staticObservedEndpointComparisonSchema } from "../domain/javascript/staticObservedEndpointSchemas.js";
 import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "./javascript/staticObservedEndpointExample.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
@@ -296,6 +296,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Generate the complete obligation ledger",
         input: {
           evidence_bundle: {
+            evidence_format: 1,
             artifacts: [],
             providers: [],
             environments: [],
@@ -327,6 +328,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         input: {
           coverage: {
             evidence_bundle: {
+              evidence_format: 1,
               artifacts: [],
               providers: [],
               environments: [],

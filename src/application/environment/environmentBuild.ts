@@ -8,13 +8,13 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
-import type { Evidence } from "../../domain/evidence.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -159,15 +159,16 @@ const cancelled = async (
   // The stages are synchronous; yield so a pending interrupt is dispatched before checking.
   if (signal !== undefined) await setImmediate();
   return signal?.aborted === true
-    ? new AnalysisCancelledError(ENVIRONMENT_BUILD_OPERATION, {
-        cause: signal.reason,
-        ...(written === undefined
+    ? cancelledBy(
+        ENVIRONMENT_BUILD_OPERATION,
+        signal,
+        written === undefined
           ? {}
           : {
               userMessage: `The build was cancelled after it wrote the bundle at ${written}.`,
               diagnostics: { output_directory: written, bundle_written: true },
-            }),
-      })
+            },
+      )
     : undefined;
 };
 

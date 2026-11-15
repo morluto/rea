@@ -200,12 +200,17 @@ const decodeRecords = (
   start: number,
   classValue: (value: number) => number,
   observed: readonly ObservedAddress[],
-): Result<readonly RecordFact[], DnsWireFailure> => {
+): Result<
+  { records: readonly RecordFact[]; extendedRcode: number },
+  DnsWireFailure
+> => {
   const u16 = (at: number): number => message.readUInt16BE(at);
   const counts = [u16(6), u16(8), u16(10)];
   let at = start;
   const addressesByIdentity = addressInventory(observed);
   const records: RecordFact[] = [];
+  let extendedRcode = 0;
+  let optRecords = 0;
   for (let section = 0; section < counts.length; section += 1) {
     for (let index = 0; index < counts[section]!; index += 1) {
       const ownerResult = decodeName(message, at);
@@ -220,6 +225,16 @@ const decodeRecords = (
       const end = at + size;
       if (end > message.length)
         return invalidWire("DNS record data is truncated");
+      // EDNS: an OPT pseudo-RR in the additional section carries the
+      // upper eight bits of the extended RCODE in its TTL field.
+      if (section === 2 && type === 41 && owner.end + 8 <= message.length) {
+        // RFC 6891 6.1.1: more than one OPT record is a format error, so no
+        // later record may choose or clear the extended RCODE.
+        optRecords += 1;
+        if (optRecords > 1)
+          return invalidWire("DNS message carries more than one OPT record");
+        extendedRcode = message.readUInt32BE(owner.end + 4) >>> 24;
+      }
       let target: string | null = null;
       let address: string | null = null;
       if (type === 5 && dnsClass === 1) {
@@ -262,28 +277,52 @@ const decodeRecords = (
   }
   if (at !== message.length)
     return invalidWire("DNS message contains unexamined trailing bytes");
-  return ok(records);
+  return ok({ records, extendedRcode });
 };
 
 const eligibleQuestion = (
   decodedQuestions: readonly WireQuestion[],
   flags: number,
-): WireQuestion | null => {
+  rcode: number = flags & 0x000f,
+): { question: WireQuestion | null; reason: string | null } => {
   const question = decodedQuestions[0];
-  if (
-    (flags & 0x8000) === 0 ||
-    decodedQuestions.length !== 1 ||
-    question === undefined ||
-    ![1, 255].includes(question.dnsClass) ||
-    ![1, 28, 255].includes(question.type)
-  )
-    return null;
-  return question;
+  // QR bit must be set (response, not query).
+  if ((flags & 0x8000) === 0)
+    return { question: null, reason: "DNS response flag (QR) is not set" };
+  // RCODE must be zero (no error response such as NXDOMAIN or BADVERS).
+  if (rcode !== 0)
+    return {
+      question: null,
+      reason: `DNS response RCODE is nonzero (${rcode}); error response such as NXDOMAIN`,
+    };
+  // OPCODE must be QUERY (0); unsupported opcodes (STATUS, IQUERY, NOTIFY, ...)
+  // do not establish ordinary successful-query address ownership.
+  if ((flags & 0x7800) !== 0)
+    return {
+      question: null,
+      reason: `DNS OPCODE is not QUERY (${(flags & 0x7800) >> 11})`,
+    };
+  if (decodedQuestions.length !== 1 || question === undefined)
+    return {
+      question: null,
+      reason: "Question count does not establish Internet address ownership",
+    };
+  if (![1, 255].includes(question.dnsClass))
+    return {
+      question: null,
+      reason: "Question class does not establish Internet address ownership",
+    };
+  if (![1, 28, 255].includes(question.type))
+    return {
+      question: null,
+      reason: "Question type does not establish Internet address ownership",
+    };
+  return { question, reason: null };
 };
 
 const attributeAddresses = (
   questions: readonly DnsWireQuestion[],
-  question: WireQuestion | null,
+  eligibility: { question: WireQuestion | null; reason: string | null },
   records: readonly RecordFact[],
   observed: readonly ObservedAddress[],
 ): DnsMessageFacts => {
@@ -296,9 +335,11 @@ const attributeAddresses = (
   });
   if (observed.length === 0)
     return { questions, assigned: [], unattributed: [], incomplete: false };
+  const { question } = eligibility;
   if (question === null)
     return unknown(
-      "Question count, response flag, type or class does not establish Internet address ownership",
+      eligibility.reason ??
+        "Question count, response flag, type or class does not establish Internet address ownership",
     );
   const links = new Map<string, Set<string>>();
   for (const record of records) {
@@ -424,10 +465,13 @@ export const parseDnsMessageRaw = (
   }));
   const records = decodeRecords(message, at, classValue, observed);
   if (!records.ok) return unknown(records.error.reason);
+  const extendedRcode = records.value.extendedRcode;
+  const fullRcode = (extendedRcode << 4) | (flags & 0x000f);
+  const eligibility = eligibleQuestion(decodedQuestions, flags, fullRcode);
   const facts = attributeAddresses(
     questions,
-    eligibleQuestion(decodedQuestions, flags),
-    records.value,
+    eligibility,
+    records.value.records,
     observed,
   );
   // A structurally complete packet can carry only part of the DNS response.
