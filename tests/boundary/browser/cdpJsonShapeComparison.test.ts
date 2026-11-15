@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compareWebCaptureEvidence } from "../../../src/application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
+import { CdpTargetDocument } from "../../../src/browser/CdpTargetDocument.js";
 import { browserCaptureComparisonInputSchema } from "../../../src/domain/browserCaptureComparison.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
@@ -430,7 +431,7 @@ const captureBody = (
     }),
     new Set([ORIGIN]),
   );
-  events.beginAuthorizedFrame({ frameId: "main" });
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "main" }));
   events.ingest(
     receiveCdpEvent({
       method: "Network.requestWillBeSent",

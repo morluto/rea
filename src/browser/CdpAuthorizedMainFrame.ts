@@ -5,10 +5,7 @@ import type { CdpConnection } from "./CdpConnection.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { delayWithCancellation } from "./CdpCaptureValues.js";
 import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
-import {
-  cdpRootDocument,
-  type CdpDocumentTracker,
-} from "./CdpTargetSession.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 interface AuthorizedMainFrameOptions {
   readonly connection: CdpConnection;
@@ -23,7 +20,7 @@ interface AuthorizedMainFrameOptions {
    * retry, is compared with it before scope, so a proven change is reported as
    * `target_changed` rather than hidden by a retry or a scope refusal.
    */
-  readonly document?: CdpDocumentTracker | undefined;
+  readonly document?: CdpTargetDocument | undefined;
 }
 
 /** Wait for the attached target's main frame to enter its approved origin. */
@@ -42,8 +39,7 @@ export const authorizedMainFrame = async ({
         ? initial
         : await connection.send("Page.getFrameTree", {}, sessionId, signal);
     if (document !== undefined) {
-      const observedDocument = cdpRootDocument(tree);
-      if (observedDocument !== undefined) document.observe(observedDocument);
+      document.observeTree(tree);
       if (document.changed)
         throw new BrowserObservationError(operation, "target_changed");
     }
