@@ -2,14 +2,12 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../resources/StableArtifactFailure.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
+  type ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ANDROID_MAPPING_LIMITS,
   type AndroidMappingSource,

@@ -44,10 +44,10 @@ import { readJsonFile, jsonFileReadCleanupLeases } from "../JsonFiles.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";

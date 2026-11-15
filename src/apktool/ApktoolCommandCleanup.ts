@@ -5,12 +5,10 @@ import {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";

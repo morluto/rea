@@ -2,7 +2,7 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";

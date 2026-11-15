@@ -14,9 +14,9 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
+  ArtifactResourceScope,
+  AnalysisCleanupLeaseGroup,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import type {

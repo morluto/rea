@@ -29,17 +29,15 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../resources/StableArtifactObservation.js";
-import type { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../resources/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../resources/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,

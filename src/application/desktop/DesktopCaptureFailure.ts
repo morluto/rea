@@ -2,11 +2,9 @@ import type { ProviderProcessInspectionCleanup } from "../../process/ProviderPro
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../resources/AnalysisCleanupLease.js";
-import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../../resources/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {

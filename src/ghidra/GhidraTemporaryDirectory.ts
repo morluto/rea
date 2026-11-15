@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
 
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactFileHandle,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 /**

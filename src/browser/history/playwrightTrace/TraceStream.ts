@@ -5,7 +5,7 @@ import { LosslessNumber, isSafeNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../resources/ArtifactReader.js";
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,

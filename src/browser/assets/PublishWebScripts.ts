@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,

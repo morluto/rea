@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";

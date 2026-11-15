@@ -6,7 +6,7 @@ import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../resources/ArtifactReader.js";
+} from "../resources/index.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {

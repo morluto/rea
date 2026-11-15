@@ -1,4 +1,15 @@
-import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactReaderFailure,
+  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+  assertArtifactReadActive,
+  withArtifactRegularFile,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
@@ -26,17 +37,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
-  ArtifactFileCleanupFailure,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-  assertArtifactReadActive,
-  withArtifactRegularFile,
-} from "../resources/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,

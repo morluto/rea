@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {

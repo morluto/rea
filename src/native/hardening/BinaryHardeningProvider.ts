@@ -6,18 +6,14 @@ import {
   stableArtifactInputFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../resources/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

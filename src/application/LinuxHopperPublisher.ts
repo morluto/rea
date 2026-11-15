@@ -7,12 +7,10 @@ import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../resources/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
-import {
+  type AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../resources/ArtifactReader.js";
+} from "../resources/index.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {

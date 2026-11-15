@@ -4,17 +4,15 @@ import { processInspectionCancellationError } from "../providers/OwnedCommandCle
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   capturedApktoolCommandOutput,

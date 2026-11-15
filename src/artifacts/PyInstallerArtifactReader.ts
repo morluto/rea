@@ -21,11 +21,11 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
+  artifactReadCancelledBy,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
-import { artifactReadCancelledBy } from "../resources/ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,

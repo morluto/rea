@@ -6,11 +6,13 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../resources/AnalysisCleanupLease.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../resources/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
@@ -31,12 +33,6 @@ import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,

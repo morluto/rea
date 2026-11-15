@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -16,7 +19,6 @@ import {
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,

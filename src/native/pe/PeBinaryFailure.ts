@@ -4,14 +4,12 @@ import {
   stableArtifactInputFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-} from "../../resources/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { StableArtifactSnapshot } from "../../resources/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   type ArtifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,

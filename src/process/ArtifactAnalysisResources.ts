@@ -1,13 +1,11 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,

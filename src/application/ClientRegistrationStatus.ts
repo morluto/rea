@@ -45,7 +45,7 @@ import type {
   OwnedProviderSetting,
   RecordedProviderSettings,
 } from "../ports/DesktopBuildHost.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
   parseClientRegistrationPolicy,

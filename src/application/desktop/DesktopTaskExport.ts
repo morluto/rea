@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import {
   isPointerCheck,
   parseDesktopTask,

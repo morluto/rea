@@ -1,9 +1,9 @@
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";

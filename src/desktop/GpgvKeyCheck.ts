@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import {
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import {
   dearmorPublicKeys,
   isArmoredKey,

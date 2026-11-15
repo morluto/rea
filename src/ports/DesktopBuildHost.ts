@@ -1,5 +1,5 @@
 import type { execFileOutput } from "../process/ExecFileOutput.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 /**
  * The desktop build host contract: what doctor and `rea setup --desktop-build`

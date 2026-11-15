@@ -20,7 +20,7 @@ import type {
   ArtifactEntry,
   ArtifactReader,
   ArtifactReaderTraversal,
-} from "../../resources/ArtifactReader.js";
+} from "../../resources/index.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,

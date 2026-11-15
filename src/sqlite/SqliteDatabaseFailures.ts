@@ -1,13 +1,11 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../resources/StableArtifactFailure.js";
-import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,

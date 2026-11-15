@@ -5,19 +5,15 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   readerIntegrityFailure,
-} from "../resources/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../resources/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { RustBinaryPort } from "../ports/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
