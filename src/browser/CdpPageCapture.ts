@@ -170,6 +170,7 @@ const captureAuthorizedPage = async (
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
+    document: state.events.document,
   });
   const attachedUrl = observedFrameUrl(frameResult.root.url) ?? "";
   const frameCapture = captureFrames(
@@ -182,7 +183,6 @@ const captureAuthorizedPage = async (
   const captureDocument = cdpRootDocument(frameResult);
   if (frameCapture.root === undefined || captureDocument === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  state.events.beginFinalCapture(captureDocument);
   assertObservedCaptureValid(state);
   const resourceCapture = await capturePageResources(state);
   const resources = stableWebResources(
@@ -258,7 +258,10 @@ const assertCompletedDocument = async (state: CaptureState): Promise<void> => {
     allowedOrigins,
     operation: context.operation,
     initial: completed,
+    document: events.document,
   });
+  // Navigation events can arrive while an unavailable URL is retried.
+  assertObservedCaptureValid(state);
   if (events.document?.unknown === true) {
     events.completeness.attachLimited("frames");
     state.limitations.push(
