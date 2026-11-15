@@ -549,17 +549,68 @@ const clineSettingsDirectory =
     );
 const clineVscodeSettingsDirectory = clineSettingsDirectory("Code");
 
+/** Flathub's Zed (`dev.zed.Zed`) gets this XDG_CONFIG_HOME inside its sandbox. */
+const ZED_FLATPAK_CONFIG = [".var", "app", "dev.zed.Zed", "config"] as const;
+
+const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
+  try {
+    lstatSync(path);
+    return ok(true);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return ok(false);
+    return err({
+      path,
+      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Zed.`,
+    });
+  }
+};
+
 /**
- * Zed's paths::config_dir. On Windows it reads the RoamingAppData known
- * folder, which APPDATA normally names; on Linux, `dirs::config_dir` admits
- * only an absolute XDG_CONFIG_HOME.
+ * Zed's `paths::config_dir`. On Windows it reads the RoamingAppData known
+ * folder, which APPDATA normally names. On Linux and FreeBSD,
+ * `FLATPAK_XDG_CONFIG_HOME` wins, then `dirs::config_dir`, which admits only an
+ * absolute XDG_CONFIG_HOME. A Flathub Zed reads its sandbox's config folder,
+ * so REA uses it when only that folder exists and refuses to guess when a
+ * native configuration exists too.
  */
-const zedConfigDirectory = ({ home, platform, env }: ClientPathContext) =>
-  platform === "darwin"
-    ? join(home, ".config", "zed")
-    : platform === "win32"
-      ? join(windowsAppDataRoots(home, env).roaming, "Zed")
-      : join(absoluteXdgConfigHome({ home, env }), "zed");
+const zedLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const at = (directory: string): ClientLocation => ({
+    configPath: join(directory, "settings.json"),
+    markerPath: directory,
+  });
+  if (platform === "darwin") return ok(at(join(home, ".config", "zed")));
+  if (platform === "win32")
+    return ok(at(join(windowsAppDataRoots(home, env).roaming, "Zed")));
+  const flatpakOverride = env.FLATPAK_XDG_CONFIG_HOME;
+  if (flatpakOverride)
+    return posix.isAbsolute(flatpakOverride)
+      ? ok(at(join(flatpakOverride, "zed")))
+      : err({
+          path: flatpakOverride,
+          message:
+            "FLATPAK_XDG_CONFIG_HOME is relative, so Zed's configuration folder depends on its working directory. Set an absolute path before configuring Zed.",
+        });
+  const native = join(absoluteXdgConfigHome({ home, env }), "zed");
+  const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
+  // XDG_CONFIG_HOME may itself name the Flatpak folder.
+  if (native === sandboxed) return ok(at(native));
+  const flatpak = directoryPresent(sandboxed);
+  if (!flatpak.ok) return flatpak;
+  if (!flatpak.value) return ok(at(native));
+  const nativePresent = directoryPresent(native);
+  if (!nativePresent.ok) return nativePresent;
+  return nativePresent.value
+    ? err({
+        path: sandboxed,
+        message: `Both ${native} and the Flatpak Zed folder ${sandboxed} exist, so REA cannot tell which Zed you use. Remove the configuration of the Zed you no longer use, then configure Zed again.`,
+      })
+    : ok(at(sandboxed));
+};
 
 /**
  * Amp's user settings: `settings.json` or `settings.jsonc` in
@@ -1219,9 +1270,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       stdio: [{ kind: "present", field: "url" }],
     },
     displayName: "Zed",
-    configPath: (context: ClientPathContext) =>
-      join(zedConfigDirectory(context), "settings.json"),
-    markerPath: zedConfigDirectory,
+    location: zedLocation,
     format: "zed",
   }),
   defineClient({

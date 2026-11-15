@@ -849,7 +849,10 @@ reports the user file. Mastra Code keeps enabled state outside `mcp.json`, and
 Amp's managed settings and `amp.mcpPermissions` can block a server; doctor
 cannot observe either. When both Amp settings files exist, Amp does not
 document which it reads, so REA refuses to choose; merge them into one file.
-Zed's comments and formatting are preserved. These
+On Linux, `FLATPAK_XDG_CONFIG_HOME` selects Zed's folder as Zed itself does,
+and a Flathub Zed's `~/.var/app/dev.zed.Zed/config/zed` is used when only that
+folder exists; with both it and the native folder present, REA cannot tell which
+Zed you use and refuses. Zed's comments and formatting are preserved. These
 locations follow each client's documentation and source; no installed client
 was run to verify loading.
 

@@ -237,3 +237,27 @@ it.each([
     );
   },
 );
+
+it("selects the Zed configuration a Linux Flatpak Zed reads", async () => {
+  const home = await createTestTempDirectory("rea-zed-flatpak-");
+  const zed = (env: NodeJS.ProcessEnv = {}) =>
+    supportedClients(home, "linux", env).find(({ name }) => name === "zed");
+  const native = join(home, ".config", "zed");
+  const sandboxed = join(home, ".var", "app", "dev.zed.Zed", "config", "zed");
+  expect(zed()?.configPath).toBe(join(native, "settings.json"));
+  await mkdir(sandboxed, { recursive: true });
+  expect(zed()?.configPath).toBe(join(sandboxed, "settings.json"));
+  await mkdir(native, { recursive: true });
+  expect(zed()?.configPathError).toContain("cannot tell which Zed");
+  // An XDG_CONFIG_HOME naming the Flatpak folder is one folder, not two.
+  expect(
+    zed({ XDG_CONFIG_HOME: join(home, ".var", "app", "dev.zed.Zed", "config") })
+      ?.configPath,
+  ).toBe(join(sandboxed, "settings.json"));
+  expect(
+    zed({ FLATPAK_XDG_CONFIG_HOME: join(home, "selected") })?.configPath,
+  ).toBe(join(home, "selected", "zed", "settings.json"));
+  expect(
+    zed({ FLATPAK_XDG_CONFIG_HOME: "relative" })?.configPathError,
+  ).toContain("FLATPAK_XDG_CONFIG_HOME is relative");
+});
