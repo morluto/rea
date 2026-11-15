@@ -100,6 +100,77 @@ it("plans kilo.json in an empty KILO_CONFIG_DIR", async () => {
   expect(await mcpAddTarget(home, environment)).toBe(row?.configPath);
 });
 
+it("loads KILO_CONFIG above Kilo's root files and below its home folders", async () => {
+  const home = await createTestTempDirectory("rea-kilo-config-file-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "kilo.json"), "{}");
+  const explicit = join(home, "profiles", "kilo.json");
+  const environment = { KILO_CONFIG: explicit };
+  // A selected file that does not exist yet is still Kilo's last root layer.
+  const planned = await kiloRow(home, environment);
+  expect(planned).toMatchObject({
+    configPath: explicit,
+    configPaths: [join(root, "kilo.json"), explicit],
+  });
+  expect(await mcpAddTarget(home, environment)).toBe(explicit);
+  // A home folder layer loads after it and becomes the write target.
+  await mkdir(join(home, ".kilo"));
+  await writeFile(join(home, ".kilo", "kilo.jsonc"), "{}");
+  const layered = await kiloRow(home, environment);
+  expect(layered).toMatchObject({
+    configPath: join(home, ".kilo", "kilo.jsonc"),
+    configPaths: [
+      join(root, "kilo.json"),
+      explicit,
+      join(home, ".kilo", "kilo.jsonc"),
+    ],
+  });
+  expect(await mcpAddTarget(home, environment)).toBe(layered?.configPath);
+});
+
+it("loads ~/.kilo after the legacy ~/.kilocode folder", async () => {
+  const home = await createTestTempDirectory("rea-kilo-home-folders-");
+  for (const folder of [".kilocode", ".kilo"]) {
+    await mkdir(join(home, folder));
+    await writeFile(join(home, folder, "kilo.json"), "{}");
+  }
+  const row = await kiloRow(home);
+  expect(row).toMatchObject({
+    configPath: join(home, ".kilo", "kilo.json"),
+    configPaths: [
+      join(home, ".kilocode", "kilo.json"),
+      join(home, ".kilo", "kilo.json"),
+    ],
+  });
+  expect(await mcpAddTarget(home, {})).toBe(row?.configPath);
+});
+
+it("lets doctor and setup accept REA's entry that only KILO_CONFIG_CONTENT defines", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-only-");
+  // Kilo is installed but none of its files exists yet.
+  await mkdir(join(home, ".config", "kilo"), { recursive: true });
+  const environment = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { type: "local", command, enabled: true } },
+    }),
+  };
+  const statuses = await readClientRegistrationStatuses(home, command[1], {
+    platform,
+    environment,
+  });
+  expect(statuses.find(({ client }) => client === "kilo")).toMatchObject({
+    state: "aligned",
+  });
+  const row = await kiloRow(home, environment);
+  if (row === undefined) throw new Error("Kilo row is missing");
+  // Writing the same entry beneath it changes nothing Kilo loads, so setup
+  // may still record it in the file it manages.
+  expect(await inspectClientConfiguration(row, {}, command)).toMatchObject({
+    status: "create",
+  });
+});
+
 it("refuses a relative Kilo configuration path instead of guessing its folder", async () => {
   const home = await createTestTempDirectory("rea-kilo-relative-");
   for (const environment of [
