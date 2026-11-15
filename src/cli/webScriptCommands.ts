@@ -25,6 +25,16 @@ export const registerWebScriptCommands = (
         "Export retained website scripts into an absent directory for static JavaScript analysis",
       positionals: ["capture_path", "output_directory"],
       callerPaths: ["capture_path", "output_directory"],
+      fields: {
+        capture_path: {
+          description:
+            "Saved inspect_web_page or capture_browser_scenario JSON, normalized result or complete Evidence; a relative path resolves against the current directory",
+        },
+        output_directory: {
+          description:
+            "Absent directory for verified scripts and manifest; its parent must exist. A relative path resolves against the current directory",
+        },
+      },
     },
     async (input, { operation, signal }) => {
       const resources = new ArtifactResourceScope();
