@@ -395,7 +395,7 @@ checkCounted(
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
 checkCounted(
-  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage, or mark a detail level, lifecycle state or domain vocabulary with `// detail-level:`, `// lifecycle-state:` or `// domain-vocabulary:` and its reason)",
   "local-completeness-enum",
   files,
   localCompletenessEnumCount,
