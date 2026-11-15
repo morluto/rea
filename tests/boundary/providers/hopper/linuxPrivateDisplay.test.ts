@@ -17,7 +17,7 @@ import {
 } from "../../../../src/domain/hopperStartupFailure.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   runLinuxPrivateDisplayProbe,
   selectLinuxPrivateDisplayStrategy,

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
@@ -8,10 +8,10 @@ import { constants as bufferConstants } from "node:buffer";
 import {
   imageFileSizeRemediation,
   readerIntegrityFailure,
-} from "./StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
-import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.

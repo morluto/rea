@@ -2,7 +2,7 @@ import type { Cli } from "incur";
 import type { Logger } from "pino";
 
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { WEB_RUNTIME_TOOL_CONTRACTS } from "../contracts/webRuntimeToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";

@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 
 import { executeManagedMemberComparison } from "../../../../src/application/managed/ManagedMemberComparisonService.js";
-import { RetainedRegularFileCleanupFailure } from "../../../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../../../src/process/RegularFileRead.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";

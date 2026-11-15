@@ -21,33 +21,31 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
-import type {
-  ArtifactCleanupAttempt,
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
-import { lstat, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
-import { isPathWithinRoot } from "../../domain/localPath.js";
-import { SafeOutputTreeDestinationRefusal } from "../SafeOutputTreeAdmission.js";
-
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
+  withArtifactRegularFile,
+  type ArtifactCleanupAttempt,
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
+import { lstat, realpath } from "node:fs/promises";
+import { dirname } from "node:path";
+import { isPathWithinRoot } from "../../domain/localPath.js";
+import {
+  SafeOutputTreeDestinationRefusal,
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
+
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { SafeOutputTree } from "../SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,

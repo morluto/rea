@@ -42,7 +42,7 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";

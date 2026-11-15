@@ -9,7 +9,7 @@ import { err, ok } from "../../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
 
 it("retains the binary reader refusal when the symbol fallback also fails", async () => {

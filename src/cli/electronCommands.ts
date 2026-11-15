@@ -27,7 +27,7 @@ import {
   runJavaScriptApplicationCommand,
 } from "./javascriptApplicationAnalysis.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,

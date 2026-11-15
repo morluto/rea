@@ -1,13 +1,15 @@
 import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "./Lz4Block.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {
   readUnityFsHeaderFacts,

@@ -9,8 +9,10 @@ import {
 } from "./PeResourceTreeFacts.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import type { ArtifactLimitBoundary } from "../../domain/artifactOperationError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
 import type {

@@ -17,7 +17,7 @@ import * as artifactHash from "../../src/artifacts/ArtifactHash.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../src/artifacts/ArtifactReader.js";
+} from "../../src/resources/ArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../src/artifacts/MachOSliceArtifactReader.js";
 import {
   CPU,

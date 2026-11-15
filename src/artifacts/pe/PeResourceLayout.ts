@@ -10,7 +10,7 @@ import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import {
   readPeOptionalHeaderStructure,
   type PeOptionalHeaderFailure,

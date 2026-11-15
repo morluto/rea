@@ -8,14 +8,14 @@ import {
   gpuCodeObjectsPageViewResultSchema,
 } from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const GPU_TOOL_CONTRACTS = [
   {
     name: "inspect_gpu_code_objects",
     availability: "standalone",
     cli: true,
-    ...toolContractMetadata("inspect_gpu_code_objects"),
+    ...toolContractMetadata("inspect_gpu_code_objects", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

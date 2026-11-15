@@ -20,7 +20,7 @@ import {
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.

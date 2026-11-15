@@ -3,7 +3,7 @@ import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../artifacts/ArtifactReader.js";
+} from "../../resources/index.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";

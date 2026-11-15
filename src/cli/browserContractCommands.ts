@@ -1,6 +1,6 @@
 import type { z } from "incur";
 
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";

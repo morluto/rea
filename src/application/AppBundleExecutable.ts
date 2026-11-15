@@ -10,7 +10,10 @@ import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
-import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import type {
+  BundleResourceRoot,
+  ResolvedAppBundleResourceRoot,
+} from "../domain/apple/bundleResourceRoot.js";
 import { openableAppleBundleExtension } from "../domain/apple/appleBundleTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -73,18 +76,6 @@ const FLATTENED_FRAMEWORK_LAYOUTS: readonly BundleLayout[] = [
 export interface ResolvedAppBundle {
   readonly executable: string;
   readonly infoPlist?: string;
-}
-
-/** Resource-only identity for an app directory; it is not a BinaryTarget. */
-export interface ResolvedAppBundleResourceRoot {
-  /** Path selected by the caller, retained even when it is a symlink alias. */
-  readonly callerPath: string;
-  /** Canonical directory whose resources are inspected. */
-  readonly canonicalPath: string;
-  readonly infoPlistPath: string;
-  readonly layout: BundleResourceRoot["layout"];
-  /** No executable was opened or hashed by resource-root discovery. */
-  readonly executableSha256: string | null;
 }
 
 /** Filesystem operations used by the resolver, injectable for boundary tests. */

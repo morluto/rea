@@ -73,7 +73,7 @@ check(
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
-  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  "provider-owned inspection lifetime (use src/ports/ProviderInspectionScope)",
   files,
   /providers\/ProviderInspectionScope\.js/,
 );
@@ -347,6 +347,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; new
@@ -416,6 +427,17 @@ checkCounted(
   files,
   /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
   ["src/domain/boundedList.ts"],
+);
+
+// Display text cut with an appended ellipsis comes from ellipsisExcerpt in
+// src/domain/excerpt, which never splits a surrogate pair and marks the result
+// as excerpt text. A hand-written `${text.slice(0, n)}…` does neither.
+checkCounted(
+  "hand-written ellipsis excerpt (use ellipsisExcerpt from src/domain/excerpt)",
+  "ad-hoc-ellipsis",
+  files,
+  /\.slice\(\s*0\s*,[^)]*\)\)?\}(?:…|\.\.\.)/gu,
+  ["src/domain/excerpt.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
@@ -784,10 +806,27 @@ const verifierScripts = await Promise.all(
       ),
     })),
 );
+// The Windows native lane tests PrivateRuntimeRoot itself: it calls
+// PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
+// violation and asserts the typed refusal. That call is the subject under
+// test, not a verifier root, so exactly one occurrence of that expression is
+// exempt; any other allocation in the file, including a second copy of it,
+// still counts.
+const verifierRootSubjectsUnderTest = new Map([
+  [
+    "scripts/verify-windows-native.mjs",
+    "PrivateRuntimeRoot.create({ parent: sharingParent.observation.path })",
+  ],
+]);
 checkCounted(
   "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
   "verifier-fixture-root",
-  verifierScripts,
+  verifierScripts.map((file) => {
+    const subject = verifierRootSubjectsUnderTest.get(file.path);
+    return subject === undefined
+      ? file
+      : { ...file, content: file.content.replace(subject, "") };
+  }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );

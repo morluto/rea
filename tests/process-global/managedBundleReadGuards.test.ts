@@ -18,7 +18,7 @@ import {
   createImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
 } from "../../src/domain/evidenceBundle.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
 import { readImmutableEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";

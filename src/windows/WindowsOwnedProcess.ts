@@ -3,8 +3,7 @@ import { PassThrough, Writable } from "node:stream";
 
 import { z } from "zod";
 
-import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import {
   requireWindowsNativeAuthority,
   windowsHandleSchema,
@@ -31,6 +30,16 @@ const limitedPollSchema = pollSchema.extend({
   memoryLimitReached: z.boolean(),
   peakJobMemoryBytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
+
+/**
+ * The outcome of stopping one Job Object tree: settled (and whether this call
+ * signalled it), or the reason it did not settle. It is the subset of
+ * process-ownership cleanup results a Windows job can report; the process
+ * supervisor reads it as one.
+ */
+export type WindowsJobCleanupResult =
+  | { readonly cleaned: true; readonly signaled: boolean }
+  | { readonly cleaned: false; readonly reason: string };
 
 /** Optional native job controls for one owned Windows process tree. */
 export interface WindowsOwnedProcessOptions {
@@ -230,7 +239,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #blockedWake: NodeJS.Timeout | undefined;
   readonly #blockedOutput = new Set<PassThrough>();
   #unreferenced = false;
-  #cleanup: Promise<ProcessCleanupResult> | undefined;
+  #cleanup: Promise<WindowsJobCleanupResult> | undefined;
   readonly #memoryLimitBytes: number | undefined;
   #memoryLimitReached = false;
   #peakJobMemoryBytes: number | undefined;
@@ -394,7 +403,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   }
 
   /** Terminate and verify that the entire job has settled before releasing it. */
-  cleanup(): Promise<ProcessCleanupResult> {
+  cleanup(): Promise<WindowsJobCleanupResult> {
     this.#cleanup ??= this.#stop().then((result) => {
       if (!result.cleaned) this.#cleanup = undefined;
       return result;
@@ -416,7 +425,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     this.#blockedWake?.ref();
   }
 
-  async #stop(): Promise<ProcessCleanupResult> {
+  async #stop(): Promise<WindowsJobCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
     if (this.#releasePending) {
       try {

@@ -1,5 +1,5 @@
 import { scheduler } from "node:timers/promises";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,

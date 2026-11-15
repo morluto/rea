@@ -1,6 +1,6 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
   access,

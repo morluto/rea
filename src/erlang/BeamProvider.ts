@@ -4,20 +4,16 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { BeamPort } from "../application/erlang/BeamPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import type { BeamPort } from "../ports/erlang/BeamPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,

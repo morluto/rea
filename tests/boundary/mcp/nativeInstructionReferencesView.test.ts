@@ -1,9 +1,12 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -166,11 +169,13 @@ it.each(["compact"] as const)(
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
+      const listed = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (advertised === undefined)
+      if (listed === undefined)
         throw new Error("Missing advertised view schema");
+      // Every call, including continuation pages, checks the whole reply.
+      const advertised = withCanonicalOutputSchema(listed);
       expect(
         validation.assertions.validateSchema(
           canonicalOutputSchema(advertised.name),

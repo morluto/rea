@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,

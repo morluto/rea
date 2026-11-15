@@ -1,7 +1,9 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  ArtifactResourceScope,
+  projectArtifactCloseFailure,
+} from "../resources/index.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "../contracts/apiContractToolContracts.js";
 import {
   API_CONTRACT_OPERATION as operation,

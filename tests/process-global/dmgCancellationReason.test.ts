@@ -33,7 +33,7 @@ vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => {
   };
 });
 import { NativeDmgArtifactReader } from "../../src/artifacts/NativeDmgArtifactReader.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { ExecFileOutputCancelledError } from "../../src/process/ExecFileOutput.js";
 import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
 

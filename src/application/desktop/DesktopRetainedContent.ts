@@ -2,12 +2,12 @@ import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
