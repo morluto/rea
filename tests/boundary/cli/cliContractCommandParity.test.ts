@@ -136,6 +136,37 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
+/** A caller-relative target, or the first probe the positional admits. */
+const positionalValue = (
+  description: ContractCliDescription,
+  parameter: ContractCliParameter,
+): unknown =>
+  parameter.callerPath
+    ? "rel/target"
+    : probes(contractShape(description)[parameter.field]!).find(
+        (value) =>
+          value !== undefined &&
+          admits(registeredField(description, parameter), value),
+      );
+
+/** Parsed option values plus admitted positionals. */
+const argvValues = (
+  description: ContractCliDescription,
+  options: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => ({
+  ...(registered.get(description.command)!.options as z.ZodObject).parse(
+    options,
+  ),
+  ...Object.fromEntries(
+    description.parameters
+      .filter(({ positional }) => positional)
+      .map((parameter) => [
+        parameter.key,
+        positionalValue(description, parameter),
+      ]),
+  ),
+});
+
 const each = descriptions.map(
   (description) => [description.command, description] as const,
 );
@@ -154,6 +185,9 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-python-pyc",
         "inspect-erlang-beam",
         "inspect-model-artifact",
+        "inspect-apk-signature",
+        "inspect-desktop-application",
+        "inspect-evm-interface",
       ]),
     );
   });
@@ -243,15 +277,7 @@ describe("CLI commands projected from tool contracts", () => {
   it.each(each)(
     "%s maps parsed argv to an admitted contract input",
     (_command, description) => {
-      const command = registered.get(description.command)!;
-      const values = {
-        ...(command.options as z.ZodObject).parse({}),
-        ...Object.fromEntries(
-          description.parameters
-            .filter(({ positional }) => positional)
-            .map(({ key }) => [key, "rel/target"]),
-        ),
-      };
+      const values = argvValues(description, {});
       const input = description.toContractInput(values);
       expect(description.contract.inputSchema.safeParse(input).error).toBe(
         undefined,
@@ -301,21 +327,6 @@ describe("CLI commands projected from tool contracts", () => {
 const delivering = each.filter(
   ([, description]) => description.delivery !== undefined,
 );
-
-/** Parsed option values plus a caller-relative target. */
-const argvValues = (
-  description: ContractCliDescription,
-  options: Readonly<Record<string, unknown>>,
-): Record<string, unknown> => ({
-  ...(registered.get(description.command)!.options as z.ZodObject).parse(
-    options,
-  ),
-  ...Object.fromEntries(
-    description.parameters
-      .filter(({ positional }) => positional)
-      .map(({ key }) => [key, "rel/target"]),
-  ),
-});
 
 describe("Evidence delivery of contract commands", () => {
   it.each(delivering)(
