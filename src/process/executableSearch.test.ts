@@ -57,6 +57,29 @@ describe("posixPathCandidates", () => {
     }
   });
 
+  it("skips relative entries once the working directory is removed and searches later ones", () => {
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("ENOENT: uv_cwd");
+    });
+    try {
+      expect([
+        ...posixPathCandidates("java", ".::/jdk/bin", {
+          relativeEntries: "resolve",
+        }),
+      ]).toEqual([{ path: "/jdk/bin/java", relativeEntry: false }]);
+      const windows = windowsPathCandidates("java", {
+        PATH: "bin;C:\\jdk\\bin",
+        PATHEXT: ".EXE",
+      });
+      if (!windows.ok) throw new Error(windows.error.extension);
+      expect([...windows.value]).toEqual([
+        { path: "C:\\jdk\\bin\\java.EXE", relativeEntry: false },
+      ]);
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it("tries every name in an entry before the next entry", () => {
     expect([
       ...posixPathCandidates(["ghidra", "ghidraRun"], "/a:/b", {
@@ -96,6 +119,16 @@ describe("windowsPathCandidates", () => {
       "D:\\work\\bin\\rizin.EXE",
       "D:\\work\\bin\\rizin.COM",
     ]);
+  });
+
+  it("opens a quote only at the start of an entry, so a stray quote cannot hide later entries", () => {
+    expect(
+      paths(
+        ["ghidra.bat"],
+        { PATH: 'bad"quote;C:\\ghidra;"C:\\a;b"' },
+        { allowBatch: true, cwd: "C:\\" },
+      ),
+    ).toEqual(["C:\\ghidra\\ghidra.bat", "C:\\a;b\\ghidra.bat"]);
   });
 
   it("includes batch launchers only when the caller can start them through cmd.exe", () => {

@@ -44,9 +44,11 @@ export function* posixPathCandidates(
     const relativeEntry = !posix.isAbsolute(directory);
     if (relativeEntry && selection.relativeEntries === "skip") continue;
     const workingDirectory =
-      selection.relativeEntries === "resolve"
-        ? selection.workingDirectory
+      relativeEntry && selection.relativeEntries === "resolve"
+        ? (selection.workingDirectory ?? currentDirectory())
         : undefined;
+    // A removed working directory holds nothing; later entries still count.
+    if (relativeEntry && workingDirectory === undefined) continue;
     for (const command of typeof commands === "string" ? [commands] : commands)
       yield {
         path: absoluteCallerPath(
@@ -64,15 +66,31 @@ export function* posixPathCandidates(
 }
 
 /**
- * Windows PATH entries in order. A quoted entry may contain `;`; empty
- * entries, `""` and entries with a stray quote name nothing and are skipped.
+ * This process's directory, or `undefined` once it has been removed: a
+ * launcher then finds nothing under a relative entry and moves on.
+ */
+const currentDirectory = (): string | undefined => {
+  try {
+    return process.cwd();
+  } catch (cause: unknown) {
+    // A removed directory has no path; the entry names nothing.
+    void cause;
+    return undefined;
+  }
+};
+
+/**
+ * Windows PATH entries in order. A quote opens only at the start of an entry,
+ * and a quoted entry may contain `;`; elsewhere a quote is an ordinary
+ * character, so it cannot join later entries. Empty entries, `""` and
+ * entries with a stray quote name nothing and are skipped.
  */
 const windowsPathEntries = (value: string): readonly string[] => {
   const entries: string[] = [];
   let start = 0;
   let quoted = false;
   for (let index = 0; index < value.length; index += 1) {
-    if (value[index] === '"') quoted = !quoted;
+    if (value[index] === '"' && (quoted || index === start)) quoted = !quoted;
     else if (value[index] === ";" && !quoted) {
       entries.push(value.slice(start, index));
       start = index + 1;
@@ -98,8 +116,9 @@ export interface WindowsPathSearchFailure {
 
 /**
  * The files Windows' PATH/PATHEXT search tries for bare commands, in order:
- * for each PATH entry (relative ones resolve against `cwd`, read only when
- * such a candidate is produced), each command with every PATHEXT extension,
+ * for each PATH entry (relative ones resolve against `cwd`, or against this
+ * process's directory, read only when such an entry is reached and skipped
+ * once removed), each command with every PATHEXT extension,
  * or as written when it already names an extension. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
@@ -138,12 +157,19 @@ export const windowsPathCandidates = (
   const entries = windowsPathEntries(selected.PATH ?? "");
   return ok({
     *[Symbol.iterator]() {
-      for (const directory of entries)
+      for (const directory of entries) {
+        // Only an entry without a drive or UNC root reads the working
+        // directory; a removed one holds nothing, and later entries count.
+        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
+          ? directory
+          : (search.cwd ?? currentDirectory());
+        if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
-            path: win32.resolve(search.cwd ?? process.cwd(), directory, name),
+            path: win32.resolve(workingDirectory, directory, name),
             relativeEntry: !win32.isAbsolute(directory),
           };
+      }
     },
   });
 };
