@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
+import { isLivingProsePath } from "../lib/docs-facts.mjs";
 import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
@@ -224,6 +225,8 @@ if (tier === "reused") {
       ] of Object.entries(CI_LANES))
         if (matchesAny(file, earlyAll ? paths : earlyInputs))
           selected[owner] = true;
+      // The documentation check scans living prose outside docs/ too.
+      if (isLivingProsePath(file)) selected.docs = true;
       if (
         /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
           file,

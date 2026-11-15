@@ -66,9 +66,9 @@ const untypedCommands = (
 };
 
 it("distinguishes replacement untyped commands even when the total is unchanged", () => {
-  const commands = protocolCommands();
-  expect(untypedCommands('send("Runtime.enable")', commands)).not.toEqual(
-    untypedCommands('send("Debugger.enable")', commands),
+  const commands = new Set(["Fixture.first", "Fixture.second"]);
+  expect(untypedCommands('send("Fixture.first")', commands)).not.toEqual(
+    untypedCommands('send("Fixture.second")', commands),
   );
 });
 

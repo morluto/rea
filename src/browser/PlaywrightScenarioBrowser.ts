@@ -37,6 +37,7 @@ import {
   settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import { admitCdpReply } from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -417,11 +418,15 @@ const findConnectedPage = async (
       }
       try {
         throwIfScenarioCancelled(signal);
-        const { targetInfo } = await withScenarioCommandDeadline(
-          () => session.send("Target.getTargetInfo"),
-          commandTimeoutMs,
-          "command",
+        const { targetInfo } = admitCdpReply(
           "Target.getTargetInfo",
+          await withScenarioCommandDeadline(
+            () => session.send("Target.getTargetInfo"),
+            commandTimeoutMs,
+            "command",
+            "Target.getTargetInfo",
+          ),
+          OPERATION,
         );
         throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
