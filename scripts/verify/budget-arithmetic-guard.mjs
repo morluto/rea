@@ -112,7 +112,7 @@ const namedAllowances = (scope, exempt) =>
 const NONE = new Set();
 
 /**
- * @param {string} content comment-stripped source
+ * @param {string} content source with comments blanked (`blankComments`)
  * @param {{ readonly source: string } | undefined} file the raw source, read
  *   for not-an-allowance markers
  */

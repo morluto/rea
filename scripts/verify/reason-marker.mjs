@@ -9,26 +9,24 @@
 // templates (including `${…}` substitutions) and regular expressions. Matches
 // are taken from the code with every comment blanked (newlines kept).
 
-import { tokenize } from "./source-tokens.mjs";
+import { blankComments, tokenize } from "./source-tokens.mjs";
 
 const newlines = (text) => text.split("\n").length - 1;
 
 /** The code with comments blanked, and each line's `//` comment. */
 const scan = (raw) => {
+  const { comments } = tokenize(raw);
   const lineComments = new Map();
-  let code = "";
   let last = 0;
   let line = 0;
-  for (const { text, end } of tokenize(raw).comments) {
+  for (const { text, end } of comments) {
     const start = end - text.length;
-    const before = raw.slice(last, start);
-    code += before + text.replace(/[^\n]/gu, " ");
-    line += newlines(before);
+    line += newlines(raw.slice(last, start));
     if (text.startsWith("//")) lineComments.set(line, text);
     line += newlines(text);
     last = end;
   }
-  return { code: code + raw.slice(last), lineComments };
+  return { code: blankComments(raw, comments), lineComments };
 };
 
 /**

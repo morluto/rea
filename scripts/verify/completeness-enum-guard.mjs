@@ -26,7 +26,7 @@ const isCompletenessVocabulary = ([, literals]) =>
   literals.includes('"complete"') && !literals.includes('"summary"');
 
 /**
- * @param {string} content comment-stripped source
+ * @param {string} content source with comments blanked (`blankComments`)
  * @param {{ readonly source: string } | undefined} file the raw source, read
  *   for reason markers
  */
