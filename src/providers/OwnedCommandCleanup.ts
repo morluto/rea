@@ -11,7 +11,7 @@ import {
   type ProcessInspectionFailure,
 } from "../process/ProcessInspectionCleanup.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
@@ -211,11 +211,7 @@ export const retainProcessInspectionCleanup = (
     operation,
   );
   for (const failure of failures)
-    primary = analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      operation,
-    ).bindCleanupDependencies([primary, failure]);
+    primary = analysisErrorWithCleanupDependencies(primary, failure, operation);
   return bindProcessInspectionCancellations(cause, primary, operation);
 };
 
