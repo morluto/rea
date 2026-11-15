@@ -2,8 +2,8 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   isBinaryStringReadLimit,
-} from "../../domain/binaryContainer.js";
-import { readElfStringBytes } from "./ElfStringTable.js";
+} from "../binaryContainer.js";
+import { readElfStringBytes } from "./elfStringBytes.js";
 
 it("preserves empty and non-UTF8 string-table bytes", () => {
   const table = Buffer.from([0, 0xff, 0x61, 0]);

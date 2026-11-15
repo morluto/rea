@@ -23,8 +23,8 @@ import {
   mappedFileOffset,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
   elfInitializerSlotKey,

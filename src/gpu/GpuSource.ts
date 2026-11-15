@@ -11,7 +11,7 @@ import {
 import type {
   NativeReadRequest,
   NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
+} from "../domain/native/nativeSectionDirectory.js";
 export const GPU_OBJECT_BYTES = 128 * 1024 * 1024;
 export const GPU_REPORT_BYTES = 16 * 1024 * 1024;
 /** A retained-facts refusal aborts discovery; it is never downgraded to one opaque payload. */
