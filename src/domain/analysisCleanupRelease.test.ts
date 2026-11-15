@@ -29,3 +29,18 @@ it("lets every bound error read one owner's confirmed release", () => {
   // An error bound after the release reads it immediately.
   expect(release.bind(failure()).cleanupIncomplete).toBe(false);
 });
+
+it("reads a claim bound repeatedly to one error only once", () => {
+  let reads = 0;
+  const claim = {
+    get cleanupReleased() {
+      reads += 1;
+      return false;
+    },
+  };
+  const error = failure();
+  for (let attempt = 0; attempt < 3; attempt += 1)
+    error.bindCleanupReleaseClaim(claim);
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(reads).toBe(1);
+});
