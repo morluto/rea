@@ -1,6 +1,6 @@
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -145,8 +145,7 @@ export class PwntoolsRecordedCrashProvider
             });
           try {
             if (options?.signal?.aborted)
-              throw new AnalysisCancelledError("inspect_recorded_crash", {
-                cause: options.signal.reason,
+              throw cancelledBy("inspect_recorded_crash", options.signal, {
                 capturedOutput: diagnostics,
               });
             const authority = validateCoreFileMappingAuthority(

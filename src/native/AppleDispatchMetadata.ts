@@ -18,12 +18,13 @@ import {
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
@@ -48,7 +49,6 @@ import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
 import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
   type AdmittedMachoSlice,
 } from "./AppleMachoSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
@@ -369,10 +369,8 @@ export const inspectAppleDispatchMetadata = async (
         }
       : { maximum_bytes: options.maxInputBytes, source: "caller" as const };
   const maximumBytes = admission.maximum_bytes;
-  const cancelled = () =>
-    new AnalysisCancelledError(OPERATION, {
-      cause: signal?.reason,
-    });
+  // Called only after the caller's signal aborted.
+  const cancelled = () => cancelledBy(OPERATION, carriedReason(signal?.reason));
   const { bytes, digest } = await withArtifactRegularFile(
     target.path,
     resources,
@@ -438,9 +436,10 @@ export const appleDispatchMetadataFailure = (
           )
         : physical?.completionCancellation === undefined
           ? undefined
-          : new AnalysisCancelledError(OPERATION, {
-              cause: physical.completionCancellation.reason,
-            });
+          : cancelledBy(
+              OPERATION,
+              carriedReason(physical.completionCancellation.reason),
+            );
     const failure = new ProviderCleanupError(
       IDENTITY.id,
       cause.cleanup.resources,
@@ -466,6 +465,15 @@ const appleDispatchMetadataPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
+    // A recognized Mach-O class this reader cannot decode still holds metadata
+    // another reader may recover.
+    if (cause instanceof BinaryFormatFailure && cause.undecodedContent)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
     if (cause instanceof BinaryFormatFailure)
       return new AnalysisUnsupportedTargetError(
         OPERATION,
@@ -479,17 +487,11 @@ const appleDispatchMetadataPrimaryFailure = (
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },
       );
-    if (cause instanceof UnsupportedMachoMetadataFormatError)
-      return new AnalysisCapabilityUnavailableError(
-        IDENTITY.id,
-        OPERATION,
-        cause.message,
-        { cause },
-      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

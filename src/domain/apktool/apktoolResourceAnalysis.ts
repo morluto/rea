@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
@@ -9,8 +10,6 @@ export const DEFAULT_APKTOOL_STRING_TABLE_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_APKTOOL_TOTAL_STRING_TABLE_BYTES = 32 * 1024 * 1024;
 /** Decode wall clock used when decode_timeout_ms is omitted. */
 export const DEFAULT_APKTOOL_DECODE_TIMEOUT_MS = 600_000;
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_APKTOOL_DECODE_TIMEOUT_MS = 2_147_483_647;
 const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
   "car",
   "desk",
@@ -129,11 +128,7 @@ export const apktoolInputSchemas = {
       .describe(
         `Project multiple localized string tables from res/values-<locale>/strings.xml alongside the default table (up to ${String(MAX_SELECTED_LOCALES)} locales per call; split larger selections into separate calls and verify target.sha256)`,
       ),
-    decode_timeout_ms: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_APKTOOL_DECODE_TIMEOUT_MS)
+    decode_timeout_ms: timerDurationMsSchema
       .exactOptional()
       .describe(
         `Decode wall-clock budget in milliseconds (default ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), from apktool d start through process exit. Omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}. Applies on the next decode. Does not raise the fixed output capture allowance or the version probe.`,

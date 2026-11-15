@@ -9,6 +9,8 @@ import {
   type AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -19,147 +21,75 @@ const value: AnalysisPartialObservation = {
   evidence_id: "evidence-1",
 };
 const reason = { caller: "stop" };
-const completedWork = async (): Promise<
-  Result<AnalysisPartialObservation, AnalysisError>
-> => ok(value);
 
-/** A close that aborts the caller's signal, so cancellation lands during final cleanup. */
-const closeThenAbort =
-  (controller: AbortController, failure?: unknown) => async () => {
-    controller.abort(reason);
-    if (failure !== undefined) throw failure;
-  };
+// Scenarios shared by every adopter live in runOwned.lifecycle.test.ts; these
+// cases cover producer-supplied errors, reader leases and recovered completions.
 
 const options = (controller: AbortController, close: () => Promise<void>) => ({
   providerId: "fixture",
   operation: "fixture_operation",
   signal: controller.signal,
   close,
+  partial: (completed: AnalysisPartialObservation) => completed,
 });
 
-describe("runOwned precedence", () => {
-  it("completes when cleanup is released and no cancellation arrives", async () => {
-    const controller = new AbortController();
-    const finalized = await runOwned(
-      completedWork,
-      options(controller, async () => undefined),
-    );
-    expect(finalized).toEqual({ kind: "completed", value });
-  });
+const counted = async (): Promise<
+  Result<{ readonly count: number }, AnalysisError>
+> => ok({ count: 3 });
+const project = (completed: { readonly count: number }) => ({
+  kind: "retained-evidence" as const,
+  evidence_id: `counted-${String(completed.count)}`,
+});
 
-  it("cancels a completed value when cancellation arrives during final cleanup before commit", async () => {
-    const controller = new AbortController();
-    const finalized = await runOwned(
-      completedWork,
-      options(controller, closeThenAbort(controller)),
-    );
-    expect(finalized.kind).toBe("cancelled");
-    const result = finalizedResult(finalized);
-    if (result.ok) throw new Error("expected cancellation");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    expect(result.error.partialObservation).toBe(value);
-  });
-
-  it("keeps a committed value when cancellation arrives after the commit", async () => {
-    const controller = new AbortController();
-    const commits: unknown[] = [];
-    const finalized = await runOwned(completedWork, {
-      ...options(controller, closeThenAbort(controller)),
-      commit: async (committed) => {
-        commits.push(committed);
-      },
-    });
-    expect(commits).toEqual([value]);
-    expect(finalized).toEqual({
-      kind: "completed",
-      value,
-      lateCancellation: reason,
-    });
-  });
-
-  it("does not commit after cancellation and reports it before commit", async () => {
-    const controller = new AbortController();
-    controller.abort(reason);
-    let committed = false;
-    const finalized = await runOwned(completedWork, {
-      ...options(controller, async () => undefined),
-      commit: async () => {
-        committed = true;
-      },
-    });
-    expect(committed).toBe(false);
-    expect(finalized.kind).toBe("cancelled");
-  });
-
-  it("keeps a recorded failure primary when cancellation arrives during final cleanup", async () => {
-    const controller = new AbortController();
-    const failure = new AnalysisProtocolError("fixture failure");
-    const finalized = await runOwned(
-      async () => err(failure),
-      options(controller, closeThenAbort(controller)),
-    );
-    expect(finalized.kind).toBe("failed");
-    const result = finalizedResult(finalized);
-    if (result.ok) throw new Error("expected failure");
-    expect(primaryAnalysisError(result.error)).toBe(failure);
-    expect(failure.secondaryFailures).toEqual([
-      expect.objectContaining({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
+describe("runOwned close-failure lease binding", () => {
+  it("binds an artifact reader close failure to the leases it reports", async () => {
+    let attempts = 0;
+    const lease = new AnalysisCleanupLease(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("close failed");
+    }, ["/reader/handle"]);
+    await lease.release().catch(() => undefined);
+    const finalized = await runOwned(counted, {
+      ...options(new AbortController(), async () => {
+        throw new ArtifactReaderFailure("io", "reader close failed", {
+          cleanup: { reason: "handle retained", resources: ["/reader/handle"] },
+          cleanupLeases: [lease],
+        });
       }),
-    ]);
-  });
-
-  it("reports a completed value with unconfirmed cleanup as cleanup_incomplete keeping the value", async () => {
-    const controller = new AbortController();
-    const finalized = await runOwned(
-      completedWork,
-      options(controller, async () => {
-        throw new Error("close failed");
-      }),
-    );
+      partial: project,
+    });
     expect(finalized.kind).toBe("completed-cleanup-retained");
     const result = finalizedResult(finalized);
     if (result.ok) throw new Error("expected cleanup failure");
-    expect(result.error).toBeInstanceOf(ProviderCleanupError);
     expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result.error.partialObservation).toBe(value);
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 
-  it("keeps the primary failure's identity when cleanup also fails", async () => {
+  it("binds a typed close failure to the leases while the failed work stays primary", async () => {
     const controller = new AbortController();
     const failure = new AnalysisProtocolError("fixture failure");
-    const cleanup = new ProviderCleanupError("fixture", ["fixture-run"], {
-      reason: "still running",
+    const typed = new ProviderCleanupError("fixture", ["/producer/root"], {
+      reason: "still owned",
     });
-    const finalized = await runOwned(
-      async () => err(failure),
-      options(controller, async () => {
-        throw cleanup;
-      }),
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["/owned/root"],
     );
-    expect(finalized).toMatchObject({
-      kind: "failed",
-      cleanup: { kind: "retained", failure: cleanup },
+    const finalized = await runOwned(async () => err(failure), {
+      ...options(controller, async () => {
+        throw typed;
+      }),
+      partial: project,
+      cleanupLeases: [lease],
     });
     const result = finalizedResult(finalized);
     if (result.ok) throw new Error("expected failure");
     expect(primaryAnalysisError(result.error)).toBe(failure);
-    expect(result.error.cleanupIncomplete).toBe(true);
-  });
-
-  it("types a thrown work failure as a provider adapter failure", async () => {
-    const controller = new AbortController();
-    const finalized = await runOwned(
-      async () => {
-        throw new Error("unexpected");
-      },
-      options(controller, async () => undefined),
-    );
-    const result = finalizedResult(finalized);
-    if (result.ok) throw new Error("expected failure");
-    expect(result.error._tag).toBe("ProviderAdapterError");
+    expect(result.error.cleanupResources).toEqual(["/owned/root"]);
+    await lease.release();
+    expect(typed.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 });
 
@@ -205,17 +135,6 @@ it("classifies a producer composite whose primary is a cancellation as cancelled
   });
 });
 
-it("keeps a failure with a later cancellation classified as failed", async () => {
-  const controller = new AbortController();
-  const failure = new AnalysisProtocolError("fixture failure");
-  const finalized = await runOwned(
-    async () => err(failure),
-    options(controller, closeThenAbort(controller)),
-  );
-  expect(finalized.kind).toBe("failed");
-  expect(failure.secondaryFailures).toHaveLength(1);
-});
-
 it("keeps producer cleanup retained when close does not resolve it", async () => {
   const controller = new AbortController();
   const failure = new ProviderCleanupError("fixture", ["owned-process"], {
@@ -230,18 +149,6 @@ it("keeps producer cleanup retained when close does not resolve it", async () =>
     error: failure,
     cleanup: { kind: "retained", failure },
   });
-});
-
-it("retains completed work when publication fails", async () => {
-  const finalized = await runOwned(completedWork, {
-    ...options(new AbortController(), async () => undefined),
-    commit: async () => {
-      throw new Error("publication failed");
-    },
-  });
-  const result = finalizedResult(finalized);
-  if (result.ok) throw new Error("expected publication failure");
-  expect(result.error.partialObservation).toBe(value);
 });
 
 it("publishes recovered completion after cleanup resolves", async () => {

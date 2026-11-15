@@ -18,6 +18,7 @@ import type {
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { isDoctorProviderId } from "../../domain/doctorProviderIds.js";
 import {
   providerReleaseVerificationSchema,
   type ProviderReleaseVerification,
@@ -105,7 +106,7 @@ export const evaluateAnalysisProviderCandidate = async (
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Provider version or analysis profile could not be resolved",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     const profile = analysisProfileSchema.parse(resolved.value.profile);
@@ -119,7 +120,7 @@ export const evaluateAnalysisProviderCandidate = async (
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Resolved analysis profile has mismatched provider identity",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     const verification =
@@ -132,7 +133,7 @@ export const evaluateAnalysisProviderCandidate = async (
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Provider returned invalid release verification",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     return ok({
@@ -157,7 +158,7 @@ export const evaluateAnalysisProviderCandidate = async (
     return ok(
       rejectedProfile(candidate, status, {
         reason: "Provider returned an invalid analysis profile",
-        remediation: PROFILE_REMEDIATION,
+        remediation: profileRemediation(candidate),
       }),
     );
   }
@@ -166,8 +167,13 @@ export const evaluateAnalysisProviderCandidate = async (
 const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
-const PROFILE_REMEDIATION =
-  "Run rea doctor to check this provider's installation and version, then reopen the target, or select another analysis provider.";
+/** Name doctor only for a provider whose installation it can check. */
+const profileRemediation = (candidate: AnalysisProviderCandidate): string => {
+  const providerId = candidate.identity().id;
+  return isDoctorProviderId(providerId)
+    ? `Run rea doctor --provider ${providerId} to check this provider's installation and version, then reopen the target, or select another analysis provider.`
+    : `Check the ${providerId} provider's installation and version against its documented requirements, then reopen the target, or select another analysis provider.`;
+};
 
 const rejectedProfile = (
   candidate: AnalysisProviderCandidate,

@@ -18,11 +18,8 @@ import {
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
 import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
-import {
-  parseMachoLayout,
-  selectMachoSlice,
-  UnsupportedMachoMetadataFormatError,
-} from "./AppleMachoSelection.js";
+import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
@@ -43,7 +40,7 @@ it("keeps unknown magic distinct from recognized unsupported Mach-O formats", ()
     failure = error;
   }
   expect(failure).toBeInstanceOf(TypeError);
-  expect(failure).not.toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+  expect(failure).not.toBeInstanceOf(BinaryFormatFailure);
 });
 
 it.each([
@@ -609,6 +606,43 @@ describe("native Mach-O fixup load command boundaries", () => {
       command.writeUInt32LE(kind, 0);
       command.writeUInt32LE(command.length, 4);
       expect(() => decode(command)).toThrow(/Truncated/u);
+    },
+  );
+
+  it.each<[string, readonly [number, number], RegExp]>([
+    [
+      "LC_DYLD_CHAINED_FIXUPS",
+      [LC.DYLD_CHAINED_FIXUPS, LC.DYLD_CHAINED_FIXUPS],
+      /more than one LC_DYLD_CHAINED_FIXUPS/u,
+    ],
+    [
+      "LC_DYLD_INFO and LC_DYLD_INFO_ONLY",
+      [LC.DYLD_INFO, LC.DYLD_INFO_ONLY],
+      /more than one LC_DYLD_INFO/u,
+    ],
+  ])(
+    "refuses repeated %s fixup tables instead of reading one by position",
+    (_name, kinds, message) => {
+      const commands = kinds.map((kind, index) => {
+        const command = Buffer.alloc(kind === LC.DYLD_CHAINED_FIXUPS ? 16 : 48);
+        command.writeUInt32LE(kind, 0);
+        command.writeUInt32LE(command.length, 4);
+        // Distinct empty ranges, so neither repeat is a byte-identical copy.
+        command.writeUInt32LE(index * 8, 8);
+        return command;
+      });
+      const thrown = (() => {
+        try {
+          parseMachoLayout(Buffer.from(machoImage({ commands })), "arm64");
+          return undefined;
+        } catch (cause: unknown) {
+          return cause;
+        }
+      })();
+      expect(thrown).toBeInstanceOf(ParseFailureError);
+      expect(thrown).toMatchObject({
+        failure: { kind: "malformed", detail: expect.stringMatching(message) },
+      });
     },
   );
 
