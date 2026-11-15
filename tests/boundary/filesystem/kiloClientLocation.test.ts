@@ -507,7 +507,73 @@ it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update main
     expect.objectContaining({
       client: "kilo",
       state: "stale",
-      remediation: expect.stringContaining("KILO_CONFIG_CONTENT sets the rea"),
+      remediation: expect.stringContaining(
+        "KILO_CONFIG_CONTENT overrides REA's rea registration",
+      ),
+    }),
+  ]);
+});
+
+it("maintains a stale Kilo registration whose KILO_CONFIG_CONTENT entry setup's refresh keeps", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-inline-kept-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({
+      mcp: {
+        rea: {
+          type: "local",
+          command: [
+            "npx",
+            "-y",
+            `${PRODUCT_IDENTITY.packageName}@3.2.0`,
+            "mcp",
+          ],
+          enabled: true,
+        },
+      },
+    }),
+  );
+  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
+    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { enabled: true } } }),
+  });
+  expect(scope.clients).toContain("kilo");
+  expect(scope.unresolved).toBeUndefined();
+});
+
+it("leaves an aligned Kilo registration out of update maintenance when KILO_CONFIG_CONTENT adds what setup would not write", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-inline-aligned-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({ mcp: { rea: { type: "local", command, enabled: true } } }),
+  );
+  const environment = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { environment: { FOO: "bar" } } },
+    }),
+  };
+  const [status] = await readClientRegistrationStatuses(
+    home,
+    command[1] ?? "",
+    { environment, selectedClientIds: ["kilo"] },
+  );
+  expect(status).toMatchObject({ client: "kilo", state: "aligned" });
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    environment,
+  );
+  expect(scope.clients).not.toContain("kilo");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({
+      client: "kilo",
+      state: "aligned",
+      remediation: expect.stringContaining(
+        "KILO_CONFIG_CONTENT overrides REA's rea registration",
+      ),
     }),
   ]);
 });
