@@ -55,6 +55,9 @@ const assertUncertainEvidence = async (
     expect.stringMatching(/did not report the document generation/u),
   );
   expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(/did not declare whether output was omitted/u),
+  );
+  expect(uncertainEvidence.limitations).toContainEqual(
     expect.stringMatching(
       /completion.*could not be confirmed.*not retry.*effects/iu,
     ),
