@@ -226,7 +226,9 @@ class Projector {
   #literal(code: number): string {
     if (code < 0x80) return emitOutside(code);
     this.#widen();
-    return NON_ASCII;
+    // V8 without `u` reads an astral literal as two UTF-16 units, so one
+    // non-ASCII unit would reject it there.
+    return code > 0xffff ? `(?:${NON_ASCII}{1,2})` : NON_ASCII;
   }
 
   #parenthesized():
