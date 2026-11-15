@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { writeFile } from "node:fs/promises";
@@ -87,7 +90,7 @@ fuseMcpTest(
     await writeFile(path, elf.bytes);
     const response = await client.callTool(
       { name: "inspect_electron_fuses", arguments: { path } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const parsed = toolContract("inspect_electron_fuses").outputSchema.parse(

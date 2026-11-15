@@ -1,18 +1,15 @@
-import {
-  ParseFailureError,
-  unsupportedInput,
-} from "../../domain/parseFailure.js";
-import { invariantViolation } from "../../domain/internalInvariant.js";
+import { ParseFailureError, unsupportedInput } from "../parseFailure.js";
+import { invariantViolation } from "../internalInvariant.js";
 import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
   type BinaryPlistLayout,
-} from "./BinaryPlistLayout.js";
+} from "./binaryPlistLayout.js";
 import {
   createPlistNumberCollector,
   type PlistNumberLiterals,
-} from "../../domain/apple/plistNumbers.js";
-import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
+} from "./plistNumbers.js";
+import { hasBinaryPlistSignature } from "./appleArchiveFormat.js";
 
 export interface BinaryPlistScalarMetadata {
   readonly literals: PlistNumberLiterals;

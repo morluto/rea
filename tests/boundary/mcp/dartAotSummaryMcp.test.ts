@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -57,7 +60,7 @@ it("retains the selected pool policy through MCP summary projection", async () =
         pool_policy: { contains: "package:animations/", uri_limit: 1 },
       },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(filteredReply.isError).not.toBe(true);
   const filteredView = dartAotSummaryViewResultSchema.parse(
@@ -100,7 +103,7 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
       name: "inspect_dart_aot",
       arguments: { path, abi: "x86_64", detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const receipt = parseEvidence(reply.structuredContent);

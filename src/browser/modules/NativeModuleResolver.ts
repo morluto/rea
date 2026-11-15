@@ -105,8 +105,10 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   constructor(
     environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
+    // The host Chromium launches on; defaults to the running host.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
-    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
+    this.environment = snapshotEnvironment(environment, platform);
   }
 
   resolve(
@@ -150,7 +152,10 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           },
         ),
       );
-    const chromiumSandbox = chromiumSandboxEnabled(this.environment);
+    const chromiumSandbox = chromiumSandboxEnabled(
+      this.environment,
+      this.platform,
+    );
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
     let activeCall:
       | { settled: boolean; interruption?: AnalysisError }

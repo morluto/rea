@@ -123,7 +123,6 @@ describe("translateNativeCommandFailure", () => {
     expect(projectAnalysisError(error).details?.limit).toEqual({
       control_kind: "parameter",
       parameter: "native_command_timeout_ms",
-      cli_flag: "--native-command-timeout-ms",
       effective_value: 60_000,
       unit: "ms",
       minimum: 1,

@@ -8,3 +8,9 @@
 
 # refactor(domain): move the source map format parser into src/domain (#11348)
 97112f14a1f21a21a91578b5371fe4dfbfbb7835
+
+# refactor(config): move the MCP startup policy beside its startup budgets in src/config (#11429)
+47c252f5274607a02d750f817caaac7366a33ccb
+
+# refactor(domain): move the Mach-O load command and binary plist readers into src/domain/apple (#11415)
+23eee86bd59e5d399c59280b24a746be8318b111

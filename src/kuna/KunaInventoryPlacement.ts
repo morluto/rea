@@ -1,4 +1,4 @@
-import { MAX_LOAD_COMMAND_BYTES } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import {
   readMachoHeaderDeclarations,
   readMachoLoadCommandTableHeader,

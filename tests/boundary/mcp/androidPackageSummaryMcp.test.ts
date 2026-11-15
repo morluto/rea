@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -202,7 +205,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   ).toBe(true);
   const compact = await client.callTool(
     { name: "inspect_android_jni_bindings", arguments: request },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(compact.isError).not.toBe(true);
   const summaryEvidence = parseEvidence(compact.structuredContent);
@@ -235,7 +238,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
       name: "inspect_android_jni_bindings",
       arguments: { ...request, detail: "complete" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(complete.isError).not.toBe(true);
   const completeEvidence = parseEvidence(complete.structuredContent);
@@ -320,7 +323,7 @@ it.skipIf(process.platform === "win32")(
         name: "inspect_android_package",
         arguments: { path: apk, detail: "summary" },
       },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(reply.isError).not.toBe(true);
     const receipt = parseEvidence(reply.structuredContent);
@@ -368,7 +371,7 @@ it.skipIf(process.platform === "win32")(
     }
     await assertAndroidPackageSelectedFacetContract({
       client,
-      toolDefinition: definition,
+      toolDefinition: withCanonicalOutputSchema(definition),
       apk,
       parent,
       retained: (id) => session.evidenceById(id),

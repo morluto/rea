@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
@@ -121,7 +124,7 @@ it("shares complete/summary source identity and advertised contracts across all 
       : {};
     const completeReply = await harness.mcp.callTool(
       { name: operation, arguments: parameters },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (completeReply.isError) throw new Error(JSON.stringify(completeReply));
     const complete = parseEvidence(
@@ -137,7 +140,7 @@ it("shares complete/summary source identity and advertised contracts across all 
     expect(complete.parameters).not.toHaveProperty("detail");
     const summaryReply = await harness.mcp.callTool(
       { name: operation, arguments: { ...parameters, detail: "summary" } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (summaryReply.isError) throw new Error(JSON.stringify(summaryReply));
     const summary = parseEvidence(
@@ -181,7 +184,7 @@ it("shares complete/summary source identity and advertised contracts across all 
             view: { kind: "native-inventory", offset, limit: 1 },
           },
         },
-        { toolDefinition: viewTool },
+        { toolDefinition: withCanonicalOutputSchema(viewTool) },
       );
       if (pageReply.isError) throw new Error(JSON.stringify(pageReply));
       const page = toolContract("inspect_analysis_view").outputSchema.parse(

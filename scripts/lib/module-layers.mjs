@@ -110,7 +110,6 @@ export const UNIT_LAYERS = Object.freeze(
       "main.ts",
       "mcpDoctor.ts",
       "mcpDoctorOptions.ts",
-      "mcpStartupPolicy.ts",
       "recordedCatalogDigests.ts",
       "recordedCliCommandRegistrations.ts",
       "recordedMcpCatalog.ts",

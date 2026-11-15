@@ -16,7 +16,7 @@ import {
   machoImage,
   machoImageWithUnknownCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
 import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { layoutFor, MachoSliceRefused } from "./AppleMachoSelection.fixture.js";

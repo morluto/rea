@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -82,7 +85,10 @@ it.each(["compact"] as const)(
       const call = (name: string, args: Record<string, unknown>) => {
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined) throw new Error(`Missing ${name}`);
-        return client.callTool({ name, arguments: args }, { toolDefinition });
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+        );
       };
       const inventory = selected(
         "list_procedures",

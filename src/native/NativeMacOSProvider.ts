@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   readerIntegrityFailure,
   bindArtifactFileCleanup,
@@ -28,7 +29,7 @@ import {
   type NativePlistSelection,
   resolveBundleResourcePlistSelection,
 } from "./NativePlistSource.js";
-import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js";
+import { readMachoEncryption } from "../domain/apple/machoEncryptionReader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
@@ -121,7 +122,6 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   NativeCommandFailure,
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   XcrunCommandRunner,
   failureCapture,
   type NativeCommandCleanupFailure,
@@ -171,7 +171,8 @@ import {
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
-import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
+import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -196,7 +197,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(
       environment,
     ),
-    platform: NodeJS.Platform = process.platform,
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     tracerFactory?: () => NativeCallTracer,
     privateRuntimeRootFactory?: SignatureRuntimeRootFactory,
   ) {
