@@ -303,6 +303,38 @@ export const ambientPathMayHaveChanged = (
   state.ambientWrites.covers(path) ||
   (observes === "contents" && state.ambientEscapes.covers(path));
 
+/** Whether a recorded ambient effect's path is `target` or one of its prefixes. */
+export const ambientEffectCovers = (
+  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  target: readonly string[],
+): boolean =>
+  effect.path.length <= target.length &&
+  effect.path.every((key, index) =>
+    semanticPropertyPathKeyMatches(key, target[index]!),
+  );
+
+/**
+ * `mayObserve` for an ambient member path: whether a recorded write to `path`
+ * or to one of its prefixes may run before `read`. With `"contents"`, an
+ * escape of it to code whose effects are not evaluated counts too.
+ */
+export const ambientPathMayObserveAt = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  path: readonly string[],
+  observes: "value" | "contents" = "value",
+): boolean => {
+  const mayPrecede = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ): boolean =>
+    ambientEffectCovers(effect, path) &&
+    semanticEffectTiming(read, effect.node, state) !== "after";
+  return (
+    state.ambientWriteEffects.some(mayPrecede) ||
+    (observes === "contents" && state.ambientEscapeEffects.some(mayPrecede))
+  );
+};
+
 /** Declaration assignability is independent of observed explicit writes. */
 const semanticBindingCanBeRebound = (
   binding: JavaScriptSemanticBindingState,
