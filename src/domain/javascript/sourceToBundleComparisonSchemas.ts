@@ -108,7 +108,11 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
   items: z.array(sourceToBundleItemSchema),
   unmapped_current_node_ids: z.array(nodeIdSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when the source inventory and graph coverage are both complete; unknown when either could not tell.",
+      ),
     reference_inventory_state: coverageStatusSchema,
     application_graph_status: z.enum([
       "complete",
