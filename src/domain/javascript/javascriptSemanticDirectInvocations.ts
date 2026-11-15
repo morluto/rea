@@ -106,17 +106,17 @@ const computeDirectInvocation = (
   const spread = call.arguments.findIndex((argument) =>
     t.isSpreadElement(argument),
   );
+  // A later duplicate parameter name shadows earlier ones.
+  const lastPosition = new Map<string, number>();
+  parameters.forEach((parameter, index) => {
+    if (t.isIdentifier(parameter)) lastPosition.set(parameter.name, index);
+  });
   const bound = call.arguments.map((_, index) => {
     if ((spread >= 0 && index >= spread) || (rest >= 0 && index >= rest))
       return undefined;
     const parameter = parameters[index];
     if (!t.isIdentifier(parameter)) return null;
-    // A later duplicate parameter name shadows this one.
-    return parameters
-      .slice(index + 1)
-      .some((later) => t.isIdentifier(later, { name: parameter.name }))
-      ? null
-      : parameter;
+    return lastPosition.get(parameter.name) === index ? parameter : null;
   });
   return { call, bound };
 };
