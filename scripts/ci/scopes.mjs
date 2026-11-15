@@ -552,7 +552,7 @@ const PATH_SCOPES = {
     "src/application/WebNetworkCapture*",
     "src/composition/webNetworkCaptures.ts",
     "src/cli/webNetworkCaptureCommands.ts",
-    "src/server/registerWebNetworkCaptureTool.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/server/toolRegistrationOptions.ts",
     "src/cli.ts",

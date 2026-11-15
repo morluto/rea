@@ -46,7 +46,6 @@ import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
 import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
-import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
@@ -583,14 +582,7 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
-      registerWebNetworkCaptureTool(
-        server,
-        webNetworkCapture,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
+      registerServiceTools(server, { webNetworkCapture }, contractTools);
     },
     electron: () =>
       registerElectronTools(server, {
