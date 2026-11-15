@@ -1,4 +1,3 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { processArgumentSchema } from "../process/processArgument.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -12,6 +11,9 @@ import {
 } from "../localPath.js";
 
 const argument = processArgumentSchema.min(1).max(8192);
+/** TShark parses `-c` as a C `int` packet count; this is not a timer delay. */
+const MAX_TSHARK_PACKET_COUNT = 2_147_483_647;
+
 const captureInputShape = z.strictObject({
   producer_limits: boundedProducerLimitsSchema,
   path: localPathStringSchema.describe("Absolute local capture path"),
@@ -37,7 +39,7 @@ const captureInputShape = z.strictObject({
     .number()
     .int()
     .positive()
-    .max(MAX_NODE_TIMER_DELAY_MS)
+    .max(MAX_TSHARK_PACKET_COUNT)
     .nullable()
     .default(null)
     .describe(

@@ -179,6 +179,8 @@ check(
     "src/android/JadxAnalysis.ts",
     // JVM `-XX:ActiveProcessorCount`: a Java int processor count.
     "src/android/JadxConfiguration.ts",
+    // TShark `-c` packet count: a C int, not a duration.
+    "src/domain/captures/packetCapture.ts",
     // DEX static `int` value range.
     "src/domain/android/androidAnalysis.ts",
     // Signed 32-bit bitmask operand range.
