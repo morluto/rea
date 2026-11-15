@@ -311,9 +311,15 @@ export const clientRegistrationSourceFacts = (
   return ok({ ...parsed, connectionFields: fields });
 };
 
+const inheritsGooseEnvironmentAlias = (inherited: unknown): boolean =>
+  typeof inherited === "object" &&
+  inherited !== null &&
+  Object.hasOwn(inherited, "env");
+
 /** Explicit launcher replacement preserves policy and native environment, while
  * superseding connection selectors that could keep the old remote transport.
- * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+ * Goose's single env alias becomes envs unless a lower layer declares the
+ * alias; declaring both remains ambiguous. */
 export const replaceClientRegistrationLauncher = (
   target: ClientRegistrationTarget,
   command: readonly string[],
@@ -360,8 +366,13 @@ export const replaceClientRegistrationLauncher = (
           ],
         }),
       );
-    retained.envs = alias.data;
-    delete retained.env;
+    // Goose overlays each field separately, so an alias a lower layer also
+    // declares keeps its spelling; `envs` beside it would be ambiguous.
+    if (inheritsGooseEnvironmentAlias(inherited)) retained.env = alias.data;
+    else {
+      retained.envs = alias.data;
+      delete retained.env;
+    }
   }
   const defaults = clientRegistrationEntry(dialect, command, {});
   // Layered native clients inherit policy without copying it into the edited
@@ -372,6 +383,10 @@ export const replaceClientRegistrationLauncher = (
       if (
         !launcherConnectionKeys.has(key) &&
         (Object.hasOwn(inheritedPolicy.data, key) ||
+          // Goose reads its `env` alias as `envs`.
+          (dialect === "goose" &&
+            key === "envs" &&
+            inheritsGooseEnvironmentAlias(inherited)) ||
           (dialect === "opencode" &&
             key === "enabled" &&
             Object.hasOwn(inheritedPolicy.data, "disabled")))
