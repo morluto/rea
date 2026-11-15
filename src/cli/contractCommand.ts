@@ -659,7 +659,9 @@ export const registerTargetRoutedCommand = (
             opening: opening.value,
             inputBinding: description.inputBinding,
             delivery: admitted.value.delivery,
-            cliOptions: description.cliOptionValues(values),
+            cliOptions: description.cliOptionValues(
+              withCliOnlyDefaults(description, values),
+            ),
           });
         }),
       );
@@ -669,6 +671,23 @@ export const registerTargetRoutedCommand = (
   registered.push(...routes.map(({ description }) => description));
   routedDescriptions.set(cli, registered);
 };
+
+/**
+ * Routing saw CLI-only options without their defaults; the chosen route's
+ * handler receives each omitted one's default, which no contract parse
+ * would otherwise restore.
+ */
+const withCliOnlyDefaults = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => ({
+  ...values,
+  ...Object.fromEntries(
+    description.cliOnlyOptions.flatMap(({ key, schema }) =>
+      values[key] === undefined ? [[key, schema.parse(undefined)]] : [],
+    ),
+  ),
+});
 
 const kebabCase = (key: string): string =>
   key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
