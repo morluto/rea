@@ -18,6 +18,7 @@ export interface AnalysisSettingValues {
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
   readonly "bridge.max_request_bytes": number;
+  readonly "bridge.max_reply_bytes": number;
   readonly "debugger.command_deadline_ms": number;
   readonly "debugger.max_command_output_bytes": number;
   readonly "hopper.caller_scan_budget_ms": number;

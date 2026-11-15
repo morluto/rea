@@ -197,6 +197,18 @@ export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
 export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536_870_888 - 1;
 
+/**
+ * Hopper and Ghidra reply line ceiling, in UTF-8 bytes before the framing LF.
+ * The client refuses a longer line, or an unterminated tail past it, instead
+ * of retaining it. The default is far above the largest reply the packaged
+ * bridge fixtures produce (see `bridgeMaxReplyBytes.ts`). The floor admits the
+ * bridge handshake and a full inventory page. A line decodes to at most as many
+ * UTF-16 code units as it has bytes, so the maximum is Node's string ceiling.
+ */
+export const DEFAULT_BRIDGE_MAX_REPLY_BYTES = 256 * 1024 * 1024;
+export const MINIMUM_BRIDGE_MAX_REPLY_BYTES = 1024 * 1024;
+export const MAXIMUM_BRIDGE_MAX_REPLY_BYTES = NODE_MAX_STRING_LENGTH;
+
 /** MCP client SDK default request timeout. JEB uses it when the setting is unset. */
 export const DEFAULT_JEB_MCP_TIMEOUT_MS = 60_000;
 

@@ -1,4 +1,7 @@
-import { Utf8NdjsonDecodingError } from "../process/Utf8NdjsonLineBuffer.js";
+import {
+  JsonLineBridgeReader,
+  type JsonLineBridgeFailure,
+} from "../process/JsonLineBridgeReader.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -84,13 +87,19 @@ import {
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import {
+  admitBridgeReplyLimit,
+  bridgeReplyOversizeError,
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
+import {
   HopperRequestQueue,
   type HopperRequestActivity,
 } from "./HopperRequestQueue.js";
-import { HopperResponseStream } from "./HopperResponseStream.js";
 import {
   type HopperBridgeEvent,
   type HopperBridgeMessage,
+  hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
 
@@ -113,6 +122,8 @@ export interface HopperClientOptions {
     | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling. Omitted uses the 256 MiB default. */
+  readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
   readonly logger?: Logger;
 }
@@ -146,7 +157,10 @@ export class HopperClient {
   > &
     HopperClientOptions;
   readonly #requests: HopperRequestQueue;
-  readonly #responses: HopperResponseStream;
+  readonly #responses: JsonLineBridgeReader<
+    HopperBridgeMessage,
+    HopperRemoteError
+  >;
   readonly #logger: Logger;
   #socket: Socket | undefined;
   readonly #resources: HopperOwnedResources = {
@@ -157,6 +171,8 @@ export class HopperClient {
     externalApplication: undefined,
   };
   #token: string | undefined;
+  /** Reply ceiling admitted with the latest request; the default before any. */
+  #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #closing = false;
@@ -170,20 +186,10 @@ export class HopperClient {
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   readonly #onSocketData = (chunk: Buffer): void => {
-    try {
-      this.#responses.push(chunk);
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.push(chunk);
   };
   readonly #onSocketEnd = (): void => {
-    try {
-      this.#responses.finish();
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.finish();
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -277,11 +283,13 @@ export class HopperClient {
         });
       },
     );
-    this.#responses = new HopperResponseStream({
-      accept: (message) => this.#acceptBridgeMessage(message),
-      hasQueued: (id) => this.#requests.hasQueued(id),
-      nextRequestId: () => this.#nextId,
-      abort: (message, cause) => this.#abortProtocol(message, cause),
+    this.#responses = new JsonLineBridgeReader({
+      envelope: hopperReplyEnvelope,
+      maxReplyBytes: () => this.#replyLimit.maximumBytes,
+      deliver: (message) => this.#acceptBridgeMessage(message),
+      wasSent: (id) => id < this.#nextId && !this.#requests.hasQueued(id),
+      rejectInFlight: (cause) => this.#requests.failActive(cause),
+      fail: (failure) => this.#abortReplyStream(failure),
     });
   }
 
@@ -1126,6 +1134,9 @@ export class HopperClient {
     // Count escaped JSON before the request can wait in the FIFO. A rejected
     // payload is not serialized, and an admitted one is serialized only when
     // it reaches the wire.
+    this.#replyLimit = admitBridgeReplyLimit(
+      this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+    );
     const measured = jsonValueByteLength(
       payloadValue,
       this.#options.bridgeMaxRequestBytes.maximumBytes,
@@ -1266,6 +1277,38 @@ export class HopperClient {
           launcherFailure: this.#launcherOutcome(false),
         }),
       );
+    }
+  }
+
+  #abortReplyStream(failure: JsonLineBridgeFailure): void {
+    switch (failure.kind) {
+      case "reply_oversize":
+        this.#failAll(
+          bridgeReplyOversizeError(
+            "Hopper",
+            this.#replyLimit,
+            failure.observedBytes,
+          ),
+        );
+        this.#socket?.destroy();
+        return;
+      case "utf8":
+        this.#abortProtocol(
+          "Hopper bridge response is not valid UTF-8",
+          failure.cause,
+        );
+        return;
+      case "envelope":
+        this.#abortProtocol(failure.cause.message, failure.cause);
+        return;
+      case "unknown_id":
+        this.#abortProtocol("Hopper returned an unknown response id");
+        return;
+      case "connection_rejected":
+        this.#abortProtocol(
+          `Hopper rejected the connection: ${failure.cause.message}`,
+          failure.cause,
+        );
     }
   }
 

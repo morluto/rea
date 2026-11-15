@@ -182,6 +182,16 @@ export class HopperRequestQueue {
     return true;
   }
 
+  /**
+   * Fail the request on the wire with a rejection the bridge could not
+   * attribute by id. False when no request is on the wire.
+   */
+  failActive(error: HopperError): boolean {
+    const active = this.#active;
+    if (active === undefined || !active.transmitted) return false;
+    return this.accept(active.id, err(error));
+  }
+
   /** Fail the active wire request and every request still waiting in the FIFO. */
   failAll(error: HopperError): void {
     const active = this.#active;

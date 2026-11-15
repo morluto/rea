@@ -334,6 +334,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
       readStartupTimeoutSource: () => this.config.hopperStartupTimeoutSource,
       bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+      bridgeMaxReplyBytes: this.config.bridgeMaxReplyBytes,
       logger: this.logger.child({ layer: "bridge" }),
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),

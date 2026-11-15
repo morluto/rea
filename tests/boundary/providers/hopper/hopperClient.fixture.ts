@@ -130,11 +130,13 @@ export const trackHopperClient = (client: HopperClient): HopperClient => {
 /** Start a real fixture session with test-scoped cleanup. */
 export const startHopperFixtureClient = async (
   launcher = new HopperFixtureLauncher(),
+  options: Partial<ConstructorParameters<typeof HopperClient>[0]> = {},
 ): Promise<HopperClient> => {
   const client = trackHopperClient(
     new HopperClient({
       launcher,
       startupTimeoutMs: 10_000,
+      ...options,
     }),
   );
   const started = await client.start();

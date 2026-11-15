@@ -1,5 +1,9 @@
 import type { Socket } from "node:net";
 
+import {
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
@@ -32,7 +36,10 @@ type WireHarness = {
   readonly wire: GhidraWire;
 };
 
-const harness = (ceiling: BridgeMaxRequestBytes): WireHarness => {
+const harness = (
+  ceiling: BridgeMaxRequestBytes,
+  replyCeiling: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY,
+): WireHarness => {
   const writes: string[] = [];
   const socket = {
     destroyed: false,
@@ -57,9 +64,31 @@ const harness = (ceiling: BridgeMaxRequestBytes): WireHarness => {
       logger: pino({ level: "silent" }),
       failure,
       bridgeMaxRequestBytes: ceiling,
+      bridgeMaxReplyBytes: replyCeiling,
     }),
   };
 };
+
+describe("GhidraWire reply ceiling", () => {
+  it("admits the reply ceiling in the request's settings context", async () => {
+    let override = 2 * 1024 * 1024;
+    const { wire } = harness(limit(8192), {
+      get maximumBytes() {
+        return override;
+      },
+      source: "runtime",
+    });
+    expect(wire.replyLimit()).toEqual(DEFAULT_BRIDGE_MAX_REPLY);
+
+    void wire.request("list_strings", {}, { timeoutMs: 1 });
+    override = 4 * 1024 * 1024;
+
+    expect(wire.replyLimit()).toEqual({
+      maximumBytes: 2 * 1024 * 1024,
+      source: "runtime",
+    });
+  });
+});
 
 describe("GhidraWire request ceiling", () => {
   it("refuses escaped oversized input before encoding, pending registration or write", async () => {
