@@ -1,5 +1,7 @@
 import type { Locator, Page } from "playwright-core";
 
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+
 import {
   SAVED_URL_PLACEHOLDER,
   type BrowserScenarioAction,
@@ -17,6 +19,58 @@ type ScenarioLocator = Extract<
   BrowserScenarioAction,
   { readonly locator: unknown }
 >["locator"];
+
+const OPERATION = "capture_browser_scenario" as const;
+
+const describeScenarioLocator = (locator: ScenarioLocator): string => {
+  switch (locator.kind) {
+    case "test_id":
+      return `test_id ${JSON.stringify(locator.value)}`;
+    case "role":
+      return `role ${JSON.stringify(locator.role)} with accessible name ${JSON.stringify(locator.name)}`;
+    case "css":
+      return `css ${JSON.stringify(locator.selector)}`;
+  }
+};
+
+const probeLocatorMatchCount = async (
+  page: Page,
+  locator: ScenarioLocator,
+): Promise<number | undefined> => {
+  try {
+    return await resolveLocator(page, locator).count();
+  } catch {
+    return undefined;
+  }
+};
+
+const locatorFailure = (
+  locator: ScenarioLocator,
+  cause: unknown,
+): BrowserObservationError =>
+  new BrowserObservationError(OPERATION, "locator_zero_match", {
+    cause,
+    detail: `The step's locator ${describeScenarioLocator(locator)} matched 0 elements.`,
+    remediationAction:
+      "Verify the locator matches at least one visible element in the current page; accessibility capture lists the accessible name to match, and the name must match exactly when role is used.",
+  });
+
+/** Surface a typed zero-match failure instead of a generic deadline when the locator verifies empty. */
+const withLocatorZeroMatchFallback = async <T>(
+  input: PerformActionInput,
+  run: () => Promise<T>,
+): Promise<T> => {
+  const locator = (input.action as { readonly locator?: ScenarioLocator })
+    .locator;
+  try {
+    return await run();
+  } catch (cause: unknown) {
+    if (locator === undefined) throw cause;
+    const count = await probeLocatorMatchCount(input.page, locator);
+    if (count === 0) throw locatorFailure(locator, cause);
+    throw cause;
+  }
+};
 
 const resolveLocator = (page: Page, locator: ScenarioLocator): Locator => {
   switch (locator.kind) {
@@ -90,11 +144,13 @@ export const performPlaywrightScenarioAction = async (
     case "click": {
       const saving = savingResponse(input, action, timeout);
       try {
-        await resolveLocator(page, action.locator).click({
-          ...options,
-          button: action.button,
-          clickCount: action.click_count,
-        });
+        await withLocatorZeroMatchFallback(input, () =>
+          resolveLocator(page, action.locator).click({
+            ...options,
+            button: action.button,
+            clickCount: action.click_count,
+          }),
+        );
         await saving?.saved();
       } finally {
         saving?.stop();
@@ -102,15 +158,19 @@ export const performPlaywrightScenarioAction = async (
       return;
     }
     case "fill":
-      await resolveLocator(page, action.locator).fill(
-        resolveValue(action.value, secrets),
-        options,
+      await withLocatorZeroMatchFallback(input, () =>
+        resolveLocator(page, action.locator).fill(
+          resolveValue(action.value, secrets),
+          options,
+        ),
       );
       return;
     case "press": {
       const saving = savingResponse(input, action, timeout);
       try {
-        await resolveLocator(page, action.locator).press(action.key, options);
+        await withLocatorZeroMatchFallback(input, () =>
+          resolveLocator(page, action.locator).press(action.key, options),
+        );
         await saving?.saved();
       } finally {
         saving?.stop();
@@ -118,16 +178,22 @@ export const performPlaywrightScenarioAction = async (
       return;
     }
     case "select_option":
-      await resolveLocator(page, action.locator).selectOption(
-        resolveValue(action.value, secrets),
-        options,
+      await withLocatorZeroMatchFallback(input, () =>
+        resolveLocator(page, action.locator).selectOption(
+          resolveValue(action.value, secrets),
+          options,
+        ),
       );
       return;
     case "check":
-      await resolveLocator(page, action.locator).check(options);
+      await withLocatorZeroMatchFallback(input, () =>
+        resolveLocator(page, action.locator).check(options),
+      );
       return;
     case "uncheck":
-      await resolveLocator(page, action.locator).uncheck(options);
+      await withLocatorZeroMatchFallback(input, () =>
+        resolveLocator(page, action.locator).uncheck(options),
+      );
       return;
     case "wait_for":
       await resolveLocator(page, action.locator).waitFor({

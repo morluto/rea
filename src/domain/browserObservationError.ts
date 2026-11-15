@@ -92,6 +92,8 @@ const observationFailureMessage = (
     return `${operation} was cancelled. Collected observations and cleanup status are reported when available.`;
   if (reason === "timeout")
     return `${operation} exceeded its execution deadline. Review the target's responsiveness and retained observations before retrying.`;
+  if (reason === "locator_zero_match")
+    return `${operation} could not find an element for the selected locator. Check the locator against the captured accessibility tree; the accessible name must match exactly.`;
   if (reason === "endpoint_unreachable")
     return `${operation} could not reach the selected loopback debugging endpoint. Verify that the target process is running with debugging enabled and that the endpoint's port matches it, then retry.`;
   if (reason === "target_not_found")

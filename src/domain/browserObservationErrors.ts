@@ -36,4 +36,5 @@ export type BrowserObservationFailureReason =
   | "application_already_running"
   | "cleanup_failed"
   | "cancelled"
-  | "timeout";
+  | "timeout"
+  | "locator_zero_match";
