@@ -50,7 +50,10 @@ export class BoundedListCollector<T> {
 export const describeBoundedList = (
   list: BoundedList<string>,
   separator: string,
-): string =>
-  list.omitted > 0
-    ? `${list.items.join(separator)}${separator}and ${String(list.omitted)} more`
-    : list.items.join(separator);
+): string => {
+  if (list.omitted === 0) return list.items.join(separator);
+  const rest = `and ${String(list.omitted)} more`;
+  return list.items.length === 0
+    ? rest
+    : `${list.items.join(separator)}${separator}${rest}`;
+};

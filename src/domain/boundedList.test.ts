@@ -32,4 +32,8 @@ it("names the retained items and counts the rest", () => {
   expect(describeBoundedList(boundedList(["a", "b", "c", "d"], 2), ", ")).toBe(
     "a, b, and 2 more",
   );
+  // Nothing retained: no leading separator.
+  expect(describeBoundedList(boundedList(["a", "b"], 0), ", ")).toBe(
+    "and 2 more",
+  );
 });
