@@ -47,6 +47,9 @@ export const registerPcapCommands = (
         "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
       positionals: ["path"],
       callerPaths: ["path"],
+      fields: {
+        path: { description: "Local pcap or pcapng capture file to inspect" },
+      },
       omit: {
         detail:
           "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
