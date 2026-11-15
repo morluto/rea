@@ -95,7 +95,10 @@ export interface IdaMcpConnection {
 
 export type IdaMcpConnectionDependencies = Readonly<{
   createDiagnosticRedactor?: typeof createIdaDiagnosticRedactor;
-  /** Host platform that selects the Windows launch resolution. */
+  /**
+   * Host platform that selects the Windows launch resolution. Composition
+   * passes the running host; omitted, stdio registrations launch directly.
+   */
   platform?: NodeJS.Platform;
   /** Owned process acquisition for a stdio registration. */
   launcher?: OwnedMcpLauncher;
@@ -129,7 +132,7 @@ const IDA_STDERR_TAIL_BYTES = 16_384;
  */
 const idaStdioLauncher =
   (
-    platform: NodeJS.Platform,
+    platform: NodeJS.Platform | undefined,
     launch: OwnedMcpLauncher,
     timeoutMs: number,
   ): OwnedMcpLauncher =>
@@ -693,7 +696,7 @@ export const createIdaMcpConnection = (
             capturedOutput: capturedTransportOutput,
           },
           idaStdioLauncher(
-            dependencies.platform ?? process.platform,
+            dependencies.platform,
             dependencies.launcher ?? spawnOwnedProviderProcess,
             config.timeoutMs,
           ),
