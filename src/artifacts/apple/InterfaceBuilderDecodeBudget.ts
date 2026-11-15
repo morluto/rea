@@ -12,16 +12,6 @@ export class InterfaceBuilderDecodeBudgetExceeded extends Error {
   }
 }
 
-/** Map shared plist preflight limits to Interface Builder's public reason. */
-export const interfaceBuilderDecodeBudgetFailure = (
-  _kind: "cycle" | "depth" | "expansion",
-  message: string,
-): Error =>
-  new InterfaceBuilderDecodeBudgetExceeded(
-    "aggregate_decode_budget_exhausted",
-    message,
-  );
-
 /** Shared byte budget for decoder records and projected archive data. */
 export class InterfaceBuilderDecodeBudget {
   readonly #initialBytes: number;

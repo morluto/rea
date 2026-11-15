@@ -216,7 +216,7 @@ export const skillDestinationSelection = (
   home: string,
   clientIds: readonly string[] | undefined,
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): {
   readonly destinations: readonly SkillDestination[];
   readonly issues: readonly SkillPathIssue[];
@@ -246,7 +246,7 @@ export const skillDestinations = (
   home: string,
   clientIds: readonly string[] | undefined,
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): readonly SkillDestination[] => {
   const selection = skillDestinationSelection(
     home,
@@ -263,7 +263,7 @@ export const skillDestinations = (
 export const existingSkillDestinations = async (
   home: string,
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   resources?: ArtifactResourceScope,
 ): Promise<{
   readonly destinations: readonly SkillDestination[];
@@ -400,7 +400,7 @@ export const validateCanonicalSkillDirectories = async (
   home: string,
   clientIds: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<Result<void, SetupSkillInstallError>> => {
   const selection = skillDestinationSelection(
     home,
@@ -555,7 +555,7 @@ export const canonicalSkillNeedsInstall = async (
   home: string,
   clientIds: readonly string[] = [],
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   resources?: ArtifactResourceScope,
 ): Promise<boolean> => {
   try {
@@ -615,7 +615,7 @@ export const installCanonicalSkill = async (
   home: string,
   clientIds: readonly string[] = [],
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   operations: SkillInstallFileOperations = systemSkillInstallFileOperations,
   resources?: ArtifactResourceScope,
 ): Promise<SkillInstallResult> => {
@@ -728,7 +728,7 @@ export const readInstalledSkillIdentity = async (
   home: string,
   clientIds: readonly string[] | undefined,
   environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   resources?: ArtifactResourceScope,
 ): Promise<InstalledSkillIdentity | undefined> => {
   const inspection = await inspectCanonicalSkill(

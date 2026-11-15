@@ -68,6 +68,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       "memory",
       `The parent reserved its remaining result capacity for static observations; semantic analysis of ${file.path} was not started`,
       { semantic_result_budget_bytes: 0 },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("semantic");
   const ir = await completeJavaScriptAnalysisSteps(
@@ -93,6 +94,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
         semantic_result_budget_bytes: resultBudgetBytes,
         module_transfer_bytes: measured.bytes,
       },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(

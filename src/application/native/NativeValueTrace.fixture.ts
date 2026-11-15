@@ -75,6 +75,12 @@ export const nativeFlowDossier = (
     native_value_flow: {
       available: true,
       provenance: "ghidra-high-pcode",
+      limits: {
+        max_operations: 3_000,
+        max_inputs_per_operation: 64,
+        max_edges: 12_000,
+      },
+      limits_reached: [],
       operations,
       def_use: [],
       effects: [],

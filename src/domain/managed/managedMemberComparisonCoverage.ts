@@ -233,7 +233,7 @@ export const comparisonLimitations = (
     [left, right].some((report) =>
       report.methods.some(
         ({ parameter_defaults: defaults }) =>
-          defaults === null || (defaults?.length ?? 0) > 0,
+          defaults === null || defaults.length > 0,
       ),
     )
   )
@@ -285,10 +285,6 @@ export const comparisonLimitations = (
   if (!hasSignatureResolution(left) || !hasSignatureResolution(right))
     limitations.push(
       "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
-    );
-  if (left.nesting_read === null || right.nesting_read === null)
-    limitations.push(
-      "At least one managed member observation predates enclosing-name identity. The legacy bare-name comparison does not establish the enclosing owner of a nested type.",
     );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(

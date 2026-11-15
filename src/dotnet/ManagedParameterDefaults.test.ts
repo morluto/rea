@@ -441,16 +441,14 @@ it("projects parameter defaults from retained method rows", () => {
   });
 });
 
-it("does not invent inspected parameter defaults on historical member Evidence", () => {
+it("refuses member Evidence that omits parameter defaults", () => {
   const result = inspect(configure(0x1010, []));
   const methods = result.methods.map(
     ({ parameter_defaults: _defaults, ...method }) => method,
   );
-  const historical = managedMemberInspectionSchema.parse({
-    ...result,
-    methods,
-  });
-  expect(historical.methods[0]).not.toHaveProperty("parameter_defaults");
+  expect(
+    managedMemberInspectionSchema.safeParse({ ...result, methods }).success,
+  ).toBe(false);
 });
 
 it("discloses that member comparison does not examine parameter defaults", () => {

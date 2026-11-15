@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+/**
+ * Which plugin source a session runs: the packaged copy, a different one, or
+ * unknown when the plugin predates source identity.
+ */
+export const cutterBridgeSourceSchema = z.enum([
+  "packaged",
+  "modified",
+  "unknown",
+]);
+export type CutterBridgeSource = z.infer<typeof cutterBridgeSourceSchema>;
+
 /** Observed Cutter session identity without bridge transport credentials. */
 export const cutterSessionSchema = z.strictObject({
   session_id: z.string().uuid(),
@@ -8,6 +19,12 @@ export const cutterSessionSchema = z.strictObject({
   current_file: z.string().nullable(),
   cutter_version: z.string().nullable(),
   identity_status: z.literal("partial"),
+  bridge_source: cutterBridgeSourceSchema,
+  /**
+   * How to run the packaged plugin, present when `bridge_source` is not
+   * `packaged`: the session's plugin is unknown or differs from this release.
+   */
+  bridge_source_recovery: z.string().exactOptional(),
 });
 
 /** Discovery facts retained independently of descriptor cleanup. */

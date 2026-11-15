@@ -13,9 +13,10 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
@@ -63,9 +64,10 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,

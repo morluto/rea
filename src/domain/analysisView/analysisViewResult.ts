@@ -774,11 +774,11 @@ export const androidMethodSummaryViewResultSchema = z.strictObject({
   summary: androidMethodSummarySchema,
 });
 
-/** Legacy manifest views keep their original shape; new facets are explicit. */
+/** One page of the retained manifest text. */
 export const androidManifestViewResultSchema = z.strictObject({
   ...viewResultBase,
   kind: z.literal("android"),
-  facet: z.literal("manifest").optional(),
+  facet: z.literal("manifest"),
   view: androidManifestViewRequestSchema,
   item: androidManifestViewItemSchema,
   parent_operation: z.literal("inspect_android_package"),

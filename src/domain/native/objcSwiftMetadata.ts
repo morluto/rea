@@ -213,7 +213,7 @@ const objcMethodSymbolOwner = (owner: string) => {
   };
 };
 
-/** The accepted provider spelling, shared by new and retained symbol records. */
+/** The accepted provider method-symbol spelling. */
 const parseObjcMethodSymbol = (symbol: string) => {
   const match = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(symbol);
   if (match?.[1] === undefined || !match[2] || !match[3]) return undefined;
@@ -223,39 +223,6 @@ const parseObjcMethodSymbol = (symbol: string) => {
     selector: match[3],
     method_type: match[1] === "+" ? ("class" as const) : ("instance" as const),
   };
-};
-
-/** Retained symbol-only records predate separate category ownership. */
-export const objcImplementationClassName = (
-  implementation: ObjcDispatchImplementation,
-): string => {
-  if (
-    implementation.category !== undefined ||
-    implementation.decode.reason !== "symbol_name_only"
-  )
-    return implementation.class_name;
-  const symbols = implementation.evidence.filter(
-    ({ kind }) => kind === "symbol",
-  );
-  // Conflicting or absent source facts cannot establish category qualification.
-  if (
-    symbols.length === 0 ||
-    symbols.some((item) => {
-      const prefix = "Provider symbol ";
-      if (!item.description.startsWith(prefix)) return true;
-      const parsed = parseObjcMethodSymbol(
-        item.description.slice(prefix.length),
-      );
-      return (
-        parsed === undefined ||
-        parsed.reported_owner !== implementation.class_name ||
-        parsed.selector !== implementation.selector ||
-        parsed.method_type !== implementation.method_type
-      );
-    })
-  )
-    return implementation.class_name;
-  return objcMethodSymbolOwner(implementation.class_name).class_name;
 };
 
 /** Project class declarations without selecting an ambiguous or unrepresentable address. */
@@ -315,8 +282,8 @@ export type MachoImportBinding = z.infer<typeof machoImportBindingSchema>;
 /** Swift protocol conformance and its associated witness-table location. */
 export const swiftConformanceSchema = z.strictObject({
   type_name: z.string().min(1).nullable(),
-  /** Raw three-bit Swift ABI type-reference kind; absent in older Evidence. */
-  type_reference_kind: z.number().int().min(0).max(7).optional(),
+  /** Raw three-bit Swift ABI type-reference kind. */
+  type_reference_kind: z.number().int().min(0).max(7),
   /** Address of the descriptor, class-name string, or resolved ObjC class reference. */
   type_reference_target: nativeMetadataLocationSchema.optional(),
   type_binding: machoImportBindingSchema.nullable().optional(),
@@ -587,8 +554,8 @@ export const inspectNativeDispatchMetadata = (
         category,
       } = method;
       // The provider's method-symbol grammar owns category qualification. Binary
-      // class names and historical records are identities, not display strings
-      // for downstream consumers to split. Keep the original symbol in Evidence.
+      // class names are identities, not display strings for downstream
+      // consumers to split. Keep the original symbol in Evidence.
       const key = parsedAddress.success
         ? compositeKey([
             className,

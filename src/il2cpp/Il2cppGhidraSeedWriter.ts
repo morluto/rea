@@ -12,9 +12,9 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -41,9 +41,7 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
     options?: ExecutionOptions,
   ): Promise<Result<void, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     if (!isAbsolute(output.path))
       return err(
         invalid(

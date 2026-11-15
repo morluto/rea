@@ -523,7 +523,7 @@ export const systemMacHopperInstallHost = (
     async minimumSystemVersion(appPath) {
       const plist = posix.join(appPath, "Contents", "Info.plist");
       const declared = minimumSystemVersionSchema.safeParse(
-        decodeInfoPlistValue(await readFile(plist)),
+        decodeInfoPlistValue(await readFile(plist), ["LSMinimumSystemVersion"]),
       );
       if (!declared.success)
         throw new TypeError(
