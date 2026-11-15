@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   chmod,
   mkdir,
@@ -465,31 +466,21 @@ it.skipIf(process.platform === "win32")(
       { message: "busy", details: {} },
     );
     onTestFinished(() => resources.close());
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    if (platform === undefined) throw new Error("Missing host descriptor");
-    let prepared: Awaited<ReturnType<typeof preparePcapNativeBound>>;
-    try {
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "linux",
-      });
-      prepared = await preparePcapNativeBound(
-        { REA_TSHARK_PRLIMIT_COMMAND: selected },
-        resources,
-        async (_selected, args) => {
-          const stdout =
-            args[0] === "--help"
-              ? " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]"
-              : "prlimit from util-linux 2.38.1";
-          return {
-            stdout,
-            capturedOutput: { stdout, stderr: "", truncated: false },
-          };
-        },
-      );
-    } finally {
-      Object.defineProperty(process, "platform", platform);
-    }
+    const prepared = await preparePcapNativeBound(
+      "linux",
+      { REA_TSHARK_PRLIMIT_COMMAND: selected },
+      resources,
+      async (_selected, args) => {
+        const stdout =
+          args[0] === "--help"
+            ? " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]"
+            : "prlimit from util-linux 2.38.1";
+        return {
+          stdout,
+          capturedOutput: { stdout, stderr: "", truncated: false },
+        };
+      },
+    );
     let refuseCleanup = false;
     let retained: ProviderProcessSupervisor | undefined;
     onTestFinished(async () => {
@@ -499,6 +490,7 @@ it.skipIf(process.platform === "win32")(
     const execute = () =>
       runPcapCommand({
         operation: "inspect_pcap_capture",
+        platform: HOST_PLATFORM.platform,
         command: "/bin/echo",
         arguments: ["selected limiter"],
         limits: { timeoutMs: 10_000, maxOutputBytes: 1024 },
