@@ -5,7 +5,7 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,47 @@ export interface PwndbgCoreInspection {
   readonly finalization: AnalysisError | undefined;
 }
 
+/** Why a configured debugger path cannot be used; a host error is its cause. */
+interface ConfiguredPathRefusal {
+  readonly reason: string;
+  readonly cause?: unknown;
+}
+
+const hostPathRefusal = (cause: unknown): ConfiguredPathRefusal => ({
+  reason: cause instanceof Error ? cause.message : String(cause),
+  cause,
+});
+
+/**
+ * Check one caller-supplied path, or return why it cannot be used.
+ * Cancellation between host checks propagates instead of becoming a refusal.
+ */
+const configuredPathRefusal = async (
+  path: string,
+  kind: "file" | "directory",
+  mode: number,
+  checkCancelled: () => void,
+): Promise<ConfiguredPathRefusal | undefined> => {
+  if (!isAbsolute(path))
+    return { reason: "Expected an absolute caller-supplied path." };
+  try {
+    await access(path, mode);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  let information: Stats;
+  try {
+    information = await stat(path);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  return (kind === "file" ? information.isFile() : information.isDirectory())
+    ? undefined
+    : { reason: `Expected a ${kind}.` };
+};
+
 /** Add mapping candidates from an owned core-only debugger, using the existing snapshot. */
 export const inspectPwndbgCore = async ({
   environment,
@@ -111,25 +152,18 @@ export const inspectPwndbgCore = async ({
     ["REA_PWNDBG_GDBINIT", entry, "file"],
     ["REA_PWNDBG_VENV_PATH", venv, "directory"],
   ] as const) {
-    try {
-      checkCancelled();
-      if (!isAbsolute(path))
-        throw new Error("Expected an absolute caller-supplied path.");
-      const mode = key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK;
-      await access(path, mode);
-      checkCancelled();
-      const information = await stat(path);
-      checkCancelled();
-      if (kind === "file" ? !information.isFile() : !information.isDirectory())
-        throw new Error(`Expected a ${kind}.`);
-      checkCancelled();
-    } catch (cause: unknown) {
-      if (cause instanceof AnalysisCancelledError) throw cause;
+    checkCancelled();
+    const refusal = await configuredPathRefusal(
+      path,
+      kind,
+      key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK,
+      checkCancelled,
+    );
+    if (refusal !== undefined)
       throw unavailable(
-        `${key} is unavailable at ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
-        cause,
+        `${key} is unavailable at ${path}: ${refusal.reason}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
+        refusal.cause,
       );
-    }
   }
   checkCancelled();
   const stage = join(rootPath, "debugger");

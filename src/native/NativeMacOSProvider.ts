@@ -1,5 +1,6 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -113,6 +114,7 @@ import {
   type NativeCommandInvocation,
 } from "../domain/native/nativeInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   NativeCommandFailure,
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
@@ -271,7 +273,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   private get target(): BinaryTarget {
     if (this.activeTarget === undefined)
-      throw new Error("This provider client has no executable target");
+      throw invariantViolation("This provider client has no executable target");
     return this.activeTarget;
   }
 
@@ -1441,7 +1443,9 @@ class NativeMacOSClient implements AnalysisClient {
               );
               if (size !== null) {
                 if (selected === undefined)
-                  throw new TypeError("Selected Mach-O slice is unavailable");
+                  throw invariantViolation(
+                    "Selected Mach-O slice is unavailable",
+                  );
                 assertSelectedMachoSlice(source, selected, binary);
               }
               return binary;
@@ -1705,11 +1709,19 @@ const closeNativeFileScope = async (
   }
 };
 
+/**
+ * Project a producer failure. A broken internal assumption is a REA defect, not
+ * native output, so it is rethrown rather than reported as output parsing.
+ */
 const nativeOutputFailure = (
   operation: AnalysisOperation,
   cause: unknown,
-): AnalysisError =>
-  new AnalysisOutputError(operation, "Native output parsing failed", { cause });
+): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return new AnalysisOutputError(operation, "Native output parsing failed", {
+    cause,
+  });
+};
 
 const nativeMachoCompletedFailure = (
   value: unknown,

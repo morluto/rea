@@ -82,14 +82,13 @@ export const readPwntoolsFailureEvidence = async (
       });
       const expected =
         cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ? "M" : "F";
-      if (!reported.bytes.equals(Buffer.from(expected, "ascii")))
-        throw new Error(
-          "Private bridge failure marker does not match the observed exit status.",
-        );
-      marker = {
-        resource: expected === "M" ? "memory" : "file-size",
-        failure: null,
-      };
+      marker = reported.bytes.equals(Buffer.from(expected, "ascii"))
+        ? { resource: expected === "M" ? "memory" : "file-size", failure: null }
+        : {
+            resource: null,
+            failure:
+              "Private bridge failure marker does not match the observed exit status.",
+          };
     } catch (markerFailure: unknown) {
       marker = {
         resource: null,
