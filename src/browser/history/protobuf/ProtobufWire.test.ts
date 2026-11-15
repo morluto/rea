@@ -91,7 +91,11 @@ it("restores SDK encoding after a descriptor string fails UTF-8 decoding", async
     FileDescriptorSetSchema,
     create(FileDescriptorSetSchema, {
       file: [
-        { name: "bad.proto", options: { javaPackage: "unique-invalid-text" } },
+        {
+          name: "bad.proto",
+          messageType: [{ name: "M" }],
+          options: { javaPackage: "unique-invalid-text" },
+        },
       ],
     }),
   );
