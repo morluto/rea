@@ -24,6 +24,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -107,41 +108,57 @@ const targetIdentitySchema = z.object({
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
 });
-const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
-    format: z.enum(
-      formatSchema.options.filter(
-        (format) =>
-          format !== "raw-binary" &&
-          format !== "gamecube-dol" &&
-          format !== "esp-flash-image",
+const targetSchema = z
+  .discriminatedUnion("format", [
+    targetIdentitySchema.extend({
+      format: z.enum(
+        formatSchema.options.filter(
+          (format) =>
+            format !== "raw-binary" &&
+            format !== "gamecube-dol" &&
+            format !== "esp-flash-image",
+        ),
       ),
-    ),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("gamecube-dol"),
-    kind: z.literal("executable"),
-    architecture: z.literal("powerpc"),
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
-    format: z.literal("esp-flash-image"),
-    kind: z.literal("archive"),
-    architecture: z.null(),
-    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-  }),
-]);
+      architecture: architectureSchema
+        .exclude([...RAW_ONLY_ARCHITECTURES])
+        .nullable(),
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("raw-binary"),
+      kind: z.literal("executable"),
+      architecture: binaryArchitectureSchema,
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("gamecube-dol"),
+      kind: z.literal("executable"),
+      architecture: z.literal("powerpc"),
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    // The caller's inputs select how the dump is read, so they are identity.
+    targetIdentitySchema.extend({
+      format: z.literal("esp-flash-image"),
+      kind: z.literal("archive"),
+      architecture: z.null(),
+      flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
+      partition_table_offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(0xffff_ffff)
+        .nullable(),
+    }),
+  ])
+  .superRefine((target, context) => {
+    // Query IDs commit to the kind, so a kind the format cannot have would
+    // admit entries that no live lookup or export of this target can reach.
+    if (target.kind !== BINARY_TARGET_FORMAT_KINDS[target.format])
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: `Snapshot target kind ${target.kind} does not match format ${target.format}`,
+      });
+  });
 const bindingSchema = z
   .object({
     provider: committedProviderSchema,
