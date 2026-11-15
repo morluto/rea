@@ -127,7 +127,7 @@ export const semanticOpaqueGlobalMayHaveChanged = (
  * through aliases even where the original name is shadowed or out of block scope.
  * Without a disjointness proof, consider their enclosing activation and closures.
  * Queries retain no binding-by-eval table. */
-export function* semanticOpaqueBindingEffects(
+function* semanticOpaqueBindingEffects(
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
   kind: "binding" | "reference" = "binding",
@@ -244,7 +244,7 @@ export const semanticOpaqueNameMayHaveChanged = (
 };
 
 /** Declaration assignability is independent of observed explicit writes. */
-export const semanticBindingCanBeRebound = (
+const semanticBindingCanBeRebound = (
   binding: JavaScriptSemanticBindingState,
 ): boolean =>
   binding.mutable ||
@@ -282,6 +282,26 @@ export const opaqueCodeMayReachBindingReference = (
   capturePoint: t.Node | undefined,
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
+
+/**
+ * Opaque sites that may affect a binding, for a report of every effect: direct
+ * evals that may rebind it when its declaration is assignable, then every
+ * direct eval that may reach the object it references (an escape of its whole
+ * value). Timing and path proofs stay with the caller's effect report.
+ */
+export function* semanticOpaqueReferenceEffects(
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<{
+  readonly kind: "binding-write" | "escape";
+  readonly node: t.CallExpression;
+}> {
+  if (semanticBindingCanBeRebound(binding))
+    for (const node of semanticOpaqueBindingEffects(binding, state))
+      yield { kind: "binding-write", node };
+  for (const node of semanticOpaqueBindingEffects(binding, state, "reference"))
+    yield { kind: "escape", node };
+}
 
 const activation = (
   scopeId: string,

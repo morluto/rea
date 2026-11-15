@@ -92,6 +92,15 @@ check(
   ],
 );
 
+// Slice 3: a method read on an intrinsic instance asks one owner, which checks
+// the method, the instance's prototype link and the intrinsic prototypes.
+check(
+  "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
+  files,
+  /referenceMayHaveChangedAt\([^;]*\["__proto__"\]/u,
+  ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
+);
+
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
   files,
