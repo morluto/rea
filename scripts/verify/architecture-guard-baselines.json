@@ -99,11 +99,6 @@
     "src/native/parsers/plist.ts": 1,
     "src/rust/RustAuditableReader.ts": 1
   },
-  "parser-plain-throw": {
-    "src/native/AppleDispatchMetadata.ts": 1,
-    "src/native/MachoCommandNames.ts": 1,
-    "src/native/NativeMachoInspection.ts": 4
-  },
   "raw-buffer-read": {
     "src/application/BinaryTargetResolver.ts": 1,
     "src/application/MipsElfMetadata.ts": 10,
