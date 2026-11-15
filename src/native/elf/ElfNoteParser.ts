@@ -32,7 +32,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;

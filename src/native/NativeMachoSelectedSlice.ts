@@ -11,7 +11,7 @@ import {
   type MachoCommandNames,
 } from "./MachoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
-import type { LipoArchitecture } from "./parsers/lipo.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 export interface ResolvedMachoSlice {
   readonly offset: number;

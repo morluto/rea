@@ -20,8 +20,12 @@ import {
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
   parseFieldDiscovery,
-  FieldDiscoveryBudgetError,
+  FIELD_GLOSSARY_FORMAT,
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
@@ -65,7 +69,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -539,23 +542,16 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       providerId: TSHARK_PROVIDER_IDENTITY.id,
       operation,
       recognise: (cause) =>
-        cause instanceof FieldDiscoveryBudgetError
-          ? new AnalysisResourceConstraintError(
-              operation,
-              "memory",
-              cause.message,
-              { record_budget_bytes: FIELD_RECORD_BUDGET },
-              {
-                cause,
-                ...(observedOutput === undefined
-                  ? {}
-                  : { capturedOutput: observedOutput }),
-                ...fixedAllowanceOptions(
-                  "The packet-field discovery record allowance",
-                  "capture",
-                ),
-              },
-            )
+        isParseLimit(cause, FIELD_GLOSSARY_FORMAT)
+          ? parseLimitConstraint(operation, "memory", cause, {
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              ...fixedAllowanceOptions(
+                "The packet-field discovery record allowance",
+                "capture",
+              ),
+            })
           : undefined,
       command: () => command,
       // The retained workspace owns a command's unresolved cleanup and reports

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
@@ -12,8 +13,6 @@ import { IdaWorkspace } from "../../src/ida/IdaWorkspace.js";
 import { IdaSessionClient } from "../../src/ida/IdaSessionClient.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { RecordingIdaMcp } from "../fixtures/idaMcp.js";
-import { createDeferred } from "../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 interface ObservedHandle {
@@ -411,22 +410,20 @@ it("keeps shared IDA startup owned when the caller leaves during source finaliza
 
 it("joins an admitted copy before removing its root and refuses new copy admission", async () => {
   const { workspace, target } = await fixture();
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const copyRead = phaseGate();
   control.install = ({ handle, path }) => {
     if (path !== target.path) return;
     const reading: CopyReadPort = handle;
     const read = reading.read.bind(handle);
     vi.spyOn(reading, "read").mockImplementation(async (...args) => {
-      entered.resolve();
-      await release.promise;
+      await copyRead.hold();
       return read(...args);
     });
   };
   const copying = workspace.copyInput();
   let removing: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(entered.promise, copying, "selected copy read");
+    await copyRead.reached(copying, "selected copy read");
     let removed = false;
     removing = workspace.remove().then(() => {
       removed = true;
@@ -436,12 +433,12 @@ it("joins an admitted copy before removing its root and refuses new copy admissi
     });
     expect(removed).toBe(false);
     await access(workspace.directory);
-    release.resolve();
+    copyRead.release();
     await copying;
     await removing;
     expect(workspace.inputSha256).toBe(target.sha256);
   } finally {
-    release.resolve();
+    copyRead.release();
     await Promise.allSettled([copying, removing]);
   }
 });

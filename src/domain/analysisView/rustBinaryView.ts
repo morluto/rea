@@ -1,3 +1,4 @@
+import { completeOrUnknownCoverageSchema } from "../coverage.js";
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
@@ -57,7 +58,7 @@ export const rustBinarySummarySchema = z.strictObject({
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
     auditable_metadata_available: z.boolean(),
-    embedded_records: z.enum(["complete", "unknown"]),
+    embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
   }),
 });

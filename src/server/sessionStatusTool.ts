@@ -1,3 +1,6 @@
+import type { ServerContext } from "@modelcontextprotocol/server";
+import type { z } from "zod";
+
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import {
   BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
@@ -26,15 +29,18 @@ import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { err } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
-/** Inputs required to register the binary session status tool. */
+/** The parsed `binary_session` request. */
+export type BinarySessionStatusInput = z.output<
+  ReturnType<typeof toolContract<"binary_session">>["inputSchema"]
+>;
+
+/** Inputs required to report binary session status. */
 export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
-  readonly contract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
 }
@@ -94,101 +100,91 @@ const probeSessionAvailability = async (
   }
 };
 
-/** Register the read-only provider and target status operation. */
-export const registerSessionStatusTool = (
+/** Report provider, target and tool availability for one status request. */
+export const readSessionStatus = async (
   options: SessionStatusToolOptions,
-): void => {
-  const { server, session, contract, startedAt, availabilityPolicy } = options;
-  server.registerTool(
-    contract.name,
-    toolRegistrationOptions(contract),
-    async (input, context) => {
-      const { client, clientFeatures, protocolVersion } = mcpClientMetadata(
-        context,
-        server.server,
-      );
-      let availabilityResults: Awaited<
-        ReturnType<typeof probeSessionAvailability>
-      >;
-      let status: JsonValue;
-      try {
-        availabilityResults = await probeSessionAvailability(
-          options,
-          context.mcpReq.signal,
-          (family) => server.advertisesFamily(family),
-        );
-        status = await session.status({
-          signal: context.mcpReq.signal,
-          detail: input.detail,
-          refreshCandidates: input.refresh_candidates,
-        });
-      } catch (cause) {
-        if (!(cause instanceof AnalysisError)) throw cause;
-        return server.delivery.toCallToolResult(err(cause), contract);
-      }
-      const statusObject = jsonObjectSchema.parse(status);
-      // Availability is derived from the complete provider facts: an
-      // advertised composed tool still depends on direct operations the
-      // registration hides. Advertisement narrows only the public report.
-      const toolAvailability = buildCapabilityInventory(
-        status,
-        {
-          ...availabilityPolicy(),
-          ...(availabilityResults.android === undefined
-            ? {}
-            : { androidAnalysisAvailability: availabilityResults.android }),
-          ...(availabilityResults.adb === undefined
-            ? {}
-            : { adbAnalysisAvailability: availabilityResults.adb }),
-          ...(availabilityResults.apktool === undefined
-            ? {}
-            : { apktoolAnalysisAvailability: availabilityResults.apktool }),
-          ...(availabilityResults.jeb === undefined
-            ? {}
-            : { jebAnalysisAvailability: availabilityResults.jeb }),
-          ...(availabilityResults.evmLimiter === undefined
-            ? {}
-            : { evmLimiterAvailability: availabilityResults.evmLimiter }),
-        },
-        (name) => server.advertisesTool(name),
-      );
-      const serverIdentity = createServerIdentity({
-        startedAt,
-        commandPath: CURRENT_ENTRYPOINT_PATH,
-        catalog: server.catalogIdentity,
-        expected: {
-          ...(input.expected_package_version === undefined
-            ? {}
-            : { package_version: input.expected_package_version }),
-          ...(input.expected_catalog_digest === undefined
-            ? {}
-            : { catalog_digest: input.expected_catalog_digest }),
-          ...(input.expected_server_path === undefined
-            ? {}
-            : { server_path: input.expected_server_path }),
-        },
-        ...(client === undefined ? {} : { client }),
-        ...(protocolVersion === undefined ? {} : { protocolVersion }),
-      });
-      return server.delivery.toCallToolResult(
-        {
-          ok: true,
-          value: projectSessionStatus({
-            detail: input.detail,
-            status:
-              server.advertisedToolFamilies === undefined
-                ? statusObject
-                : restrictAdvertisedCapabilities(statusObject, (operation) =>
-                    server.advertisesTool(operation),
-                  ),
-            toolAvailability,
-            serverIdentity,
-            clientFeatures,
-          }),
-        },
-        contract,
-      );
+  input: BinarySessionStatusInput,
+  context: ServerContext,
+): Promise<Result<JsonValue, AnalysisError>> => {
+  const { server, session, startedAt, availabilityPolicy } = options;
+  const { client, clientFeatures, protocolVersion } = mcpClientMetadata(
+    context,
+    server.server,
+  );
+  let availabilityResults: Awaited<ReturnType<typeof probeSessionAvailability>>;
+  let status: JsonValue;
+  try {
+    availabilityResults = await probeSessionAvailability(
+      options,
+      context.mcpReq.signal,
+      (family) => server.advertisesFamily(family),
+    );
+    status = await session.status({
+      signal: context.mcpReq.signal,
+      detail: input.detail,
+      refreshCandidates: input.refresh_candidates,
+    });
+  } catch (cause) {
+    if (!(cause instanceof AnalysisError)) throw cause;
+    return err(cause);
+  }
+  const statusObject = jsonObjectSchema.parse(status);
+  // Availability is derived from the complete provider facts: an
+  // advertised composed tool still depends on direct operations the
+  // registration hides. Advertisement narrows only the public report.
+  const toolAvailability = buildCapabilityInventory(
+    status,
+    {
+      ...availabilityPolicy(),
+      ...(availabilityResults.android === undefined
+        ? {}
+        : { androidAnalysisAvailability: availabilityResults.android }),
+      ...(availabilityResults.adb === undefined
+        ? {}
+        : { adbAnalysisAvailability: availabilityResults.adb }),
+      ...(availabilityResults.apktool === undefined
+        ? {}
+        : { apktoolAnalysisAvailability: availabilityResults.apktool }),
+      ...(availabilityResults.jeb === undefined
+        ? {}
+        : { jebAnalysisAvailability: availabilityResults.jeb }),
+      ...(availabilityResults.evmLimiter === undefined
+        ? {}
+        : { evmLimiterAvailability: availabilityResults.evmLimiter }),
     },
+    (name) => server.advertisesTool(name),
+  );
+  const serverIdentity = createServerIdentity({
+    startedAt,
+    commandPath: CURRENT_ENTRYPOINT_PATH,
+    catalog: server.catalogIdentity,
+    expected: {
+      ...(input.expected_package_version === undefined
+        ? {}
+        : { package_version: input.expected_package_version }),
+      ...(input.expected_catalog_digest === undefined
+        ? {}
+        : { catalog_digest: input.expected_catalog_digest }),
+      ...(input.expected_server_path === undefined
+        ? {}
+        : { server_path: input.expected_server_path }),
+    },
+    ...(client === undefined ? {} : { client }),
+    ...(protocolVersion === undefined ? {} : { protocolVersion }),
+  });
+  return ok(
+    projectSessionStatus({
+      detail: input.detail,
+      status:
+        server.advertisedToolFamilies === undefined
+          ? statusObject
+          : restrictAdvertisedCapabilities(statusObject, (operation) =>
+              server.advertisesTool(operation),
+            ),
+      toolAvailability,
+      serverIdentity,
+      clientFeatures,
+    }),
   );
 };
 
