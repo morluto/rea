@@ -204,6 +204,19 @@ export const parseClientRegistrationPolicy = (
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
+  } else if (client.format === "fx") {
+    // fx's native launcher is the dialect's own shape; normalize it once.
+    const launcher = parseClientRegistrationLauncher(value, {
+      dialect: client.format,
+      profile: client.registrationProfile,
+    });
+    if (!launcher.ok) return launcher;
+    const entry = clientConfigurationRecordSchema.safeParse(value);
+    value = {
+      ...(entry.success ? entry.data : {}),
+      command: launcher.value.command,
+      args: launcher.value.args,
+    };
   }
   const source = clientRegistrationSource(value, client.registrationProfile);
   if (source.nested)

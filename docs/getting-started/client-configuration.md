@@ -875,6 +875,19 @@ and doctor reports it only when its file holds a `rea` row or you select it.
 Update and uninstall refresh and remove the row REA wrote. A project
 `config/mcporter.json` entry with the same name overrides the home file.
 
+## fx
+
+Setup and `rea mcp add` write `mcpServers.rea` into fx's profile,
+`~/.fx/mcp.json`, or `$FX_HOME/mcp.json` when `FX_HOME` is set. fx accepts only
+an absolute `FX_HOME` other than the root and home folders, so REA refuses other
+values before writing. An existing profile that still uses fx's older `mcp`
+table keeps it; a profile with both tables is refused. Both commands publish the
+profile privately: the folder is 0700 and the file 0600 on POSIX systems, and
+setup repairs those modes even when the registration is otherwise current.
+Windows ACLs cannot be verified through mode bits. fx reloads its MCP servers
+with `/mcp reload`; its project `.mcp.json` files need fx's own approval and are
+not written by REA.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the

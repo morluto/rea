@@ -89,6 +89,7 @@ describe("client configuration filesystem lifecycle", () => {
       "mastracode",
       "zed",
       "amp",
+      "fx",
       "grok_bot",
     ]);
     expect(
