@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
   filterGhidraLiteralCandidates,
@@ -621,12 +622,12 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   // An invalid decompile seed is refused only by operations that use it.
-  let launcherDecompileTimeout: number | undefined;
-  try {
-    launcherDecompileTimeout = config.ghidraDecompileTimeoutSeconds;
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-  }
+  const decompileTimeout = readRuntimeSetting(
+    () => config.ghidraDecompileTimeoutSeconds,
+  );
+  const launcherDecompileTimeout = decompileTimeout.ok
+    ? decompileTimeout.value
+    : undefined;
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
@@ -1061,13 +1062,9 @@ export const createGhidraProviderClient = (input: {
             }
           : {}),
       });
-      let operationLimits: ReturnType<typeof selectLimits>;
-      try {
-        operationLimits = selectLimits();
-      } catch (cause: unknown) {
-        if (cause instanceof ConfigurationError) return err(cause);
-        throw cause;
-      }
+      const admittedLimits = readRuntimeSetting(selectLimits);
+      if (!admittedLimits.ok) return admittedLimits;
+      const operationLimits = admittedLimits.value;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);

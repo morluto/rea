@@ -1,3 +1,5 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   snapshotRegexConfiguration,
   type RegexConfigurationSnapshot,
@@ -24,7 +26,6 @@ import {
   type RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -1649,13 +1650,20 @@ export class KunaSessionClient implements AnalysisClient {
       admitted();
       return err(cancelledBy(operation, signal));
     }
-    let deadline: KunaDeadline;
+    let selected: Result<KunaDeadline, ConfigurationError>;
     try {
-      deadline = kunaFunctionDeadline(installation.configuration);
+      selected = readRuntimeSetting(() =>
+        kunaFunctionDeadline(installation.configuration),
+      );
     } catch (cause: unknown) {
       admitted();
       throw cause;
     }
+    if (!selected.ok) {
+      admitted();
+      return selected;
+    }
+    const deadline = selected.value;
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],
@@ -2404,13 +2412,11 @@ export class KunaSessionClient implements AnalysisClient {
     if (exported !== undefined) return ok(exported);
     if (this.#session.signal.aborted)
       return err(cancelledBy("list_procedures", this.#session.signal));
-    let deadline: KunaDeadline;
-    try {
-      deadline = kunaFunctionDeadline(installation.configuration);
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const admitted = readRuntimeSetting(() =>
+      kunaFunctionDeadline(installation.configuration),
+    );
+    if (!admitted.ok) return admitted;
+    const deadline = admitted.value;
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["functions", input, "--json"],
