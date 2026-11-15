@@ -9,10 +9,15 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  clientConfigurationRecordSchema,
+  parseClientConfiguration,
+} from "../../../src/application/ClientConfigurationDocument.js";
+import { parseGooseConfigurationYaml } from "../../../src/application/GooseConfigurationYaml.js";
 
-import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   readClientRegistrationInspections,
@@ -547,5 +552,117 @@ it.skipIf(platform === "win32")(
     );
     // Uninstall changes only the user file Goose writes.
     expect(await readFile(additional, "utf8")).toBe(lower);
+  },
+);
+
+it("orders Goose's layers as Goose loads them", () => {
+  const home = "/fixture/home";
+  const user = "/fixture/home/.config/goose/config.yaml";
+  const unix = supportedClients(home, "linux", {
+    GOOSE_ADDITIONAL_CONFIG_FILES: `${user}:/fixture/team.yaml`,
+  }).find(({ name }) => name === "goose");
+  // Goose loads the user file again last, so that load decides precedence.
+  expect(unix?.configPaths).toEqual([
+    "/etc/goose/config.yaml",
+    "/fixture/team.yaml",
+    user,
+  ]);
+  const windows = supportedClients("C:\\Users\\fixture", "win32", {
+    APPDATA: "C:\\Users\\fixture\\AppData\\Roaming",
+    PROGRAMDATA: "C:\\ProgramData",
+    GOOSE_ADDITIONAL_CONFIG_FILES:
+      '"C:\\Team Config\\a;b.yaml";C:\\Team\\goose.yaml',
+  }).find(({ name }) => name === "goose");
+  expect(windows?.configPathError).toBeUndefined();
+  expect(windows?.configPaths?.slice(1, 3)).toEqual([
+    "C:\\Team Config\\a;b.yaml",
+    "C:\\Team\\goose.yaml",
+  ]);
+});
+
+// The system layer is the host's /etc/goose/config.yaml; these cases need it absent.
+it.skipIf(platform === "win32" || existsSync("/etc/goose/config.yaml"))(
+  "refreshes Goose's environment through setup without losing inherited or aliased settings",
+  async () => {
+    const home = await createTestTempDirectory("rea-goose-environment-");
+    const team = join(home, "team.yaml");
+    const environment = { GOOSE_ADDITIONAL_CONFIG_FILES: team };
+    const row = supportedClients(home, platform, environment).find(
+      ({ name }) => name === "goose",
+    );
+    if (row === undefined) throw new Error("Goose has no table row");
+    await mkdir(dirname(row.configPath), { recursive: true });
+    const userEntry = async () =>
+      (
+        clientConfigurationRecordSchema.parse(
+          parseGooseConfigurationYaml(await readFile(row.configPath, "utf8")),
+        ).extensions as Record<string, Record<string, unknown>>
+      ).rea;
+
+    const launcher = `    type: stdio\n    cmd: ${JSON.stringify(command[0])}\n    args: ${JSON.stringify(command.slice(1))}\n`;
+
+    // A lower map stays in effect when the user entry declares none.
+    await writeFile(
+      team,
+      'extensions:\n  rea:\n    envs:\n      TEAM_SETTING: "1"\n',
+    );
+    await writeFile(row.configPath, `extensions:\n  rea:\n${launcher}`);
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect(await userEntry()).not.toHaveProperty("envs");
+
+    // The env alias is read and written back as envs.
+    await writeFile(team, "{}\n");
+    await writeFile(
+      row.configPath,
+      `extensions:\n  rea:\n${launcher}    env:\n      KEEP: "1"\n`,
+    );
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect(await userEntry()).toMatchObject({ envs: { KEEP: "1" } });
+    expect(await userEntry()).not.toHaveProperty("env");
+
+    // A requested setting replaces the recorded value.
+    await expect(
+      configureClientConfiguration(
+        row,
+        { REA_ANALYSIS_PROVIDER: "ghidra" },
+        command,
+      ),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect(await userEntry()).toMatchObject({
+      envs: { KEEP: "1", REA_ANALYSIS_PROVIDER: "ghidra" },
+    });
+  },
+);
+
+it.skipIf(platform === "win32" || existsSync("/etc/goose/config.yaml"))(
+  "keeps Goose's user registration while a read-only layer would stay enabled",
+  async () => {
+    const home = await createTestTempDirectory("rea-goose-uninstall-");
+    const team = join(home, "team.yaml");
+    const environment = { GOOSE_ADDITIONAL_CONFIG_FILES: team };
+    const row = supportedClients(home, platform, environment).find(
+      ({ name }) => name === "goose",
+    );
+    if (row === undefined) throw new Error("Goose has no table row");
+    await writeFile(
+      team,
+      `extensions:\n  rea:\n    type: stdio\n    cmd: ${JSON.stringify(command[0])}\n    args: ${JSON.stringify(command.slice(1))}\n`,
+    );
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    const before = await readFile(row.configPath, "utf8");
+    const uninstall = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, environment, platform),
+    );
+    expect(uninstall.items).toContainEqual(
+      expect.objectContaining({ name: "goose", status: "failed" }),
+    );
+    expect(await readFile(row.configPath, "utf8")).toBe(before);
   },
 );

@@ -23,6 +23,7 @@ import {
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
+  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
@@ -1000,5 +1001,44 @@ const clientConfigurationDesired = async (
     validated.value.timeoutInputs,
   );
   if (!registration.ok) throw registration.error;
-  return registration.value;
+  return withInheritedGooseEnvironment(
+    registration.value,
+    format,
+    parsed,
+    effective,
+    providerEnvironment,
+  );
+};
+
+/**
+ * Goose replaces `envs` as a whole map per layer, so a default empty map in
+ * the user file would hide an environment a lower layer supplies. Without a
+ * user environment or a requested setting, the lower map stays in effect.
+ */
+const withInheritedGooseEnvironment = (
+  registration: Record<string, unknown>,
+  format: ClientRegistrationDialect,
+  parsed: ClientConfigurationDocument | undefined,
+  effective: ClientConfigurationDocument | undefined,
+  providerEnvironment: SetupProviderEnvironment,
+): Record<string, unknown> => {
+  if (format !== "goose" || Object.keys(providerEnvironment).length > 0)
+    return registration;
+  const declaresEnvironment = (
+    document: ClientConfigurationDocument | undefined,
+  ) => {
+    const entry =
+      document === undefined
+        ? undefined
+        : effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey);
+    return (
+      typeof entry === "object" &&
+      entry !== null &&
+      (Object.hasOwn(entry, "envs") || Object.hasOwn(entry, "env"))
+    );
+  };
+  if (declaresEnvironment(parsed) || !declaresEnvironment(effective))
+    return registration;
+  const { envs: _inherited, ...rest } = registration;
+  return rest;
 };

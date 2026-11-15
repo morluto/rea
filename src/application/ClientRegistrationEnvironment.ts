@@ -142,7 +142,30 @@ export const clientRegistrationEnvironmentDetails = (
     registration,
     client?.registrationProfile,
   );
-  const raw = source.connection?.[key];
+  // Goose also reads its `env` alias for `envs`; declaring both is ambiguous.
+  const alias =
+    key === "envs" && source.connection?.envs === undefined
+      ? source.connection?.env
+      : undefined;
+  if (
+    key === "envs" &&
+    alias === undefined &&
+    source.connection?.env !== undefined
+  )
+    return err(
+      new ConfigurationError(
+        "Goose environment is ambiguous: keep only envs or its env alias, not both.",
+        {
+          settings: [
+            {
+              setting: "envs",
+              constraint: "env and envs declare the same native field",
+            },
+          ],
+        },
+      ),
+    );
+  const raw = alias ?? source.connection?.[key];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(

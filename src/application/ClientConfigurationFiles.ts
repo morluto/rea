@@ -126,7 +126,13 @@ export const readClientConfigurationFiles = async (
       resources,
     );
     if (!document.ok) return document;
-    if (document.value !== undefined) {
+    // A read-only lower layer's environment can be replaced as a whole map
+    // by a later layer (Goose), so only the effective view is validated.
+    const validatesLayer =
+      client.readOnlyLowerLayers !== true || path === client.configPath;
+    if (document.value !== undefined && !validatesLayer)
+      documents.push({ ...document.value, sourcePath: path });
+    else if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
         client,
