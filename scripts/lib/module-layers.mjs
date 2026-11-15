@@ -113,6 +113,32 @@ export const UNIT_LAYERS = Object.freeze(
   ]),
 );
 
+/**
+ * Single file-to-file imports that may point up the layer order. Each one is
+ * a deliberate decision, not a baseline debt: it is not counted, and any other
+ * import between the same units still is. Keep the list short and say why.
+ */
+export const LAYER_EXCEPTIONS = Object.freeze([
+  Object.freeze({
+    file: "src/domain/localPath.ts",
+    target: "src/platform/HostPlatform.ts",
+    // `absoluteLocalPathStringSchema` states which paths are absolute on the
+    // host running REA; that is a fact about the host's path rules, and
+    // HostPlatform is its only reader (maintainer decision, W8).
+    reason:
+      "the absolute local path schema follows the running host's path rules",
+  }),
+]);
+
+const sourcePath = (path) => path.replace(/\.js$/u, ".ts");
+/** Whether one resolved import is a declared layer exception. */
+export const isLayerException = (file, target) =>
+  LAYER_EXCEPTIONS.some(
+    (exception) =>
+      exception.file === sourcePath(file) &&
+      exception.target === sourcePath(target),
+  );
+
 const PRODUCTION_SOURCE = /^src\/.+\.(?:ts|js)$/u;
 const NON_PRODUCTION = /\.(?:test|spec|fixture)\.(?:ts|js)$|\.d\.ts$/u;
 
@@ -153,6 +179,7 @@ export const layerGraphFacts = (imports, files = []) => {
     const from = sourceUnit(file);
     const to = sourceUnit(target);
     if (from === undefined || to === undefined || from === to) continue;
+    if (isLayerException(file, target)) continue;
     for (const unit of [from, to])
       if (UNIT_LAYERS[unit] === undefined) undeclared.add(unit);
     const key = `${from} -> ${to}`;
