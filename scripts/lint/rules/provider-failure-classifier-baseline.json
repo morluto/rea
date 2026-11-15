@@ -69,7 +69,6 @@
     "src/native/pe/PeBinaryFailure.ts": 1,
     "src/native/pe/PeImportsProvider.ts": 1,
     "src/native/pe/PeLoadConfigProvider.ts": 1,
-    "src/native/pwntools/PwntoolsFailures.ts": 2,
     "src/native/windows/WindowsShortcutProvider.ts": 1,
     "src/pcap/PcapProvider.ts": 2,
     "src/process/ArtifactAnalysisResources.ts": 3,

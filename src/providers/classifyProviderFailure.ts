@@ -144,6 +144,10 @@ const fileFailure = (
         carriedReason(artifactFileCancellationCause(physical)),
         {
           ...cancellationDetails,
+          // What the reader had already established stays reported.
+          ...(physical.partialObservation === undefined
+            ? {}
+            : { partialObservation: physical.partialObservation }),
           ...(dialect.observedOutput === undefined
             ? {}
             : { capturedOutput: dialect.observedOutput }),
