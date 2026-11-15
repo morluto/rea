@@ -179,8 +179,7 @@
     "src/wasm/WabtFailures.ts": 2
   },
   "parser-format-failure-class": {
-    "src/artifacts/apple/PropertyListDecodeBudget.ts": 1,
-    "src/kuna/KunaDocumentError.ts": 1
+    "src/artifacts/apple/PropertyListDecodeBudget.ts": 1
   },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
