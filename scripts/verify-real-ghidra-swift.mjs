@@ -16,7 +16,10 @@ import {
 } from "../dist/process/ProviderProcess.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execute = promisify(execFile);
 const run = createVerifierRun();
@@ -74,7 +77,19 @@ let connected = false;
 let verifierRun;
 let literalReport;
 let decoderCleaned = true;
-await withVerifierCleanup(async () => {
+// The root is removed only after the session, client and decoder confirm.
+rootFixture.releaseAfter(async () => {
+  if (connected) await call("close_binary", {});
+});
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+rootFixture.releaseAfter(async () => {
+  assert.equal(decoderCleaned, true, "Owned decoder cleanup remains pending");
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(rootFixture, async () => {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
   });
@@ -188,27 +203,7 @@ await withVerifierCleanup(async () => {
     }, [() => call("close_binary", {})]);
   }
   literalReport = await verifyStringLiterals();
-}, [
-  async () => {
-    // The root is removed only after the session, client and decoder confirm.
-    rootFixture.releaseAfter(async () => {
-      if (connected) await call("close_binary", {});
-    });
-    rootFixture.releaseAfter(() => client.close());
-    rootFixture.releaseAfter(() => transport.close());
-    rootFixture.releaseAfter(async () => {
-      assert.equal(
-        decoderCleaned,
-        true,
-        "Owned decoder cleanup remains pending",
-      );
-      verifierRun = await completeVerifierRun(run);
-      assert.equal(verifierRun.process_lineage.status, "verified");
-      assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    });
-    await rootFixture.release();
-  },
-]);
+});
 console.log(
   JSON.stringify(
     {

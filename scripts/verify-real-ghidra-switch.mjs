@@ -30,7 +30,10 @@ import {
 } from "./verify-real-ghidra-switch-assertions.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { verifySwitchEvidenceControls } from "./verify-real-ghidra-switch-controls.mjs";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // Narrow compiler-shape lane; no cross compiler or game artifact prerequisites.
 const { values } = parseArgs({
@@ -99,7 +102,18 @@ await writeFile(source, buildSwitchSource());
 const flags = ["-O2", "-g", "-fno-pie", "-no-pie"];
 const results = [];
 let productionControls = null;
-await withVerifierCleanup(async () => {
+// The workspace is removed only once no owned runtime or process survives.
+workspaceFixture.releaseAfter(async () => {
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  const cleanup = await completeVerifierRun(run);
+  assert.equal(cleanup.process_lineage.status, "verified");
+  assert.deepEqual(cleanup.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   for (const compiler of ["gcc", "clang"]) {
     const original = join(workspace, `${compiler}-optimized`);
     await exec(commands[compiler], [...flags, source, "-o", original]);
@@ -173,24 +187,7 @@ await withVerifierCleanup(async () => {
       });
     }
   }
-}, [
-  async () => {
-    // The workspace is removed only once no owned runtime or process survives.
-    workspaceFixture.releaseAfter(async () => {
-      assert.deepEqual(
-        (await readdir(runtime)).filter((name) =>
-          name.startsWith("rea-ghidra-"),
-        ),
-        [],
-        "Owned Ghidra runtime survived close",
-      );
-      const cleanup = await completeVerifierRun(run);
-      assert.equal(cleanup.process_lineage.status, "verified");
-      assert.deepEqual(cleanup.process_lineage.descendants, []);
-    });
-    await workspaceFixture.release();
-  },
-]);
+});
 const lifecycle = await completeVerifierRun(run);
 if (lifecycle.process_lineage.status === "verified")
   assert.deepEqual(lifecycle.process_lineage.descendants, []);

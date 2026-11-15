@@ -326,11 +326,15 @@ if (cleanupFailures.length > 0) {
   process.stderr.write(
     `Retained verifier workspace after cleanup failure: ${workspace}\n`,
   );
-  throw new AggregateError(
-    primaryFailure === undefined
-      ? cleanupFailures
-      : [primaryFailure.cause, ...cleanupFailures],
-    "Ghidra address-context verifier cleanup failed",
+  throw Object.assign(
+    new AggregateError(
+      primaryFailure === undefined
+        ? cleanupFailures
+        : [primaryFailure.cause, ...cleanupFailures],
+      "Ghidra address-context verifier cleanup failed",
+    ),
+    // The caller can retry the retained workspace from the final failure.
+    workspaceFixture.released ? {} : { cleanupLeases: [workspaceFixture] },
   );
 }
 if (primaryFailure !== undefined) throw primaryFailure.cause;
