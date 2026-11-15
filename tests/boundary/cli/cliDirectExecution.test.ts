@@ -25,6 +25,7 @@ processTest(
       "--version",
     ]);
     expect(dispatched.exitCode).toBe(0);
+    expect(dispatched.stderr).toBe("");
     expect(dispatched.stdout.trim()).not.toBe("");
   },
 );
