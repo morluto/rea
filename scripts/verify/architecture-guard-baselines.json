@@ -443,7 +443,7 @@
     "src/dotnet/ManagedSnapshot.ts": 2,
     "src/electron/ElectronFuseFailures.ts": 1,
     "src/evm/EvmoleInterfaceProvider.ts": 6,
-    "src/firmware/FirmwareFailures.ts": 2,
+    "src/firmware/FirmwareFailures.ts": 1,
     "src/firmware/FirmwareProvider.ts": 3,
     "src/firmware/FirmwarePublication.ts": 1,
     "src/flutter/FlutterBuildProvider.ts": 2,

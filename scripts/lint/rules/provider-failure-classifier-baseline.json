@@ -38,7 +38,6 @@
     "src/cutter/CutterBridgeClient.ts": 1,
     "src/dotnet/ManagedSnapshot.ts": 1,
     "src/electron/ElectronFuseFailures.ts": 1,
-    "src/firmware/FirmwareFailures.ts": 2,
     "src/flutter/FlutterBuildProvider.ts": 2,
     "src/frida/FridaInstrumentationManager.ts": 1,
     "src/ghidra/GhidraClient.ts": 1,
