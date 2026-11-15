@@ -26,16 +26,17 @@ export class CdpExecutionWindow {
 
   /** Collection ends on a main-document replacement, never follows source URLs into another context. */
   ingest(event: CdpReceivedEvent): void {
-    if (event.method === "Target.detachedFromTarget") {
+    const method = event.registered?.method;
+    if (method === "Target.detachedFromTarget") {
       this.end("session_detached");
       return;
     }
-    if (event.method === "Inspector.targetCrashed") {
+    if (method === "Inspector.targetCrashed") {
       this.end("target_terminated");
       return;
     }
     if (!this.active) return;
-    if (event.method === "Runtime.executionContextsCleared")
+    if (method === "Runtime.executionContextsCleared")
       this.end("document_changed");
     const frame = cdpFrameEvent(event)?.facts;
     if (frame?.kind === "navigated") {

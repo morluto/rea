@@ -18,6 +18,13 @@ describe("registered CDP event payloads", () => {
     // Subscribers cannot name the raw payload; they read `registered`.
     // @ts-expect-error `params` is not part of a received event.
     expect(event.params).toBeUndefined();
+    // Subscribers select events by the registered name, never by wire text.
+    expect(event).not.toHaveProperty("method");
+    // @ts-expect-error the wire method name is not part of a received event.
+    expect(event.method).toBeUndefined();
+    // @ts-expect-error an unregistered event name does not compile.
+    expect(event.registered?.method === "Page.frameNavigatedd").toBe(false);
+    expect(event.domain).toBe("Page");
     expect(cdpFrameEvent(event)).toEqual({
       facts: expect.objectContaining({
         kind: "navigated",
@@ -301,6 +308,14 @@ describe("unregistered CDP events", () => {
       params: { requestId: "1" },
     });
     expect(event.registered).toBeUndefined();
+    expect(event.domain).toBe("Network");
     expect(cdpFrameEvent(event)).toBeUndefined();
+  });
+
+  it("registers a target crash, which has no payload", () => {
+    expect(
+      receiveCdpEvent({ method: "Inspector.targetCrashed", params: {} })
+        .registered,
+    ).toEqual({ method: "Inspector.targetCrashed", payload: {} });
   });
 });
