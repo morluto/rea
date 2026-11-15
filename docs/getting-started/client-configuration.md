@@ -899,7 +899,10 @@ fallback server, uninstall refuses before changing either file; review the
 fallback configuration before retrying. Other fallback servers, settings and a
 foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
-as stale, and rerunning setup removes the flag to repair it. Native configuration
+as stale, and rerunning setup removes the flag to repair it. In shared storage
+that setup preserves (the fallback file), the flag binds every reader, so doctor
+reports the stale row with `manual_conflict: "shared_disabled_activation"`:
+re-enable it in the product that disabled it rather than rerunning setup. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
 writing a registration ZCode cannot load.
 
