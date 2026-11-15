@@ -82,9 +82,6 @@ export const projectRpmPackageView = (
       file_count: report.coverage.files,
       limitation_count: report.limitations.length,
     },
-    coverage: completeWithinViewCoverage(
-      report.files?.length ?? 0,
-      report.files?.length ?? 0,
-    ),
+    coverage: completeWithinViewCoverage(report.files?.length ?? 0),
   });
 };
