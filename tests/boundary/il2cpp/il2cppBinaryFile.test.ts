@@ -447,10 +447,16 @@ it("refuses an image name repeated past the search bound", () => {
   // The Mach-O segment covers the original size; widen it to the new tail.
   flooded.writeBigUInt64LE(BigInt(flooded.length), 64);
   flooded.writeBigUInt64LE(BigInt(flooded.length), 80);
-  expect(failure(flooded)).toEqual({
-    reason: "native-index-capacity",
-    kind: "capacity",
-  });
+  expect(() => link(flooded)).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "il2cpp-binary",
+        limit: { name: "native-index-capacity", maximum: 65536 },
+      }),
+    }),
+  );
 });
 
 it.each([
@@ -1970,6 +1976,7 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
               throw new Il2cppBinaryFormatFailure(
                 "native-type-text-capacity",
                 "budget",
+                1,
               );
             tableChecked = bytes === 3 * minimumGenericRow;
           },
@@ -1982,7 +1989,10 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   })();
   expect(tableChecked).toBe(true);
   expect(failure).toBeInstanceOf(Il2cppBinaryFormatFailure);
-  expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
+  expect((failure as Il2cppBinaryFormatFailure).failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "native-type-text-capacity", maximum: 1 },
+  });
 });
 
 it.each([0, 8, 16])(
