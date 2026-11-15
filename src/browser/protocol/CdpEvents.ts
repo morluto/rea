@@ -1,6 +1,8 @@
 import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 
+import { err, ok, type Result } from "../../domain/result.js";
+
 import {
   observeCdpFrameUrl,
   type CdpFrameUrlObservation,
@@ -68,9 +70,19 @@ const frameEvent = (kind: CdpFrameEventKind) =>
     };
   });
 
-/** UTF-8 JSON size of a declaration as the producer sent it, for retention budgets. */
-const declarationBytes = (params: unknown): number =>
-  Buffer.byteLength(JSON.stringify(params) ?? "");
+/**
+ * UTF-8 JSON size of a declaration as the producer sent it, for retention
+ * budgets. Serialization can fail on input that parsed (for example, nesting
+ * deeper than the serializer's stack); that failure is a fact for the budget
+ * owner to report, never an exception in the connection's event callback.
+ */
+const declarationBytes = (params: unknown): Result<number, unknown> => {
+  try {
+    return ok(Buffer.byteLength(JSON.stringify(params) ?? ""));
+  } catch (cause: unknown) {
+    return err(cause);
+  }
+};
 
 /**
  * A script declaration has two admission policies: passive capture keeps
