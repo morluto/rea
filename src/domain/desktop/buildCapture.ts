@@ -14,6 +14,11 @@ export const buildCheckpointNameSchema = z
     message:
       "baseline, stop, time-limit and exit are the capture's own checkpoints",
   })
+  // A `.refine` states a refusal a caller reads only after sending one; the
+  // reservation is what a caller must know before choosing a name, so the
+  // refusal is advertised too. `not.enum` is the form this repository uses for
+  // a reserved set, and strict clients compile it.
+  .meta({ not: { enum: [...RESERVED_CHECKPOINT_NAMES] } })
   .describe(
     `Lowercase letters, digits, dot, dash and underscore. Name the seed ${SEED_CHECKPOINT} and the end ${END_CHECKPOINT}: the draft and the export read them.`,
   );
