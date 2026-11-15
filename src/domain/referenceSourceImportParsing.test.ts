@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { javaScriptMemberMutationRefusal } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { parseReferenceSourceImports } from "./referenceSourceImportParsing.js";
 
 /** Conditional self-selections before one member write (#8294). */
@@ -40,11 +41,19 @@ it("keeps declaration-level imports when the member-mutation phase is refused", 
     ["imports", "./lazy"],
   ]);
   expect(refused.parse_failures).toEqual([]);
-  expect(refused.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringMatching(
-        /^CommonJS require calls in probe\.js were not examined because the member-mutation phase was refused \(JavaScript member-mutation analysis scheduled more than 1 alias states for one source\)\. The effective javascript\.member_mutation_alias_states value is 1 alias states \(source setting;/u,
-      ),
-    ]),
+  // The limitation carries the owning formatter's recovery for this file.
+  const owner = javaScriptMemberMutationRefusal(
+    "analyze_javascript_semantics",
+    {
+      aliasStates: 1,
+      source: "setting",
+    },
   );
+  expect(
+    refused.limitations.filter(
+      (limitation) =>
+        limitation.includes("probe.js") &&
+        limitation.includes(owner.remediationAction ?? "<missing>"),
+    ),
+  ).toHaveLength(1);
 });
