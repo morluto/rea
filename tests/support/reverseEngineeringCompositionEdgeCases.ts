@@ -404,8 +404,12 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         if (digests === 2) controller.abort();
         return digests === 1 ? "a".repeat(64) : "b".repeat(64);
       },
-      runOwned: async () =>
-        ownedOutput("captured output", "", { exitCode: null }),
+      runOwned: async () => {
+        throw ownedFailure(
+          "process",
+          ownedOutput("captured output", "", { exitCode: null }),
+        );
+      },
     });
 
     try {
