@@ -72,7 +72,7 @@ import {
   clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
-  supportedClients,
+  resolveSupportedClients,
   type ClientSystemPaths,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -602,7 +602,7 @@ export const systemUninstallHost = (
     redirectedWriteBlocker(redirection, [path], "uninstall");
   return {
     clients: async () => {
-      const supported = supportedClients(
+      const supported = await resolveSupportedClients(
         home,
         platform,
         environment,

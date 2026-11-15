@@ -28,7 +28,7 @@ import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
   manualRegistrationRemediation,
-  supportedClients,
+  resolveSupportedClients,
 } from "./SupportedClients.js";
 import type { ClientSystemPaths, SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -156,7 +156,7 @@ export const readClientRegistrationInspections = async (
   ): void => {
     inspections.push({ status, activation });
   };
-  for (const client of supportedClients(
+  for (const client of await resolveSupportedClients(
     home,
     options.platform,
     options.environment,
