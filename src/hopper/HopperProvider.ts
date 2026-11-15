@@ -43,6 +43,11 @@ import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
+import {
+  hasHopperReplyContract,
+  hopperBridgeMethod,
+  parseHopperReply,
+} from "./HopperReplyContracts.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 import {
   reconcileHopperCallers,
@@ -416,20 +421,17 @@ export class HopperProvider implements AnalysisProviderCandidate {
               operation === "analyze_function" ||
               (operation === "procedure_references" &&
                 parameters.direction === "incoming");
-            const result =
+            const isRegexSearch =
               (operation === "search_strings" ||
                 operation === "search_procedures") &&
-              parameters.mode === "regex"
-                ? await regexSearch.execute(operation, parameters, options)
-                : await client.callTool(
-                    operation === "procedure_callers"
-                      ? "rea_caller_base"
-                      : operation,
-                    parameters,
-                    willReconcile
-                      ? reconciliationChildOptions(options)
-                      : options,
-                  );
+              parameters.mode === "regex";
+            const result = isRegexSearch
+              ? await regexSearch.execute(operation, parameters, options)
+              : await client.callTool(
+                  hopperBridgeMethod(operation),
+                  parameters,
+                  willReconcile ? reconciliationChildOptions(options) : options,
+                );
             if (!result.ok)
               return operation === "procedure_callers"
                 ? err(
@@ -440,9 +442,32 @@ export class HopperProvider implements AnalysisProviderCandidate {
                     ),
                   )
                 : result;
-            const mapped =
+            // Each bridge reply is validated once against its method contract.
+            // Reconciliation validates the replies it reads, and regex search
+            // rows come from an inventory validated when it was read.
+            const names =
+              operation === "list_names"
+                ? parseHopperReply(operation, result.value)
+                : undefined;
+            if (names !== undefined && !names.ok) return names;
+            const offset =
               operation === "address_to_file_offset"
-                ? await mapHopperFileOffset(target, result.value, {
+                ? parseHopperReply(operation, result.value)
+                : undefined;
+            if (offset !== undefined && !offset.ok) return offset;
+            if (
+              names === undefined &&
+              offset === undefined &&
+              !willReconcile &&
+              !isRegexSearch &&
+              hasHopperReplyContract(operation)
+            ) {
+              const replied = parseHopperReply(operation, result.value);
+              if (!replied.ok) return replied;
+            }
+            const mapped =
+              offset !== undefined
+                ? await mapHopperFileOffset(target, offset.value, {
                     ...(options?.signal === undefined
                       ? {}
                       : { signal: options.signal }),
@@ -474,9 +499,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
             if (reconciled !== undefined && !reconciled.ok) return reconciled;
             const reconciledResult = reconciled?.value.result ?? mapped.value;
             const inventory =
-              operation === "list_names"
-                ? projectHopperNameInventory(reconciledResult)
-                : { result: reconciledResult, changed: false };
+              names === undefined
+                ? { result: reconciledResult, changed: false }
+                : projectHopperNameInventory(names.value);
             return ok(
               projectExecution(
                 operation,
@@ -503,6 +528,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
           options?.signal === undefined ? {} : { signal: options.signal },
         );
         if (result === undefined || !result.ok) return result;
+        if (hasHopperReplyContract(operation)) {
+          const replied = parseHopperReply(operation, result.value);
+          if (!replied.ok) return replied;
+        }
         return ok(projectExecution(operation, result.value));
       },
       runtimeLineageSnapshots: () => {

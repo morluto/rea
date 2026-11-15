@@ -11,6 +11,15 @@ import {
  * semantics, `wider` matches a superset, and `unexpressible` has neither form
  * (a backreference, for example), so the advertisement must omit it. Server
  * validation keeps the canonical expression either way.
+ *
+ * V8's plain, `u` and `v` modes accept the same BMP strings. Known
+ * limitation: V8 without `u` matches UTF-16 units, so where a wildcard,
+ * shorthand or negated class must match one astral character (`^.$`,
+ * `^[^]$`, `^[\S]$`, `^\S\W\D$`), a client compiling without `u` rejects an
+ * astral character at that position, which the canonical pattern accepts. These
+ * are rare and keeping the constraint beats dropping it. Literal and class
+ * astral members are omitted instead (see `#literal`). Repeated classes are
+ * unaffected, and valid base64, which `^(?:....)*$` checks, is ASCII.
  */
 export type PortablePatternProjection =
   | { readonly kind: "exact"; readonly pattern: string }

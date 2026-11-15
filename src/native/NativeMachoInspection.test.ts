@@ -282,10 +282,19 @@ describe("Mach-O tool architecture selection", () => {
       expect(commands.find(({ tool }) => tool === "dyld_info")?.args).toContain(
         selected,
       );
-      expect(selectMachoSlice(fat, "arm64").slice).toBe(
-        (names.findIndex((name) => name === selected) + 1) * 4096,
+      // Dispatch metadata reads only the admitted slice and never ranks again.
+      const index = names.findIndex((name) => name === selected);
+      const admitted = {
+        offset: (index + 1) * 4096,
+        size: slices[index]!.bytes.length,
+      };
+      expect(selectMachoSlice(fat, "arm64", admitted).slice).toBe(
+        admitted.offset,
       );
-      expect(parseMachoLayout(fat, "arm64").fixups.dylibs).toEqual([
+      expect(() => selectMachoSlice(fat, "arm64")).toThrow(
+        /needs the admitted slice/u,
+      );
+      expect(parseMachoLayout(fat, "arm64", admitted).fixups.dylibs).toEqual([
         `/fixture/${selected}.dylib`,
       ]);
     },
