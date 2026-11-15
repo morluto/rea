@@ -22,7 +22,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
@@ -471,11 +471,11 @@ export class KunaTargetCommands {
           { cause, operation: "kuna:workspace" },
         );
         owned.cleanup.bindCleanupError(cleanup);
-        failure = analysisErrorWithCleanupFailure(
+        failure = analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           "kuna:workspace",
-        ).bindCleanupDependencies([primary, cleanup]);
+        );
       }
     }
     return err(

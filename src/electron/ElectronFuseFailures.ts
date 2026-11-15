@@ -8,7 +8,7 @@ import {
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -58,11 +58,11 @@ export const electronFuseFailure = (
                 cause: cancellation.reason,
               });
       if (primary !== undefined)
-        return analysisErrorWithCleanupFailure(
+        return analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           operation,
-        ).bindCleanupDependencies([primary, cleanup]);
+        );
     }
     return cleanup;
   }

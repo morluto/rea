@@ -4,7 +4,10 @@ import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -422,11 +425,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };
