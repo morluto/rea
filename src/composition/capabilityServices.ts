@@ -455,7 +455,8 @@ const modules = {
     }),
   ),
   gdbSessions: capability(
-    ({ providerEnvironment }) => createGdbSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createGdbSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
     ({ platform }) => ({
       hostUnsupported: {
@@ -464,8 +465,8 @@ const modules = {
     }),
   ),
   rizinDebugSessions: capability(
-    ({ providerEnvironment }) =>
-      createRizinDebugSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createRizinDebugSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
   ),
   android: service(
