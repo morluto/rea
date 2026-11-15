@@ -204,14 +204,16 @@ available after the command exits:
 
 ```bash
 rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
-  --detail summary --evidence-bundle /absolute/path/evidence/members.json --json
+  --detail summary --evidence_output /absolute/path/evidence/members.json --json
 ```
 
-`--evidence-bundle` writes the complete original Evidence in REA's canonical
-bundle format. Its parent directory must exist, and it never replaces an
-existing path. Relative paths resolve against the command's working directory.
-The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. For partial Evidence
+`--evidence_output` writes the complete original Evidence in REA's canonical
+bundle format and prints `{"summary": …, "evidence_bundle": {"path", "bytes"}}`.
+Its parent directory must exist, and it never replaces an existing path.
+Relative paths resolve against the command's working directory. The option
+also works with complete delivery when a saved bundle is useful. Summary
+without a destination is rejected before analysis. Earlier releases spelled
+this option `--evidence-bundle` and printed the summary Evidence alone. For partial Evidence
 and committed-file receipts after failure or cancellation, see
 [Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
