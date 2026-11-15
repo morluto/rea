@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -320,7 +321,9 @@ describe("analysis snapshot contract", () => {
         architecture,
       });
       expect(parsed.entries[0]?.execution.subject?.format).toBe(format);
-      expect(parsed.evidence_bundle.records[0]?.subject?.format).toBe(format);
+      expect(
+        fileIdentity(parsed.evidence_bundle.records[0]?.subject).format,
+      ).toBe(format);
     },
   );
 
@@ -583,6 +586,78 @@ it("retains linked foreign Evidence without treating it as selected-target repla
       evidence_bundle: createEvidenceBundle([...bundle.records, unrelated]),
     }),
   ).toThrow("unrelated to the selected target and its linked sources");
+});
+
+it("binds raw Evidence only when its entry point matches the snapshot target", () => {
+  const raw = (entryPoint: string): BinaryTarget => ({
+    path: "/fixture/image.bin",
+    sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    availableArchitectures: ["arm"],
+    entryPoint,
+    entryPointSource: entryPoint,
+  });
+  const selected = raw("0x8000000");
+  const target = snapshotTarget(selected);
+  const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+  const parameters = { procedure: "main" };
+  const observe = (observed: BinaryTarget) =>
+    createEvidence(observed, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "analyze_function",
+      parameters,
+      result: { summary: "cached" },
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    });
+  const snapshotWith = (evidence: ReturnType<typeof observe>) =>
+    analysisSnapshotSchema.parse({
+      target,
+      binding,
+      entries: [
+        {
+          query_id: analysisQueryId(
+            target,
+            binding,
+            "analyze_function",
+            parameters,
+          ),
+          operation: "analyze_function",
+          parameters,
+          execution: {
+            result: { summary: "cached" },
+            raw_result: null,
+            provider: binding.provider,
+            limitations: [],
+            relationship_coverage: null,
+            locations: [],
+            subject: {
+              path: selected.path,
+              sha256: selected.sha256,
+              format: "raw-binary",
+              architecture: "arm",
+            },
+          },
+        },
+      ],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([evidence]),
+    });
+  const query = {
+    target: selected,
+    bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: "analyze_function",
+    parameters,
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+  };
+  const matching = observe(selected);
+  expect(snapshotEvidenceForQuery(snapshotWith(matching), query)).toEqual(
+    matching,
+  );
+  expect(
+    snapshotEvidenceForQuery(snapshotWith(observe(raw("0x9000000"))), query),
+  ).toBeUndefined();
 });
 
 describe("analysis snapshot Evidence binding", () => {

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -222,7 +223,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",

@@ -1,17 +1,20 @@
-import { dosMz, nonPeWindowsMz } from "../../domain/binaryTarget.fixture.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { dosMz, nonPeWindowsMz } from "../binaryTarget.fixture.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
-} from "../../domain/native/peResources.js";
+} from "../native/peResources.js";
 import {
   hasPeResourceName,
   locatePeResourcePayloads,
-} from "./PeResourceLayout.js";
-import { parsePeResources } from "./PeResourceParser.js";
-import { peResourceFixture } from "./PeResources.fixture.js";
+} from "./peResourceLayout.js";
+import {
+  parsePeResources,
+  peResourceLimitBoundary,
+} from "./peResourceInventory.js";
+import { peResourceFixture } from "./peResources.fixture.js";
+import { ParseFailureError } from "../parseFailure.js";
 
 const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
   parsePeResources(
@@ -74,7 +77,7 @@ describe("word-aligned PE resource records", () => {
           fixture.directoryAt + 4,
         );
         await expect(parse(fixture.bytes)).rejects.toMatchObject({
-          reason: "format",
+          kind: "malformed",
         });
       }
     },
@@ -228,7 +231,7 @@ describe("portable PE resource parsing", () => {
     const fixture = peResourceFixture();
     mutate(fixture);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
     });
   });
 });
@@ -306,7 +309,7 @@ describe("PE header admission and bounded traversal", () => {
     ],
   ])("rejects %s", async (_name, mutate) => {
     await expect(parse(mutate(peResourceFixture()))).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
     });
   });
 
@@ -341,9 +344,20 @@ describe("PE header admission and bounded traversal", () => {
   });
 
   it("enforces entry budgets before traversing large tables", async () => {
-    await expect(parse(peResourceFixture().bytes, 1)).rejects.toMatchObject({
-      reason: "limit",
+    const failure = await parse(peResourceFixture().bytes, 1).catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toMatchObject({
+      kind: "limit",
+      failure: { format: "pe", limit: { name: "max_entries", maximum: 1 } },
     });
+    const limit =
+      failure instanceof ParseFailureError && failure.failure.kind === "limit"
+        ? failure.failure.limit
+        : undefined;
+    expect(
+      limit === undefined ? undefined : peResourceLimitBoundary(limit),
+    ).toBe("capacity");
   });
 
   it("allows cancellation while traversing resource entries", async () => {
@@ -351,11 +365,7 @@ describe("PE header admission and bounded traversal", () => {
     const parsing = parse(peResourceFixture().bytes, 4096, controller.signal);
     const reason = { caller: "during PE resource traversal" };
     controller.abort(reason);
-    const failure = await parsing.catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    expect(failure).toMatchObject({ reason: "cancelled" });
-    if (!(failure instanceof ArtifactReaderFailure)) throw failure;
-    expect(failure.cause).toBe(reason);
+    await expect(parsing).rejects.toBe(reason);
   });
 });
 
@@ -379,7 +389,7 @@ describe("PE resource section virtual extent", () => {
       fixture.bytes.writeUInt32LE(rva, fixture.dataOffsets[0]);
       fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
       await expect(parse(fixture.bytes)).rejects.toMatchObject({
-        reason: "format",
+        kind: "malformed",
         message: expect.stringMatching(message),
       });
     },
@@ -414,7 +424,7 @@ describe("PE resource section virtual extent", () => {
     );
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
       message: expect.stringMatching(/RVA.*(?:missing|overlapping).*section/iu),
     });
   });
@@ -426,7 +436,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0x2000 + rawSize + 1, fixture.dataOffsets[0]);
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
       message: expect.stringMatching(/range.*file-backed/iu),
     });
   });
@@ -526,7 +536,7 @@ describe("PE resource ownership boundaries", () => {
     const fixture = singleResource();
     const bytes = secondSection(fixture, 4, 0x2001, 0);
     await expect(parse(bytes)).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
       message: expect.stringMatching(/interval.*overlapping.*sections/iu),
     });
   });
@@ -553,7 +563,7 @@ describe("PE resource ownership boundaries", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     const bytes = secondSection(fixture, 4, 0x100, 4);
     await expect(parse(bytes)).rejects.toMatchObject({
-      reason: "format",
+      kind: "malformed",
       message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
     });
   });
@@ -628,7 +638,7 @@ it("reports a named resource that cannot resolve to a payload as malformed", asy
   ]);
   fixture.bytes.writeUInt32LE(0xffff_fff0, fixture.dataOffsets[0]!);
   await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
   });
 });
 
@@ -642,11 +652,11 @@ it("fails closed when a duplicate resource type branch cannot be read beside the
   fixture.bytes.writeUInt32LE(10, duplicate);
   fixture.bytes.writeUInt32LE(0xffff_fff0, duplicate + 4);
   await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringContaining("cannot be read"),
   });
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
   });
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
@@ -665,7 +675,7 @@ it("fails closed when a duplicate resource type branch is a data entry beside th
     duplicate + 4,
   );
   await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringContaining("cannot be read"),
   });
   expect(await probeSeaName(fixture.bytes)).toBe(true);
@@ -686,11 +696,11 @@ it("rejects a language directory beside a readable language payload", async () =
     leaf + 4,
   );
   await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringContaining("language entry"),
   });
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
   });
 });
 
@@ -722,7 +732,7 @@ it("matches resource names by their exact UTF-16 bytes without losing source ide
   fixture.bytes.writeUInt16LE(0xffff, nameAt);
   expect(await probeSeaName(fixture.bytes)).toBe(false);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
   });
 });
 
@@ -741,7 +751,7 @@ it("keeps name probing independent of full resource name/ID partition admission"
   fixture.bytes.writeUInt16LE(1, names + 14);
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringMatching(/name\/ID.*counts.*encoded identities/iu),
   });
 });
@@ -776,7 +786,7 @@ it("keeps raw name probing separate from full resource-name alignment admission"
   fixture.bytes.writeUInt32LE(extendedEnd, fixture.sectionAt + 8);
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringMatching(/unaligned.*resource name/iu),
   });
 });

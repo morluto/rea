@@ -25,6 +25,7 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
+export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -32,6 +33,7 @@ export {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   artifactOperationCause,
+  artifactParseFailure,
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,

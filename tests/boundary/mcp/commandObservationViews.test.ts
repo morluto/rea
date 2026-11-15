@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -44,7 +45,7 @@ const gdbEvidence = (
   parameters = { session_id: sessionId, command: capture.command },
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -148,7 +149,7 @@ it("delivers ordered GDB records once and queries their retained parent after cl
   expect(parseEvidence(full.structuredContent)).toEqual(gdbEvidence());
   const selected = parseEvidence(summary.structuredContent);
   expect(selected.raw_result).toBeNull();
-  expect(selected.subject).toBeNull();
+  expect(selected.subject.identity.kind).toBe("unknown");
   expect(selected.normalized_result).toMatchObject({
     parent_evidence_id: gdbEvidence().evidence_id,
     artifact: null,
@@ -225,7 +226,7 @@ it("keeps pathless objdump observations subjectless and preserves the default co
     summary: parent.normalized_result,
   });
   expect(summary.raw_result).toBeNull();
-  expect(summary.subject).toBeNull();
+  expect(summary.subject.identity.kind).toBe("unknown");
   expect(ledger.get(parent.evidence_id)).toEqual(parent);
 });
 
@@ -263,11 +264,15 @@ it("rejects malformed historical GDB facts and conflicting source commands", asy
       })
     ).ok,
   ).toBe(false);
-  const malformed = createEvidence(undefined, source.provider, {
-    operation: "gdb_console",
-    parameters: {},
-    result: { ...capture, records: [123] },
-  });
+  const malformed = createEvidence(
+    unknownTarget("not-observed"),
+    source.provider,
+    {
+      operation: "gdb_console",
+      parameters: {},
+      result: { ...capture, records: [123] },
+    },
+  );
   expect(
     (
       await inspectAnalysisView({

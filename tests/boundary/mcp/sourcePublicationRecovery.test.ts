@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
@@ -207,7 +208,7 @@ it.each([
   }) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
     const base = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       identity,
       {
         operation: "health",
@@ -330,7 +331,7 @@ it.each([
 it("reports omission when the primary cannot be safely authenticated", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },
@@ -397,7 +398,7 @@ it("reports omission when the primary cannot be safely authenticated", async () 
 it("accounts for a wide source ID list before constructing recovery Evidence", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },
@@ -463,7 +464,7 @@ it.each(["compact"] as const)(
   async (profile) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       identity,
       { operation: "health", parameters: {}, result: "historical source" },
       { immutable: true },
@@ -536,7 +537,7 @@ it.each(["compact"] as const)(
 it("accounts for source links before admitting a completed direct observation", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },

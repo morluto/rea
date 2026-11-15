@@ -28,7 +28,7 @@ const input = (path, index) => ({
 const check = (value, digest, index, dexEntry) => {
   const evidence = parseEvidence(value);
   assert.equal(evidence.operation, operation);
-  assert.equal(evidence.subject.digest.sha256, digest);
+  assert.equal(evidence.subject.identity.sha256, digest);
   const result = evidence.normalized_result;
   assert.equal(result.target_definition, "external");
   assert.equal(result.reference_scope, "direct_dex_invokes");
@@ -206,7 +206,7 @@ const verifyLimit = async (
 
 const checkSiteBudget = (value, digest) => {
   const evidence = parseEvidence(value);
-  assert.equal(evidence.subject.digest.sha256, digest);
+  assert.equal(evidence.subject.identity.sha256, digest);
   const result = evidence.normalized_result;
   assert.equal(result.total, 11);
   const partial = result.references.filter(

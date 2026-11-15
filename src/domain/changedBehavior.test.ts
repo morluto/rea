@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
 import {
@@ -5,7 +6,11 @@ import {
   findChangedBehavior,
   type ChangedBehaviorResult,
 } from "./changedBehavior.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  evidenceSubjectInput,
+} from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 
@@ -33,7 +38,7 @@ const comparison = (
 ): Evidence => {
   const process = operation === "compare_process_captures";
   return createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: process ? "rea-process" : "rea-artifact-comparison",
       name: process
@@ -328,7 +333,7 @@ describe("changed-behavior input and Evidence validation", () => {
 
   it("rejects a comparison operation unsupported by this workflow", () => {
     const bundle = createEvidence(
-      undefined,
+      unknownTarget("derived-from-linked-evidence"),
       { id: "rea-bundle-comparison", name: "Bundle", version: "1" },
       {
         predicateType: "rea.bundle-comparison",
@@ -410,19 +415,23 @@ describe("changed-behavior input and Evidence validation", () => {
       ...dimension,
       evidence_links: [...dimension.evidence_links, `ev_${"f".repeat(64)}`],
     }));
-    const danglingNested = createEvidence(undefined, base.provider, {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: functionComparisonResultSchema.parse({
-        ...result,
-        dimensions,
-        changes: dimensions.filter(({ status }) => status !== "unchanged"),
-      }),
-      confidence: base.confidence,
-      authority: base.authority,
-      evidenceLinks: base.evidence_links,
-    });
+    const danglingNested = createEvidence(
+      evidenceSubjectInput(base.subject),
+      base.provider,
+      {
+        predicateType: base.predicate_type,
+        operation: base.operation,
+        parameters: base.parameters,
+        result: functionComparisonResultSchema.parse({
+          ...result,
+          dimensions,
+          changes: dimensions.filter(({ status }) => status !== "unchanged"),
+        }),
+        confidence: base.confidence,
+        authority: base.authority,
+        evidenceLinks: base.evidence_links,
+      },
+    );
     expect(() => aggregate([danglingNested])).toThrowError(
       expect.toSatisfy(
         (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>

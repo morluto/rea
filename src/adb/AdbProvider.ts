@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -2517,7 +2518,7 @@ export class AdbProvider {
           if (verificationFailed)
             deviceDigest.error.retainPartialObservation(
               createEvidence(
-                completed.subject ?? undefined,
+                completed.subject ?? unknownTarget("not-observed"),
                 completed.provider,
                 {
                   operation,
@@ -2561,7 +2562,7 @@ export class AdbProvider {
               `The device-reported digest does not match the staged local file: ${localPath}`,
               {
                 partialObservation: createEvidence(
-                  completed.subject ?? undefined,
+                  completed.subject ?? unknownTarget("not-observed"),
                   completed.provider,
                   {
                     operation,

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -207,7 +208,7 @@ it("keeps an oversized unretained observation failure bounded and the connection
 it("bounds fallback when the retention error itself has oversized diagnostics", async () => {
   const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "address_name", parameters: {}, result: "entry" },
     { immutable: true },
