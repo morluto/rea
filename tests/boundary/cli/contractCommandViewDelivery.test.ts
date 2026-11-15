@@ -66,6 +66,31 @@ const harness = () => {
       return {};
     },
   );
+  registerContractCommand(
+    cli as unknown as CliInstance,
+    logger,
+    {
+      name: "view_json_input_probe",
+      inputSchema: z.object({
+        path: z.string(),
+        settings: z.record(z.string(), z.number()).optional(),
+        detail: detailSchema,
+        view: viewSchema,
+      }),
+    },
+    {
+      command: "json-input",
+      description: "JSON input",
+      positionals: ["path"],
+      jsonInputs: { settings: "settings must be inline JSON or a file" },
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
+    },
+    async () => {
+      opened.push("json-input");
+      return {};
+    },
+  );
   registerContractDocumentCommand(
     cli as unknown as CliInstance,
     logger,
@@ -159,3 +184,30 @@ it.each([
   });
   expect(opened).toEqual([command]);
 });
+
+// A JSON input may name a file or stdin; reading it must not delay the
+// refusal of options the invocation can never use.
+it.each([
+  [{ view: "{" }, { path: ["view"], reason: "invalid_format" }],
+  [{ view }, { path: ["view"], reason: "invalid_value" }],
+  [
+    { detail: "summary" },
+    { path: ["evidence_output"], reason: "invalid_value" },
+  ],
+])(
+  "refuses delivery options before reading a JSON input (%j)",
+  async (options, issue) => {
+    const { invoke, opened } = harness();
+    await expect(
+      invoke(
+        "json-input",
+        { path: "/missing" },
+        { ...options, settings: "/missing/settings.json" },
+      ),
+    ).resolves.toMatchObject({
+      code: "invalid_request",
+      details: { issues: [issue] },
+    });
+    expect(opened).toEqual([]);
+  },
+);
