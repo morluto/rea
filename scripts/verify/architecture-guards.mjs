@@ -306,6 +306,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  /z\.enum\(\[[^\]]*"complete"[^\]]*\]/gu,
+  ["src/domain/coverage.ts"],
+);
+
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
 checkCounted(

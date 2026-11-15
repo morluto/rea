@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 
@@ -78,7 +79,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
   comparison_id: prefixedDigestSchema("stbc"),
   reference: z.strictObject({
     root_sha256: digestSchema,
-    inventory_state: z.enum(["complete", "partial", "unknown"]),
+    inventory_state: coverageStatusSchema,
   }),
   application: z.strictObject({
     evidence_id: evidenceIdSchema,
@@ -108,7 +109,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
   unmapped_current_node_ids: z.array(nodeIdSchema),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inputs", "partial"]),
-    reference_inventory_state: z.enum(["complete", "partial", "unknown"]),
+    reference_inventory_state: coverageStatusSchema,
     application_graph_status: z.enum([
       "complete",
       "partial",
