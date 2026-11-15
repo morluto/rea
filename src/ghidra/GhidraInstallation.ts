@@ -4,7 +4,7 @@ import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   probeGhidraJava,
   type GhidraJavaObservation,

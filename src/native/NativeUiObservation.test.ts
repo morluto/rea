@@ -10,7 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 const target: BinaryTarget = {

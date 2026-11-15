@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   normalizeArtifactPath,
   ArtifactPathRegistry,
-} from "../../artifacts/ArtifactPaths.js";
+} from "../../resources/index.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

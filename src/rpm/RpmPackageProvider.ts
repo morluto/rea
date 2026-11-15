@@ -1,23 +1,19 @@
 import { RPM_PACKAGE_PROVIDER_IDENTITY } from "./RpmPackageProviderIdentity.js";
 import {
+  artifactFilePrimaryFacts,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
-  stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
-  artifactFilePrimaryFacts,
+  stableArtifactInputFailure,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
 import type { RpmPackagePort } from "../application/rpm/RpmPackagePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";

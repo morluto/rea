@@ -25,16 +25,14 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
-import {
+  readArtifactFileChunks,
   admitAsarHeader,
   readAsarHeader,
   type AsarHeaderExtents,
-} from "./AsarHeader.js";
+} from "../resources/index.js";
+import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,

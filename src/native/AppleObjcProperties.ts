@@ -3,7 +3,10 @@ import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js"
 import type { z } from "zod";
 
 import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type DecodeIssue,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 

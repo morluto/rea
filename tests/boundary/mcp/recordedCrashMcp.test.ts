@@ -1,4 +1,8 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -73,7 +77,7 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
       name: "inspect_recorded_crash",
       arguments: { path: value.artifact.path },
     },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("inspect_recorded_crash").outputSchema.parse(
@@ -81,7 +85,7 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
   );
   const evidence = parseEvidence(parsed);
   expect(evidence.confidence).toBe("observed");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
+  expect(fileIdentity(evidence.subject).sha256).toBe(value.artifact.sha256);
   expect(parsed.normalized_result).toEqual(value);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const relative = await client.callTool({

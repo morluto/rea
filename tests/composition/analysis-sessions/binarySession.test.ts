@@ -1,9 +1,14 @@
+import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -13,7 +18,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -665,17 +670,10 @@ describe("evidence metadata imports and snapshot cache", () => {
     const before = session.exportAnalysisSnapshot();
     if (!before.ok) throw before.error;
     const existing = session.exportEvidenceBundle().records[0];
-    if (existing === undefined || existing.subject === null)
+    if (existing === undefined)
       throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
-      {
-        path: existing.subject.local_path,
-        sha256: existing.subject.digest.sha256,
-        format: existing.subject.format,
-        ...(existing.subject.architecture === null
-          ? {}
-          : { architecture: existing.subject.architecture }),
-      },
+      fileSubjectTarget(existing.subject),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.analysis",
@@ -743,7 +741,10 @@ describe("Evidence display metadata refresh", () => {
         const activeEvidence = baseline.value.evidence_bundle.records.find(
           ({ operation }) => operation === "address_name",
         );
-        if (activeEvidence === undefined || activeEvidence.subject === null)
+        if (
+          activeEvidence === undefined ||
+          activeEvidence.subject.identity.kind !== "file"
+        )
           throw new Error("Expected artifact-bound Evidence");
         const evidence =
           scope === "active"
@@ -754,14 +755,14 @@ describe("Evidence display metadata refresh", () => {
                 { operation: "health", parameters: {}, result: true },
               );
         expect(session.recordEvidence(evidence).ok).toBe(true);
-        if (evidence.subject === null) throw new Error("Expected a subject");
+        if (evidence.subject.identity.kind !== "file")
+          throw new Error("Expected a subject");
         const relocated = {
           ...evidence,
-          subject: {
-            ...evidence.subject,
+          subject: displayedEvidenceSubject(evidence.subject, {
             local_path: `${evidence.subject.local_path}.moved`,
             name: `${evidence.subject.name}.moved`,
-          },
+          }),
         };
         const changed = vi.fn();
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
@@ -1157,7 +1158,7 @@ describe("snapshot cache eligibility", () => {
           ...(live ? { cachePolicy: "live" as const } : {}),
         }));
       const source = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         provider.identity(),
         {
           operation: "health",
@@ -1210,11 +1211,15 @@ describe("snapshot cache eligibility", () => {
   it("rejects invalid source Evidence on a non-replayable observation", async () => {
     const [target] = await createBinarySessionTargets();
     const provider = createCacheProvider([]);
-    const source = createEvidence(undefined, provider.identity(), {
-      operation: "health",
-      parameters: {},
-      result: "original",
-    });
+    const source = createEvidence(
+      unknownTarget("not-observed"),
+      provider.identity(),
+      {
+        operation: "health",
+        parameters: {},
+        result: "original",
+      },
+    );
     provider.createClient = () => ({
       execute: async () =>
         resultOk(

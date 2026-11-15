@@ -7,7 +7,12 @@ import {
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
-import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  withArtifactTargetIdentity,
+} from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -19,14 +24,13 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   inspectBundleKeyedArchive,
   inspectStandaloneKeyedArchive,
 } from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
 import { dirname } from "node:path";
-import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -48,20 +52,21 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
+import { binaryTargetSelection } from "../domain/targetIdentity.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import {
   artifactInspectionSources,
   createArtifactInspection,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
-import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
-import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../application/binary/BundleResourceSession.js";
+import type {
+  ResolvedAppBundleResourceRoot,
+  BundleResourceRoot,
+} from "../domain/apple/bundleResourceRoot.js";
+import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
@@ -386,10 +391,7 @@ class ArtifactClient implements AnalysisClient {
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             rawResult: null,
             limitations: result.limitations,
-            subject: subjectFor(
-              artifactTargetSelectedPath(this.target),
-              result.manifest,
-            ),
+            subject: subjectFor(this.target, result.manifest),
             // Each extracted file's path is already in artifacts.
             locations: [],
           }),
@@ -401,10 +403,7 @@ class ArtifactClient implements AnalysisClient {
         createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
           rawResult: null,
           limitations: result.limitations,
-          subject: subjectFor(
-            artifactTargetSelectedPath(this.target),
-            result.manifest,
-          ),
+          subject: subjectFor(this.target, result.manifest),
           // Each occurrence's logical path is already in the result.
           locations: [],
         }),
@@ -514,10 +513,7 @@ class ArtifactClient implements AnalysisClient {
     const inventory = freezeJsonSnapshot(
       await this.inventory(inventoryParameters, options),
     );
-    const subject = subjectFor(
-      artifactTargetSelectedPath(this.target),
-      inventory.manifest,
-    );
+    const subject = subjectFor(this.target, inventory.manifest);
     const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
       operation: "inventory_artifact",
       parameters: inventoryParameters,
@@ -597,14 +593,27 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
+/**
+ * The inventory root as an Evidence subject. When the root is the open
+ * target's own bytes, it carries the target's selection (ESP flash offsets),
+ * so observations of different selections name different subjects.
+ */
 const subjectFor = (
-  path: string,
+  target: BinaryTarget,
   manifest: {
     readonly root_sha256: string;
     readonly root_format: import("../domain/artifactGraph.js").ArtifactInventoryResult["manifest"]["root_format"];
   },
-) => ({
-  path,
-  sha256: manifest.root_sha256,
-  format: manifest.root_format,
-});
+) => {
+  const selection =
+    manifest.root_sha256 === target.sha256 &&
+    manifest.root_format === target.format
+      ? binaryTargetSelection(target)
+      : null;
+  return {
+    path: artifactTargetSelectedPath(target),
+    sha256: manifest.root_sha256,
+    format: manifest.root_format,
+    ...(selection === null ? {} : { selection }),
+  };
+};

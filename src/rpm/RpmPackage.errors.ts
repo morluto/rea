@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import type { RPM_PACKAGE_LIMIT_MAXIMA } from "../domain/rpm/package.js";
 
 /** Resource boundary exceeded while reading headers, files, or scriptlet text. */

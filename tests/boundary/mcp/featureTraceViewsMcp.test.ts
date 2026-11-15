@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { deliverApplicationEvidence } from "../../../src/server/registerApplicationTools/helpers.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -141,13 +142,10 @@ it.each(["compact"] as const)(
     expect(summary.evidence.normalized_result).toMatchObject({
       kind: "summary",
       parent_operation: "trace_application_feature",
-      artifact:
-        parent.subject === null
-          ? null
-          : {
-              path: parent.subject.local_path,
-              sha256: parent.subject.digest.sha256,
-            },
+      artifact: {
+        path: parent.subject.local_path,
+        sha256: fileIdentity(parent.subject).sha256,
+      },
       summary: {
         trace_id: full.trace_id,
         source_evidence_id: full.source_evidence_id,

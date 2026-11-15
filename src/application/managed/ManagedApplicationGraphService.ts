@@ -1,8 +1,9 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   createEvidence,
@@ -63,33 +64,37 @@ const createManagedApplicationGraphEvidence = (
   input: ParsedManagedGraphInput,
   result: ManagedApplicationGraphResult,
 ): Evidence =>
-  createEvidence(subjectTarget(input), MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-application-graph",
-    operation: OPERATION,
-    parameters: {
-      managed_artifact_evidence_id:
-        input.artifact?.evidence.evidence_id ?? null,
-      managed_members_evidence_id: input.members?.evidence.evidence_id ?? null,
-      managed_native_boundaries_evidence_id:
-        input.boundaries?.evidence.evidence_id ?? null,
+  createEvidence(
+    subjectTarget(input) ?? unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-application-graph",
+      operation: OPERATION,
+      parameters: {
+        managed_artifact_evidence_id:
+          input.artifact?.evidence.evidence_id ?? null,
+        managed_members_evidence_id:
+          input.members?.evidence.evidence_id ?? null,
+        managed_native_boundaries_evidence_id:
+          input.boundaries?.evidence.evidence_id ?? null,
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    evidenceLinks: result.evidence_links,
-  });
+  );
 
 const subjectTarget = (
   input: ParsedManagedGraphInput,
 ): EvidenceSubjectTarget | undefined => {
-  const subject =
-    input.artifact?.evidence.subject ??
-    input.members?.evidence.subject ??
-    input.boundaries?.evidence.subject;
-  if (subject === undefined || subject === null || subject.format !== "pe")
-    return undefined;
-  return evidenceSubjectTarget(subject);
+  // Every subject is present; an unknown one names no file, so the first
+  // file subject among the inputs is the graph's target.
+  const target = [input.artifact, input.members, input.boundaries]
+    .map((source) => evidenceSubjectTarget(source?.evidence.subject))
+    .find((candidate) => candidate !== undefined);
+  return target?.format === "pe" ? target : undefined;
 };

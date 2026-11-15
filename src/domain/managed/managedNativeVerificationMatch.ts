@@ -6,7 +6,10 @@ import type {
   ManagedNativeObservationFacts,
   ManagedNativePlatform,
 } from "./managedNativeVerificationSource.js";
-import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
+import {
+  managedInspectionCoverage,
+  type ManagedNativeBoundaryInspection,
+} from "./managedArtifact.js";
 import type {
   ManagedNativeVerificationResult,
   NativeSymbol,
@@ -571,11 +574,7 @@ export const buildVerificationResult = ({
   // verification cannot tell what it would cover: unknown wins beside the
   // known gaps of skipped native Evidence or non-exhaustive exports.
   const status = joinCoverageStatus([
-    managed.coverage.state === "unavailable"
-      ? "unknown"
-      : managed.coverage.state === "complete"
-        ? "complete"
-        : "partial",
+    managedInspectionCoverage(managed.coverage.state),
     native.unsupported === 0 && !native.partialExports ? "complete" : "partial",
   ]);
   const coverage: ManagedNativeVerificationResult["coverage"] = {

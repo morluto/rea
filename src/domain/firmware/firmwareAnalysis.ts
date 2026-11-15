@@ -1,5 +1,6 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -96,13 +97,11 @@ const engine = z.strictObject({
   source_revision: z.null(),
   worker_count: z.literal(1),
 });
-/** Small execution metadata contract; historical omissions remain unknown. */
+/** Execution metadata every firmware result carries. */
 export const firmwareExecutionBudgetSchema = z.object({
-  analysis_timeout_ms: timerDurationMsSchema
-    .exactOptional()
-    .describe(
-      "Actual analysis phase budget in milliseconds; absent in historical Evidence means unknown",
-    ),
+  analysis_timeout_ms: timerDurationMsSchema.describe(
+    "Actual analysis phase budget in milliseconds",
+  ),
 });
 const selection = z.strictObject({ ...range.shape, sha256: digestSchema });
 const chunk = z.strictObject({
@@ -173,7 +172,7 @@ export const firmwareResultSchemas = {
     engine,
     selection,
     output_directory: z.string(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     files: z.array(
       z.strictObject({
         // Producer-relative identity retains source spelling; `path` identifies

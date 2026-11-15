@@ -318,6 +318,11 @@ same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
 
+Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
+of the packaged bridge scripts. A snapshot replays only under the same
+producer, so after an REA upgrade or a bridge script change an older snapshot is
+refused; open the target without it and save a fresh snapshot.
+
 When `inspect_native_instruction` selects a byte inside a listed instruction,
 `containing_instruction` reports its separate start, length and Ghidra Listing
 text, retaining any non-default address space. The requested address remains

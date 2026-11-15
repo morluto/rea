@@ -24,13 +24,13 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
 import {
   RegularFileReadFailure,
   withRegularFile,
   type RegularFileReadOptions,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
   JSON_INPUT_RESOURCE_REMEDIATION,

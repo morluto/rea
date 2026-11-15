@@ -4,9 +4,9 @@ import {
   wasmInterfaceByteBudgetSchema,
 } from "./wasmInterface.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 /** Exact upstream release whose tool profile REA verified. */
@@ -177,7 +177,7 @@ export const wasmArtifactSchema = z
     glue: z.array(
       z.strictObject({
         artifact,
-        parse_status: z.enum(["complete", "partial", "failed"]),
+        parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
         references: z.array(
           z.strictObject({
             value: z.string(),
@@ -270,10 +270,11 @@ export type InspectWasmArtifactInput = z.infer<
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
 /** Semantic WASM subject identity excludes delivery-only local paths. */
-export type WasmArtifactSubject = Pick<
-  EvidenceSubjectTarget,
-  "sha256" | "format"
->;
+/** The file facts a WASM artifact is matched against (a subject or target identity). */
+export interface WasmArtifactSubject {
+  readonly sha256: string;
+  readonly format: string;
+}
 type WasmArtifactFileSubject = WasmArtifactSubject & {
   readonly format: "file";
 };

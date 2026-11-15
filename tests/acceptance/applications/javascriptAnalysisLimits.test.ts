@@ -63,12 +63,22 @@ cliTest(
       code: "provider_timeout",
       message: expect.stringContaining("analysis_timeout_ms"),
       remediation: {
-        action: expect.stringContaining(
-          "rea analyze-javascript-application <input_path> --analysis-timeout-ms",
-        ),
+        action: expect.stringContaining("Increase analysis_timeout_ms"),
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: 1 },
+      // The worker names the setting's request parameter; the CLI adds the
+      // option that sets it.
+      details: {
+        limit: {
+          setting: "javascript.analysis_timeout_ms",
+          parameter: "analysis_timeout_ms",
+          cli_flag: "--analysis-timeout-ms",
+        },
+      },
     });
+    expect(
+      JSON.stringify((response.json as { remediation: unknown }).remediation),
+    ).not.toContain("--analysis-timeout-ms");
   },
 );
 

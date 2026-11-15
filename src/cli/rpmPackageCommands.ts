@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createRpmPackageService } from "../composition/rpmPackage.js";
 import { RPM_PACKAGE_TOOL_CONTRACTS } from "../contracts/rpm/rpmPackageToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -20,7 +19,6 @@ export const registerRpmPackageCommands = (
     logger,
     contractNamed(RPM_PACKAGE_TOOL_CONTRACTS, "inspect_rpm_package"),
     {
-      command: CLI_COMMANDS.inspectRpmPackage,
       description:
         "Inspect RPM lead, signature and header metadata without installing the package or unpacking the payload",
       positionals: ["path"],

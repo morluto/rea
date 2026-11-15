@@ -3,13 +3,15 @@ import assert from "node:assert/strict";
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../dist/dotnet/ManagedNativeBoundaryInspector.js";
-import { compareManagedMemberPaths } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
+import { executeManagedMemberComparison } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
+import { createDirectAnalysis } from "../../../dist/composition/directAnalysis.js";
 import { executeManagedNativeBoundaries } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
+import { unknownTarget } from "../../../dist/domain/targetIdentity.js";
 import { functionDossier } from "../../fixtures/managed/function-dossier.mjs";
 import {
   alternateMvid,
@@ -28,6 +30,22 @@ import {
 } from "../../lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
+const { runManagedProviderEvidence } = createDirectAnalysis({});
+
+/** Compare two paths as compare-managed-members composes its inspections. */
+const compareManagedPaths = async (leftPath, rightPath) => {
+  const [left, right] = [
+    await runManagedProviderEvidence(leftPath, "inspect_managed_members", {}),
+    await runManagedProviderEvidence(rightPath, "inspect_managed_members", {}),
+  ];
+  assert.equal(left.ok && right.ok, true);
+  const compared = executeManagedMemberComparison({
+    left: left.value,
+    right: right.value,
+  });
+  assert.equal(compared.ok, true);
+  return compared.value.evidence;
+};
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-managed-conformance-",
 });
@@ -245,7 +263,7 @@ await withVerifierFixture(workspaceFixture, async () => {
   const reconstructionMethod = obfuscatedMembers.methods[0];
   assert.ok(reconstructionMethod);
   const obfuscatedMembersEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_members",
@@ -295,12 +313,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       { name: "RenamedSemanticSlice", body: defaultIlBody },
     ],
   });
-  const comparison = await compareManagedMemberPaths({
-    leftPath: left.path,
-    rightPath: right.path,
-  });
-  assert.equal(comparison.ok, true);
-  const comparisonResult = comparison.value.normalized_result;
+  const comparison = await compareManagedPaths(left.path, right.path);
+  const comparisonResult = comparison.normalized_result;
   assert.equal(
     comparisonResult.algorithm.name_matching,
     "exact-signature-fallback",
@@ -322,13 +336,12 @@ await withVerifierFixture(workspaceFixture, async () => {
   const unavailableBodyRight = await fixture("partial-body-right.exe", {
     methods: [{ name: "PartialBodyTarget", body: defaultIlBody }],
   });
-  const partialBodyComparison = await compareManagedMemberPaths({
-    leftPath: unavailableBodyLeft.path,
-    rightPath: unavailableBodyRight.path,
-  });
-  assert.equal(partialBodyComparison.ok, true);
+  const partialBodyComparison = await compareManagedPaths(
+    unavailableBodyLeft.path,
+    unavailableBodyRight.path,
+  );
   const partialBodyMethod =
-    partialBodyComparison.value.normalized_result.methods.find(
+    partialBodyComparison.normalized_result.methods.find(
       ({ left }) => left?.name === "PartialBodyTarget",
     );
   assert.equal(partialBodyMethod?.status, "unknown");

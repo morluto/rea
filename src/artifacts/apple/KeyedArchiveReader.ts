@@ -1,5 +1,16 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
+import {
+  targetDigestChangedFailure,
+  readStableArtifact,
+  projectStableArtifactFailure,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  artifactSelectedPathErrno,
+  artifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -9,12 +20,10 @@ import {
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import { readStableArtifact } from "../readStableArtifact.js";
-import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   AnalysisAccessDeniedError,
@@ -33,7 +42,7 @@ import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js"
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   KeyedArchiveKindError,
@@ -45,18 +54,9 @@ import {
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
-import {
-  artifactSelectedPathErrno,
-  artifactFilePrimaryFacts,
-  assertArtifactReadActive,
-  bindArtifactFileCleanup,
-} from "../ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -64,7 +64,7 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -227,11 +227,11 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           outcome.cause,
           cleanup,
           "inspect_keyed_archive",
-        ).bindCleanupDependencies([outcome.cause, cleanup]);
+        );
       }
       throw resources.cleanupFailure(outcome, [released]);
     }

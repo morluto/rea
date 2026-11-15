@@ -113,9 +113,8 @@ After finding method indices, parameters can be requested directly:
 }
 ```
 
-An Evidence bundle exported by an earlier release, without `evidence_format`,
-is refused; recreate the observation. A standalone Evidence record that
-predates these member collections remains queryable. A missing collection has an unknown (`null`) summary count, and requesting it
+An Evidence bundle or record from an earlier Evidence format revision is
+refused; recreate the observation. A missing collection has an unknown (`null`) summary count, and requesting it
 reports that it was not collected; it is never presented as an empty inventory. The same holds for Evidence that predates binary linking: its summary
 omits `binary`, and `method_addresses`, `method_address_states`,
 `return_types`, `field_types` and `parameter_types` counts are `null`. A link retained before

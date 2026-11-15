@@ -1,7 +1,8 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -15,28 +16,25 @@ import {
   createCatalogDigestProfiles,
   createCatalogDigests,
   createCatalogIdentity,
-} from "../../../src/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
+  CLI_COMMAND_NAMES,
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  annotationsFromEffects,
-  toolSessionEffects,
-} from "../../../src/contracts/toolEffects.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createServerIdentity } from "../../../src/serverIdentity.js";
+import { createServerIdentity } from "../../../src/process/ServerIdentity.js";
 import { normalizeEntrypointPath } from "../../../src/process/CurrentEntrypointPath.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -184,6 +182,9 @@ describe("server and catalog identity", () => {
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
+    expect(unknown.package.root_path).toBe(
+      resolve(fileURLToPath(import.meta.url), "../../../.."),
+    );
     const aligned = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -572,7 +573,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
-    const effects = toolSessionEffects(contract.name);
+    const effects = contract.sessionEffects;
     const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({

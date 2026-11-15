@@ -1,16 +1,23 @@
 import { getEventListeners } from "node:events";
 import { execFile } from "node:child_process";
-import { chmod, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  open,
+  symlink,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { createCli } from "../../../src/cli.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { closeCliResources, createCli } from "../../../src/cli.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { cliJavaScriptSourcePaths } from "../../../src/cli/javascriptApplicationAnalysis.js";
 import { readJsonInputFile } from "../../../src/application/JsonInputFile.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -589,5 +596,91 @@ describe("CLI JSON stdin cancellation and encoding", () => {
       error: { input_path: "-", input_reason: "read-failed" },
     });
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+});
+
+describe("CLI JSON file cleanup", () => {
+  /** Refuse every close, recording each owner so the test can release it. */
+  const refuseCloses = (onClose?: () => void) => {
+    const owners = new Set<OwnedFileHandle>();
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        owners.add(this);
+        onClose?.();
+        throw new Error("injected file close failure");
+      });
+    onTestFinished(async () => {
+      close.mockRestore();
+      for (const owner of owners) await owner.close();
+    });
+    return { owners, close };
+  };
+
+  const jsonFile = async (prefix: string) => {
+    const root = await createTestTempDirectory(prefix);
+    const path = join(root, "input.json");
+    await writeFile(path, '{"value":1}');
+    return path;
+  };
+
+  it("retains a file whose close fails until final CLI cleanup", async () => {
+    const path = await jsonFile("rea-json-input-close-");
+    const { owners, close } = refuseCloses();
+    expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+      ok: false,
+      error: {
+        code: "cleanup_incomplete",
+        input_path: path,
+        details: { cleanup: "incomplete", resources: [path] },
+      },
+    });
+    const [owner] = owners;
+    // The handle stays with the process owner rather than being dropped.
+    expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+    close.mockRestore();
+    await closeCliResources();
+    expect(owner?.handle.fd).toBe(-1);
+  });
+
+  it("keeps a cancellation recorded during close beside the incomplete cleanup", async () => {
+    const path = await jsonFile("rea-json-input-close-cancel-");
+    const controller = new AbortController();
+    refuseCloses(() => controller.abort("stop"));
+    expect(
+      await parseCliJsonInput(path, "test-input", controller.signal),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "cleanup_incomplete",
+        input_path: path,
+        details: { cleanup: "incomplete", execution_failure: "cancelled" },
+      },
+    });
+  });
+
+  it("keeps a descriptor read failure beside the incomplete cleanup", async () => {
+    const path = await jsonFile("rea-json-input-close-read-");
+    const probe = await open(path);
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const read = vi
+      .spyOn(prototype, "read")
+      .mockRejectedValue(
+        Object.assign(new Error("injected read failure"), { code: "EIO" }),
+      );
+    onTestFinished(() => read.mockRestore());
+    refuseCloses();
+    expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+      ok: false,
+      error: {
+        code: "cleanup_incomplete",
+        input_path: path,
+        details: {
+          cleanup: "incomplete",
+          execution_failure: "invalid_request",
+        },
+      },
+    });
   });
 });

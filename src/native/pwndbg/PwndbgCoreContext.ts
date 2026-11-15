@@ -1,8 +1,16 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";
@@ -10,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -24,17 +32,10 @@ import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
-  capturedPwntoolsOutput,
   pwntoolsFailureDialect,
   pwntoolsBudgetRecovery,
 } from "../pwntools/PwntoolsFailures.js";
@@ -233,7 +234,7 @@ export const inspectPwndbgCore = async ({
       },
       failure,
     );
-    output = capturedPwntoolsOutput(execution);
+    output = capturedProviderOutput(execution);
     let reply: z.output<typeof replySchema>;
     let finalization: AnalysisError | undefined;
     try {
@@ -344,7 +345,13 @@ export const inspectPwndbgCore = async ({
         ),
         finalization,
       );
-    return { context: { ...reply.value, diagnostics: output }, finalization };
+    return {
+      context: {
+        ...reply.value,
+        diagnostics: providerResultDiagnostics(output),
+      },
+      finalization,
+    };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
     const primary = classifyProviderFailure(
@@ -405,11 +412,7 @@ export const pwndbgContextFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          OPERATION,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, OPERATION)
       : primary.retainSecondaryFailure(finalization);
 
 /** Preserve both stages' exact text and their independently observed truncation state. */

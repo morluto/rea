@@ -21,11 +21,9 @@ import {
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import {
-  tryParseEvidence,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
@@ -67,7 +65,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
+import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
@@ -86,7 +84,6 @@ import {
   cancelledBy,
   CallerAbort,
 } from "../domain/analysisErrorCore.js";
-import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
@@ -96,7 +93,7 @@ import {
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { BUNDLE_RESOURCE_OPERATIONS } from "./binary/BundleResourceSession.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
@@ -189,15 +186,7 @@ const targetSelection = (options: {
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
-  ...[
-    path,
-    tool,
-    arguments_,
-    logger = silentLogger,
-    signal,
-    delivery,
-    selection,
-  ]:
+  ...[path, tool, arguments_, logger = silentLogger, signal, selection]:
     | readonly [
         path: string,
         tool: NativeToolName | ArtifactAnalysisOperation | ManagedToolName,
@@ -207,93 +196,26 @@ export const runProviderAnalysis = async (
       ]
     | readonly [
         path: string,
-        tool: "inspect_managed_members",
-        arguments_: Readonly<Record<string, JsonValue>>,
-        logger: Logger | undefined,
-        signal: AbortSignal | undefined,
-        delivery: {
-          readonly detail?: "complete" | "summary";
-          readonly evidenceBundlePath?: string;
-        },
-      ]
-    | readonly [
-        path: string,
         tool: ArtifactAnalysisOperation,
         arguments_: Readonly<Record<string, JsonValue>>,
         logger: Logger | undefined,
         signal: AbortSignal | undefined,
-        delivery: undefined,
         selection: ArtifactTargetSelection,
       ]
-): Promise<Result<Evidence, JsonValue>> => {
-  if (delivery !== undefined && tool !== "inspect_managed_members")
-    return err(
-      cliError(
-        new AnalysisInputError(tool, undefined, [
-          {
-            path: ["delivery"],
-            reason: "invalid_value",
-            message:
-              "Evidence delivery options are only supported by inspect_managed_members",
-          },
-        ]),
-      ),
-    );
-  if (
-    delivery?.detail === "summary" &&
-    delivery.evidenceBundlePath === undefined
-  )
-    return err(
-      cliError(
-        new AnalysisInputError(tool, undefined, [
-          {
-            path: ["evidence_bundle"],
-            reason: "missing_argument",
-            message:
-              "summary detail requires --evidence-bundle so complete Evidence remains available to later CLI commands",
-          },
-        ]),
-      ),
-    );
-  return withProcessCancellation(signal, async (operationSignal) => {
+): Promise<Result<Evidence, JsonValue>> =>
+  withProcessCancellation(signal, async (operationSignal) => {
     // Preserve the selected path and original arguments as request facts.
     const evidenceParameters = { ...arguments_, input_path: path };
     if (isManagedToolName(tool)) {
-      const original = await runManagedProviderAnalysis(
+      const evidence = await managedCallerEvidence(
         dependencies,
         path,
         tool,
         arguments_,
-        evidenceParameters,
         operationSignal,
       );
-      await dispatchQueuedInterrupts();
-      if (!original.ok)
-        return err(
-          cliError(
-            retainFinalCancellation(original.error, tool, operationSignal),
-            path,
-          ),
-        );
-      const evidence = withEvidenceCallerInputPath(original.value, path);
-      if (operationSignal.aborted)
-        return err(
-          cliError(
-            cancelledBy(tool, operationSignal, {
-              partialObservation: evidence,
-            }),
-          ),
-        );
-      const result =
-        delivery?.evidenceBundlePath === undefined
-          ? ok(evidence)
-          : await deliverAnalysisEvidence(
-              evidence,
-              delivery.evidenceBundlePath,
-              delivery.detail,
-              operationSignal,
-            );
-      return result.ok ? result : err(cliError(result.error, path));
+      // Completed Evidence already carries the caller's path.
+      return evidence.ok ? evidence : err(cliError(evidence.error, path));
     }
     const admitted = admitOneShotOperation(tool, arguments_, operationSignal);
     if (!admitted.ok) return err(cliError(admitted.error, path));
@@ -316,6 +238,56 @@ export const runProviderAnalysis = async (
       },
     );
   });
+
+/**
+ * Run one managed operation on a caller-selected path, keeping its typed
+ * failure so a composed command can retain earlier Evidence beside it.
+ */
+export const runManagedProviderEvidence = (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+  path: string,
+  tool: ManagedToolName,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  signal?: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> =>
+  withProcessCancellation(signal, (operationSignal) =>
+    managedCallerEvidence(
+      dependencies,
+      path,
+      tool,
+      arguments_,
+      operationSignal,
+    ),
+  );
+
+/** Managed Evidence bound to the caller's path and its request facts. */
+const managedCallerEvidence = async (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+  path: string,
+  tool: ManagedToolName,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  operationSignal: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> => {
+  // Preserve the selected path and original arguments as request facts.
+  const original = await runManagedProviderAnalysis(
+    dependencies,
+    path,
+    tool,
+    arguments_,
+    { ...arguments_, input_path: path },
+    operationSignal,
+  );
+  await dispatchQueuedInterrupts();
+  if (!original.ok)
+    return err(retainFinalCancellation(original.error, tool, operationSignal));
+  const evidence = withEvidenceCallerInputPath(original.value, path);
+  if (operationSignal.aborted)
+    return err(
+      cancelledBy(tool, operationSignal, {
+        partialObservation: evidence,
+      }),
+    );
+  return ok(evidence);
 };
 
 /** Execute managed metadata inspection in an isolated managed-only session. */
@@ -559,9 +531,10 @@ const runAnalysis = async (
     });
     if (!executed.ok) {
       if (options.includeEvidenceSources) {
-        const partial = tryParseEvidence(executed.error.partialObservation);
-        if (partial !== undefined) {
-          const captured = captureSources(partial);
+        const partial = recognizeEvidence(executed.error.partialObservation);
+        if (!partial.ok) executed.error.retainSecondaryFailure(partial.error);
+        else if (partial.value !== undefined) {
+          const captured = captureSources(partial.value);
           if (!captured.ok)
             executed.error.retainSecondaryFailure(captured.error);
         }

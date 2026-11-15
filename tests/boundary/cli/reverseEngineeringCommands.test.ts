@@ -1,10 +1,14 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
 import { Cli, z } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -38,7 +42,7 @@ afterEach(() => {
 
 const observation = (completionStatus: "complete" | "unknown") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gnu.objdump", name: "GNU objdump", version: null },
     {
       predicateType: "rea.reverse-engineering.command-observation",
@@ -99,7 +103,7 @@ const runObjdump = async (
     undefined,
     () => service as ReverseEngineeringService,
   );
-  const command = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const command = commands.get(cliCommandFor("inspect_with_objdump"));
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
@@ -204,7 +208,7 @@ it("lists objdump architectures without inventing an artifact path", async () =>
     { operation: "architectures" },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
-  const artifactCommand = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const artifactCommand = commands.get(cliCommandFor("inspect_with_objdump"));
   expect(
     artifactCommand?.args?.safeParse({
       path: "/tmp/sample",
@@ -328,6 +332,22 @@ it("preserves an operation timeout and unknown partial Evidence after cleanup re
     expect(timeout).toBeInstanceOf(AnalysisTimeoutError);
     expect(timeout?.cleanupIncomplete).toBe(false);
     expect(owner.stop).toHaveBeenCalledOnce();
+    // The service names the contract field; the CLI adds the flag that sets it.
+    expect(timeout?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "command_timeout_ms",
+    });
+    expect(
+      JSON.stringify((result as { remediation?: unknown }).remediation),
+    ).not.toContain("--");
+    expect(result).toMatchObject({
+      details: {
+        limit: {
+          parameter: "command_timeout_ms",
+          cli_flag: "--command-timeout-ms",
+        },
+      },
+    });
   } finally {
     await service.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
@@ -480,7 +500,7 @@ it.each([false, true])(
       },
     } as unknown as CliInstance;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -600,7 +620,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     } as unknown as CliInstance;
     const previous = process.exitCode;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",

@@ -18,7 +18,7 @@ import {
   ParseFailureError,
   unsupportedInput,
 } from "../domain/parseFailure.js";
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import {
   RPM_FILE_FLAG,

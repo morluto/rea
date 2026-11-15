@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -9,12 +10,17 @@ import {
 } from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   type InspectSignalDecodersInput,
   signalDecodersSchema,
 } from "../domain/signals/signalDecoders.js";
 import {
-  DecoderDiscoveryBudgetError,
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
+  DECODER_CATALOG_FORMAT,
   parseDecoderDiscovery,
 } from "./parseDecoderDiscovery.js";
 import {
@@ -34,20 +40,21 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { SignalRecordingPort } from "../application/signals/SignalRecordingService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/AnalysisProvider.js";
+import type { SignalRecordingPort } from "../ports/signals/SignalRecordingPort.js";
+import {
+  ArtifactReaderFailure,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
-  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
 } from "../providers/artifactResourceFailure.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -61,7 +68,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -93,14 +99,14 @@ export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
  * A nonzero version probe ran under the resource limiter, so the status is not
  * attributed to sigrok-cli alone.
  */
-class ResourceLimitedVersionProbeFailure extends Error {
+class UnattributedVersionProbeFailure extends Error {
   readonly statusOwner = "limiter-or-tool" as const;
 
   constructor() {
     super(
       "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
     );
-    this.name = "ResourceLimitedVersionProbeFailure";
+    this.name = "UnattributedVersionProbeFailure";
   }
 }
 
@@ -112,7 +118,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     readonly launcher?: Launcher,
     readonly createRuntime: () => Promise<ArtifactAnalysisRuntime> = () =>
       PrivateRuntimeRoot.create({ prefix: "rea-sigrok-" }),
-    readonly platform: NodeJS.Platform = process.platform,
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
@@ -248,7 +254,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(output);
+        capturedOutput = capturedProviderOutput(output);
         await assertArtifactCommandPath(selectedCommand, operation, {
           capturedOutput,
         });
@@ -299,7 +305,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           );
         // The probe runs under the limiter, so either program may own the status.
         if (output.exitCode !== 0 && phase === "configuration")
-          throw new ResourceLimitedVersionProbeFailure();
+          throw new UnattributedVersionProbeFailure();
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,
@@ -509,23 +515,16 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       providerId: SIGROK_PROVIDER_IDENTITY.id,
       operation,
       recognise: (cause) =>
-        cause instanceof DecoderDiscoveryBudgetError
-          ? new AnalysisResourceConstraintError(
-              operation,
-              "memory",
-              cause.message,
-              { line_budget: 65536 },
-              {
-                cause,
-                ...(observedOutput === undefined
-                  ? {}
-                  : { capturedOutput: observedOutput }),
-                ...fixedAllowanceOptions(
-                  "The sigrok decoder-discovery line allowance",
-                  "capture",
-                ),
-              },
-            )
+        isParseLimit(cause, DECODER_CATALOG_FORMAT)
+          ? parseLimitConstraint(operation, "memory", cause, {
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              ...fixedAllowanceOptions(
+                "The sigrok decoder-discovery line allowance",
+                "capture",
+              ),
+            })
           : undefined,
       command: () => command,
       // The retained workspace owns a command's unresolved cleanup and reports
@@ -559,7 +558,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               ...(observedOutput === undefined
                 ? {}
                 : { capturedOutput: observedOutput }),
-              ...(cause instanceof ResourceLimitedVersionProbeFailure
+              ...(cause instanceof UnattributedVersionProbeFailure
                 ? {
                     diagnostics: {
                       version_probe_status_owner: cause.statusOwner,

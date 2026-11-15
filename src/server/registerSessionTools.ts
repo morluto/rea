@@ -2,7 +2,7 @@ import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvai
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
 
 import {
@@ -27,20 +27,18 @@ import type { Evidence } from "../domain/evidence.js";
 import type { ProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
-import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
+import { registerServiceTools } from "./serviceToolBindings.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -93,6 +91,7 @@ interface ProcessToolRegistration {
   >;
   readonly resourceScope: ProcessCaptureResourceScope;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly platform: NodeJS.Platform;
 }
 
 const registerProcessTools = ({
@@ -102,6 +101,7 @@ const registerProcessTools = ({
   captureContract,
   resourceScope,
   environment,
+  platform,
 }: ProcessToolRegistration): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
@@ -123,7 +123,7 @@ const registerProcessTools = ({
                 prepareProcessScenarioPlan(
                   input,
                   environment,
-                  process.platform,
+                  platform,
                   context.mcpReq.signal,
                 ),
             );
@@ -134,7 +134,7 @@ const registerProcessTools = ({
               );
             const evidence = createProcessScenarioPlanEvidence(
               prepared.value,
-              process.platform,
+              platform,
             );
             const recorded = session.recordEvidence(evidence);
             if (!recorded.ok)
@@ -155,7 +155,7 @@ const registerProcessTools = ({
               captureProcessScenario(
                 input,
                 context.mcpReq.signal,
-                process.platform,
+                platform,
                 environment,
                 undefined,
                 undefined,
@@ -192,7 +192,6 @@ export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes 
   readonly logger: Logger;
   readonly openContract: ReturnType<typeof toolContract<"open_binary">>;
   readonly closeContract: ReturnType<typeof toolContract<"close_binary">>;
-  readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
   readonly artifactResources: ArtifactResourceScope;
@@ -205,10 +204,11 @@ const registerLifecycleTools = (
   registerOpenLifecycleTool(registration);
   registerCloseLifecycleTool(registration);
   registerResetInvestigationTool(registration);
-  registerSessionStatusTool({
-    ...registration,
-    contract: registration.statusContract,
-  });
+  registerServiceTools(
+    registration.server,
+    { sessionStatus: registration },
+    { logger: registration.logger },
+  );
 };
 
 const registerOpenLifecycleTool = ({
@@ -263,6 +263,8 @@ export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes
   readonly artifactResources: ArtifactResourceScope;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /** The host process capture plans for and runs on. */
+  readonly platform: NodeJS.Platform;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
 }
@@ -340,13 +342,10 @@ export const registerSessionTools = (
   const openContract = toolContract("open_binary");
   const openBundleResourcesContract = toolContract("open_bundle_resources");
   const closeContract = toolContract("close_binary");
-  const statusContract = toolContract("binary_session");
   const exportContract = toolContract("export_evidence_bundle");
   const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
-  const compareContract = toolContract("compare_process_captures");
   const compareArtifactsContract = toolContract("compare_artifacts");
-  const compareFunctionsContract = toolContract("compare_functions");
   const compareBundlesContract = toolContract("compare_bundles");
   const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
@@ -390,11 +389,11 @@ export const registerSessionTools = (
     logger,
     openContract,
     closeContract,
-    statusContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
       {},
+      options.platform,
     ),
     androidAnalysisAvailability:
       options.androidAnalysisAvailability ?? missingAndroidAvailability,
@@ -439,6 +438,7 @@ export const registerSessionTools = (
     captureContract,
     resourceScope: processResources,
     environment: options.environment,
+    platform: options.platform,
   });
   const closeServer = server.close.bind(server);
   server.close = async () => {
@@ -465,14 +465,13 @@ export const registerSessionTools = (
       });
     }
   };
-  registerProcessComparisonTool(server, session, compareContract);
+  registerServiceTools(server, { sessionDerived: session }, { logger });
   registerArtifactComparisonTool(
     server,
     session,
     compareArtifactsContract,
     options.artifactResources,
   );
-  registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerNativeFunctionMatchingTool(
     server,
     session,
