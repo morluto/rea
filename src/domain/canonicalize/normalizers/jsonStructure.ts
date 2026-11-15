@@ -11,7 +11,7 @@ import {
   type NormalizedArtifactFacts,
   type NormalizerBudget,
 } from "../normalizer.js";
-import { findDuplicateJsonMember } from "../../jsonDuplicateMember.js";
+import { findDuplicateJsonMemberBounded } from "../../jsonDuplicateMember.js";
 
 /** Multiplier bounding the pass's own node walk against structural inflation. */
 const NODE_BUDGET_FACTOR = 256;
@@ -355,12 +355,25 @@ const canonicalize = (
   let sourceFidelityLost = false;
   // JSON.parse silently loses source data: a repeated member keeps only its last
   // value, and an integer beyond 2^53 is rounded. Report those as explicit
-  // omissions so coverage is never falsely reported as complete.
-  const duplicate = findDuplicateJsonMember(text);
-  if (duplicate !== undefined) {
+  // omissions so coverage is never falsely reported as complete. The duplicate
+  // scan is bounded by the same depth and retained-name allowance as the walk,
+  // so a deeply nested or key-dense document cannot exhaust memory before it.
+  const duplicateScan = findDuplicateJsonMemberBounded(text, {
+    maxDepth: budget.maxDepth,
+    maxRetainedNames: Math.max(
+      budget.maxFacts * NODE_BUDGET_FACTOR,
+      MIN_NODE_BUDGET,
+    ),
+  });
+  if (duplicateScan.member !== undefined) {
     sourceFidelityLost = true;
     limitations.push(
-      `Member ${boundedKey(duplicate.name)} repeats at offset ${String(duplicate.offset)}; JSON.parse keeps only the last value, so an earlier declaration is not represented.`,
+      `Member ${boundedKey(duplicateScan.member.name)} repeats at offset ${String(duplicateScan.member.offset)}; JSON.parse keeps only the last value, so an earlier declaration is not represented.`,
+    );
+  } else if (duplicateScan.limitReached) {
+    sourceFidelityLost = true;
+    limitations.push(
+      "Duplicate-member detection stopped at its depth and retained-name allowance; repeated members beyond it are unverified.",
     );
   }
   if (hasUnsafeIntegerLiteral(text)) {

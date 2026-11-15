@@ -251,10 +251,10 @@ const canonicalize = (
   const collapsed: CanonicalizeFact[] = [];
   const limitations: string[] = [];
   const coreSections = newGroup();
+  const malformed = newGroup();
   const padding = newGroup();
   const link = newGroup();
   let sectionsExamined = 0;
-  let unverifiedSections = 0;
   let truncated = false;
 
   if (!recognizes(bytes)) {
@@ -323,11 +323,13 @@ const canonicalize = (
     const parsed = readCustomName(bytes, payloadStart, payloadEnd);
     if (parsed === null) {
       // An unreadable name-length field is a malformed section, not padding:
-      // keep it unverified and report partial coverage rather than assert it is
-      // non-semantic to execution.
-      unverifiedSections += 1;
-      if (collapsed.length < budget.maxFacts)
+      // keep it unverified with partial coverage. Bound retention like the other
+      // groups so the overflow keeps a group digest rather than losing identity.
+      malformed.examined += 1;
+      if (malformed.retained < budget.maxFacts) {
+        malformed.retained += 1;
         collapsed.push(malformedSectionFact(payloadStart, size.value, region));
+      } else collapseIntoGroup(malformed, size.value, region);
       offset = payloadEnd;
       continue;
     }
@@ -395,13 +397,25 @@ const canonicalize = (
     );
   }
 
-  if (unverifiedSections > 0)
+  if (malformed.examined > 0) {
+    if (malformed.overflow > 0)
+      reductions.push(
+        groupReduction(
+          "wasm-custom-section",
+          malformed,
+          "Malformed custom sections beyond the exemplar budget were counted with a group digest and left unverified; raise max_facts to retain more.",
+        ),
+      );
     limitations.push(
-      `${String(unverifiedSections)} custom sections had an unreadable name-length field and were left unverified.`,
+      `${String(malformed.examined)} custom sections had an unreadable name-length field and were left unverified.`,
     );
+  }
 
   const omitted =
-    coreSections.overflow > 0 || padding.overflow > 0 || link.overflow > 0;
+    coreSections.overflow > 0 ||
+    padding.overflow > 0 ||
+    link.overflow > 0 ||
+    malformed.overflow > 0;
   return {
     detected_format: "wasm",
     normalizer: "wasm-sections",
@@ -410,7 +424,7 @@ const canonicalize = (
     reductions,
     coverage: {
       status:
-        truncated || omitted || unverifiedSections > 0 ? "partial" : "complete",
+        truncated || omitted || malformed.examined > 0 ? "partial" : "complete",
       examined: sectionsExamined,
       total: truncated ? null : sectionsExamined,
       truncated,

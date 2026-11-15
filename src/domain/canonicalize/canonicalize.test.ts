@@ -239,6 +239,26 @@ describe("wasm-sections defensive bounds", () => {
     ).toBe(false);
     expect(facts.coverage.status).toBe("partial");
   });
+
+  it("accounts for malformed sections beyond the budget with a group digest", () => {
+    // Two malformed sections with max_facts 1: the overflow keeps a group digest
+    // rather than losing its byte range and identity.
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+        wasmSection(0, Buffer.from([0x05])),
+        wasmSection(0, Buffer.from([0x06])),
+      ]),
+      "wasm",
+      budget({ maxFacts: 1 }),
+    );
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-custom-section",
+    );
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(reduction?.collapsed).toBeGreaterThanOrEqual(1);
+    expect(facts.coverage.status).toBe("partial");
+  });
 });
 
 // --- JSON -----------------------------------------------------------------
@@ -427,6 +447,20 @@ describe("json-structure source fidelity", () => {
     );
     expect(facts.coverage.status).toBe("partial");
     expect(facts.limitations.join(" ")).toMatch(/safe-integer precision/iu);
+  });
+
+  it("bounds the duplicate scan on deeply nested input", () => {
+    let nested = "1";
+    for (let depth = 0; depth < 40; depth += 1) nested = `{"k":${nested}}`;
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(nested, "utf8"),
+      "json",
+      budget({ maxDepth: 8 }),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(
+      /depth and retained-name allowance/iu,
+    );
   });
 });
 
