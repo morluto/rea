@@ -2,7 +2,10 @@ import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "./analysisErrorCore.js";
 import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
@@ -335,6 +338,20 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
   return authenticateBundle(evidenceBundleSchema.parse(input), seal);
 };
 
+/**
+ * Refusal of one standalone Evidence record where a bundle is required; its
+ * `detected_kind` matches the file reader's `wrong-kind` fact.
+ */
+export const singleEvidenceRecordIssue = (
+  path: readonly (string | number)[],
+  message: string,
+): AnalysisInputIssue => ({
+  path,
+  reason: "invalid_value",
+  message,
+  observed: { detected_kind: "evidence-record" },
+});
+
 /** Read a source bundle while preserving unexpected implementation failures. */
 export const readEvidenceBundle = (
   input: unknown,
@@ -351,7 +368,7 @@ export const readEvidenceBundle = (
       new AnalysisInputError(
         context.operation,
         { cause, userMessage: message, remediationAction: message },
-        [{ path: context.path, reason: "invalid_value", message }],
+        [singleEvidenceRecordIssue(context.path, message)],
       ),
     );
   return err(
