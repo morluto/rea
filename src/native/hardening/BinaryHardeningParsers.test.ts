@@ -7,6 +7,7 @@ import {
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { elfNoteFixture, gnuPropertyNote } from "../elf/ElfNotes.fixture.js";
 import { readElfImage } from "../metadata/ElfImage.js";
 import { readMachoImage } from "../metadata/MachoImage.js";
 import {
@@ -35,6 +36,21 @@ const peArtifact = (bytes: Buffer) => ({
   path: "/artifacts/app.exe",
   sha256: "a".repeat(64),
   bytes: bytes.length,
+});
+
+it("requires canonical GNU owner bytes before deriving CET from a property note", () => {
+  const canonical = gnuPropertyNote();
+  const noncanonical = Buffer.from(canonical);
+  noncanonical.writeUInt32LE(3, 0);
+  const rowFor = (notes: Buffer) =>
+    findRow(
+      readElfHardening(
+        elfNoteFixture({ notes, ownership: "program", alignment: 8 }),
+      ).rows,
+      "cet_ibt_shstk",
+    );
+  expect(rowFor(canonical).state).toBe("enabled");
+  expect(rowFor(noncanonical).state).toBe("unknown");
 });
 
 it("reports a default ET_DYN image without treating missing symbols as disabled", () => {
