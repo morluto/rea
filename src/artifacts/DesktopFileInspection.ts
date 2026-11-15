@@ -122,6 +122,7 @@ export const inspectDesktopFile = async (
         throw new ArtifactReaderFailure(
           "integrity",
           "File ended before its observed extent",
+          { integrityCheck: "read-coverage" },
         );
       consumed += part.bytesRead;
     }

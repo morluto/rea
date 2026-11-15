@@ -10,10 +10,12 @@ import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { classifyLaunchFailure } from "../process/launchFailure.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute, win32 } from "node:path";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -73,9 +75,7 @@ export const resolveApktoolCommand = async (
   signal?: AbortSignal,
 ): Promise<ApktoolCommandSelection> => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_apktool_client", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_apktool_client", signal);
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[APKTOOL_COMMAND_ENV];
   if (configured !== undefined && configured.trim() !== "") {
@@ -98,9 +98,7 @@ export const resolveApktoolCommand = async (
   const deadline = new ProviderStartupDeadline(VERSION_TIMEOUT_MS, signal);
   const lookupInterruption = () =>
     deadline.interruption === "cancelled"
-      ? new AnalysisCancelledError("inspect_apktool_client", {
-          cause: signal?.reason,
-        })
+      ? cancelledBy("inspect_apktool_client", carriedReason(signal?.reason))
       : new AnalysisTimeoutError("inspect_apktool_client", VERSION_TIMEOUT_MS, {
           diagnostics: { phase: "windows_path_lookup" },
           ...apktoolVersionProbeTimeoutGuidance(),
@@ -481,13 +479,16 @@ const versionProbeFailure = (
   )
     return (
       inspectionCancellation ??
-      new AnalysisCancelledError("inspect_apktool_client", {
-        cause: cause.cancellation.reason,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        ...(observed === undefined
-          ? {}
-          : { diagnostics: { client: { version: observed.version } } }),
-      })
+      cancelledBy(
+        "inspect_apktool_client",
+        carriedReason(cause.cancellation.reason),
+        {
+          ...(output === undefined ? {} : { capturedOutput: output }),
+          ...(observed === undefined
+            ? {}
+            : { diagnostics: { client: { version: observed.version } } }),
+        },
+      )
     );
   if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (
@@ -522,26 +523,25 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "ENOENT" || cause.code === "EACCES")
-  )
+  const refusal = classifyLaunchFailure(cause);
+  if (refusal !== undefined) {
+    const execDenied = refusal.kind === "not_executable";
     return new ApktoolConfigurationFailure(
-      cause.code === "EACCES" ? "command_not_executable" : "command_missing",
-      cause.code === "EACCES"
+      execDenied ? "command_not_executable" : "command_missing",
+      execDenied
         ? `Execution of the selected apktool launcher was denied: ${selection.command}`
         : `The selected apktool launcher was not found: ${selection.command}`,
-      cause.code === "EACCES"
+      execDenied
         ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
         : APKTOOL_MISSING_REMEDIATION,
       {
-        filesystem_error: cause.code,
+        filesystem_error: refusal.code,
         selected_command: selection.command,
         command_source: selection.commandSource,
       },
       { cause },
     );
+  }
   const snapshot = cause instanceof OwnedCommandFailure ? cause.snapshot : null;
   if (cause instanceof OwnedCommandFailure && cause.reason === "output-limit")
     return new AnalysisResourceConstraintError(

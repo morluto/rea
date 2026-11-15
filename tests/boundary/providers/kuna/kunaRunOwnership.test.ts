@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { expect, it as test, vi } from "vitest";
 
@@ -48,7 +49,11 @@ it.each(["procedure_callees", "xrefs"] as const)(
     const text = run(client, "procedure_pseudo_code", { procedure: "main" });
     let reference: ReturnType<typeof run> | undefined;
     try {
-      await started.promise;
+      await awaitAcknowledgement(
+        started.promise,
+        text,
+        "Kuna decompile admission",
+      );
       const budget = grants[0]?.owner;
       expect(budget).toBeDefined();
       reference = run(

@@ -3,7 +3,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { nativeMachoTargetForFile } from "../../tests/fixtures/nativeCommands.js";
+import {
+  nativeMachoTargetForFile,
+  NativeFixtureRunner,
+} from "../../tests/fixtures/nativeCommands.js";
 import { fat } from "../domain/binaryTarget.fixture.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -18,7 +21,6 @@ import {
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import { XcrunCommandRunner, NativeCommandFailure } from "./CommandRunner.js";
 import { LldbCallTracer } from "./LldbCallTracer.js";
-import { NativeFixtureRunner } from "../../tests/fixtures/nativeCommands.js";
 import { err } from "../domain/result.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({

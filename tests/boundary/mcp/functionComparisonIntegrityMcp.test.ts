@@ -88,6 +88,7 @@ it.each([
   {
     name: "omitted unknown dimension with known changes retained",
     valid: false,
+    constraint: "changes-cover-dimensions",
     result: (value: FunctionComparisonResult) => {
       const unknown = unknownDimension(value);
       return {
@@ -99,11 +100,13 @@ it.each([
   {
     name: "conflicting dimensions",
     valid: false,
+    constraint: "dimensions-unique",
     result: conflictingDimensions,
   },
   {
     name: "reversed conflicting dimensions",
     valid: false,
+    constraint: "dimensions-unique",
     result: (value: FunctionComparisonResult) => {
       const malformed = conflictingDimensions(value);
       return {
@@ -116,6 +119,7 @@ it.each([
   {
     name: "incorrect summary counts with the correct total",
     valid: false,
+    constraint: "summary-counts-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       summary: {
@@ -128,11 +132,13 @@ it.each([
   {
     name: "missing changes",
     valid: false,
+    constraint: "changes-cover-dimensions",
     result: (value: FunctionComparisonResult) => ({ ...value, changes: [] }),
   },
   {
     name: "altered change provenance",
     valid: false,
+    constraint: "changes-cite-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       changes: value.changes.map((dimension, index) =>
@@ -151,6 +157,7 @@ it.each([
   {
     name: "duplicate changes",
     valid: false,
+    constraint: "changes-cite-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       changes: [...value.changes, ...value.changes],
@@ -251,6 +258,7 @@ it.each([
           error: {
             code: "evidence_integrity_mismatch",
             category: "integrity_mismatch",
+            details: { constraint: scenario.constraint },
           },
         });
     }

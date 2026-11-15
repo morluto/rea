@@ -11,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { captureDecoderProcessMemoryLimitBytes } from "../../../src/browser/history/CaptureRelease.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../src/domain/webNetworkCapture.js";
+import { CAPTURE_RUNTIME_SUPPORTED } from "../../fixtures/captureDecoderLimits.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -53,10 +54,11 @@ const capture = (count: number) =>
 // the decoder's Job Object commit limit is the enforced bound instead, and
 // Bun elsewhere has no bound this capture can reach.
 const testHeap = { oldGenerationMiB: 64, source: "setting" } as const;
-const jobLimit = captureDecoderProcessMemoryLimitBytes(
-  testHeap.oldGenerationMiB,
-);
-it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
+const jobLimit = javaScriptWorkerMemoryLimitBytes(testHeap.oldGenerationMiB);
+it.skipIf(
+  !CAPTURE_RUNTIME_SUPPORTED ||
+    (process.versions.bun !== undefined && jobLimit === null),
+)(
   "reports real HAR memory exhaustion through CLI and MCP and preserves server usability",
   async () => {
     const root = await createTestTempDirectory("rea-har-capacity-");
@@ -192,5 +194,4 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       error: { code: "invalid_request" },
     });
   },
-  60_000,
 );

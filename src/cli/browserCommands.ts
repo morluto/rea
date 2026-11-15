@@ -42,15 +42,17 @@ import {
 } from "../cliObservationOptions.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgressReporter } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   registerTargetList(cli, logger);
   registerPageInspection(cli, logger);
-  registerBundleAnalysis(cli, logger);
+  registerBundleAnalysis(cli, logger, environment);
   registerObservationSession(cli, logger);
 };
 
@@ -167,6 +169,7 @@ const registerPageInspection = (
 const registerBundleAnalysis = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeWebBundle, {
     description:
@@ -223,7 +226,10 @@ const registerBundleAnalysis = (
                   signal,
                 );
           if (precision !== undefined && !precision.ok) return precision.error;
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -318,7 +324,12 @@ const registerObservationSession = (
               ),
             );
           return await finishAnalysisCommand(
-            () => observeWebSession(provider, parsed.data, { signal }),
+            () =>
+              observeWebSession(provider, parsed.data, {
+                signal,
+                // Report the armed observation on stderr, as MCP does.
+                progress: cliProgressReporter,
+              }),
             {
               close: async () => {
                 await provider.close?.();

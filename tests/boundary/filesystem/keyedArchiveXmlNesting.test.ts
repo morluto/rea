@@ -49,7 +49,7 @@ it.each([
     expect(rejected).toMatchObject({
       reason: "format",
       cause: {
-        _tag: "OpenStepPropertyListError",
+        name: "OpenStepPropertyListError",
         code,
         position,
       },
