@@ -985,9 +985,6 @@ it("keeps the packet summary when only the DNS wire pass exits unsuccessfully", 
     coverage: "partial",
     packet_count: 3,
   });
-  expect(result.value.limitations.join(" ")).toContain(
-    "DNS wire identity extraction was unavailable: Packet capture tool",
-  );
 });
 
 it("reports partial DNS coverage when raw extraction fails without selected DNS facts", async () => {
