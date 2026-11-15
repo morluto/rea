@@ -10,7 +10,7 @@ import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { assertSetupActive } from "../application/SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type {
   DesktopBuildSetupFacts,
