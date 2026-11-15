@@ -8,21 +8,27 @@ import {
 } from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
 import { plistUidValue } from "./plistUid.js";
+import { ParseFailureError } from "../parseFailure.js";
 import { projectPlistValue } from "./plistValue.js";
 
 /**
  * The selected file is intact but is another kind of file, so another tool
  * applies. A malformed NSKeyedArchiver archive is not this error.
  */
-export class KeyedArchiveKindError extends TypeError {
+export class KeyedArchiveKindError extends ParseFailureError<"unsupported"> {
   override readonly name = "KeyedArchiveKindError";
 
   constructor(
     message: string,
     /** What the selected file is instead. */
-    readonly kind: "nib-archive" | "property-list",
+    readonly fileKind: "nib-archive" | "property-list",
   ) {
-    super(message);
+    super({
+      kind: "unsupported",
+      format: "keyed-archive",
+      detail: message,
+      undecodedContent: false,
+    });
   }
 }
 

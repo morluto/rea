@@ -179,7 +179,7 @@
     "src/wasm/WabtFailures.ts": 2
   },
   "parser-format-failure-class": {
-    "src/domain/propertyListXmlText.ts": 1,
+    "src/artifacts/apple/PropertyListDecodeBudget.ts": 1,
     "src/kuna/KunaDocumentError.ts": 1
   },
   "parser-json-parse": {
@@ -380,7 +380,6 @@
   },
   "range-error-interpretation": {
     "src/application/JsonInputFile.ts": 1,
-    "src/artifacts/apple/InterfaceBuilderAnalysis.ts": 1,
     "src/artifacts/apple/KeyedArchiveReader.ts": 1,
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
     "src/browser/WebBundleAnalysisWorkerServer.ts": 1,

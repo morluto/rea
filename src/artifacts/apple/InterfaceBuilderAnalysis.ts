@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import { TextDecoder } from "node:util";
 
 import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
@@ -1042,14 +1046,18 @@ const readEntry = async (
 
 /**
  * The shared parser bounds plist value nesting before its recursive decode and
- * reports the limit as a RangeError; that is an omitted archive, not a
- * malformed one.
+ * reports the limit as a `limit` parse failure; that, or a host stack or
+ * capacity limit, is an omitted archive, not a malformed one.
  */
 const parseXmlWithinDecodeBudget = (text: string) => {
   try {
     return parseXmlPropertyList(text);
   } catch (cause: unknown) {
-    if (cause instanceof RangeError)
+    if (
+      cause instanceof Error &&
+      ((cause instanceof ParseFailureError && cause.kind === "limit") ||
+        isHostLimitFailure(cause))
+    )
       throw new InterfaceBuilderDecodeBudgetExceeded(
         "aggregate_decode_budget_exhausted",
         cause.message,

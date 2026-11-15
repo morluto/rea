@@ -2,6 +2,7 @@ import { types } from "node:util";
 import { z } from "zod";
 
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import { ParseFailureError } from "../parseFailure.js";
 import { copyPlistUidIdentity } from "./plistUid.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
@@ -26,11 +27,15 @@ const plistNestingLimitMessage = (maximumDepth = MAX_PLIST_DEPTH): string =>
   `Plist exceeds ${String(maximumDepth)} nesting levels. This release has no runtime override for this ${String(maximumDepth)}-level nesting allowance.`;
 
 /** A source-value depth refusal, distinct from malformed decoder output. */
-export class PlistNestingLimitError extends RangeError {
-  readonly _tag = "PlistNestingLimitError";
-
+export class PlistNestingLimitError extends ParseFailureError<"limit"> {
   constructor(readonly maximumDepth: number) {
-    super(plistNestingLimitMessage(maximumDepth));
+    super({
+      kind: "limit",
+      format: "plist",
+      detail: plistNestingLimitMessage(maximumDepth),
+      limit: { name: "plist-nesting-depth", maximum: maximumDepth },
+    });
+    this.name = "PlistNestingLimitError";
   }
 }
 

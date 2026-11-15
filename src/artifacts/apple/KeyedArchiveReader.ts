@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { readStableArtifact } from "../readStableArtifact.js";
@@ -176,7 +177,7 @@ export const decodeKeyedArchiveBytes = (
  * decode_interface_builder is portable; inspect_plist requires macOS.
  */
 const keyedArchiveKindRemediation = (
-  kind: KeyedArchiveKindError["kind"],
+  kind: KeyedArchiveKindError["fileKind"],
   platform: NodeJS.Platform,
 ): string => {
   if (kind === "nib-archive")
@@ -474,13 +475,16 @@ const decodeSelectedArchive = (
         {
           cause,
           remediationAction: keyedArchiveKindRemediation(
-            cause.kind,
+            cause.fileKind,
             input.platform ?? process.platform,
           ),
         },
       );
     throw new ArtifactReaderFailure(
-      cause instanceof RangeError ? "limit" : "format",
+      cause instanceof RangeError ||
+        (cause instanceof ParseFailureError && cause.kind === "limit")
+        ? "limit"
+        : "format",
       `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
       { cause },
     );
