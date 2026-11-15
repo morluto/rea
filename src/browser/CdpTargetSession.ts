@@ -6,7 +6,10 @@ import {
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
@@ -398,7 +401,10 @@ const cleanupCdpTargetCommands = async (
     signal === undefined
       ? cleanup.signal
       : AbortSignal.any([cleanup.signal, signal]);
-  const timeout = setTimeout(() => cleanup.abort(), 1_000);
+  const timeout = setTimeout(
+    () => cleanup.abort(OwnerCancellation.deadlineElapsed),
+    1_000,
+  );
   timeout.unref();
   try {
     if (signal?.aborted !== true) {
@@ -435,7 +441,7 @@ const cleanupCdpTargetCommands = async (
     }
   } finally {
     clearTimeout(timeout);
-    cleanup.abort();
+    cleanup.abort(OwnerCancellation.noLongerNeeded);
   }
 };
 

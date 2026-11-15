@@ -204,6 +204,7 @@ it.skipIf(process.platform === "win32")(
     };
 
     stopSampler = startProcessSampler({
+      platform: "freebsd",
       resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
