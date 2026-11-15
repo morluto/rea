@@ -27,7 +27,9 @@ import {
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import {
   registerContractCommand,
   runDirectOnTarget,
@@ -52,7 +54,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("annotate_native_function"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
     {
       command: CLI_COMMANDS.annotateNativeFunction,
       description: "Edit function annotations and return refreshed analysis",
@@ -76,7 +78,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("search_bytes"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "search_bytes"),
     {
       command: CLI_COMMANDS.searchBytes,
       description:
@@ -104,7 +106,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("inspect_native_load_image"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_load_image"),
     {
       command: CLI_COMMANDS.inspectNativeLoadImage,
       description:
@@ -118,7 +120,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("read_bytes"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "read_bytes"),
     {
       command: CLI_COMMANDS.readBytes,
       description:
@@ -136,7 +138,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("address_to_file_offset"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "address_to_file_offset"),
     {
       command: CLI_COMMANDS.addressToFileOffset,
       description:
@@ -151,7 +153,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("trace_native_values"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_values"),
     {
       command: CLI_COMMANDS.traceNativeValues,
       description: "Trace bounded native def-use and call dependencies",
@@ -178,7 +180,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("inspect_native_data_type"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_data_type"),
     {
       command: CLI_COMMANDS.inspectNativeDataType,
       description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
@@ -210,7 +212,7 @@ export const registerCoreNativeCommands = (
     registerContractCommand(
       cli,
       logger,
-      toolContract(operation),
+      contractNamed(OFFICIAL_TOOL_CONTRACTS, operation),
       {
         command,
         description,
@@ -226,7 +228,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("trace_native_ui_action"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_ui_action"),
     {
       command: CLI_COMMANDS.traceNativeUiAction,
       description:
@@ -248,7 +250,7 @@ export const registerCoreNativeCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("inspect_native_dispatch_metadata"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_dispatch_metadata"),
     {
       command: CLI_COMMANDS.inspectNativeDispatchMetadata,
       description: "Inspect typed Objective-C and Swift dispatch metadata",
