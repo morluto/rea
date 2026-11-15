@@ -148,6 +148,7 @@ export const bridgeRequestOversizeError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -173,6 +174,7 @@ export const bridgeRequestLimitMismatchError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -191,6 +193,7 @@ export const bridgeResponseOversizeError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: true,
     },
   );
 };

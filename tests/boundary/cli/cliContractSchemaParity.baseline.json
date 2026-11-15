@@ -8,10 +8,6 @@
   "inspect-android-class options.mappingPath relative",
   "inspect-android-method options.mappingPath relative",
   "inspect-electron-fuses args.path empty",
-  "inspect-native-api options.procedure empty",
-  "inspect-native-data-type options.address empty",
-  "inspect-native-data-type options.type empty",
   "recover-javascript-sources args.outputDirectory relative",
-  "recover-javascript-sources args.path relative",
-  "search-bytes options.cursor empty"
+  "recover-javascript-sources args.path relative"
 ]
