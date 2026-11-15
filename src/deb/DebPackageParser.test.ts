@@ -654,3 +654,44 @@ it("records one bounded issue for a field with many unreadable alternatives", ()
     unreadableRelationshipsDetail("Depends", 5000, "("),
   );
 });
+
+it("refuses a run of PAX headers with no entry before it costs work", () => {
+  const headers = Array.from({ length: 9 }, (_, index) => ({
+    name: `./PaxHeaders/${String(index)}`,
+    type: "x",
+    content: paxRecord(`key${String(index)}`, "value"),
+  }));
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          dataEntries: [...headers, { name: "./usr/bin/h", content: "" }],
+        }),
+      ),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("malformed");
+  expect(error.partial?.control?.package).toBe("hello");
+});
+
+it("accepts the few PAX and GNU headers a real entry uses", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "./PaxHeaders/a",
+          type: "x",
+          content: Buffer.concat([
+            paxRecord("mtime", "1"),
+            paxRecord("path", "./usr/share/a"),
+          ]),
+        },
+        { name: "./usr/share/a", content: "" },
+      ],
+    }),
+  );
+  expect(report.data_entries.map((entry) => entry.path)).toContain(
+    "usr/share/a",
+  );
+});

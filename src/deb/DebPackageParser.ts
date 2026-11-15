@@ -162,6 +162,12 @@ export const unreadableRelationshipsDetail = (
 export const undecodableTarNamesLimitation = (count: number): string =>
   `${String(count)} tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.`;
 
+/**
+ * GNU long name/link and PAX headers that may precede one tar entry. Real
+ * archives use at most a few; a longer run is refused before it costs work.
+ */
+const MAX_TAR_EXTENSION_HEADERS = 8;
+
 const pad512 = (size: number): number =>
   Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 
@@ -377,7 +383,10 @@ const parseTar = (
   let longlinkUndecodable = false;
   let undecodableNames = 0;
   let longlink: string | null = null;
-  let pax: Readonly<Record<string, string>> = {};
+  // Only the PAX keys this reader uses are kept, so a run of headers with
+  // fresh keys cannot grow or repeatedly copy an object.
+  const pax: { path?: string; linkpath?: string } = {};
+  let extensionHeaders = 0;
   const paxUndecodable = new Set<string>();
   while (offset + TAR_BLOCK <= bytes.length) {
     const header = bytes.subarray(offset, offset + TAR_BLOCK);
@@ -422,6 +431,24 @@ const parseTar = (
     const rawName = tarText(header.subarray(0, 100));
     const headerName =
       prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
+    if (
+      typeFlag === 76 ||
+      typeFlag === 75 ||
+      typeFlag === 120 ||
+      typeFlag === 103
+    ) {
+      extensionHeaders += 1;
+      if (extensionHeaders > MAX_TAR_EXTENSION_HEADERS)
+        return {
+          entries,
+          files,
+          undecodableNames,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            `${memberName} has more than ${String(MAX_TAR_EXTENSION_HEADERS)} extension headers before an entry at offset ${String(offset)}.`,
+          ),
+        };
+    }
     if (typeFlag === 76) {
       const decoded = tarText(payload);
       longname = decoded.text;
@@ -438,10 +465,13 @@ const parseTar = (
     }
     if (typeFlag === 120 || typeFlag === 103) {
       const parsed = parsePax(payload);
-      pax = { ...pax, ...parsed.fields };
-      for (const key of Object.keys(parsed.fields))
+      for (const key of ["path", "linkpath"] as const) {
+        const value = parsed.fields[key];
+        if (value === undefined) continue;
+        pax[key] = value;
         if (parsed.undecodable.has(key)) paxUndecodable.add(key);
         else paxUndecodable.delete(key);
+      }
       offset = dataStart + pad512(size);
       continue;
     }
@@ -497,7 +527,9 @@ const parseTar = (
     longlink = null;
     longnameUndecodable = false;
     longlinkUndecodable = false;
-    pax = {};
+    delete pax.path;
+    delete pax.linkpath;
+    extensionHeaders = 0;
     paxUndecodable.clear();
     offset = dataStart + pad512(size);
   }
