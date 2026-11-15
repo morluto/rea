@@ -1,4 +1,6 @@
+import { Budget } from "../domain/budget.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
@@ -193,7 +195,7 @@ export class WebBundleAnalysisWorker {
   #activeJob: WebBundleActiveJob | undefined;
   #activeTerminalResponseObserved = false;
   readonly #frameSignal = new WorkerFrameSignal();
-  #retainedResultBytes = 0;
+  readonly #retainedResult = new Budget(WEB_BUNDLE_WORKER_LIMITS.resultBytes);
   #ready = false;
   readonly #stdout = (chunk: Buffer | string): void => {
     if (this.#activeDeadline?.interruption !== undefined) return;
@@ -484,7 +486,10 @@ export class WebBundleAnalysisWorker {
         script,
         memberMutationAllowance,
       );
-      this.#retainedResultBytes += descriptor.bytes;
+      // The descriptor was admitted against this remainder before the read.
+      this.#retainedResult.charge(descriptor.bytes, () =>
+        invariantViolation("Admitted web analysis result no longer fits"),
+      );
       completed = facts;
       result = ok(facts);
     } catch (cause) {
@@ -492,13 +497,15 @@ export class WebBundleAnalysisWorker {
       const snapshot = completedStableArtifact(cause);
       if (snapshot !== undefined && resultDescriptor !== undefined) {
         try {
-          completed = this.#validateCompletedResult(
+          const validated = this.#validateCompletedResult(
             snapshot,
             resultDescriptor,
             script,
             memberMutationAllowance,
           );
-          this.#retainedResultBytes += resultDescriptor.bytes;
+          // Retain the completed facts only when they fit what remains.
+          if (this.#retainedResult.tryCharge(resultDescriptor.bytes))
+            completed = validated;
         } catch {
           // The physical read completed, but only validated facts are retained.
         }
@@ -616,8 +623,7 @@ export class WebBundleAnalysisWorker {
   #admittedResultBudget():
     | { readonly ok: true; readonly bytes: number }
     | { readonly ok: false; readonly error: AnalysisResourceConstraintError } {
-    const fixedRemaining =
-      WEB_BUNDLE_WORKER_LIMITS.resultBytes - this.#retainedResultBytes;
+    const fixedRemaining = this.#retainedResult.remaining;
     const hostCapacity = Math.max(
       0,
       Math.floor(
