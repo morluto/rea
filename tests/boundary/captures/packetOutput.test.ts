@@ -1,8 +1,19 @@
 import { expect, it } from "vitest";
 import { ZodError } from "zod";
 import { parsePacketOutput } from "../../../src/captures/parsePacketOutput.js";
+import { DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 
-it("preserves repeated field values and missing fields while discarding export index metadata", () => {
+const read = (
+  output: string,
+  packetLimit: number | null,
+  expansionBytes = DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+) =>
+  parsePacketOutput(output, packetLimit, {
+    outputBytes: Buffer.byteLength(output),
+    expansionBytes,
+  });
+
+it("preserves repeated field values and missing fields while discarding export index metadata", async () => {
   const output = JSON.stringify([
     {
       _index: "packets-2026",
@@ -16,7 +27,7 @@ it("preserves repeated field values and missing fields while discarding export i
     },
     { _source: { layers: { "frame.number": ["7"] } } },
   ]);
-  expect(parsePacketOutput(output, 7)).toEqual({
+  expect(await read(output, 7)).toEqual({
     ok: true,
     value: [
       { "frame.number": ["2"], "ip.addr": ["192.0.2.1", "192.0.2.2"] },
@@ -48,12 +59,10 @@ it.each([
     layers: { "frame.number": ["1", "2"] },
     issue: { code: "too_big", path: [0, "frame.number"] },
   },
-])("rejects malformed producer fields: $layers", ({ layers, issue }) => {
-  const parsed = parsePacketOutput(
-    JSON.stringify([{ _source: { layers } }]),
-    null,
-  );
-  if (parsed.ok) throw new Error("Expected a field-shape refusal");
+])("rejects malformed producer fields: $layers", async ({ layers, issue }) => {
+  const parsed = await read(JSON.stringify([{ _source: { layers } }]), null);
+  if (parsed.ok || parsed.error.kind !== "output")
+    throw new Error("Expected a field-shape refusal");
   const failure = parsed.error.cause;
   expect(failure).toBeInstanceOf(ZodError);
   if (!(failure instanceof ZodError)) throw failure;
@@ -65,23 +74,26 @@ it.each([
 it.each([
   [["2"], ["2"]],
   [["2"], ["1"]],
-])("rejects repeated or reordered producer frames: %j then %j", (...frames) => {
-  expect(
-    parsePacketOutput(
-      JSON.stringify(
-        frames.map((frame) => ({
-          _source: { layers: { "frame.number": frame } },
-        })),
+])(
+  "rejects repeated or reordered producer frames: %j then %j",
+  async (...frames) => {
+    expect(
+      await read(
+        JSON.stringify(
+          frames.map((frame) => ({
+            _source: { layers: { "frame.number": frame } },
+          })),
+        ),
+        null,
       ),
-      null,
-    ),
-  ).toEqual({
-    ok: false,
-    error: { reason: "TShark returned unordered frames." },
-  });
-});
+    ).toEqual({
+      ok: false,
+      error: { kind: "output", reason: "TShark returned unordered frames." },
+    });
+  },
+);
 
-it("preserves canonical field names emitted for a selected alias", () => {
+it("preserves canonical field names emitted for a selected alias", async () => {
   const output = JSON.stringify([
     {
       _source: {
@@ -89,29 +101,30 @@ it("preserves canonical field names emitted for a selected alias", () => {
       },
     },
   ]);
-  expect(parsePacketOutput(output, null)).toEqual({
+  expect(await read(output, null)).toEqual({
     ok: true,
     value: [{ "frame.number": ["1"], "dhcp.type": ["1"] }],
   });
 });
 
-it("validates every frame against the input read limit while allowing filtered gaps", () => {
+it("validates every frame against the input read limit while allowing filtered gaps", async () => {
   const output = JSON.stringify(
     [2, 7].map((frame) => ({
       _source: { layers: { "frame.number": [String(frame)] } },
     })),
   );
-  expect(parsePacketOutput(output, 7)).toMatchObject({
+  expect(await read(output, 7)).toMatchObject({
     ok: true,
     value: { length: 2 },
   });
-  expect(parsePacketOutput(output, 6)).toEqual({
+  expect(await read(output, 6)).toEqual({
     ok: false,
     error: {
+      kind: "output",
       reason: "TShark returned a frame beyond the selected input packet limit.",
     },
   });
-  expect(parsePacketOutput(output, null)).toMatchObject({
+  expect(await read(output, null)).toMatchObject({
     ok: true,
     value: { length: 2 },
   });
@@ -129,9 +142,20 @@ it.each([
     '[{"_source":{}}]',
     "TShark packet 1 lacks _source.layers.",
   ],
-])("refuses %s with a reason", (_label, output, reason) => {
-  expect(parsePacketOutput(output, null)).toMatchObject({
+])("refuses %s with a reason", async (_label, output, reason) => {
+  expect(await read(output, null)).toMatchObject({
     ok: false,
     error: { reason },
   });
+});
+
+it("refuses output whose expansion estimate exceeds the selected budget", async () => {
+  const output = JSON.stringify([
+    { _source: { layers: { "frame.number": ["1"] } } },
+  ]);
+  expect(await read(output, null, 128)).toEqual({
+    ok: false,
+    error: { kind: "expansion" },
+  });
+  expect(await read(output, null, 64 * 1024)).toMatchObject({ ok: true });
 });

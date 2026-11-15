@@ -1,34 +1,71 @@
 import { z } from "zod";
 import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { parseTsharkJsonPackets } from "../pcap/TsharkJsonPackets.js";
+import { readTsharkJsonPackets } from "../pcap/TsharkJsonPackets.js";
 
 const packetsSchema = z.array(packetFieldsSchema);
 
-/** Why selected-field output cannot be reported; the provider attaches output. */
-export interface PacketOutputFailure {
-  readonly reason: string;
-  readonly cause?: unknown;
+/**
+ * Why selected-field output cannot be reported; the provider attaches output.
+ * `expansion` is the caller-adjustable decoding budget, every other refusal is
+ * the producer's output.
+ */
+export type PacketOutputFailure =
+  | {
+      readonly kind: "output";
+      readonly reason: string;
+      readonly cause?: unknown;
+    }
+  | { readonly kind: "expansion" };
+
+/** The bounds one selected-field read is admitted under. */
+export interface PacketOutputBudget {
+  /** The producer output budget that already bounded `text`. */
+  readonly outputBytes: number;
+  /** The `capture.packet_json_expansion_bytes` budget. */
+  readonly expansionBytes: number;
 }
 
 /**
- * Read selected `-e` fields from `tshark -T json`. The producer output budget
- * already bounds the text, so no separate decoding budget applies here.
+ * Read selected `-e` fields from `tshark -T json`. The expansion estimate is
+ * charged before parsing. The read is not signal-aware: the producer already
+ * finished, so a late abort keeps complete Evidence.
  */
-export const parsePacketOutput = (
+export const parsePacketOutput = async (
   text: string,
   packetLimit: number | null,
-): Result<z.infer<typeof packetsSchema>, PacketOutputFailure> => {
-  const read = parseTsharkJsonPackets(text);
+  budget: PacketOutputBudget,
+): Promise<Result<z.infer<typeof packetsSchema>, PacketOutputFailure>> => {
+  const read = await readTsharkJsonPackets(text, {
+    maxBytes: budget.outputBytes,
+    maxDecodedBytes: budget.expansionBytes,
+    decodedBytes: 0,
+  });
   if (!read.ok)
-    return err(
-      read.error.kind === "malformed-json"
-        ? { reason: "TShark emitted malformed JSON.", cause: read.error.cause }
-        : { reason: `TShark ${read.error.reason}.` },
-    );
+    switch (read.error.kind) {
+      case "json-expansion":
+        return err({ kind: "expansion" });
+      case "json-bytes":
+        return err({
+          kind: "output",
+          reason: "TShark output exceeds the selected producer output budget.",
+        });
+      case "malformed-json":
+        return err({
+          kind: "output",
+          reason: "TShark emitted malformed JSON.",
+          cause: read.error.cause,
+        });
+      case "malformed-packet":
+        return err({ kind: "output", reason: `TShark ${read.error.reason}.` });
+      case "cancelled":
+        // No signal is passed, so the reader cannot report cancellation.
+        throw new Error("Packet output read observed no signal.");
+    }
   const parsed = packetsSchema.safeParse(read.value);
   if (!parsed.success)
     return err({
+      kind: "output",
       reason: "TShark packet fields do not match the selected-field shape.",
       cause: parsed.error,
     });
@@ -36,9 +73,13 @@ export const parsePacketOutput = (
   for (const packet of parsed.data) {
     const frame = BigInt(packet["frame.number"][0]);
     if (frame <= previous)
-      return err({ reason: "TShark returned unordered frames." });
+      return err({
+        kind: "output",
+        reason: "TShark returned unordered frames.",
+      });
     if (packetLimit !== null && frame > BigInt(packetLimit))
       return err({
+        kind: "output",
         reason:
           "TShark returned a frame beyond the selected input packet limit.",
       });
