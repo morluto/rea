@@ -1,18 +1,23 @@
-import {
-  malformedInput,
-  type ParseFailureError,
-} from "../domain/parseFailure.js";
+import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-/** One line, or the unterminated tail, reached the caller's byte ceiling. */
-export class Utf8NdjsonOversizeError extends Error {
+/**
+ * One line, or the unterminated tail, reached the caller's byte ceiling: a
+ * `limit` parse failure that also keeps the bytes observed when framing
+ * stopped, which the transport error reports.
+ */
+export class Utf8NdjsonOversizeError extends ParseFailureError<"limit"> {
   constructor(
     readonly maximumBytes: number,
     readonly observedBytes: number,
   ) {
-    super(
-      `NDJSON line reached ${String(observedBytes)} bytes, above the ${String(maximumBytes)}-byte line limit`,
-    );
+    super({
+      kind: "limit",
+      format: "ndjson",
+      detail: `NDJSON line reached ${String(observedBytes)} bytes, above the ${String(maximumBytes)}-byte line limit`,
+      limit: { name: "ndjson-line-bytes", maximum: maximumBytes },
+    });
+    this.name = "Utf8NdjsonOversizeError";
   }
 }
 

@@ -136,9 +136,15 @@ describe("UTF-8 NDJSON line buffer", () => {
 
     const refused = [...lines.push(Buffer.from("y"))];
     expect(refused).toHaveLength(1);
-    expect(refused[0]?.ok ? undefined : refused[0]?.error).toEqual(
-      new Utf8NdjsonOversizeError(16, 17),
-    );
+    const refusal = refused[0]?.ok ? undefined : refused[0]?.error;
+    expect(refusal).toEqual(new Utf8NdjsonOversizeError(16, 17));
+    // The refusal is the shared limit parse failure, with the observed bytes.
+    expect(refusal).toBeInstanceOf(ParseFailureError);
+    expect(refusal?.failure).toMatchObject({
+      kind: "limit",
+      format: "ndjson",
+      limit: { name: "ndjson-line-bytes", maximum: 16 },
+    });
     expect(lines.retainedTail()).toEqual({ pendingBytes: 0, backingBytes: 0 });
   });
 
