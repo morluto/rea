@@ -4,7 +4,7 @@ import { PassThrough, Writable } from "node:stream";
 import { z } from "zod";
 
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import {
   requireWindowsNativeAuthority,
   windowsHandleSchema,

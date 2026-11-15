@@ -99,7 +99,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import {
   adbCommandOutputFailure,
   adbArguments,

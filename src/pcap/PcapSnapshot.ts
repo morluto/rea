@@ -25,7 +25,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_pcap_capture";
