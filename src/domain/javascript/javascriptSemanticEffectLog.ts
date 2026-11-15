@@ -564,24 +564,25 @@ export const semanticReferenceEffectsMayHaveChanged = (
 };
 
 /**
- * Whether a read of `referenceNode` (at `propertyPath`) at `site` may observe
+ * `mayObserve(read, target, path)` (ADR decision 2): whether reading `target`
+ * at `path` (default: the member path `target` spells) at `read` may observe
  * a recorded effect. Before the member-mutation phase completes, every read
- * may observe one.
+ * may observe one (decision 4).
  */
-export const semanticReferenceMayHaveChangedAt = (
+export const semanticReadMayObserveEffect = (
   state: JavaScriptSemanticAnalysisState,
   ambientPaths: SemanticAmbientRootPaths,
-  site: t.Node,
-  referenceNode: t.Node,
-  propertyPath?: JavaScriptSemanticPropertyPath,
+  read: t.Node,
+  target: t.Node,
+  path?: JavaScriptSemanticPropertyPath,
 ): boolean =>
   !state.memberMutationFactsComplete ||
   semanticReferenceEffectsMayHaveChanged(
     state,
     ambientPaths,
-    site,
-    referenceNode,
-    propertyPath,
+    read,
+    target,
+    path,
   );
 
 /** Preserve the complete diagnostic contract for consumers needing every effect. */
