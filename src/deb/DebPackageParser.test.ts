@@ -367,6 +367,26 @@ it("counts a hardlinked md5sums path as present in the inventory", () => {
   });
 });
 
+it("reads control files from the control.tar root, not nested paths", () => {
+  const report = parse(
+    debPackageFixture({
+      controlEntries: [
+        {
+          name: "./subdir/control",
+          content: "Package: nested\nVersion: 9.9\nArchitecture: all\n",
+        },
+        { name: "./subdir/postinst", content: "#!/bin/sh\nexit 0\n" },
+        {
+          name: "./control",
+          content: "Package: hello\nVersion: 1.0\nArchitecture: all\n",
+        },
+      ],
+    }),
+  );
+  expect(report.control?.package).toBe("hello");
+  expect(report.control?.maintainer_scripts).toEqual([]);
+});
+
 it("keeps UTF-8, surrounding spaces, and backslashes in tar names", () => {
   const sum = "d41d8cd98f00b204e9800998ecf8427e";
   const names = [

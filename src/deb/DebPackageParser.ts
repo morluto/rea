@@ -556,24 +556,18 @@ const expandArchive = (
   return member.bytes;
 };
 
-const fileName = (path: string): string => {
-  const trimmed = path.replace(/\/$/u, "");
-  const slash = trimmed.lastIndexOf("/");
-  return slash === -1 ? trimmed : trimmed.slice(slash + 1);
-};
-
 const listedFile = (
   files: ReadonlyMap<string, Uint8Array>,
   name: string,
 ): { present: boolean; count: number | null; text: string | null } => {
-  for (const [path, bytes] of files) {
-    if (fileName(path) !== name) continue;
-    const text = decodeUtf8(bytes);
-    if (text === null) return { present: true, count: null, text: null };
-    const lines = text.split(/\n/u).filter((line) => line.trim().length > 0);
-    return { present: true, count: lines.length, text };
-  }
-  return { present: false, count: null, text: null };
+  // Control files live at the root of control.tar; a nested file with the
+  // same basename is not one of them.
+  const bytes = files.get(name);
+  if (bytes === undefined) return { present: false, count: null, text: null };
+  const text = decodeUtf8(bytes);
+  if (text === null) return { present: true, count: null, text: null };
+  const lines = text.split(/\n/u).filter((line) => line.trim().length > 0);
+  return { present: true, count: lines.length, text };
 };
 
 const interpreterLine = (bytes: Uint8Array): string | null => {
@@ -649,17 +643,10 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
   const conffiles = listedFile(tar.files, "conffiles");
   const md5sums = listedFile(tar.files, "md5sums");
   const scripts = DEB_MAINTAINER_SCRIPTS.flatMap((name) => {
-    for (const [path, bytes] of tar.files) {
-      if (fileName(path) !== name) continue;
-      return [
-        {
-          name,
-          interpreter: interpreterLine(bytes),
-          bytes: bytes.length,
-        },
-      ];
-    }
-    return [];
+    const bytes = tar.files.get(name);
+    return bytes === undefined
+      ? []
+      : [{ name, interpreter: interpreterLine(bytes), bytes: bytes.length }];
   });
   if (listed.present && listed.text === null)
     issues.push({
