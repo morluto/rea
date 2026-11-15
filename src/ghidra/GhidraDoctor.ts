@@ -4,7 +4,7 @@ import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import { admitGhidraInstallation } from "./GhidraAdmission.js";
 import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
