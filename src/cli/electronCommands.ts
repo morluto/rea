@@ -1,14 +1,9 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
-import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
-import {
-  localPathStringSchema,
-  nulFreeStringSchema,
-} from "../domain/localPath.js";
+import { nulFreeStringSchema } from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -18,7 +13,11 @@ import {
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import {
+  registerContractCommand,
+  registerContractDocumentCommand,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -27,18 +26,15 @@ import type { Logger } from "pino";
 import { cliDomainInput } from "./domainInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
-  javascriptApplicationOptions,
   selectedCommandTimeout,
 } from "../cliObservationOptions.js";
 import {
-  cliJavaScriptSourcePaths,
-  runCliJavaScriptApplicationAnalysis,
+  javaScriptApplicationCliProjection,
+  runJavaScriptApplicationCommand,
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import {
@@ -315,87 +311,22 @@ const registerJavaScriptApplicationCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
-    description:
-      "Statically reconstruct a local JavaScript/Electron application",
-    args: z.object({
-      path: localPathStringSchema.describe(
+  registerContractCommand(
+    cli as CliInstance,
+    logger,
+    contractNamed(ELECTRON_TOOL_CONTRACTS, "analyze_javascript_application"),
+    {
+      command: CLI_COMMANDS.analyzeJavaScriptApplication,
+      description:
+        "Statically reconstruct a local JavaScript/Electron application",
+      ...javaScriptApplicationCliProjection(
         "ASAR or extracted application path",
       ),
-    }),
-    options: javascriptApplicationOptions,
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.analyzeJavaScriptApplication,
-          async () => {
-            const delivery = parseCliAnalysisEvidenceDelivery(
-              "analyze_javascript_application",
-              options,
-              javaScriptRoutesDeliverySchema,
-            );
-            if (!delivery.ok) return projectAnalysisError(delivery.error);
-            const sourcePaths = await cliJavaScriptSourcePaths(
-              options.sourcePath,
-              options.sourcePathsJson,
-              signal,
-            );
-            if (!sourcePaths.ok) return sourcePaths.error;
-            const precision =
-              options.semanticPrecision === undefined
-                ? undefined
-                : await parseCliJsonInput(
-                    options.semanticPrecision,
-                    "analyze_javascript_application",
-                    signal,
-                  );
-            if (precision !== undefined && !precision.ok)
-              return precision.error;
-            return runCliJavaScriptApplicationAnalysis(
-              {
-                input_path: absoluteCallerPath(args.path),
-                ...(precision === undefined
-                  ? {}
-                  : { semantic_precision: precision.value }),
-                format: options.artifactFormat,
-                integrity_policy: options.integrityPolicy,
-                ...(options.maxSemanticNodes === undefined
-                  ? {}
-                  : { max_semantic_nodes: options.maxSemanticNodes }),
-                ...(options.maxSemanticNodesPerFile === undefined
-                  ? {}
-                  : {
-                      max_semantic_nodes_per_file:
-                        options.maxSemanticNodesPerFile,
-                    }),
-                ...(options.maxSemanticUnknowns === undefined
-                  ? {}
-                  : { max_semantic_unknowns: options.maxSemanticUnknowns }),
-                ...(options.maxSemanticUnknownsPerFile === undefined
-                  ? {}
-                  : {
-                      max_semantic_unknowns_per_file:
-                        options.maxSemanticUnknownsPerFile,
-                    }),
-                ...(sourcePaths.value === undefined
-                  ? {}
-                  : { source_paths: sourcePaths.value }),
-                ...(options.maxHeapMb === undefined
-                  ? {}
-                  : { max_heap_mb: options.maxHeapMb }),
-                ...(options.analysisTimeoutMs === undefined
-                  ? {}
-                  : { analysis_timeout_ms: options.analysisTimeoutMs }),
-              },
-              environment,
-              signal,
-              delivery.value,
-            );
-          },
-        ),
-      ),
-  });
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
+    },
+    runJavaScriptApplicationCommand(environment),
+  );
 };
 
 const createCliElectronObservationProvider = async (
