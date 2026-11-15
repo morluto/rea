@@ -144,7 +144,7 @@ it("limits unary-plus keys to transparent numeric literals", () => {
     ).toBeNull();
 });
 
-it("reads nested inline object spreads beyond the former evaluator depth cap", () => {
+it("resolves a property through deeply nested inline spreads", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("stdio"), t.stringLiteral("inherit")),
   ]);

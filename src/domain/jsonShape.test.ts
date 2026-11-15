@@ -9,6 +9,29 @@ const completeShape = (source: string | Uint8Array) => {
   return result.value.shape;
 };
 
+/** 5,001 sibling properties in one object, used to probe the byte allowance. */
+const wideObjectSource = (): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Array.from({ length: 5_001 }, (_, index) => [`field_${index}`, index]),
+    ),
+  );
+
+/**
+ * Serialized size of the shape retained for `source`, measured with
+ * `Buffer.byteLength` so it does not depend on `inferJsonShape`'s accounting.
+ */
+const serializedShapeBytes = (source: string): number => {
+  const reference = inferJsonShape(
+    source,
+    WEB_RUNTIME_LIMITS.retainedEventBytes,
+  );
+  if (!reference.ok) throw reference.error;
+  const exact = Buffer.byteLength(JSON.stringify(reference.value.shape));
+  expect(reference.value.serializedBytes).toBe(exact);
+  return exact;
+};
+
 const property = (name: string) => ({ kind: "property" as const, name });
 const element = { kind: "array-element" as const };
 
@@ -201,18 +224,29 @@ describe("JSON shape completeness and ordering", () => {
     }
   });
 
-  it("retains every parsed property beyond the former shape-node limit", () => {
-    const content = Object.fromEntries(
-      Array.from({ length: 5_001 }, (_, index) => [`field_${index}`, index]),
-    );
-    const shape = completeShape(JSON.stringify(content));
+  it("retains every sibling property at the exact retained-byte allowance", () => {
+    const source = wideObjectSource();
+    const allowance = serializedShapeBytes(source);
 
-    expect(shape.properties).toHaveLength(5_001);
-    expect(shape.node_count).toBe(5_002);
-    expect(shape.properties).toContainEqual({
+    const admitted = inferJsonShape(source, allowance);
+    if (!admitted.ok) throw admitted.error;
+
+    expect(admitted.value.shape.properties).toHaveLength(5_001);
+    expect(admitted.value.shape.node_count).toBe(5_002);
+    expect(admitted.value.shape.properties).toContainEqual({
       path: [property("field_5000")],
       types: ["number"],
       observations: 1,
+    });
+  });
+
+  it("reports the retained-byte allowance when one byte less cannot hold the shape", () => {
+    const source = wideObjectSource();
+    const allowance = serializedShapeBytes(source);
+
+    expect(inferJsonShape(source, allowance - 1)).toMatchObject({
+      ok: false,
+      error: { kind: "capacity", maximumBytes: allowance - 1 },
     });
   });
 });
