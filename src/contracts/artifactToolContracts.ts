@@ -7,6 +7,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { artifactOutputSchemas } from "./toolOutputSchemaGroups.js";
 import { artifactIntegrityPolicySchema } from "../domain/artifactIntegrityPolicy.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { distinctItems } from "../domain/schemaConstraints.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
@@ -44,14 +45,10 @@ export const artifactExtractionInputSchema = z.strictObject({
     .describe(
       "Absolute destination path on the REA host. It must not exist and its parent must exist. Omit to use a fresh temporary directory. Successful output persists after the call.",
     ),
-  occurrence_ids: z
-    .array(artifactOccurrenceSchema.shape.occurrence_id)
-    .min(1)
-    .refine(
-      (ids) => new Set(ids).size === ids.length,
-      "Occurrence IDs must be unique",
-    )
-    .meta({ uniqueItems: true })
+  occurrence_ids: distinctItems(
+    z.array(artifactOccurrenceSchema.shape.occurrence_id).min(1),
+    "Occurrence IDs must be unique",
+  )
     .exactOptional()
     .describe(
       "Exact regular-file or slice occurrence IDs from the current inventory. Omit to extract all regular entries exposed by the active reader. Directories, links, the root and members inside nested archives cannot be selected.",

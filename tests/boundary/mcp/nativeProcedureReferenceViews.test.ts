@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -33,7 +33,7 @@ const fixture = {
   unresolved_calls: [{ address: "0x1003", reason: "indirect destination" }],
 };
 
-const setup = async (profile: "full" | "compact") => {
+const setup = async (profile: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("View opened provider");
   });
@@ -53,7 +53,7 @@ const setup = async (profile: "full" | "compact") => {
   };
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages procedure reference Evidence across a %s offline handoff",
   async (profile) => {
     const parent = createEvidence(

@@ -3,8 +3,14 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
-import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
+import { pwntoolsFailureDialect } from "./PwntoolsFailures.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
+
+const pwntoolsDecoderFailure = (
+  cause: unknown,
+  ...phase: Parameters<typeof pwntoolsFailureDialect>
+) => classifyProviderFailure(cause, pwntoolsFailureDialect(...phase));
 
 it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   "preserves opaque cancellation from command and artifact owners: %s",
@@ -33,7 +39,7 @@ it("keeps the caller-selected pwntools input-limit source", () => {
       new ArtifactReaderFailure(
         "limit",
         "artifact exceeds the input allowance",
-        {},
+        { boundary: "file-size" },
       ),
       "artifact-read",
       "/selected",
@@ -67,7 +73,7 @@ it("names a runtime pwntools ceiling instead of the built-in default", () => {
       new ArtifactReaderFailure(
         "limit",
         "artifact exceeds the input allowance",
-        {},
+        { boundary: "file-size" },
       ),
       "artifact-read",
       "/selected",
@@ -112,8 +118,13 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
   );
   expect(projected.code).toBe("provider_timeout");
   expect(projected.message).toContain("4500 ms");
-  expect(projected.message).toContain("pwntools_timeout_ms");
-  expect(projected.remediation.action).toContain("--pwntools-timeout-ms");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "pwntools_timeout_ms",
+    cli_flag: "--pwntools-timeout-ms",
+    effective_value: 4_500,
+    default_value: 30_000,
+  });
   expect(projected.remediation.action).toContain("cpu_seconds=30");
   expect(projected.remediation.action).toContain("producer_limits");
   expect(projected.remediation.action).toContain("no REA restart");
@@ -212,13 +223,70 @@ it("retains legacy owner causes without guessing cancellation from error text", 
     "decoder",
     "/selected",
   );
-  expect(result.cause).toBe(reason);
+  // The shared outcome owner keeps the unannotated failure itself as the
+  // reason, so the owner's cause stays one step down.
+  expect(result.cause).toBeInstanceOf(OwnedCommandFailure);
+  expect((result.cause as OwnedCommandFailure).cause).toBe(reason);
   const physical = Object.assign(new Error("physical failure"), {
     name: "AbortError",
   });
   expect(pwntoolsDecoderFailure(physical, "decoder", "/selected")._tag).toBe(
     "ProviderAdapterError",
   );
+});
+
+it.each(["ENOEXEC", "EACCES"])(
+  "reports a launcher's %s refusal as the selected Python being unavailable",
+  (code) => {
+    // Node throws ENOEXEC with a bare `spawn` syscall; the launcher names it.
+    const refusal = Object.assign(new Error(`spawn ${code}`), {
+      code,
+      syscall: "spawn /python",
+      path: "/python",
+    });
+    const projected = projectAnalysisError(
+      pwntoolsDecoderFailure(refusal, "decoder", "/selected", "/python"),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        rejections: [
+          {
+            diagnostics: { executable_path: "/python", system_code: code },
+          },
+        ],
+      },
+    });
+  },
+);
+
+it("does not read an errno from another syscall as a launch refusal", () => {
+  const unrelated = Object.assign(new Error("open EACCES"), {
+    code: "EACCES",
+    syscall: "open",
+  });
+  expect(
+    pwntoolsDecoderFailure(unrelated, "decoder", "/selected", "/python")._tag,
+  ).toBe("ProviderAdapterError");
+});
+
+it("keeps the reader's partial observation on a cancelled selected-object read", () => {
+  const reason = { stop: "caller" };
+  const observation = {
+    kind: "retained-evidence",
+    evidence_id: "evidence-1",
+  } as const;
+  const failure = pwntoolsDecoderFailure(
+    new ArtifactReaderFailure("cancelled", "cancelled", {
+      cancellation: { reason },
+      partialObservation: observation,
+    }),
+    "artifact-read",
+    "/selected",
+  );
+  expect(failure._tag).toBe("AnalysisCancelledError");
+  expect(failure.cause).toBe(reason);
+  expect(failure.partialObservation).toEqual(observation);
 });
 
 it("restricts the verified host profile to Linux x64", () => {

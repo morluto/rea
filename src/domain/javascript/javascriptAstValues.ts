@@ -173,19 +173,29 @@ export const staticJavaScriptTruthiness = (
   if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
-  // Babel exposes a BigIntLiteral value as either "0" or 0n depending on version.
-  if (t.isBigIntLiteral(value)) return String(value.value) !== "0";
+  // Babel exposes a BigIntLiteral value as a bigint or, in older versions, its
+  // source digits, which may carry a 0x/0o/0b prefix; BigInt reads both.
+  if (t.isBigIntLiteral(value)) {
+    try {
+      return BigInt(value.value as string | bigint) !== 0n;
+    } catch {
+      return undefined;
+    }
+  }
   if (
     t.isUnaryExpression(value) &&
     value.operator === "-" &&
     t.isNumericLiteral(value.argument)
   )
     return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
+  // Each of these evaluates to a fresh object, and every object is truthy.
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value)
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value)
   )
     return true;
   return undefined;

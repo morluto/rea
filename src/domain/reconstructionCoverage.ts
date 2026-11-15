@@ -34,7 +34,7 @@ const stableIdSchema = z
 export const reconstructionBoundaryIdSchema = stableIdSchema.describe(
   "Exact identifier of a boundary declared in the reconstruction coverage.",
 );
-const boundedTextSchema = z.string().trim().min(1);
+const trimmedTextSchema = z.string().trim().min(1);
 
 const authoritySchema = z.enum([
   "observed",
@@ -57,7 +57,7 @@ const surfaceSchema = z.strictObject({
   family: z.string().trim().min(1),
   artifact_id: stableIdSchema,
   occurrence_id: z.string().trim().min(1).nullable(),
-  location: boundedTextSchema,
+  location: trimmedTextSchema,
   authority: authoritySchema,
   dependency_surface_ids: z.array(stableIdSchema),
   evidence_ids: z.array(evidenceIdSchema).min(1),
@@ -65,7 +65,7 @@ const surfaceSchema = z.strictObject({
 
 const implementationOwnerSchema = z.strictObject({
   disposition: z.literal("implemented"),
-  owner_path: boundedTextSchema,
+  owner_path: trimmedTextSchema,
   owner_export: z.string().trim().min(1).nullable(),
   owner_sha256: digestSchema,
   path_state: z.enum(["present", "missing", "unknown"]),
@@ -75,7 +75,7 @@ const implementationOwnerSchema = z.strictObject({
 
 const externalOwnerSchema = z.strictObject({
   disposition: z.enum(["external", "non-goal"]),
-  rationale: boundedTextSchema,
+  rationale: trimmedTextSchema,
 });
 
 const ownerSchema = z.strictObject({
@@ -284,7 +284,7 @@ const closureReasonSchema = z.strictObject({
     "package-proof-unknown",
   ]),
   subject_id: stableIdSchema,
-  detail: boundedTextSchema,
+  detail: trimmedTextSchema,
 });
 
 export const reconstructionClosureResultSchema = z.strictObject({
@@ -300,7 +300,7 @@ export const reconstructionClosureResultSchema = z.strictObject({
     z.strictObject({
       operation: stableIdSchema,
       subject_id: stableIdSchema,
-      rationale: boundedTextSchema,
+      rationale: trimmedTextSchema,
     }),
   ),
   evidence_ids: z.array(evidenceIdSchema),

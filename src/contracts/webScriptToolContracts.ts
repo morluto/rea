@@ -8,7 +8,7 @@ import {
   webSourceLocationSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import {
   exportWebScriptsInputSchema,
   webScriptExportResultSchema,
@@ -24,13 +24,15 @@ import {
   webSourceLocationInputSchema,
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
+import { presentRootDiscriminator } from "../domain/schemaAnnotations.js";
 
-export const webSourceLocationRequestSchema = z
-  .discriminatedUnion("detail", [
+export const webSourceLocationRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
     webSourceLocationInputSchema.extend(webSourceLocationCompleteDeliveryShape),
     webSourceLocationInputSchema.extend(webSourceLocationSummaryDeliveryShape),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+  ]),
+  "detail",
+);
 
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [

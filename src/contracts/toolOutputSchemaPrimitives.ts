@@ -1,3 +1,4 @@
+import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
@@ -728,34 +729,7 @@ export const addressedEntry = z.object({
   address: z.string(),
   name: z.string(),
 });
-const unavailable = z.object({
-  available: z.literal(false),
-  reason: z.string(),
-});
-
-const availableMemoryPermissions = z.object({
-  available: z.literal(true),
-  source: z.literal("ghidra-memory-block"),
-});
-
-const memoryRegionOutput = z.object({
-  name: z.string(),
-  start: z.string(),
-  end: z.string(),
-  readable: z.boolean().nullable(),
-  writable: z.boolean().nullable(),
-  executable: z.boolean().nullable(),
-  permissions: z.union([unavailable, availableMemoryPermissions]),
-  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
-  address_space: z.string().optional(),
-  image_base: z.string().optional(),
-  initialized: z.boolean().optional(),
-  overlay: z.boolean().optional(),
-});
-
-export const segmentOutput = evidenceResultOf(
-  z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
-);
+export const segmentOutput = evidenceResultOf(nativeSegmentListSchema);
 
 export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 

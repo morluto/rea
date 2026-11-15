@@ -277,3 +277,31 @@ it("terminates a stalled real child at its deadline while retaining captured out
     await processes.shutdown();
   }
 });
+
+it(
+  "stops a hung child before its running test's deadline and reports its output",
+  // The test deadline is the behavior under test: the child gets what remains.
+  { timeout: 8_000 },
+  async () => {
+    // processTest uses this registry, so one registry covers both entry points.
+    const processes = createTestProcessRegistry();
+    const started = performance.now();
+    try {
+      const failure: unknown = await processes
+        .run(process.execPath, [
+          "-e",
+          "process.stdout.write('started'); setInterval(() => {}, 1_000);",
+        ])
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(
+          /^Test process exceeded its \d+ms deadline$/u,
+        ),
+        cause: { stdout: "started" },
+      });
+      expect(performance.now() - started).toBeLessThan(6_000);
+    } finally {
+      await processes.shutdown();
+    }
+  },
+);

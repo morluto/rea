@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 
@@ -34,7 +35,7 @@ export class ManagedDecodeBudget {
 
   constructor(readonly maximumBytes = DEFAULT_MANAGED_REPRESENTATION_BYTES) {
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1)
-      throw new RangeError(
+      throw invariantViolation(
         "max_metadata_representation_bytes must be a positive safe integer",
       );
     this.#remaining = maximumBytes;

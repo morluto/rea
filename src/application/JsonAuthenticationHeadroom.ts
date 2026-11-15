@@ -144,6 +144,7 @@ export const requireAuthenticationHeadroom = (
         authentication_bytes: requiredBytes,
         available_heap_bytes: availableBytes,
       },
+      { measuredExhaustion: true },
     ),
   );
 };

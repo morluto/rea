@@ -37,7 +37,6 @@ const serve = async (
       String(port),
       "--json",
     ],
-    timeoutMs: 30_000,
   });
   return {
     exitCode: result.exitCode,

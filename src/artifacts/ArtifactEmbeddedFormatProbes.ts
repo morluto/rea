@@ -64,6 +64,7 @@ export class ArtifactEmbeddedFormatProbes {
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     const reusable =
       previous !== undefined &&

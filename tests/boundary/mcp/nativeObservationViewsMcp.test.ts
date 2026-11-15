@@ -8,10 +8,8 @@ import { ok } from "../../../src/domain/result.js";
 import { z } from "zod";
 import { afterAll, expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/native/nativeObservation.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -28,7 +26,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
     );
     const call = async (name: string, input: Record<string, unknown>) => {
       const tool = definitions.get(name);
-      if (!tool?.outputSchema) throw new Error("Missing named contract");
+      if (tool === undefined) throw new Error("Missing named contract");
       const result = await harness.mcp.callTool(
         { name, arguments: input },
         { toolDefinition: tool },

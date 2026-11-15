@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,10 +7,8 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -136,7 +135,7 @@ const checkContinuation = async (
   expect(original).toEqual(referenceRows);
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains and pages instruction reference states through %s MCP",
   async (profile) => {
     let incoming: "rows" | "empty" | "unavailable" | "not-recorded" = "rows";
@@ -170,10 +169,12 @@ it.each(["full", "compact"] as const)(
       const advertised = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (!advertised?.outputSchema)
+      if (advertised === undefined)
         throw new Error("Missing advertised view schema");
       expect(
-        validation.assertions.validateSchema(advertised.outputSchema),
+        validation.assertions.validateSchema(
+          canonicalOutputSchema(advertised.name),
+        ),
       ).toBe(true);
       expect(
         (

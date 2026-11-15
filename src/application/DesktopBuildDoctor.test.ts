@@ -36,7 +36,7 @@ const buildHost = (
   createDoctorHostFixture({
     platform: "linux",
     architecture: "x64",
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
     desktopBuildFacts: () => Promise.resolve({ ...ready, ...facts }),
     ...overrides,

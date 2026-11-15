@@ -3,10 +3,8 @@ import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import type { GoBinary } from "../go/goBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: GoBinary = {
   artifact: { path: "/artifacts/program", sha256: "a".repeat(64), bytes: 512 },

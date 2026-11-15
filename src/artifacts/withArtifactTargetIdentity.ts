@@ -3,6 +3,21 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { hashStableRootArtifact } from "./inventory/hashStableRootArtifact.js";
 
+/**
+ * The `container-identity` failure for a selected target whose observed
+ * digest no longer matches the one the session admitted.
+ */
+export const targetDigestChangedFailure = (
+  subject: string,
+  expected: string,
+  observed: string,
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "integrity",
+    `Active ${subject} digest changed: expected ${expected}, observed ${observed}`,
+    { integrityCheck: "container-identity" },
+  );
+
 /** Bind live resource reads to the target identity established by the session. */
 export const withArtifactTargetIdentity = async <T>(
   target: BinaryTarget,
@@ -13,10 +28,7 @@ export const withArtifactTargetIdentity = async <T>(
   const verify = async () => {
     const digest = await hashStableRootArtifact(target.path, resources, signal);
     if (digest.sha256 !== target.sha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Active target digest changed: expected ${target.sha256}, observed ${digest.sha256}`,
-      );
+      throw targetDigestChangedFailure("target", target.sha256, digest.sha256);
   };
   await verify();
   const result = await read();

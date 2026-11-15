@@ -1,5 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { matchesGlob } from "node:path";
 import { expect, it } from "vitest";
 import {
+  FORBIDDEN_FIELD_SCAN_EXTENSIONS,
+  FORBIDDEN_FIELD_SCAN_ROOTS,
   NUMERIC_LIMIT_DECLARATION,
   discoverNumericLimitUses,
   isNumericLimit,
@@ -282,14 +286,38 @@ it("reports each mutable alias once while keeping dynamic reads unresolved", () 
       (issue) => issue.reason === "mutable setting-key or value alias",
     ),
   ).toEqual([
-    expect.objectContaining({ offset: source.indexOf("key =") }),
-    expect.objectContaining({ offset: source.indexOf("other =") }),
+    expect.objectContaining({
+      offset: source.indexOf("key ="),
+      line: 2,
+      column: 9,
+    }),
+    expect.objectContaining({
+      offset: source.indexOf("other ="),
+      line: 6,
+      column: 9,
+    }),
   ]);
   expect(discovered.unresolved).toContainEqual(
     expect.objectContaining({
       reason: "dynamic environment key is not statically known",
     }),
   );
+});
+
+it("retains uncertainty for mutable suffixless settings passed to other functions", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/aliases.ts",
+      source: `
+        let size = process.env.REA_SIZE;
+        consume(size);
+      `,
+    },
+  ]);
+  const mutable = discovered.unresolved.filter(
+    (issue) => issue.reason === "mutable setting-key or value alias",
+  );
+  expect(mutable.map((issue) => issue.line)).toEqual([2]);
 });
 
 it("does not attribute an unrelated same-named local to a numeric limit", () => {
@@ -567,4 +595,24 @@ it("requires the tracked endpoint-candidate limit to be an analysis setting", ()
       inRegistry: true,
     }),
   ).toMatch(/numericLimitRegistry/);
+});
+
+it("lets no cached lint pass hide a file the restart-field scan reads", async () => {
+  // `npm run lint` owns this check and turbo caches it by these inputs; a
+  // scanned file outside them would let a cached pass skip a new violation.
+  const turbo = JSON.parse(
+    await readFile(new URL("../../turbo.json", import.meta.url), "utf8"),
+  ) as { tasks: Record<string, { inputs: readonly string[] }> };
+  const globs = turbo.tasks.lint!.inputs;
+  const cached = (path: string) =>
+    globs.some((glob) => !glob.startsWith("!") && matchesGlob(path, glob)) &&
+    !globs.some(
+      (glob) => glob.startsWith("!") && matchesGlob(path, glob.slice(1)),
+    );
+  const samples = FORBIDDEN_FIELD_SCAN_ROOTS.flatMap((root) =>
+    FORBIDDEN_FIELD_SCAN_EXTENSIONS.map(
+      (extension) => `${root}/nested/file.${extension}`,
+    ),
+  );
+  expect(samples.filter((path) => !cached(path))).toEqual([]);
 });

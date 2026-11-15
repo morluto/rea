@@ -74,7 +74,7 @@ describe("CDP discovery response UTF-8", () => {
         operation: "list_browser_targets",
         reason: "invalid_endpoint_response",
       });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+      await expect.poll(() => responseClosed).toBe(true);
       sendMalformed = false;
       await expect(
         discoverCdpEndpoint(server.url.href, "list_browser_targets"),
@@ -146,7 +146,7 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "payload_limit",
     });
-    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    await expect.poll(() => responseClosed).toBe(true);
   });
 
   it("ends a response that exceeds the total elapsed deadline", async () => {
@@ -177,7 +177,7 @@ describe("CDP discovery response bounds", () => {
         _tag: "BrowserObservationError",
         reason: "timeout",
       });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+      await expect.poll(() => responseClosed).toBe(true);
     }, [
       () => controller.abort(),
       async () => {
@@ -215,7 +215,7 @@ describe("CDP discovery response bounds", () => {
         _tag: "AnalysisCancelledError",
         operation: "list_browser_targets",
       });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+      await expect.poll(() => responseClosed).toBe(true);
     }, [
       () => controller.abort(),
       async () => {
@@ -242,7 +242,7 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "invalid_endpoint_response",
     });
-    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    await expect.poll(() => responseClosed).toBe(true);
   });
 });
 

@@ -19,7 +19,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment,
-        timeoutMs: 30_000,
       });
     const schema = await run([
       "mcp",
@@ -110,7 +109,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment,
-        timeoutMs: 30_000,
       });
     const filtered = await run([
       "mcp",

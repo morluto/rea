@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
 import {
@@ -15,7 +19,7 @@ import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 it("retains complete load-image facts and pages selected relocations through the advertised SDK contracts", async () => {
   const fixture = fixtureDosOverlapLoadImage();
@@ -47,14 +51,16 @@ it("retains complete load-image facts and pages selected relocations through the
       input: Record<string, unknown>,
     ) => {
       const definition = catalog.tools.find((tool) => tool.name === name);
-      if (!definition?.outputSchema) throw new Error("Missing named schema");
+      if (definition === undefined) throw new Error("Missing named schema");
       const inputSchema: Record<string, unknown> = definition.inputSchema;
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const reply = await harness.mcp.callTool(
         { name, arguments: input },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(reply.isError).not.toBe(true);
       return sessionEvidence(harness.session, reply.structuredContent);

@@ -148,9 +148,7 @@ describe("process CLI cleanup errors", () => {
       try {
         // A retained PTY can keep its CLI process alive. Read the completed
         // compiled command result before releasing the child and joining exit.
-        if (cli.sharedCliRun === undefined)
-          throw new Error("Expected the compiled CLI command session");
-        const result = await cli.sharedCliRun({
+        const result = await cli.run({
           arguments: ["capture-process", scenario, "--json"],
           environment: {
             TMPDIR: root,
@@ -204,7 +202,6 @@ describe("process CLI cleanup errors", () => {
           expect(Number.isSafeInteger(targetPid) && targetPid > 0).toBe(true);
           await expect
             .poll(() => observeProcessStartIdentity(targetPid), {
-              timeout: 7_000,
               interval: 25,
             })
             .toBeUndefined();

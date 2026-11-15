@@ -115,15 +115,14 @@ describe("managed application graph MethodDef scope", () => {
     }
   });
 
-  it("keeps unrecorded legacy MethodDef scope unknown", () => {
+  it("keeps an unexamined MethodDef scope unknown", () => {
     const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const binary = managedPeFixtureTarget(bytes);
     const members = inspectManagedMembersBytes(bytes, binary);
-    const { method_rows: _methodRows, ...legacy } = members;
     const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
       operation: "inspect_managed_members",
       parameters: {},
-      result: legacy,
+      result: { ...members, method_rows: null },
       rawResult: null,
       limitations: members.limitations,
     });
@@ -922,6 +921,46 @@ describe("managed application graph coverage", () => {
       }
     }
   });
+
+  it("reports an unavailable source as unknown, not partial", () => {
+    const bytes = buildManagedPeFixture();
+    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const evidence = (state: "partial" | "unavailable") =>
+      createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: { ...members, coverage: { state, issues: [] } },
+        rawResult: null,
+        limitations: members.limitations,
+      });
+    const project = (state: "partial" | "unavailable") => {
+      const projection = projectManagedApplicationGraphEvidence({
+        managed_members: evidence(state),
+      });
+      if (!projection.ok) throw new Error("projection failed");
+      return managedApplicationGraphResultSchema.parse(
+        parseEvidence(projection.value).normalized_result,
+      );
+    };
+
+    const unavailable = project("unavailable");
+    expect(unavailable.coverage).toEqual({ status: "unknown" });
+    expect(unavailable.graph.coverage).toEqual({
+      status: "unknown",
+      truncated: false,
+      omitted_count: null,
+      limits: [],
+    });
+    expect(unavailable.limitations).toContainEqual(
+      expect.stringMatching(/managed Evidence record is unavailable/iu),
+    );
+    expect(unavailable.limitations).not.toContainEqual(
+      expect.stringMatching(/partial coverage/iu),
+    );
+    // A known gap alone stays partial.
+    expect(project("partial").coverage).toEqual({ status: "partial" });
+  });
 });
 
 describe("managed application graph type selection", () => {
@@ -963,23 +1002,6 @@ describe("managed application graph type selection", () => {
     expect(result.limitations).not.toContainEqual(
       expect.stringMatching(/managed Evidence.*partial coverage/iu),
     );
-  });
-
-  it("accepts member Evidence recorded before type selection existed", () => {
-    // Only in-module relations, so nothing else makes the graph partial.
-    const bytes = buildManagedPeFixture({
-      ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),
-    });
-    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
-    const { selection: _selection, ...legacy } = inspectManagedMembersBytes(
-      bytes,
-      binary,
-    );
-
-    expect(managedMemberInspectionSchema.parse(legacy).selection).toBeNull();
-    expect(project(legacy, bytes).coverage).toMatchObject({
-      status: "complete-within-inputs",
-    });
   });
 });
 
@@ -1093,17 +1115,14 @@ describe("managed call and field-access relations", () => {
     );
   });
 
-  it("reads graph Evidence projected before relation counters existed", () => {
+  it("refuses graph Evidence without relation counters", () => {
     const { result } = memberGraph(relationsFixture());
-    const {
-      calls: _calls,
-      field_accesses: _fieldAccesses,
-      ...summary
-    } = result.summary;
+    const { calls: _calls, ...summary } = result.summary;
 
     expect(
-      managedApplicationGraphResultSchema.parse({ ...result, summary }).summary,
-    ).toMatchObject({ calls: null, field_accesses: null });
+      managedApplicationGraphResultSchema.safeParse({ ...result, summary })
+        .error?.issues[0]?.path,
+    ).toEqual(["summary", "calls"]);
   });
 
   it("counts relations whose endpoints a type selection omitted", () => {

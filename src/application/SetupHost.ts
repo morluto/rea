@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
@@ -27,7 +28,7 @@ import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import {
   clientEvidencePaths,
-  supportedClients,
+  resolveSupportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -298,10 +299,11 @@ export const systemSetupHost = (
       }),
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>
-      Promise.resolve(supportedClients(homeDirectory, platform, environment)),
+      resolveSupportedClients(homeDirectory, platform, environment),
     ...clientConfigurationOperations(
       resources,
       doctorHost.resolveProviderRequestBudget,
+      platform,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -362,6 +364,7 @@ const setupInstallerDiagnostic = (
 const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
+  platform: NodeJS.Platform,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -376,6 +379,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           ),
     ),
   clientNeedsConfigure: (
@@ -391,6 +395,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           )),
     ),
   inspectClientConfiguration: (
@@ -404,6 +409,7 @@ const clientConfigurationOperations = (
         providerEnvironment,
         command,
         resolveProviderRequestBudget,
+        platform,
       ),
     ),
 });
@@ -466,12 +472,20 @@ const errorMessage = (cause: unknown): string =>
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
-  for (const candidate of supportedClients(home, platform, environment)) {
-    if (candidate.configPathError !== undefined) continue;
+  for (const candidate of await resolveSupportedClients(
+    home,
+    platform,
+    environment,
+  )) {
+    if (
+      candidate.configPathError !== undefined ||
+      candidate.registrationApplicability === true
+    )
+      continue;
     if (await clientEvidencePresent(candidate)) detected.push(candidate);
   }
   return detected;

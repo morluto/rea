@@ -6,13 +6,11 @@ import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyS
 import { toolFamilyId } from "../../../src/contracts/toolFamilies.js";
 
 it.each([
-  ["full", ""],
   ["compact", ""],
-  ["full", ",native,artifact,android,managed"],
   ["compact", ",native,artifact,android,managed"],
-  ["full", ",native"],
-  ["full", ",artifact"],
-  ["full", ",android"],
+  ["compact", ",native"],
+  ["compact", ",artifact"],
+  ["compact", ",android"],
 ])(
   "preserves workflow contracts through the production %s MCP server with extra families '%s'",
   async (profile, extraFamilies) => {
