@@ -396,11 +396,6 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "cleanup-dependency-binding": {
-    "src/android/JadxConfiguration.ts": 1,
-    "src/android/JadxJavaProbe.ts": 1,
-    "src/android/JadxProvider.ts": 2,
-    "src/apktool/ApktoolCommandCleanup.ts": 1,
-    "src/apktool/ApktoolProvider.ts": 3,
     "src/application/AnalysisContextQueries.ts": 1,
     "src/application/DirectAnalysisCleanup.ts": 2,
     "src/application/Doctor.ts": 1,

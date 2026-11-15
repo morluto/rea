@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
 
 import { AnalysisCleanupRelease } from "./analysisCleanupRelease.js";
-import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "./analysisErrorCleanup.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 
 const failure = () =>
@@ -99,10 +102,7 @@ it("completes JADX-style owner records composed through the shared helper", () =
   );
   const prerequisiteRelease = new AnalysisCleanupRelease();
   const prerequisite = prerequisiteRelease.bind(resource("java-probe"));
-  const closed = analysisErrorWithCleanupFailure(
-    retained,
-    prerequisite,
-  ).bindCleanupDependencies([retained, prerequisite]);
+  const closed = analysisErrorWithCleanupDependencies(retained, prerequisite);
 
   descriptorRelease.confirm();
   expect(admission.cleanupIncomplete).toBe(false);
@@ -116,4 +116,21 @@ it("completes JADX-style owner records composed through the shared helper", () =
 
   prerequisiteRelease.confirm();
   expect(closed.cleanupIncomplete).toBe(false);
+});
+
+it("keeps an owner's record bound to a composition of owned parts", () => {
+  const primaryRelease = new AnalysisCleanupRelease();
+  const cleanupRelease = new AnalysisCleanupRelease();
+  const ownerRelease = new AnalysisCleanupRelease();
+  const composed = ownerRelease.bind(
+    analysisErrorWithCleanupDependencies(
+      primaryRelease.bind(resource("worker")),
+      cleanupRelease.bind(resource("root")),
+    ),
+  );
+  primaryRelease.confirm();
+  cleanupRelease.confirm();
+  expect(composed.cleanupIncomplete).toBe(true);
+  ownerRelease.confirm();
+  expect(composed.cleanupIncomplete).toBe(false);
 });
