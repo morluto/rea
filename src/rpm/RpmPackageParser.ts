@@ -323,6 +323,44 @@ const checkEntryPlacement = (store: BinaryReader, entry: IndexEntry): void => {
     );
 };
 
+/**
+ * Check that an entry's whole value lies inside the data store without
+ * materializing it, for tags the report does not read.
+ */
+const checkEntryExtent = (store: BinaryReader, entry: IndexEntry): void => {
+  checkEntryPlacement(store, entry);
+  const bytes = store.bytes;
+  const remaining = bytes.length - entry.offset;
+  const leaves = (): never =>
+    fail(`RPM tag ${String(entry.tag)} value leaves the data store.`, {
+      field: `tag ${String(entry.tag)}`,
+    });
+  const size = TYPE_SIZE[entry.type];
+  if (size !== undefined) {
+    if (size * entry.count > remaining) leaves();
+    return;
+  }
+  if (entry.type === RPM_TYPE.bin) {
+    if (entry.count > remaining) leaves();
+    return;
+  }
+  if (
+    entry.type === RPM_TYPE.string ||
+    entry.type === RPM_TYPE.stringArray ||
+    entry.type === RPM_TYPE.i18nString
+  ) {
+    // Each string needs at least one NUL byte, so the scan is bounded by the
+    // store whatever count the header declares.
+    if (entry.count > remaining) leaves();
+    let cursor = entry.offset;
+    for (let index = 0; index < entry.count; index += 1) {
+      const nul = bytes.indexOf(0, cursor);
+      if (nul === -1) leaves();
+      cursor = nul + 1;
+    }
+  }
+};
+
 const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
   const field = `tag ${String(entry.tag)}`;
   checkEntryPlacement(store, entry);
@@ -621,7 +659,7 @@ const parseHeader = (
     // Only tags this reader reports are decoded, so unknown tags cannot make
     // the parser materialize values the report never uses.
     if (!specs.has(entry.tag)) {
-      checkEntryPlacement(store, entry);
+      checkEntryExtent(store, entry);
       continue;
     }
     checkTagSpec(entry, specs, label, at);

@@ -595,8 +595,17 @@ export const rpmDuplicateTagFixture = (): Buffer =>
   });
 
 /** Default header plus unknown BIN tags that all name one store range. */
-export const rpmUnknownBinTagsFixture = (count: number, offset = 0): Buffer => {
-  const shared = { type: RPM_TYPE.bin, bin: new Uint8Array(64), offset };
+export const rpmUnknownBinTagsFixture = (
+  count: number,
+  offset = 0,
+  valueBytes?: number,
+): Buffer => {
+  const shared = {
+    type: RPM_TYPE.bin,
+    bin: new Uint8Array(64),
+    offset,
+    ...(valueBytes === undefined ? {} : { count: valueBytes }),
+  };
   return encodeRpmPackage({
     headerTags: [
       ...defaultHeaderTags(),

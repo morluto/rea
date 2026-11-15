@@ -623,4 +623,7 @@ it("checks unknown tags' placement without decoding their values", () => {
   expect(() => parse(rpmUnknownBinTagsFixture(1, 0xffff_fff0))).toThrow(
     /tag 90000 offset -16 is outside the data store/u,
   );
+  expect(() => parse(rpmUnknownBinTagsFixture(1, 0, 0x10_0000))).toThrow(
+    /tag 90000 value leaves the data store/u,
+  );
 });
