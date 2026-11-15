@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { Writable } from "node:stream";
 
 import { Help, z } from "incur";
@@ -12,8 +13,10 @@ import {
   type McpRegistrationClient,
 } from "../application/McpRegistrationCatalog.js";
 import { runningClientRewriteNotice } from "../application/SupportedClients.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   classifyMcpAddDiscovery,
   declaredSensitiveValues,
@@ -307,13 +310,14 @@ const executeRegistration = async (
   const resources = (retainedResources ??= new ArtifactResourceScope());
   const outcomes = await resources
     .run(async () => {
+      const { platform } = HOST_PLATFORM;
       const targets = await resolveMcpRegistrationClients(
         {
           agents: request.agents,
           global: request.global,
           cwd: process.cwd(),
-          home: homeDirectoryFromEnvironment(environment, process.platform),
-          platform: process.platform,
+          home: homeDirectoryFromEnvironment(environment, platform),
+          platform,
           environment,
           signal,
         },
@@ -334,6 +338,7 @@ const executeRegistration = async (
           request.launcher,
           signal,
           resources,
+          platform,
         ),
       };
     })

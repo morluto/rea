@@ -13,6 +13,10 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
+import {
+  annotationsFromEffects,
+  toolEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -56,24 +60,9 @@ const contract: ToolContract = {
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
-  effects: {
-    mutatesTarget: false,
-    mutatesSession: false,
-    writesFilesystem: false,
-    launchesProcess: false,
-    accessesNetwork: false,
-    changesUiState: false,
-    mayDiscardData: false,
-    executesForeignCode: false,
-    mutatesDevice: false,
-    idempotent: true,
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  effects: toolEffects(),
+  sessionEffects: toolEffects(),
+  annotations: annotationsFromEffects(toolEffects()),
   returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };

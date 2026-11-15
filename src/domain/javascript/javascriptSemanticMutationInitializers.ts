@@ -9,6 +9,10 @@ import {
   javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
+import {
+  isSemanticDirectEvalSite,
+  semanticGlobalCodeSites,
+} from "./javascriptSemanticEffectRecord.js";
 
 import {
   delayedInstanceFieldValue,
@@ -1300,7 +1304,8 @@ const moduleFunctionFirstRead = (
           // scope-owned sites are complete before ambient indexing starts.
           if (
             t.isCallExpression(node) &&
-            state?.opaqueEffects.sites.has(node)
+            state !== undefined &&
+            isSemanticDirectEvalSite(node, state)
           ) {
             if (unknownPropertyRead !== null)
               unknownPropertyRead =
@@ -1470,7 +1475,7 @@ const moduleFunctionFirstRead = (
   }
   // Callee resolution can query timing during the ambient walk. Source reads
   // stay fixed; consume each newly observed opaque call once without rescanning.
-  const sites = state?.opaqueEffects.globalSites ?? [];
+  const sites = state === undefined ? [] : semanticGlobalCodeSites(state);
   while (retained.opaqueSitesIndexed < sites.length) {
     const site = sites[retained.opaqueSitesIndexed++];
     const position =

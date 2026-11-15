@@ -2,7 +2,7 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type {
   ProgressReporter,
   ProgressUpdate,
-} from "../application/ProgressReporter.js";
+} from "../ports/ProgressReporter.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperBridgeEvent } from "./protocol.js";
 import {

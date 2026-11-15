@@ -5,7 +5,7 @@ import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   clientConfigurationValuesEqual,

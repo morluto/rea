@@ -8,7 +8,7 @@ import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import type { PromptContract } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
 import type { ToolContract } from "./contracts/toolContractTypes.js";
-import { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "./cliCommandNames.js";
 import { compareUnicodeCodePoints } from "./domain/unicodeCodePointOrder.js";
 import {
   advertisedInputJsonSchema,
@@ -25,7 +25,11 @@ import {
   type McpOutputSchemaProfile,
 } from "./config/mcpOutputSchemaProfile.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "./config/mcpInputSchemaProfile.js";
-import { RECORDED_CATALOG_DIGEST_PROFILES } from "./recordedCatalogDigests.js";
+import {
+  RECORDED_CATALOG_DIGEST_PROFILES,
+  type CatalogDigestProfiles,
+  type CatalogDigests,
+} from "./recordedCatalogDigests.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -33,6 +37,24 @@ import { RECORDED_CATALOG_DIGEST_PROFILES } from "./recordedCatalogDigests.js";
  * that predates the untrusted-content framing must not digest equal to one
  * that emits `_meta.provenance`, or a stale process would report aligned.
  */
+/**
+ * Primary CLI command inventory, aliases excluded: the command of every
+ * contract that declares `cli: true`, in catalog order, then the commands no
+ * contract names.
+ */
+export const cliCommandNames = (
+  contracts: readonly Pick<ToolContract, "name" | "cli">[],
+): readonly string[] =>
+  Object.freeze([
+    ...contracts.flatMap(({ name, cli }) =>
+      cli === true ? [cliCommandFor(name)] : [],
+    ),
+    ...Object.values(CLI_COMMANDS),
+  ]);
+
+/** The primary CLI command inventory of the public contract registry. */
+export const CLI_COMMAND_NAMES = cliCommandNames(TOOL_CONTRACTS);
+
 const createToolCatalog = (contracts: readonly ToolContract[]) =>
   contracts.map((contract) => ({
     name: contract.name,
@@ -141,11 +163,6 @@ export const createCatalogDigests = (
     compactPresentation,
     outputSchemaProfile,
   );
-
-export type CatalogDigests = ReturnType<typeof digestCatalogs>;
-export type CatalogDigestProfiles = Readonly<
-  Record<McpOutputSchemaProfile, CatalogDigests>
->;
 
 /** Build-time identities share schema conversion across both output profiles. */
 export const createCatalogDigestProfiles = (

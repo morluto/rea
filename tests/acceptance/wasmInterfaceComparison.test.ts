@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -108,7 +111,7 @@ cliTest(
       expect(ajv.validate(tool.inputSchema, { left, right })).toBe(false);
       const mcp = await client.callTool(
         { name: tool.name, arguments: input },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       expect(
@@ -134,7 +137,7 @@ cliTest(
             },
           },
         },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(retained.isError).not.toBe(true);
       expect(parseEvidence(retained.structuredContent).evidence_id).toBe(
@@ -145,7 +148,7 @@ cliTest(
           name: tool.name,
           arguments: { ...input, scope: "all" },
         },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(invalid.isError).toBe(true);
     } finally {

@@ -5,12 +5,11 @@ import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HopperStartError } from "../hopper/HopperErrors.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
@@ -106,16 +105,14 @@ describe.skipIf(process.platform === "win32")(
       });
       if (!acquired.acquired) throw new Error("expected acquired lease");
       onTestFinished(() => acquired.lease.release());
-      const started = createDeferred<void>();
-      const finish = createDeferred<void>();
+      const leaseClose = phaseGate();
       const close = Server.prototype.close;
       vi.spyOn(Server.prototype, "close").mockImplementationOnce(function (
         this: Server,
         callback,
       ) {
         return close.call(this, (cause) => {
-          started.resolve();
-          void finish.promise.then(() => callback?.(cause));
+          void leaseClose.hold().then(() => callback?.(cause));
         });
       });
       let firstFinished = false;
@@ -125,7 +122,7 @@ describe.skipIf(process.platform === "win32")(
       });
       let second: Promise<void> | undefined;
       try {
-        await awaitAcknowledgement(started.promise, first, "lease close");
+        await leaseClose.reached(first, "lease close");
         second = acquired.lease.release().then(() => {
           secondFinished = true;
         });
@@ -133,7 +130,7 @@ describe.skipIf(process.platform === "win32")(
         expect(firstFinished).toBe(false);
         expect(secondFinished).toBe(false);
       } finally {
-        finish.resolve();
+        leaseClose.release();
         await Promise.allSettled([first, ...(second ? [second] : [])]);
       }
       await first;

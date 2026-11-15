@@ -2,12 +2,12 @@ import type {
   AnalysisClient,
   AnalysisOperation,
   CapabilityDescriptor,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { err, ok } from "../../domain/result.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 
 export const BUNDLE_NATIVE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
   "inspect_plist",

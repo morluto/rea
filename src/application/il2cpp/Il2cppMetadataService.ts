@@ -5,14 +5,14 @@ import type {
   Il2cppSeedOutput,
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
-} from "./Il2cppSeedWriterPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+} from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import type { Il2cppMetadataPort } from "./Il2cppMetadataPort.js";
+import type { Il2cppMetadataPort } from "../../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -111,7 +111,7 @@ export class Il2cppMetadataService {
               path: ["ghidra_seeds"],
               reason: "invalid_value",
               message:
-                "--ghidra-seeds needs --binary to link method addresses.",
+                "Ghidra seed output links method addresses in binary_path.",
             },
           ]),
         );

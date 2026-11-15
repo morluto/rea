@@ -1,13 +1,12 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -41,15 +40,6 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
-
-/** Preserve diagnostics independently of worker exit and private-root cleanup. */
-export const capturedSqliteOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated === true,
-});
 
 /** Keep typed cleanup history and one canonical output owner, including after resolution. */
 export const createSqliteCleanupError = (
@@ -223,7 +213,7 @@ const sqliteWorkerCommand = (
   phaseDiagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderOutcomeContext => ({
   operation: OPERATION,
-  capturedOutput: capturedSqliteOutput,
+  capturedOutput: capturedProviderOutput,
   details:
     outcome.kind === "runtime-exhausted"
       ? { diagnostics: { selected_path: selectedPath } }
@@ -254,7 +244,7 @@ const sqliteWorkerCommand = (
           ? {}
           : {
               captured_output: {
-                ...capturedSqliteOutput(exit.output.snapshot),
+                ...capturedProviderOutput(exit.output.snapshot),
               },
             }),
       },
@@ -288,7 +278,7 @@ const sqliteWorkerCleanup = (
       cause: command,
       ...(command.snapshot === null
         ? {}
-        : { capturedOutput: capturedSqliteOutput(command.snapshot) }),
+        : { capturedOutput: capturedProviderOutput(command.snapshot) }),
       ...(timeout === undefined ? {} : { cleanupPrimary: timeout }),
     },
   );

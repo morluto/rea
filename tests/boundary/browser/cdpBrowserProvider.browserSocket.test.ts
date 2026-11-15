@@ -1,6 +1,11 @@
 import { createServer, type Socket } from "node:net";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseGate,
+} from "../../support/lifecycleHarness.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
@@ -17,7 +22,6 @@ import {
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 import { waitFor } from "../../support/testWait.js";
 
@@ -471,10 +475,7 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     const closeSpy = vi.spyOn(CdpConnection.prototype, "close");
-    let armed!: () => void;
-    const observationArmed = new Promise<void>((resolve) => {
-      armed = resolve;
-    });
+    const observationStart = phaseArrival();
     const controller = new AbortController();
     let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
     try {
@@ -488,13 +489,12 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
           signal: controller.signal,
           progress: {
             report: async (update) => {
-              if (update.completed === 1) armed();
+              if (update.completed === 1) observationStart.arrive();
             },
           },
         },
       );
-      await awaitAcknowledgement(
-        observationArmed,
+      await observationStart.reached(
         observing,
         "peer session observation start",
       );
@@ -542,10 +542,7 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
           ? Promise.reject(new Error("controlled shared socket close failure"))
           : originalClose.call(this);
       });
-    let armed!: () => void;
-    const observationArmed = new Promise<void>((resolve) => {
-      armed = resolve;
-    });
+    const observationStart = phaseArrival();
     const controller = new AbortController();
     let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
     try {
@@ -559,13 +556,12 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
           signal: controller.signal,
           progress: {
             report: async (update) => {
-              if (update.completed === 1) armed();
+              if (update.completed === 1) observationStart.arrive();
             },
           },
         },
       );
-      await awaitAcknowledgement(
-        observationArmed,
+      await observationStart.reached(
         observing,
         "peer session observation start",
       );
@@ -703,10 +699,7 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
         ? Promise.reject(new Error("controlled shared socket close failure"))
         : originalClose.call(this);
     });
-  let armed!: () => void;
-  const observationArmed = new Promise<void>((resolve) => {
-    armed = resolve;
-  });
+  const observationStart = phaseArrival();
   const controller = new AbortController();
   let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
   try {
@@ -720,16 +713,12 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
         signal: controller.signal,
         progress: {
           report: async (update) => {
-            if (update.completed === 1) armed();
+            if (update.completed === 1) observationStart.arrive();
           },
         },
       },
     );
-    await awaitAcknowledgement(
-      observationArmed,
-      observing,
-      "peer session observation start",
-    );
+    await observationStart.reached(observing, "peer session observation start");
     expect(browser.openedConnectionCount()).toBe(1);
 
     denyClose = true;
@@ -794,10 +783,7 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
   });
   trackBrowser(browser);
   const provider = new CdpBrowserProvider();
-  let armed!: () => void;
-  const observationArmed = new Promise<void>((resolve) => {
-    armed = resolve;
-  });
+  const observationStart = phaseArrival();
   const peerController = new AbortController();
   const cancelController = new AbortController();
   let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
@@ -813,16 +799,12 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
         signal: peerController.signal,
         progress: {
           report: async (update) => {
-            if (update.completed === 1) armed();
+            if (update.completed === 1) observationStart.arrive();
           },
         },
       },
     );
-    await awaitAcknowledgement(
-      observationArmed,
-      observing,
-      "peer session observation start",
-    );
+    await observationStart.reached(observing, "peer session observation start");
     expect(browser.openedConnectionCount()).toBe(1);
 
     slowTargetDiscovery = true;
@@ -847,22 +829,15 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
     expect(browser.openedConnectionCount()).toBe(1);
     expect(browser.activeConnectionCount()).toBe(1);
 
-    let enterCancelDiscovery!: () => void;
-    const cancelDiscoveryEntered = new Promise<void>((resolve) => {
-      enterCancelDiscovery = resolve;
-    });
-    notifySlowDiscoveryStarted = enterCancelDiscovery;
+    const sharedDiscovery = phaseArrival();
+    notifySlowDiscoveryStarted = () => sharedDiscovery.arrive();
     cancelling = provider.listTargets(
       listBrowserTargetsInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
       }),
       { signal: cancelController.signal },
     );
-    await awaitAcknowledgement(
-      cancelDiscoveryEntered,
-      cancelling,
-      "shared socket discovery start",
-    );
+    await sharedDiscovery.reached(cancelling, "shared socket discovery start");
     cancelController.abort(new Error("caller cancelled discovery"));
     expect(await cancelling).toMatchObject({
       ok: false,
@@ -1008,27 +983,9 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   });
 });
 
-const createDeferredGate = (): {
-  readonly promise: Promise<void>;
-  readonly open: () => void;
-} => {
-  let open = (): void => undefined;
-  const promise = new Promise<void>((resolve) => {
-    open = resolve;
-  });
-  return { promise, open };
-};
-
-const holdProgressStep = (
-  step: number,
-  entered: () => void,
-  release: Promise<void>,
-) => ({
+const holdProgressStep = (step: number, gate: PhaseGate) => ({
   async report(update: { readonly completed: number }) {
-    if (update.completed === step) {
-      entered();
-      await release;
-    }
+    if (update.completed === step) await gate.hold();
   },
 });
 
@@ -1037,9 +994,13 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
   trackBrowser(browser);
   const provider = new CdpBrowserProvider();
   const controller = new AbortController();
-  const observationArmed = createDeferredGate();
-  const inspectionHeld = createDeferredGate();
-  const peersGate = createDeferredGate();
+  // Both peers stay held until the shorter screenshot call has detached.
+  const observationHeld = phaseGate();
+  const inspectionHeld = phaseGate();
+  const releasePeers = () => {
+    observationHeld.release();
+    inspectionHeld.release();
+  };
   let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
   let inspecting: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
   let capturing:
@@ -1054,11 +1015,10 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       }),
       {
         signal: controller.signal,
-        progress: holdProgressStep(1, observationArmed.open, peersGate.promise),
+        progress: holdProgressStep(1, observationHeld),
       },
     );
-    await awaitAcknowledgement(
-      observationArmed.promise,
+    await observationHeld.reached(
       observing,
       "shared browser-socket observation start",
     );
@@ -1071,11 +1031,10 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       }),
       {
         signal: controller.signal,
-        progress: holdProgressStep(2, inspectionHeld.open, peersGate.promise),
+        progress: holdProgressStep(2, inspectionHeld),
       },
     );
-    await awaitAcknowledgement(
-      inspectionHeld.promise,
+    await inspectionHeld.reached(
       inspecting,
       "shared browser-socket inspection hold",
     );
@@ -1125,7 +1084,7 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
     );
     if (!barrier.ok) throw barrier.error;
 
-    peersGate.open();
+    releasePeers();
     const [inspected, observed] = await Promise.all([inspecting, observing]);
     if (!inspected.ok) throw inspected.error;
     if (!observed.ok) throw observed.error;
@@ -1163,7 +1122,7 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       "session-3",
     ]);
   } finally {
-    peersGate.open();
+    releasePeers();
     controller.abort(new Error("test teardown"));
     await Promise.allSettled([observing, inspecting, capturing]);
     await provider.close();

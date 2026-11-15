@@ -1000,6 +1000,15 @@ it.each(["heap-exit", "heap-exit-after-noise"] as const)(
       expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
       expect(error).toMatchObject({
         remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
+        ...(exhaustion.kind === "bun-allocation"
+          ? {}
+          : {
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_heap_mb",
+                effective_value: heapMb,
+              },
+            }),
         reportedLimits: {
           max_heap_mb: heapMb,
           worker_process_memory_limit_bytes:

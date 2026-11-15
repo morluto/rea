@@ -1,5 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -7,6 +9,7 @@ import {
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -283,7 +286,7 @@ mcpTest(
 );
 
 it("settles the admitted EVM operation after SDK cancellation and accepts a subsequent request", async () => {
-  const entered = createDeferred<void>();
+  const evmInspection = phaseArrival();
   const stopped = createDeferred<void>();
   let invocations = 0;
   const harness = await createApplicationMcpHarness({
@@ -299,7 +302,7 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
             else
               signal.addEventListener("abort", () => resolve(), { once: true });
           });
-          entered.resolve();
+          evmInspection.arrive();
           await aborted;
           stopped.resolve();
           return err(new AnalysisCancelledError("inspect_evm_interface"));
@@ -320,7 +323,7 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
       (error: unknown) => error,
     );
   onTestFinished(() => controller.abort());
-  await awaitAcknowledgement(entered.promise, cancellation, "EVM inspection");
+  await evmInspection.reached(cancellation, "EVM inspection");
   controller.abort(new Error("SDK EVM cancellation verification"));
   expect(await cancellation).toMatchObject({
     message: expect.stringContaining("SDK EVM cancellation verification"),
@@ -382,7 +385,7 @@ it("returns the exact inferred interface summary while preserving complete defau
         name: "inspect_evm_interface",
         arguments: { ...input, ...(detail ? { detail } : {}) },
       },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(response.isError).not.toBe(true);
     const evidence = parseEvidence(response.structuredContent);
@@ -396,7 +399,7 @@ it("returns the exact inferred interface summary while preserving complete defau
       name: "inspect_evm_interface",
       arguments: { ...input, detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(response.isError).not.toBe(true);
   const derived = parseEvidence(response.structuredContent);

@@ -1,13 +1,12 @@
+import { capturedProviderOutput } from "./capturedProviderOutput.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -90,16 +89,6 @@ export type ArtifactResourceClassifier = (
   cause: unknown,
   context: ArtifactResourceFailureContext,
 ) => AnalysisError;
-
-export const artifactCommandOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated ?? false,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
 
 /** Own admission, artifact descriptors, producer cleanup and private workspaces together. */
 export class ArtifactAnalysisResources {
@@ -479,7 +468,7 @@ export class ArtifactAnalysisResources {
   ): ProviderOutcomeContext {
     return {
       operation,
-      capturedOutput: artifactCommandOutput,
+      capturedOutput: capturedProviderOutput,
       timeout: {
         ms: limits.command_timeout_ms,
         userMessage: `The owned producer command reached its ${String(limits.command_timeout_ms)} ms deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`,

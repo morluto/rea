@@ -23,6 +23,16 @@ Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
+It also checks each top-level `src/` unit against its layer in
+[`scripts/lib/module-layers.mjs`](scripts/lib/module-layers.mjs) (a new
+directory must declare one) and against the counted outward, mutual,
+cross-provider and past-entry imports in
+`scripts/lib/module-layers.baseline.json`. Application, composition and the
+adapters import a provider through the entry files it declares in that table
+([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
+widens the provider's public surface. The baseline may only shrink: a
+change that removes such imports lowers it with
+`node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
 Before retiring an alias or facade, trace runtime registration, dynamic imports,
 JavaScript verifiers, subprocess scripts, and packaged entrypoints as well as
@@ -272,6 +282,12 @@ review upstream security advisories when updating or using them. Preserve source
 and version provenance, update license notices when needed, and report which
 verification was actually repeated. The lab requirements describe a recorded
 environment; a dependency update does not verify the revised environment.
+
+Commits that only move files or rewrite import paths are listed in
+`.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+attributes lines to the change that wrote them. Move files with `git mv` and
+keep such a commit free of other edits.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.

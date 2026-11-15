@@ -13,7 +13,7 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
 import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
 const roots: string[] = [];

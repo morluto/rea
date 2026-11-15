@@ -131,7 +131,7 @@ const inspectBundleView = async (
           path: ["source", "kind"],
           reason: "invalid_value",
           message:
-            "--evidence-bundle requires a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
+            "An Evidence bundle needs a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
         },
       ]),
     );

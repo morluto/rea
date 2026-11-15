@@ -3,8 +3,8 @@ import { realpath } from "node:fs/promises";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { HopperStartError } from "./HopperErrors.js";
 import {
   OwnedLeaseCleanupFailure,

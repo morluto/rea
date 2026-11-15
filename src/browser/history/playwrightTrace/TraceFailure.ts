@@ -8,13 +8,13 @@ import {
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import { ArtifactReaderFailure } from "../../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
-import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 import {
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../../../artifacts/StableArtifactFailure.js";
+} from "../../../resources/index.js";
+import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {

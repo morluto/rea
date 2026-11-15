@@ -1,4 +1,4 @@
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
 /** Report one operation start through the shared monotonic boundary. */
 export const reportOperationStart = (

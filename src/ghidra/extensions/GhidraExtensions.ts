@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../domain/coverage.js";
 import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -11,8 +12,10 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
@@ -42,8 +45,7 @@ export const ghidraExtensionResultSchema = z.strictObject({
   id: z.string().min(1),
   sha256: digest,
   status: z.enum([
-    "complete",
-    "partial",
+    ...knownCoverageStatusSchema.options,
     "not_applicable",
     "unsupported",
     "failed",

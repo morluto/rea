@@ -1,7 +1,7 @@
 import { access, mkdtemp, rmdir } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import type {

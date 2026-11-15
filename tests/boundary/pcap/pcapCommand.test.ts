@@ -1,10 +1,12 @@
 import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { expect, it, onTestFinished, test, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { runPcapCommand } from "../../../src/pcap/PcapCommand.js";
 import { Deadline } from "../../../src/domain/deadline.js";
 import * as ownership from "../../../src/process/ProcessOwnershipObservation.js";
@@ -37,6 +39,7 @@ it.skipIf(process.platform !== "darwin")(
       throw new Error("Cancelled preparation must not launch the tool");
     });
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: ["--version"],
@@ -62,6 +65,7 @@ it("preserves a failed producer when cancellation arrives during its final clean
   const controller = new AbortController();
   const reason = { request: "cancel during cleanup" };
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: process.execPath,
     arguments: [
@@ -117,6 +121,7 @@ it.each([
   async (reason) => {
     const controller = new AbortController();
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: [
@@ -150,14 +155,7 @@ it.skipIf(process.platform !== "darwin")(
   "does not spend the tool execution deadline preparing native ownership",
   async () => {
     const original = ownership.prepareProcessOwnershipInspection;
-    let entered!: () => void;
-    let release!: () => void;
-    const preparing = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const ownershipPreparation = phaseGate();
     let first = true;
     const prepare = vi
       .spyOn(ownership, "prepareProcessOwnershipInspection")
@@ -165,8 +163,7 @@ it.skipIf(process.platform !== "darwin")(
         await original(signal);
         if (first) {
           first = false;
-          entered();
-          await gate;
+          await ownershipPreparation.hold();
         }
       });
     const timeoutMs = 4321;
@@ -178,9 +175,10 @@ it.skipIf(process.platform !== "darwin")(
     onTestFinished(() => {
       deadlines.mockRestore();
       prepare.mockRestore();
-      release();
+      ownershipPreparation.release();
     });
     const pending = runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: ["--version"],
@@ -196,11 +194,11 @@ it.skipIf(process.platform !== "darwin")(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
     );
-    await preparing;
+    await ownershipPreparation.reached(pending, "native ownership preparation");
     // Observe before release; assert after the command is joined so a failed
     // check never leaves it running past the test.
     const armedWhilePreparing = commandDeadlines();
-    release();
+    ownershipPreparation.release();
     const result = await pending;
     // The command deadline is armed only once preparation has finished.
     expect(armedWhilePreparing).toEqual([]);
@@ -220,6 +218,7 @@ it("returns complete stdout while retaining unresolved process cleanup", async (
     | undefined;
   let mayClean = false;
   const output = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: process.execPath,
     arguments: ["-e", 'process.stdout.write("complete producer output")'],
@@ -270,6 +269,7 @@ it.each([
   "reports a %s launch refusal while reading a capture as an unavailable tool",
   async (code, wording) => {
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_capture",
       command: "/selected/tshark",
       arguments: ["-r", "/authored-capture.pcap"],
@@ -307,6 +307,7 @@ posixIt(
     await writeFile(file, "");
     const command = join(file, "tshark");
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command,
       arguments: ["--version"],
@@ -328,6 +329,7 @@ posixIt(
 it("reports the Windows native launcher's refusal of the selected tool as an unavailable tool", async () => {
   const command = "C:\\Wireshark\\tshark.exe";
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command,
     arguments: ["-r", "/authored-capture.pcap"],
@@ -358,6 +360,7 @@ it("reports the Windows native launcher's refusal of the selected tool as an una
 it("attributes a refused limiter spawn to the limiter, not Wireshark", async () => {
   const limiter = await selectArtifactCommandPath(process.execPath);
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: "/selected/tshark",
     arguments: [],
@@ -430,6 +433,7 @@ const runLimited = async (
   limiterArguments: string[] = ["--as=1073741824"],
 ) =>
   runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command,
     arguments: [],
@@ -487,6 +491,7 @@ posixIt("attributes prlimit's own refusal to the limiter", async () => {
 
 it("does not attribute an errno without spawn identity to the selected tool", async () => {
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_client",
     command: "/selected/tshark",
     arguments: ["--version"],
@@ -506,3 +511,38 @@ it("does not attribute an errno without spawn identity to the selected tool", as
   if (!(failure instanceof AnalysisProtocolError)) throw failure;
   expect(failure.message).toContain("failing stage is unknown");
 });
+
+it.each([
+  ["win32", "C:\\Windows\\System32\\cmd.exe", true],
+  ["linux", "C:\\Tools\\tshark.cmd", false],
+] as const)(
+  "launches a batch tool through cmd.exe only for a Windows host (%s)",
+  async (platform, expectedCommand, verbatim) => {
+    const launches: {
+      readonly command: string;
+      readonly windowsVerbatimArguments: boolean | undefined;
+    }[] = [];
+    await runPcapCommand({
+      platform,
+      operation: "inspect_pcap_client",
+      command: "C:\\Tools\\tshark.cmd",
+      arguments: ["--version"],
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+      environment: { SYSTEMROOT: "C:\\Windows" },
+      signal: undefined,
+      launcher: async (spawn) => {
+        launches.push({
+          command: spawn.command,
+          windowsVerbatimArguments: spawn.windowsVerbatimArguments,
+        });
+        throw new Error("recorded launch");
+      },
+      retain: () => {
+        throw new Error("No provider resources were acquired");
+      },
+    }).catch(() => undefined);
+    expect(launches).toEqual([
+      { command: expectedCommand, windowsVerbatimArguments: verbatim },
+    ]);
+  },
+);

@@ -10,7 +10,7 @@ import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResol
 import {
   destinationCaseCollision,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
-} from "../../../../src/artifacts/ArtifactPaths.js";
+} from "../../../../src/resources/ArtifactPaths.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { ArtifactOperationError } from "../../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
