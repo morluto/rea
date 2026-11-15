@@ -19,11 +19,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const decoder = vi.hoisted(() => ({ broken: false }));
 
 vi.mock(
-  "../../../src/artifacts/apple/BinaryPlistMaterializer.js",
+  "../../../src/domain/apple/binaryPlistMaterializer.js",
   async (importOriginal) => {
     const actual =
       await importOriginal<
-        typeof import("../../../src/artifacts/apple/BinaryPlistMaterializer.js")
+        typeof import("../../../src/domain/apple/binaryPlistMaterializer.js")
       >();
     return {
       ...actual,
