@@ -318,7 +318,7 @@ it("keeps cancellation typed for a captured source with a data-sized link set", 
     omitted_count: 1,
     omitted: [{ evidence_id: wide.evidence_id, reason: "not_inlined" }],
   });
-}, 60_000);
+});
 
 it("hands off the same closure for summary delivery and permits a clean retry", async () => {
   const input = await fixture();

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { dirname } from "node:path";
 import { constants, type Stats } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
@@ -9,11 +10,11 @@ import type {
 } from "./ElectronActiveObservationPort.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   type AnalysisInputIssue,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -118,7 +119,7 @@ const resolveExecutablePath = async (
   }
   if (!metadata.isFile())
     return err(notExecutable(selected, new Error("not a regular file")));
-  if (process.platform !== "win32")
+  if (HOST_PLATFORM.platform !== "win32")
     try {
       await access(resolved.value, constants.X_OK);
     } catch (cause: unknown) {
@@ -194,15 +195,11 @@ export const captureElectronScenario = async (
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   const canonical = await canonicalizeInput(input);
   if (!canonical.ok) return canonical;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   if (provider === undefined)
     return err(
       new AnalysisCapabilityUnavailableError(

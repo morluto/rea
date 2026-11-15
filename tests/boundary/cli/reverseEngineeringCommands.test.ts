@@ -28,6 +28,7 @@ import {
 } from "../../support/reverseEngineeringCompositionFixtures.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import type { ReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const originalExitCode = process.exitCode;
 
@@ -342,7 +343,7 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
   const service = {
     inspectWithObjdump: vi.fn(async () => err(error)),
     close: vi.fn(async () => {
-      error.resolveCleanup();
+      releaseOwnedCleanup(error);
     }),
   };
 
@@ -370,7 +371,7 @@ it("does not project cancellation cleanup as incomplete after a successful retry
   const service = {
     inspectWithObjdump: vi.fn(async () => err(error)),
     close: vi.fn(async () => {
-      error.resolveCleanup();
+      releaseOwnedCleanup(error);
     }),
   };
 

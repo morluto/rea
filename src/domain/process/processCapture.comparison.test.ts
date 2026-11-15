@@ -10,7 +10,6 @@ import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { FileState } from "./processCapture.js";
 
 import {
-  deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
@@ -641,11 +640,6 @@ it.each(PROCESS_COMPARISON_DIMENSIONS)(
   (dimension) => {
     const baseline = compareFullyObserved(emptyCapture(), emptyCapture());
     const result = { ...baseline, [dimension]: "contradiction" as const };
-    expect(
-      deriveProcessComparisonStatus(
-        PROCESS_COMPARISON_DIMENSIONS.map((name) => result[name]),
-      ),
-    ).toBe("contradiction");
     expect(processCaptureComparisonSchema.safeParse(result).success).toBe(
       false,
     );
@@ -673,9 +667,6 @@ it.each([
       ["contradiction", other],
       [other, "contradiction"],
     ] as const) {
-      expect(deriveProcessComparisonStatus([terminal, interaction])).toBe(
-        expected,
-      );
       expect(
         processCaptureComparisonSchema.parse({
           ...compareFullyObserved(emptyCapture(), emptyCapture()),
@@ -684,6 +675,14 @@ it.each([
           status: expected,
         }),
       ).toMatchObject({ status: expected });
+      expect(
+        processCaptureComparisonSchema.safeParse({
+          ...compareFullyObserved(emptyCapture(), emptyCapture()),
+          terminal,
+          interaction,
+          status: expected === "truncated" ? "contradiction" : "truncated",
+        }).success,
+      ).toBe(false);
     }
   },
 );

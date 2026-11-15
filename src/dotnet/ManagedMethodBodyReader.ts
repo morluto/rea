@@ -1,3 +1,9 @@
+import {
+  malformedInput,
+  parseFailureFromCause,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import type { ManagedMethodImplementationFlags } from "./ManagedMethodDefinitionRows.js";
 import {
   admitManagedProjection,
@@ -70,16 +76,26 @@ const readMethodBodyHeader = (
       ilSize: first >> 2,
       localSig: 0,
     };
-  if ((first & 3) !== 3) throw new RangeError("Unsupported method body header");
+  if ((first & 3) !== 3)
+    throw unsupportedInput("cil-method-body", "Unsupported method body header");
   if (offset > bytes.length - 12)
-    throw new RangeError("Fat method body header leaves artifact");
+    throw truncatedInput(
+      "cil-method-body",
+      "Fat method body header leaves artifact",
+    );
   const flagsAndSize = bytes.readUInt16LE(offset);
   const headerDwords = flagsAndSize >>> 12;
   if (headerDwords < 3)
-    throw new RangeError("Fat method body header is smaller than 12 bytes");
+    throw malformedInput(
+      "cil-method-body",
+      "Fat method body header is smaller than 12 bytes",
+    );
   const size = headerDwords * 4;
   if (offset > bytes.length - size)
-    throw new RangeError("Method body header leaves artifact");
+    throw truncatedInput(
+      "cil-method-body",
+      "Method body header leaves artifact",
+    );
   return {
     format: "fat",
     size,
@@ -151,10 +167,13 @@ export const methodBody = (
       header.size > methodExtent ||
       header.ilSize > methodExtent - header.size
     )
-      throw new RangeError("Method body leaves file-backed PE section data");
+      throw malformedInput(
+        "cil-method-body",
+        "Method body leaves file-backed PE section data",
+      );
     const ilOffset = offset + header.size;
     if (ilOffset > bytes.length - header.ilSize)
-      throw new RangeError("Method IL bytes leave artifact");
+      throw truncatedInput("cil-method-body", "Method IL bytes leave artifact");
     const il = bytes.subarray(ilOffset, ilOffset + header.ilSize);
     // Bound the actual instruction records before allocating them. One raw
     // byte is only an upper bound on count; wide operands do not create a
@@ -336,7 +355,7 @@ export const methodBody = (
       throw cause;
     if (
       !(cause instanceof ManagedReaderFailure) &&
-      !(cause instanceof RangeError)
+      parseFailureFromCause(cause) === undefined
     )
       throw cause;
     return {

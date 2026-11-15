@@ -91,6 +91,8 @@ const createFileOutcomeFixture = async ({
               ? "limit"
               : "integrity",
           "controlled physical file failure",
+          // The stable reader names the bound it refused, as production does.
+          failure === "limit" ? { boundary: "file-size" } : undefined,
         );
   const selectedPath =
     resource === "limiter"

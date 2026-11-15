@@ -263,7 +263,7 @@ it.each([
     const { path, target } = await fixture();
     const replay = new NativeFixtureRunner();
     const unsigned: NativeCommandRunner = {
-      async run(tool, args, options) {
+      async run(tool, args) {
         const diagnostic = `${args.at(-1)}: code object is not signed at all\n`;
         const capture = await new NativeFixtureRunner(
           { codesign: diagnostic },

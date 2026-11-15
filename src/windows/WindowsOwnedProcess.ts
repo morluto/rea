@@ -157,6 +157,25 @@ export const isWindowsExecutableLaunchFailure = (cause: unknown): boolean => {
   return typeof code === "string" && code !== "ERR_REA_WINDOWS_NATIVE";
 };
 
+/**
+ * The executable path the native launcher refused to start, when its error
+ * names an executable-launch constraint; undefined for host-control
+ * rejections and errors from elsewhere.
+ */
+export const windowsExecutableLaunchPath = (
+  cause: unknown,
+): string | undefined => {
+  if (!(cause instanceof Error)) return undefined;
+  const constraint = Reflect.get(cause, "constraint");
+  const requestedPath = Reflect.get(cause, "requestedPath");
+  return typeof constraint === "string" &&
+    WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint) &&
+    typeof requestedPath === "string" &&
+    requestedPath.length > 0
+    ? requestedPath
+    : undefined;
+};
+
 /** Wrap a raw native process_spawn host-control rejection as a RuntimeControlUnavailableError. */
 export const windowsNativeSpawnControlError = (
   cause: unknown,

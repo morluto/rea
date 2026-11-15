@@ -494,6 +494,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     action: BrowserScenarioAction,
     signal?: AbortSignal,
   ): Promise<void> {
+    // A policy connection lost after the previous step's check would leave
+    // this action's documents unprotected; report it before acting.
+    this.serviceWorkers?.assertConnected();
     await withPlaywrightExecutionBoundary(
       () =>
         performPlaywrightScenarioAction({

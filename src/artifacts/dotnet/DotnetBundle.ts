@@ -15,6 +15,7 @@ import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
 } from "../ArtifactReader.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** SHA-256 marker embedded by Microsoft's apphost; the preceding UInt64 is the header offset. */
 export const DOTNET_BUNDLE_SIGNATURE = Buffer.from(
@@ -285,10 +286,7 @@ class BundleCursor {
       // decoder boundary so I/O and cancellation retain their original cause.
       const bytes = await this.take(length);
       try {
-        return new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(bytes);
+        return strictUtf8Decoder("preserve").decode(bytes);
       } catch (cause) {
         throw new ArtifactReaderFailure(
           "format",

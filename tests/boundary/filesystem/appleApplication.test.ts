@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { minimalMachoImage } from "../../fixtures/nativeHeaders.js";
 import {
   createNonApplicationZipInventory,
   requireSuccessfulProjection,
@@ -51,9 +52,7 @@ async function createCompleteAppleProjection() {
   for (let index = 0; index < NATIVE_COUNT; index++) {
     await writer.add(
       `Payload/Complete.app/Frameworks/Native${String(index).padStart(3, "0")}.dylib`,
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
   }
   await writeFile(path, await writer.close());
@@ -131,15 +130,11 @@ describe("Apple application projection", () => {
     );
     await writer.add(
       "Payload/Fixture.app/Fixture",
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writer.add(
       "Payload/Fixture.app/Frameworks/React.framework/React",
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writer.add(
       "Payload/Fixture.app/main.js",
@@ -484,9 +479,7 @@ describe("Apple application projection completeness", () => {
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(
       `${applicationRoot}/Fixture`,
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writeFile(path, await writer.close());
 

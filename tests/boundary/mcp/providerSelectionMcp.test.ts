@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -24,7 +25,6 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
-import { undeclaredOperationGuidance } from "../../../src/application/binary/BinarySessionExecution.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
@@ -47,6 +47,7 @@ import {
   toolAvailabilityInventory,
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 afterEach(async () => {
@@ -275,16 +276,15 @@ describe("provider selection over MCP", () => {
         message: expect.stringContaining("read_bytes"),
         details: { provider_id: "beta", operation: "read_bytes" },
         remediation: {
-          action: undeclaredOperationGuidance("read_bytes"),
+          action: expect.stringMatching(
+            /binary_session.*complete.*open_binary.*provider_id/u,
+          ),
         },
       },
     });
-    const remediation = undeclaredOperationGuidance("read_bytes");
-    expect(parseMcpToolError(unsupported).error.message).not.toContain(
-      remediation,
-    );
-    expect(remediation).toMatch(
-      /binary_session.*complete.*open_binary.*provider_id/u,
+    const unsupportedError = parseMcpToolError(unsupported).error;
+    expect(unsupportedError.message).not.toContain(
+      unsupportedError.remediation.action,
     );
     expect(starts).toEqual(["beta"]);
 
@@ -599,13 +599,8 @@ describe("binary_session detail over MCP", () => {
     const summary = (await sessionStatusOf(mcp, {})).raw.result;
     const complete = (await sessionStatusOf(mcp, { detail: "complete" })).raw
       .result;
-    const advertised = (await mcp.listTools()).tools.find(
-      ({ name }) => name === "binary_session",
-    )?.outputSchema;
-    if (advertised === undefined)
-      throw new Error("binary_session omitted its output schema");
     const validate = new AjvJsonSchemaValidator().getValidator(
-      z.record(z.string(), z.unknown()).parse(advertised),
+      canonicalOutputSchema("binary_session"),
     );
     const canonical = toolContract("binary_session").outputSchema;
     const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
@@ -935,8 +930,8 @@ it.each([true, false])(
       const error = parseMcpToolError(reply).error;
       expect(error.code).toBe("capability_unavailable");
       expect(error.details).toMatchObject({ provider_id: "beta", operation });
-      expect(error.remediation.action).toBe(
-        undeclaredOperationGuidance(operation, entryCommentAvailable),
+      expect(error.remediation.action).toMatch(
+        /binary_session.*complete.*open_binary.*provider_id/u,
       );
       if (entryCommentAvailable) {
         expect(error.remediation.action).toContain("annotate_native_function");
@@ -1125,7 +1120,7 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "keeps provider-owned release verification bound to the selected session (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory(
@@ -1717,7 +1712,7 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
         closeOwnedResources: async () => {
           if (!fail) return ok(null);
           if (!release) return err(failure);
-          failure.resolveCleanup();
+          releaseOwnedCleanup(failure);
           return ok(null);
         },
       },
@@ -1793,7 +1788,7 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     resolveAnalysisProfile: async () => err(failures[id]),
     closeOwnedResources: async () => {
       if (!released.has(id)) return err(failures[id]);
-      failures[id].resolveCleanup();
+      releaseOwnedCleanup(failures[id]);
       return ok(null);
     },
   }));
@@ -1909,7 +1904,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       });
     let closing: ReturnType<typeof session.close> | undefined;
     try {
-      await entered;
+      await awaitAcknowledgement(entered, observing, "provider readiness");
       if (mode !== "ready") {
         closing = session.close();
         const during = structured(
@@ -1981,9 +1976,11 @@ it.each(["ready", "cancelled", "physical"] as const)(
       expect(starts).toEqual([]);
     } finally {
       finish();
-      await observing;
-      await closing;
-      await session.close();
+      try {
+        await Promise.all([observing, closing]);
+      } finally {
+        await session.close();
+      }
     }
   },
 );

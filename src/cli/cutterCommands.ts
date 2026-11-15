@@ -8,7 +8,8 @@ import { logCliCommand } from "../cliLogging.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
+import { cutterCommandInputSchema } from "../contracts/cutterToolContracts.js";
 
 /** Register commands that control an already-running Cutter instance. */
 export const registerCutterCommands = (
@@ -43,8 +44,10 @@ export const registerCutterCommands = (
         .string()
         .uuid()
         .describe("Session ID copied from list-cutter-sessions."),
-      expectedGeneration: cliIntegerArgument(0).describe(
-        "Session generation returned by list-cutter-sessions.",
+      expectedGeneration: cliDecimalField(
+        cutterCommandInputSchema.shape.expected_generation.describe(
+          "Session generation returned by list-cutter-sessions.",
+        ),
       ),
       command: z
         .string()

@@ -55,4 +55,4 @@ it("applies the selected input allowance through the public deferred stdio entry
     arguments: {},
   });
   expect(healthy.isError).not.toBe(true);
-}, 90_000);
+});

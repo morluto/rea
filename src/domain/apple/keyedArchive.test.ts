@@ -114,7 +114,15 @@ describe("projectKeyedArchive root reference projection", () => {
         },
         { offset: 0, limit: 1 },
       ),
-    ).toThrow(RangeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          format: "keyed-archive",
+          limit: { name: "keyed-archive-values-per-object", maximum: 200_000 },
+        }),
+      }),
+    );
   });
 });
 

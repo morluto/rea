@@ -25,7 +25,7 @@ import type { Logger } from "pino";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -43,10 +43,18 @@ import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
+import {
+  HopperReplyContractError,
+  hopperBridgeMethod,
+  hopperReplyJson,
+  isHopperOperation,
+  type HopperReplyMethod,
+} from "./HopperReplyContracts.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 import {
   reconcileHopperCallers,
   reconciliationChildOptions,
+  type HopperCallerNativeReply,
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
@@ -329,6 +337,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
       readStartupTimeoutSource: () => this.config.hopperStartupTimeoutSource,
       bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+      bridgeMaxReplyBytes: this.config.bridgeMaxReplyBytes,
       logger: this.logger.child({ layer: "bridge" }),
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),
@@ -411,82 +420,114 @@ export class HopperProvider implements AnalysisProviderCandidate {
       execute: async (operation, parameters, options) => {
         try {
           return await sourceReads.run(async () => {
+            if (!isHopperOperation(operation))
+              return err(
+                new AnalysisCapabilityUnavailableError(
+                  "hopper",
+                  operation,
+                  "Hopper does not serve this operation.",
+                ),
+              );
             const willReconcile =
               operation === "procedure_callers" ||
               operation === "analyze_function" ||
               (operation === "procedure_references" &&
                 parameters.direction === "incoming");
+            const callOptions = {
+              ...(willReconcile
+                ? reconciliationChildOptions(options)
+                : options),
+              operation,
+            };
+            // The client validates each reply against its method contract.
+            const call = <M extends HopperReplyMethod>(method: M) =>
+              client.callTool(method, parameters, callOptions);
+            if (operation === "list_names") {
+              const names = await call("list_names");
+              if (!names.ok) return names;
+              const inventory = projectHopperNameInventory(names.value);
+              return ok(
+                projectExecution(
+                  operation,
+                  inventory.result,
+                  inventory.changed ? names.value : null,
+                ),
+              );
+            }
+            if (operation === "address_to_file_offset") {
+              const offset = await call("address_to_file_offset");
+              if (!offset.ok) return offset;
+              const mapped = await mapHopperFileOffset(target, offset.value, {
+                ...(options?.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+                retainFailedClose: retainSourceDescriptor,
+                onCleanupMarker: (marker) => {
+                  if (!(marker.cause instanceof RegularFileCleanupFailure))
+                    return;
+                  sourceLeases
+                    .get(marker.cause.owner)
+                    ?.bindCleanupError(marker);
+                },
+              });
+              if (!mapped.ok) return mapped;
+              return ok(
+                projectExecution(operation, mapped.value, offset.value),
+              );
+            }
+            if (willReconcile) {
+              const native =
+                operation === "procedure_callers"
+                  ? await call("rea_caller_base")
+                  : operation === "analyze_function"
+                    ? await call("analyze_function")
+                    : await call("procedure_references");
+              // A reply outside its contract keeps its raw reply as partial
+              // reconciliation Evidence; other failures return directly.
+              let nativeReply: Result<
+                HopperCallerNativeReply,
+                HopperReplyContractError
+              >;
+              if (native.ok) nativeReply = native;
+              else if (native.error instanceof HopperReplyContractError)
+                nativeReply = err(native.error);
+              else
+                return operation === "procedure_callers"
+                  ? err(
+                      analysisClientFailureForOperation(
+                        native.error,
+                        "hopper",
+                        operation,
+                      ),
+                    )
+                  : native;
+              const reconciled = await reconcileHopperCallers(
+                client,
+                operation,
+                parameters,
+                nativeReply,
+                options,
+                this.config.hopperCallerScanBudget,
+              );
+              if (!reconciled.ok) return reconciled;
+              return ok(
+                projectExecution(
+                  operation,
+                  reconciled.value.result,
+                  reconciled.value.rawResult,
+                  reconciled.value.reason,
+                ),
+              );
+            }
             const result =
               (operation === "search_strings" ||
                 operation === "search_procedures") &&
               parameters.mode === "regex"
                 ? await regexSearch.execute(operation, parameters, options)
-                : await client.callTool(
-                    operation === "procedure_callers"
-                      ? "rea_caller_base"
-                      : operation,
-                    parameters,
-                    willReconcile
-                      ? reconciliationChildOptions(options)
-                      : options,
-                  );
-            if (!result.ok)
-              return operation === "procedure_callers"
-                ? err(
-                    analysisClientFailureForOperation(
-                      result.error,
-                      "hopper",
-                      operation,
-                    ),
-                  )
-                : result;
-            const mapped =
-              operation === "address_to_file_offset"
-                ? await mapHopperFileOffset(target, result.value, {
-                    ...(options?.signal === undefined
-                      ? {}
-                      : { signal: options.signal }),
-                    retainFailedClose: retainSourceDescriptor,
-                    onCleanupMarker: (marker) => {
-                      if (!(marker.cause instanceof RegularFileCleanupFailure))
-                        return;
-                      sourceLeases
-                        .get(marker.cause.owner)
-                        ?.bindCleanupError(marker);
-                    },
-                  })
-                : result;
-            if (!mapped.ok) return mapped;
-            const reconciled =
-              operation === "procedure_callers" ||
-              operation === "analyze_function" ||
-              (operation === "procedure_references" &&
-                parameters.direction === "incoming")
-                ? await reconcileHopperCallers(
-                    client,
-                    operation,
-                    parameters,
-                    mapped.value,
-                    options,
-                    this.config.hopperCallerScanBudget,
-                  )
-                : undefined;
-            if (reconciled !== undefined && !reconciled.ok) return reconciled;
-            const reconciledResult = reconciled?.value.result ?? mapped.value;
-            const inventory =
-              operation === "list_names"
-                ? projectHopperNameInventory(reconciledResult)
-                : { result: reconciledResult, changed: false };
+                : await call(hopperBridgeMethod(operation));
+            if (!result.ok) return result;
             return ok(
-              projectExecution(
-                operation,
-                inventory.result,
-                reconciled?.value.rawResult ??
-                  (inventory.changed || mapped !== result
-                    ? result.value
-                    : null),
-                reconciled?.value.reason,
-              ),
+              projectExecution(operation, hopperReplyJson(result.value)),
             );
           });
         } catch (cause: unknown) {
