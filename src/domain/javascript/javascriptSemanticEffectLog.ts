@@ -433,6 +433,62 @@ export const semanticBindingEffectGeneration = (
   binding: JavaScriptSemanticBindingState,
 ): number => binding.memberWrites.length + binding.escapedPaths.length;
 
+/**
+ * Recorded ambient writes to `global` paths, as intrinsic paths with
+ * non-literal keys as null. A write recorded without a site is placed at the
+ * program, so it may precede every read.
+ */
+export function* semanticAmbientIntrinsicWrites(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<{
+  readonly site: t.Node;
+  readonly path: readonly (string | null)[];
+}> {
+  for (const { node, path } of state.ambientWriteEffects)
+    if (path[0] === "global")
+      yield {
+        site: node ?? state.program,
+        path: [
+          "intrinsic",
+          ...path
+            .slice(1)
+            .map((key) =>
+              key === null || typeof key === "object" ? null : String(key),
+            ),
+        ],
+      };
+}
+
+/** Sites of recorded ambient writes to `path` or to one of its prefixes. */
+export const ambientPathWriteSites = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+): readonly (t.Node | undefined)[] =>
+  ambientPathEffects(state, path).writes.map(({ node }) => node);
+
+/**
+ * Whether a member write to `binding`'s object, or an escape of it, may run
+ * before `read`. An escape whose site encloses `read` is the call that reads
+ * it, so it does not count.
+ */
+export const bindingMemberEffectMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): boolean =>
+  binding.memberWrites.some(
+    (effect) => semanticEffectTiming(read, effect.node, state) !== "after",
+  ) ||
+  binding.escapedPaths.some(
+    (effect) =>
+      effect.node !== undefined &&
+      !(
+        (effect.node.start ?? -1) <= (read.start ?? -1) &&
+        (effect.node.end ?? -1) >= (read.end ?? -1)
+      ) &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+
 /** The sources recorded member writes assigned into `binding`'s object. */
 export function* semanticMemberWriteSources(
   binding: JavaScriptSemanticBindingState,
