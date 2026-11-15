@@ -52,6 +52,7 @@ import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
   fatal: true,
@@ -141,7 +142,8 @@ class NodeFileReader extends Reader<string> {
   ): Promise<Uint8Array> {
     await this.verify();
     const handle = this.#handle;
-    if (handle === undefined) throw new Error("ZIP reader is not initialized");
+    if (handle === undefined)
+      throw invariantViolation("ZIP reader is not initialized");
     const readBytes = Math.min(length, this.size - index);
     // A central-directory offset can point past EOF. Type that malformed ZIP
     // read before a negative size reaches Buffer.alloc and becomes an I/O error.

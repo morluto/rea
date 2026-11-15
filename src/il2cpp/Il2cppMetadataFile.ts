@@ -18,6 +18,7 @@ import {
   readIl2cppMemberTables,
   type MetadataOwnerRange,
 } from "./Il2cppMetadataMembers.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 const NESTED_TYPE_ENTRY_BYTES = 4;
 
@@ -215,7 +216,7 @@ const checkSections = (
 /** A counted header's entry count; fixed headers record none. */
 const headerCount = (section: Il2cppMetadataSection) => {
   if (section.count === null)
-    throw new TypeError(`section ${section.name} has no header count`);
+    throw invariantViolation(`section ${section.name} has no header count`);
   return section.count;
 };
 
@@ -858,7 +859,7 @@ export function* readIl2cppMetadataForLinkingSteps(
 ): Generator<void, Il2cppMetadataForLinking> {
   const parsed = yield* readMetadataCoreSteps(bytes, options, true);
   if (parsed.link === undefined)
-    throw new Error(
+    throw invariantViolation(
       "Native metadata reader did not retain requested linking facts",
     );
   return { metadata: parsed.metadata, link: parsed.link };
