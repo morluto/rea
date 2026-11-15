@@ -169,7 +169,6 @@ export const runOnSessionTarget =
           values,
           logger,
           signal,
-          undefined,
           openBinaryTargetSelection(opening),
         ));
     if (delivery === undefined) return projectCliAnalysisResult(result);
