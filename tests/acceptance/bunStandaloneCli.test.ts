@@ -6,14 +6,47 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   bunModuleGraphPayload,
+  bunPrefixedPayload,
+  machoBunSections,
   elfAppendedBunPayload,
 } from "../../src/artifacts/bun/BunStandalone.fixture.js";
+import { DEFAULT_BUN_READER_LIMITS } from "../../src/domain/artifactReaderLimits.js";
+import { CPU_ARM64, universalMacho } from "../fixtures/universalMacho.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
   artifactInventoryResultSchema,
   artifactExtractionResultSchema,
 } from "../../src/domain/artifactGraph.js";
+
+cliTest(
+  "reports large Bun section ambiguity through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bun-many-sections-");
+    const source = join(root, "app");
+    const graph = bunPrefixedPayload(bunModuleGraphPayload({ modules: [{}] }));
+    const thin = machoBunSections(Array.from({ length: 200_000 }, () => graph));
+    expect(thin.readUInt32LE(20)).toBeLessThanOrEqual(
+      DEFAULT_BUN_READER_LIMITS.recognition_load_command_bytes,
+    );
+    const fat = universalMacho([
+      { bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]);
+    await writeFile(source, fat.bytes);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(1);
+    expect(inspected.json).toMatchObject({
+      code: "artifact_operation_failed",
+      category: "unavailable",
+      details: {
+        reason: "unavailable",
+        detail: expect.stringContaining("multiple embedded graphs"),
+      },
+    });
+  },
+);
 
 cliTest(
   "inventories and extracts Bun source from its carrier",

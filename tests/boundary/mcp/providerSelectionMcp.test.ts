@@ -1907,7 +1907,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       });
     let closing: ReturnType<typeof session.close> | undefined;
     try {
-      await entered;
+      await awaitAcknowledgement(entered, observing, "provider readiness");
       if (mode !== "ready") {
         closing = session.close();
         const during = structured(
@@ -1979,9 +1979,11 @@ it.each(["ready", "cancelled", "physical"] as const)(
       expect(starts).toEqual([]);
     } finally {
       finish();
-      await observing;
-      await closing;
-      await session.close();
+      try {
+        await Promise.all([observing, closing]);
+      } finally {
+        await session.close();
+      }
     }
   },
 );

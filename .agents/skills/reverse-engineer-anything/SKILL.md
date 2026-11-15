@@ -363,7 +363,7 @@ explicit path or endpoint and do not need it.
   `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
   then inspect the result. See the
   [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
-- CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
+- CPython 3.7–3.15 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,
   PEP 552 hash or mtime/size, nested names, and bytecode SHA-256. Bytecode is

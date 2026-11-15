@@ -37,19 +37,20 @@ export const NUGET_NUPKG_ENTRY_ROLES = [
 ] as const;
 export type NugetNupkgEntryRole = (typeof NUGET_NUPKG_ENTRY_ROLES)[number];
 
-const FOLDER_ROLES: Readonly<Record<string, NugetNupkgEntryRole>> = {
-  lib: "lib",
-  ref: "ref",
-  runtimes: "runtimes",
-  native: "native",
-  analyzers: "analyzers",
-  buildtransitive: "buildTransitive",
-  buildmultitargeting: "buildMultiTargeting",
-  build: "build",
-  contentfiles: "contentFiles",
-  content: "content",
-  tools: "tools",
-};
+// A Map so arbitrary payload folder names never resolve inherited properties.
+const FOLDER_ROLES: ReadonlyMap<string, NugetNupkgEntryRole> = new Map([
+  ["lib", "lib"],
+  ["ref", "ref"],
+  ["runtimes", "runtimes"],
+  ["native", "native"],
+  ["analyzers", "analyzers"],
+  ["buildtransitive", "buildTransitive"],
+  ["buildmultitargeting", "buildMultiTargeting"],
+  ["build", "build"],
+  ["contentfiles", "contentFiles"],
+  ["content", "content"],
+  ["tools", "tools"],
+]);
 
 /** Logical ZIP path with unified separators and without a leading `./`. */
 export const nugetNupkgLogicalPath = (name: string): string =>
@@ -68,7 +69,7 @@ export const nugetNupkgEntryRole = (name: string): NugetNupkgEntryRole => {
   if (lower.endsWith(".nuspec")) return "nuspec";
   const slash = lower.indexOf("/");
   const head = slash === -1 ? lower : lower.slice(0, slash);
-  return FOLDER_ROLES[head] ?? "unknown";
+  return FOLDER_ROLES.get(head) ?? "unknown";
 };
 
 /** Complete bounded inspection of one NuGet .nupkg ZIP. */
@@ -163,7 +164,11 @@ export const nugetNupkgSchema = z.strictObject({
   nuspec: z
     .strictObject({
       path: z.string().min(1),
-      bytes: uint,
+      bytes: uint
+        .nullable()
+        .describe(
+          "Decoded manifest bytes; null when the member was not extracted",
+        ),
       source: z.enum(["opc-relationship", "root-nuspec"]),
     })
     .nullable(),

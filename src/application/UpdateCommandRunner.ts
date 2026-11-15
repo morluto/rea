@@ -1,4 +1,5 @@
 import spawn from "cross-spawn";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { spawn as spawnWindows } from "node:child_process";
 import { win32 } from "node:path";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -18,7 +19,7 @@ import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import type { UpdateOutput } from "./Update.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
 
-export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
 
 /** The runner owns whether the process started; callers need not infer it from text. */
@@ -121,6 +122,7 @@ const runUpdateProcess = async (
     return commandFailure("No executable supplied.", "launch");
   const environment = snapshotEnvironment(
     withoutPackageRunnerIdentity(selectedEnvironment),
+    HOST_PLATFORM.platform,
   );
   let selectedExecutable = executable;
   let selectedArguments = args;

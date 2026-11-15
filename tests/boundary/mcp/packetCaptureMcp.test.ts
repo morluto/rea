@@ -13,7 +13,7 @@ it.each(["inspect_packet_capture", "inspect_packet_fields"])(
   "advertises valid target-free schemas and missing-tool diagnostics: %s",
   async (name) => {
     const harness = await createApplicationMcpHarness({
-      serverOptions: { environment: {} },
+      serverOptions: { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" } },
     });
     onTestFinished(harness.close);
     const tool = (await harness.client.listTools()).tools.find(

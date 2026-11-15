@@ -121,7 +121,9 @@ const elementText = (element: Element): string | null => {
     child !== null;
     child = child.nextSibling
   )
-    if (child.nodeType === 3) parts.push(child.nodeValue ?? "");
+    // Text (3) and CDATA section (4) nodes both carry character data.
+    if (child.nodeType === 3 || child.nodeType === 4)
+      parts.push(child.nodeValue ?? "");
   return nonempty(parts.join(""));
 };
 
@@ -252,7 +254,7 @@ const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
   });
   if (!parsed.ok) {
     limitations.push(
-      parsed.error.reason === "doctype"
+      parsed.error.kind === "unsupported"
         ? "OPC relationships declare a document type, which is unsupported; the .nuspec was selected by ZIP name when possible."
         : "OPC relationships are not well-formed XML; the .nuspec was selected by ZIP name when possible.",
     );
@@ -368,7 +370,7 @@ const parseNuspecDocument = (
   });
   if (!parsed.ok) {
     limitations.push(
-      parsed.error.reason === "doctype"
+      parsed.error.kind === "unsupported"
         ? "The selected .nuspec declares a document type, which is unsupported."
         : NUPKG_LIMITATIONS.malformedNuspec,
     );
@@ -431,28 +433,26 @@ const findNuspec = (
     | undefined;
   readonly source: "opc-relationship" | "root-nuspec" | undefined;
 } => {
-  const byName = new Map(files.map((file) => [file.name.toLowerCase(), file]));
-  const matchTarget = (target: string) =>
-    files.find((file) => file.name === target) ??
-    byName.get(target.toLowerCase());
+  // Every ZIP occurrence stays distinct: duplicate or case-variant names must
+  // surface as ambiguity rather than collapse to an archive-order winner.
+  const matchTarget = (target: string) => {
+    const exact = files.filter((file) => file.name === target);
+    if (exact.length > 0) return exact;
+    const lower = target.toLowerCase();
+    return files.filter((file) => file.name.toLowerCase() === lower);
+  };
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
-    const resolved = targets.flatMap((target) => {
-      const member = matchTarget(target);
-      return member === undefined ? [] : [member];
-    });
-    const unique = [
-      ...new Map(resolved.map((member) => [member.name.toLowerCase(), member])),
-    ].map(([, member]) => member);
-    if (targets.length > 1 && unique.length > 1) {
+    const resolved = [...new Set(targets.flatMap(matchTarget))];
+    if (resolved.length > 1) {
       limitations.push(
-        "Multiple OPC manifest relationships name different .nuspec members; identity was not decoded.",
+        "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
       );
       return { member: undefined, source: undefined };
     }
-    if (unique.length === 1) {
-      const member = unique[0]!;
-      if (member.name.toLowerCase() !== targets[0]?.toLowerCase())
+    if (resolved.length === 1) {
+      const member = resolved[0]!;
+      if (!targets.includes(member.name))
         limitations.push(
           "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
         );
@@ -597,7 +597,8 @@ export const parseNugetNupkg = async (
         contents,
         nuspec: {
           path: selected.member.name,
-          bytes: zipSize(selected.member.entry.uncompressedSize) ?? 0,
+          // Nothing was decoded; the declared size remains in contents.
+          bytes: null,
           source: selected.source,
         },
         coverage: {

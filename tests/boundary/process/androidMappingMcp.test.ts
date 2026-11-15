@@ -11,7 +11,7 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -31,7 +31,10 @@ const connect = async () => {
     { kind: "session", session },
     {
       androidAnalysis: fixture.provider,
-      environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+      environment: {
+        REA_MCP_TOOL_FAMILIES: "android,application,session",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      },
     },
   );
   const client = new Client({

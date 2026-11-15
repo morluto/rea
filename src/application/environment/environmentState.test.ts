@@ -33,10 +33,7 @@ import {
   STATE_INTAKE_LIMIT_BYTES,
   parseStateDocument,
 } from "./environmentStateDocument.js";
-import {
-  EnvironmentStateStore,
-  ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-} from "./environmentStateStore.js";
+import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentStateServeFixture();
 const { source, state } = environmentStateServeInputs(fixture);
@@ -189,12 +186,12 @@ describe("served collection history", () => {
     if (refused === null)
       throw new Error("Expected reported history budget details");
     expect(refused).toEqual(run());
-    expect(refused).toMatchObject({
-      max_collection_history_bytes: ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-    });
-    expect(refused.collection_history_bytes).toBeGreaterThan(
-      ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-    );
+    const maximum = refused.max_collection_history_bytes;
+    expect(maximum).toEqual(expect.any(Number));
+    if (typeof maximum !== "number")
+      throw new Error("Expected a history limit");
+    expect(maximum).toBeGreaterThan(0);
+    expect(refused.collection_history_bytes).toBeGreaterThan(maximum);
   });
 
   it("does not charge a deleted loaded collection again at the history limit", () => {

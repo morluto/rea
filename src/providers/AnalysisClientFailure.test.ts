@@ -163,6 +163,7 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
   if (!(attributed instanceof AnalysisResourceConstraintError))
     throw new Error("expected a resource constraint");
   expect(attributed.operation).toBe("binary_overview");
+  expect(attributed.retryable).toBe(false);
   expect(attributed.limit).toEqual(source.limit);
   expect(projectAnalysisError(attributed)).toMatchObject({
     code: "resource_constraint",

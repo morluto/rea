@@ -11,6 +11,7 @@ import { createJavaScriptRuntimeObservationProvider } from "../../../src/composi
 import { run } from "../../../src/main.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { waitFor } from "../../support/testWait.js";
 
 mkdirSync(".cache", { recursive: true });
 const root = mkdtempSync(resolve(".cache/optional-provider-shutdown-"));
@@ -169,15 +170,15 @@ it("retries failed process-owned optional cleanup without reclosing completed pe
       throw new Error("Shutdown hook was not installed");
 
     shutdown();
-    await vi.waitFor(() => expect(runtimeClose).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(exitCodes).toEqual([1]));
+    await waitFor(() => expect(runtimeClose).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(exitCodes).toEqual([1]));
     expect(browserClose).toHaveBeenCalledTimes(1);
     expect(transportCloses).toBe(1);
     expect(servers).toBe(1);
     expect(unregisterCalls).toBe(0);
 
     shutdown();
-    await vi.waitFor(() => expect(unregisterCalls).toBe(1));
+    await waitFor(() => expect(unregisterCalls).toBe(1));
 
     expect(runtimeClose).toHaveBeenCalledTimes(2);
     expect(browserClose).toHaveBeenCalledTimes(1);

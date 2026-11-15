@@ -1,10 +1,8 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
-import {
-  nugetNupkgSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { nugetNupkgSummaryViewResultSchema } from "./analysisViewResult.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const report = {

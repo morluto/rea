@@ -54,7 +54,7 @@ export type ApkCentralDirectoryError =
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
  * plus one `.SF` and one block per v1 signer; thousands is already pathological.
  */
-export const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
 
 /**
  * v1 signers (signature block + `.SF` pairs) decoded. apksig accepts at most
@@ -63,7 +63,7 @@ export const MAX_V1_SIGNATURE_ENTRIES = 4096;
 export const MAX_V1_SIGNERS = 32;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
-export const MAX_DUPLICATE_NAME_SAMPLE = 5;
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A signing-relevant central-directory entry and where its data is stored. */
 export interface ApkV1Entry {

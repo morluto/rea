@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { BigIntStats } from "node:fs";
 import {
   ntfsJournalCacheFor,
@@ -28,6 +29,8 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -75,9 +78,10 @@ const readFailure = (
   const { cause } = artifactFilePrimaryFacts(failure);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, cause.message, {
         cause,
@@ -90,7 +94,13 @@ const readFailure = (
         {
           maximum_file_bytes: NTFS_JOURNAL_FILE_BYTES,
         },
-        { cause, retryable: false },
+        {
+          cause,
+          ...fixedAllowanceOptions("The NTFS journal file allowance", "input", {
+            limit: NTFS_JOURNAL_FILE_BYTES,
+            unit: "bytes",
+          }),
+        },
       );
   }
   if (
@@ -231,7 +241,7 @@ export const inspectNtfsJournalEvidence = async (
         "capacity",
         "One NTFS inspection is already active in this scope; retry after it completes.",
         { maximum_concurrent_inspections: 1 },
-        { retryable: true },
+        { retryable: true, measuredExhaustion: true },
       ),
     );
   try {

@@ -123,14 +123,13 @@ describe.skipIf(process.platform !== "darwin")(
   () => {
     it("reports missing, directory and symlink-loop replacements as artifact changes and recovers in the same session", async () => {
       await inspectReplacements(["missing", "directory", "loop"]);
-    }, 30_000);
+    });
 
     it.skipIf(process.getuid?.() === 0)(
       "keeps permission denial distinct and recovers after restoring read access",
       async () => {
         await inspectReplacements(["unreadable"]);
       },
-      30_000,
     );
   },
 );

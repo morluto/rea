@@ -1,10 +1,17 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import WebSocket, { type RawData } from "ws";
 import { isUtf8 } from "node:buffer";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import {
+  admitCdpReply,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   cdpCleanupGraceExpired,
@@ -12,11 +19,11 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { isRecord } from "../domain/isRecord.js";
 
 // ws currently stores maxPayload as a signed 32-bit integer. Larger values can
 // wrap to a negative number, which disables its limit check.
@@ -137,10 +144,7 @@ class CdpTransportCore {
       throw new BrowserObservationError(operation, "protocol_error");
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
       throw this.transportError(this.#transportFailure, operation);
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      });
+    if (signal?.aborted === true) throw cancelledBy(operation, signal);
     const id = this.#nextId;
     this.#nextId += 1;
     const message = JSON.stringify({
@@ -154,11 +158,7 @@ class CdpTransportCore {
         const pending = this.#pending.get(id);
         if (pending === undefined) return;
         this.#complete(id, pending);
-        reject(
-          new AnalysisCancelledError(operation, {
-            cause: signal?.reason,
-          }),
-        );
+        reject(cancelledBy(operation, carriedReason(signal?.reason)));
       };
       const failTimeout = (): void => {
         const pending = this.#pending.get(id);
@@ -494,8 +494,7 @@ export class CdpConnection {
     },
     onConnected?: (connection: CdpConnection) => void,
   ): Promise<CdpConnection> {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted === true) throw cancelledBy(operation, signal);
     const maxPayloadBytes =
       limits?.maxPayloadBytes ?? WEB_RUNTIME_LIMITS.protocolBytes;
     const commandTimeoutMs =
@@ -577,19 +576,30 @@ export class CdpConnection {
     this.core.reschedulePending(this.#scopedPendingIds, timeoutMs);
   }
 
-  /** Bound each response separately from the caller-selected observation window. */
-  async send(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
+  /**
+   * Bound each response separately from the caller-selected observation
+   * window. A registered command's reply is parsed by its result schema; a
+   * mismatch rejects that command with `CdpMalformedReply`.
+   */
+  async send<M extends CdpCommand>(
+    method: M,
+    params?: CdpCommandParams<M>,
     sessionId?: string,
     signal?: AbortSignal,
-  ): Promise<unknown> {
-    return await this.core.send(method, params, sessionId, signal, {
-      operation: this.operation,
-      commandTimeoutMs: () => this.#commandTimeoutMs,
-      deadlineKind: () => this.#deadlineKind,
-      scopedIds: this.#scopedPendingIds,
-    });
+  ): Promise<CdpCommandResult<M>> {
+    const reply = await this.core.send(
+      method,
+      params ?? {},
+      sessionId,
+      signal,
+      {
+        operation: this.operation,
+        commandTimeoutMs: () => this.#commandTimeoutMs,
+        deadlineKind: () => this.#deadlineKind,
+        scopedIds: this.#scopedPendingIds,
+      },
+    );
+    return admitCdpReply(method, reply, this.operation);
   }
 
   /** Close only REA's socket; never close the browser or selected page. */
@@ -607,9 +617,6 @@ const rawBytes = (data: RawData): Buffer =>
     : Buffer.isBuffer(data)
       ? data
       : Buffer.from(data);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const waitForOpen = async (
   socket: WebSocket,
@@ -640,7 +647,7 @@ const waitForOpen = async (
     const onAbort = (): void => {
       cleanup();
       terminateSocket(socket);
-      reject(new AnalysisCancelledError(operation, { cause: signal?.reason }));
+      reject(cancelledBy(operation, carriedReason(signal?.reason)));
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -650,7 +657,7 @@ const waitForOpen = async (
       signal?.removeEventListener("abort", onAbort);
     };
     const boundedTimeoutMs = Math.min(
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
       handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {

@@ -11,6 +11,7 @@ import {
   BinaryMappingFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
 } from "../metadata/BinaryContainer.js";
@@ -103,7 +104,7 @@ const createRetention = () => {
 };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
 };
 
@@ -144,7 +145,7 @@ export const parsePeImports = async (
   const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,

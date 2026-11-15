@@ -46,7 +46,6 @@ import {
   createEvidenceBundle,
   parseEvidenceBundle,
   serializeEvidenceBundle,
-  DuplicateEvidenceRecordError,
   isImmutableEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { analysisViewLayoutEvidence } from "../../fixtures/analysisView.js";
@@ -247,7 +246,10 @@ it("preserves direct duplicate rejection and CLI identity merging for repeated i
   );
   await expect(
     deliverAnalysisEvidence(complete, join(root, "direct.json")),
-  ).rejects.toBeInstanceOf(DuplicateEvidenceRecordError);
+  ).rejects.toMatchObject({
+    name: "DuplicateEvidenceRecordError",
+    message: "Evidence bundle contains duplicate record IDs",
+  });
   const path = join(root, "cli.json");
   const delivered = await publishCliAnalysisEvidence(
     { ok: true, value: complete },

@@ -1,9 +1,13 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 
-import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteXdgConfigHome,
+  type ClientRootContext,
+} from "./ClientConfigRoots.js";
+import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
@@ -65,17 +69,20 @@ export const fromSetup =
     };
   };
 
-export const platformPaths = (context: McpRegistrationLocationContext) => {
-  const { home, platform, environment } = context;
-  const config = environment.XDG_CONFIG_HOME || join(home, ".config");
-  const appSupport =
-    platform === "win32"
-      ? environment.APPDATA || win32.join(home, "AppData", "Roaming")
-      : platform === "darwin"
-        ? join(home, "Library", "Application Support")
-        : config;
-  return { config, appSupport, vscode: join(appSupport, "Code", "User") };
-};
+/** The client-root context of one registration selection. */
+export const rootContext = ({
+  home,
+  platform,
+  environment,
+}: McpRegistrationLocationContext): ClientRootContext => ({
+  home,
+  platform,
+  env: environment,
+});
+
+/** Windows roaming application data, read as setup reads it. */
+const windowsRoaming = (context: McpRegistrationLocationContext): string =>
+  windowsAppDataRoots(context.home, context.environment).roaming;
 
 const location = (
   path: string,
@@ -108,26 +115,6 @@ export const firstExisting = async (
   return fallback;
 };
 
-export const clineLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(
-      platformPaths(context).vscode,
-      "globalStorage",
-      "saoudrizwan.claude-dev",
-      "settings",
-      "cline_mcp_settings.json",
-    ),
-  );
-export const clineCliLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const selected = resolveClineCliSettingsPath(context);
-  if (!selected.ok) throw selected.error;
-  const pathApi = context.platform === "win32" ? win32 : posix;
-  return location(selected.value, pathApi.dirname(selected.value));
-};
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
@@ -138,18 +125,12 @@ export const gooseLocation = async (
     const selected = pathApi.join(root, "config", "config.yaml");
     return location(selected, selected);
   }
-  const xdg = environment.XDG_CONFIG_HOME;
+  // etcetera's Windows and XDG strategies; only an absolute XDG root counts.
   const path =
     platform === "win32"
-      ? join(
-          platformPaths(context).appSupport,
-          "Block",
-          "goose",
-          "config",
-          "config.yaml",
-        )
+      ? join(windowsRoaming(context), "Block", "goose", "config", "config.yaml")
       : join(
-          xdg && posix.isAbsolute(xdg) ? xdg : join(home, ".config"),
+          absoluteXdgConfigHome({ home, env: environment }),
           "goose",
           "config.yaml",
         );
@@ -175,45 +156,33 @@ export const fixedProjectLocation =
       ),
     };
   };
-export const kiroLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(context.home, ".kiro", "settings", "mcp.json"),
-    join(context.home, ".kiro"),
-  );
-export const mcporterLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const root = join(context.home, ".mcporter");
-  const primary = join(root, "mcporter.json");
-  return location(
-    await firstExisting([primary, join(root, "mcporter.jsonc")], primary),
-    root,
-  );
-};
-export const zedLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    context.platform === "darwin"
-      ? join(context.home, ".config", "zed", "settings.json")
-      : join(
-          platformPaths(context).appSupport,
-          context.platform === "win32" ? "Zed" : "zed",
-          "settings.json",
-        ),
-  );
-
+/**
+ * fx's profile folder: `$FX_HOME` when set, which fx admits only as an
+ * absolute path other than the root and the home folder (`useFxHome`), else
+ * `~/.fx`. fx refuses an invalid value, so registration does too.
+ */
 export const fxLocation = async (
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".fx", "mcp.json"));
-export const mastraLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".mastracode", "mcp.json"));
-export const ampLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".config", "amp", "settings.json"));
+): Promise<McpRegistrationGlobalLocation> => {
+  const value = context.environment.FX_HOME;
+  if (!value) return location(join(context.home, ".fx", "mcp.json"));
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === context.home.replace(/[\\/]+$/u, "")
+  )
+    throw new ConfigurationError(
+      "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before registering; no settings were written.",
+    );
+  return location(pathApi.join(trimmed, "mcp.json"));
+};

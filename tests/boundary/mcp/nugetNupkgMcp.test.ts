@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ZipReader } from "@zip.js/zip.js";
 import { expect, vi } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE } from "../../../src/artifacts/ZipZstandardWindow.js";
 import { fixedAllowanceRemediation } from "../../../src/domain/fixedAllowanceRemediation.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -13,9 +14,13 @@ import { nugetNupkgFixture } from "../../../src/nuget/NugetNupkg.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
-const completeNupkgEvidenceSchema = toolContract(
+const nupkgContract = contractNamed(
+  NUGET_NUPKG_TOOL_CONTRACTS,
   "inspect_nuget_nupkg",
-).outputSchema.safeExtend({ normalized_result: nugetNupkgSchema });
+);
+const completeNupkgEvidenceSchema = nupkgContract.outputSchema.safeExtend({
+  normalized_result: nugetNupkgSchema,
+});
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {

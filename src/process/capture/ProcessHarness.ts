@@ -54,6 +54,7 @@ import {
   observeSettlement,
   prepareProcessCapture,
   resolveProcessResult,
+  processCaptureCleanupFacts,
   settleProcessCaptureJournal,
   type ProcessCaptureCleanupHost,
   type ProcessCaptureObservationBuffer,
@@ -258,6 +259,7 @@ const createTerminalRenderer = (
 interface StartCaptureRuntimeOptions {
   readonly scenario: ProcessScenario;
   readonly hostEnvironment: Readonly<Record<string, string | undefined>>;
+  readonly hostPlatform: NodeJS.Platform;
   readonly temporaryRoot: string;
   readonly runId: string;
   readonly ownershipBaseline: ProcessOwnershipBaseline;
@@ -383,6 +385,7 @@ const startCaptureRuntime = async (
     stopSampler = startProcessSampler({
       rootPid: terminal.pid,
       runId: options.runId,
+      platform: options.hostPlatform,
       started,
       limit: scenario.limits.processes,
       samples: options.samples,
@@ -567,13 +570,11 @@ const finishProcessRun = async (options: {
   const cleanupFailure = cleanupReportFailure(cleanup);
   let verifiedCapture: ProcessCapture | undefined;
   if (capture !== undefined && cleanupFailure === undefined) {
-    const settlement: UnverifiedProcessCapture["settlement"] =
-      capture.settlement.state === "quiesced"
-        ? { ...capture.settlement, cleanup_outcome: "not_required" }
-        : { ...capture.settlement, cleanup_outcome: "cleaned" };
     const completedCapture: UnverifiedProcessCapture = {
       ...capture,
-      settlement,
+      ...processCaptureCleanupFacts(capture, {
+        ownedProcessesSignaled: cleanupOutcome.ownedProcessesSignaled,
+      }),
       cleanup: {
         owned_process_group: "verified",
         temporary_root: "removed",
@@ -867,6 +868,7 @@ const runProcessScenario = async (
     runtime = await startCaptureRuntime({
       scenario,
       hostEnvironment,
+      hostPlatform,
       temporaryRoot,
       runId,
       ownershipBaseline,

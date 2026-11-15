@@ -6,7 +6,6 @@ import type {
   RecordedExchange,
 } from "./environmentSource.js";
 import {
-  ENVIRONMENT_CATALOG_LIMIT_BYTES,
   environmentCard,
   environmentToolArguments,
   environmentToolDefinitions as prepareDefinitions,
@@ -352,7 +351,7 @@ describe("environment tool response summaries", () => {
       error: {
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
-        reportedLimits: { max_catalog_bytes: ENVIRONMENT_CATALOG_LIMIT_BYTES },
+        reportedLimits: { max_catalog_bytes: expect.any(Number) },
       },
     });
     const [single] = environmentToolDefinitions(

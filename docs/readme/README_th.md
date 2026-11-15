@@ -86,7 +86,7 @@ MCP ใช้สคีมาอินพุตแบบกระชับโด�
 
 การตั้งค่าจะลงทะเบียนรันไทม์ที่เลือกและสคริปต์เริ่มต้นของ REA โดยตรง หากใช้ตัวรันแพ็กเกจ ให้เก็บรายการแคชและรันไทม์ไว้ และรับแพ็กเกจจากไดเรกทอรีที่เชื่อถือได้นอกโปรเจกต์เป้าหมาย ดูคู่มือการติดตั้ง
 
-ระบบประกาศสคีมาเอาต์พุตฉบับเต็มตามค่าเริ่มต้น หากไคลเอนต์จำกัด `tools/list` ให้ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` หรือ `off` ในการลงทะเบียน MCP การตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างยังคงครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
+ตามค่าเริ่มต้น ระบบจะไม่ใส่สคีมาเอาต์พุตใน `tools/list` เพราะไม่มี API ของโมเดลใดอ่านสคีมาเหล่านี้ และ REA ตรวจสอบผลลัพธ์ทุกรายการเอง ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ในการลงทะเบียน MCP เพื่อประกาศสคีมาเอาต์พุตแต่ละรายการภายใน 4096 ไบต์ หรือ `full` เพื่อประกาศสคีมาเอาต์พุตฉบับเต็ม (สำหรับไคลเอนต์ MCP ที่ตรวจสอบผลลัพธ์) ทุกการตั้งค่ายังคงการตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
 
 ### ถามเอเจนต์
 
@@ -174,7 +174,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | JavaScript / Electron        | โมดูล การนำเข้า ซอร์สแมป เส้นทาง IPC และความสัมพันธ์กับส่วนเสริมเนทีฟ                      | Node.js และ npm; [การวิเคราะห์แอปพลิเคชัน](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
 | เว็บไซต์                       | โครงสร้างหน้า สคริปต์ ข้อมูลเครือข่ายที่สังเกตได้ และภาพหน้าจอที่ร้องขอ                         | เบราว์เซอร์ในตระกูล Chrome; [การวิเคราะห์ผ่านเบราว์เซอร์](../guides/web/browser-observation.md)                                                                   |
 | ข้อมูลเครือข่ายที่บันทึกไว้           | คำขอ คำตอบ เพย์โหลดที่ปรากฏ และตำแหน่งต้นทาง                                         | HAR / Fiddler Everywhere SAZ; mitmdump บน Linux สำหรับข้อมูลที่บันทึกในรูปแบบเนทีฟของ mitmproxy; [คู่มือการบันทึกข้อมูล](../guides/web/web-network-captures.md)           |
-| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                                            |
+| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม (ตรวจสอบแล้วบน Linux); [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                       |
 | แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
 | Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                      |

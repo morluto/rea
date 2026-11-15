@@ -30,6 +30,7 @@ import {
 } from "../filesystem/readStableFileBytes.js";
 import { stateDirectories, stateNames } from "./ApplicationStateDirectories.js";
 import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
+import { xdgBase } from "./XdgBase.js";
 import { inspectPackageFile } from "./DebianPackageFile.js";
 import {
   debianPackage,
@@ -92,11 +93,14 @@ const LINUX_INVENTORY_HOST: LinuxInventoryHost = {
 type Package = DesktopApplicationInventory["package"];
 
 /** Directories searched for desktop entries, most specific first. */
-export const desktopEntryDirectories = (
+const desktopEntryDirectories = (
   environment: LinuxApplicationRequest["environment"],
   home: string,
 ): readonly string[] => {
-  const dataHome = environment.XDG_DATA_HOME || join(home, ".local/share");
+  const dataHome = xdgBase(
+    environment.XDG_DATA_HOME,
+    join(home, ".local/share"),
+  );
   const dataDirectories = (
     environment.XDG_DATA_DIRS || "/usr/local/share:/usr/share"
   )

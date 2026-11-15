@@ -1,6 +1,11 @@
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { ZipReader } from "@zip.js/zip.js";
+import {
+  TextReader,
+  Uint8ArrayWriter,
+  ZipReader,
+  ZipWriter,
+} from "@zip.js/zip.js";
 
 import {
   inspectNugetNupkgInputSchema,
@@ -444,4 +449,80 @@ it("keeps a Zstandard decoder window refusal as a memory limit instead of a malf
   } finally {
     enumeration.mockRestore();
   }
+});
+
+it("reads manifest text written as CDATA and as mixed text and CDATA", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replace(
+        "<id>Ungrouped.Package</id>",
+        "<id><![CDATA[Ungrouped.Package]]></id>",
+      )
+      .replace(
+        /<description>[^<]*<\/description>/u,
+        "<description>A <![CDATA[& B]]> C</description>",
+      ),
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.identity).toMatchObject({
+    id: "Ungrouped.Package",
+    description: "A & B C",
+  });
+});
+
+it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(
+  "keeps payload folder %s at the unknown role",
+  async (name) => {
+    const bytes = await nugetNupkgFixture({ extraMembers: { [name]: "x" } });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contents.find((entry) => entry.path === name)?.role).toBe(
+      "unknown",
+    );
+  },
+);
+
+it("leaves identity unknown when the manifest relationship matches case-variant members", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    nuspecName: "First.nuspec",
+    extraMembers: {
+      "_rels/.rels": manifestRels("/FIRST.nuspec"),
+      "first.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.identity).toBeNull();
+  expect(report.nuspec).toBeNull();
+  expect(report.limitations).toContain(
+    "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
+  );
+});
+
+it("reports an encrypted manifest above the metadata budget without decoding it", async () => {
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("Demo.Package.nuspec", new TextReader(ungroupedNuspec), {
+    password: "fixture",
+    level: 0,
+  });
+  const bytes = await writer.close();
+  const input = inspectNugetNupkgInputSchema.parse({
+    path: defaults.path,
+    max_nuspec_bytes: 1,
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), input),
+  );
+  expect(report.nuspec).toEqual({
+    path: "Demo.Package.nuspec",
+    bytes: null,
+    source: "root-nuspec",
+  });
+  expect(report.coverage.examined_nuspec_bytes).toBe(0);
+  expect(report.contents[0]?.encrypted).toBe(true);
 });

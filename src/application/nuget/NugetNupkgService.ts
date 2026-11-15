@@ -87,7 +87,11 @@ const validReport = (
     report.coverage.examined_nuspec_bytes > input.max_nuspec_bytes
   )
     return false;
-  if (report.nuspec !== null && report.nuspec.bytes > input.max_nuspec_bytes)
+  if (
+    report.nuspec?.bytes !== null &&
+    report.nuspec !== null &&
+    report.nuspec.bytes > input.max_nuspec_bytes
+  )
     return false;
   return report.coverage.entries === report.contents.length;
 };

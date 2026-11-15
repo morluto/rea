@@ -2,15 +2,20 @@ import { nugetNupkgSchema } from "../../src/domain/nuget/nupkg.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../src/contracts/nuget/nupkgToolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const completeNupkgEvidenceSchema = toolContract(
+const nupkgContract = contractNamed(
+  NUGET_NUPKG_TOOL_CONTRACTS,
   "inspect_nuget_nupkg",
-).outputSchema.safeExtend({ normalized_result: nugetNupkgSchema });
+);
+const completeNupkgEvidenceSchema = nupkgContract.outputSchema.safeExtend({
+  normalized_result: nugetNupkgSchema,
+});
 
 cliTest(
   "reports NuGet package identity and dependencies through the public CLI",
