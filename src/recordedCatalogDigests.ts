@@ -1,4 +1,15 @@
-import type { CatalogDigestProfiles } from "./catalogIdentity.js";
+import type { McpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+
+/** SHA-256 digests of one catalog profile, as `createCatalogIdentity` reports them. */
+export type CatalogDigests = {
+  readonly tools_sha256: string;
+  readonly prompts_sha256: string;
+  readonly combined_sha256: string;
+};
+
+export type CatalogDigestProfiles = Readonly<
+  Record<McpOutputSchemaProfile, CatalogDigests>
+>;
 
 /**
  * Digests of the two built-in output schema profiles over the compact input

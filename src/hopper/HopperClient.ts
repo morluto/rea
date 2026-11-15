@@ -61,7 +61,7 @@ import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
 } from "../process/ProviderDeadline.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
@@ -1116,18 +1116,18 @@ export class HopperClient<
       exit_code: snapshot.exitCode ?? null,
       signal: snapshot.signal ?? null,
       stdout: {
-        text: redactCapturedTransportCredential(
+        text: redactExplicitOutput(
           snapshot.stdout,
-          token,
+          token === undefined ? [] : [token],
           "[redacted transport credential]",
         ),
         bytes: snapshot.stdout.observedBytes,
         retained_bytes: snapshot.stdout.bytes,
       },
       stderr: {
-        text: redactCapturedTransportCredential(
+        text: redactExplicitOutput(
           snapshot.stderr,
-          token,
+          token === undefined ? [] : [token],
           "[redacted transport credential]",
         ),
         bytes: snapshot.stderr.observedBytes,

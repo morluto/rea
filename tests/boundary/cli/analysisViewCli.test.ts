@@ -223,6 +223,19 @@ cliTest(
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
+      // The service names the field it refuses; option spellings belong to
+      // the CLI layer.
+      if (source.kind === "inline")
+        expect(rejected.json).toMatchObject({
+          details: {
+            issues: [
+              {
+                path: ["source", "kind"],
+                message: expect.not.stringContaining("--"),
+              },
+            ],
+          },
+        });
     }
     for (const [contents, expectedCode, freshProcess] of [
       [JSON.stringify(parent), "invalid_request", false],
