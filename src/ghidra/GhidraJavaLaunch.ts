@@ -1,8 +1,8 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { resolveWindowsPathJava } from "./GhidraJavaPathResolution.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -88,19 +88,7 @@ export const ghidraJavaLaunch = async (options: {
     if (options.platform !== "win32") {
       return command;
     }
-    const pathVariable =
-      options.environment.Path ?? options.environment.PATH ?? "";
-    for (const directory of pathVariable.split(";")) {
-      const trimmed = directory.trim();
-      if (trimmed === "") {
-        continue;
-      }
-      const candidate = join(trimmed, command);
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-    return undefined;
+    return resolveWindowsPathJava(options.environment);
   };
   const command = (() => {
     if (selectedJavaHome !== undefined) {
@@ -111,7 +99,25 @@ export const ghidraJavaLaunch = async (options: {
       );
     }
     const bare = options.platform === "win32" ? "java.exe" : "java";
-    return resolvePathCommand(bare) ?? bare;
+    if (options.platform === "win32") {
+      const resolved = resolvePathCommand(bare);
+      if (resolved !== undefined) return resolved;
+      // An already-aborted caller must observe its cancellation, not an
+      // admission failure that hides it.
+      if (options.signal?.aborted) return bare;
+      // Falling back to the bare name here would reproduce the original
+      // unactionable Win32 87 launcher failure; report the search outcome
+      // instead so the caller can extend Path or set JAVA_HOME.
+      const searched =
+        options.environment.Path ?? options.environment.PATH ?? "";
+      throw new GhidraAdmissionError("java_command_unresolved", {
+        check: "path",
+        ...(searched.length <= 1024
+          ? { path: searched }
+          : { path: searched.slice(0, 1024), path_truncated: 1 }),
+      });
+    }
+    return bare;
   })();
   const isolatedProperties = [
     `-Duser.home=${options.homeRoot}`,

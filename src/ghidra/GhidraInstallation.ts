@@ -10,6 +10,7 @@ import {
   type GhidraJavaProbeFailure,
   type GhidraJavaProbeOptions,
 } from "./GhidraJavaProbe.js";
+import { resolveWindowsPathJava } from "./GhidraJavaPathResolution.js";
 import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
@@ -563,10 +564,23 @@ const installationCoordinates = async (
           platform,
         ),
       };
+    if (platform === "win32") {
+      // The Windows owned-process launcher requires absolute executable
+      // paths, so resolve bare java.exe against Path/PATH the same way the
+      // darwin branch resolves its PATH java (absolute directories only;
+      // quoted entries are unwrapped).
+      const javaOnPath = resolveWindowsPathJava(
+        options.environment,
+        (candidate) => host.executable(candidate),
+      );
+      if (javaOnPath !== undefined)
+        return { source: "path", command: javaOnPath };
+      return { source: "default", command: "java.exe" };
+    }
     if (platform !== "darwin")
       return {
         source: "default",
-        command: platform === "win32" ? "java.exe" : "java",
+        command: "java",
       };
     // Check the caller's PATH, never a file named java in the working directory.
     const javaOnPath = options.environment.PATH?.split(":")
