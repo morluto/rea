@@ -7,7 +7,7 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "./ElectronActiveObservationPort.js";
+} from "../../ports/javascript/ElectronActiveObservationPort.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,

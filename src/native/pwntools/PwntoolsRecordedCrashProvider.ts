@@ -10,7 +10,7 @@ import {
   type RecordedCrash,
   type RecordedCrashPartialObservation,
 } from "../../domain/native/recordedCrash.js";
-import type { RecordedCrashPort } from "../../application/binaryDiagnostics/RecordedCrashPort.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";

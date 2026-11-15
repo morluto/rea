@@ -9,7 +9,7 @@ import {
 } from "../../artifacts/readStableArtifact.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";

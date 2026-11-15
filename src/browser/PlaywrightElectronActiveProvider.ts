@@ -23,7 +23,7 @@ import type {
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "../application/javascript/ElectronActiveObservationPort.js";
+} from "../ports/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import {
   AnalysisError,

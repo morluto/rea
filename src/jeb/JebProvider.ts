@@ -10,7 +10,7 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../application/jeb/JebAnalysisPort.js";
+} from "../ports/jeb/JebAnalysisPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,

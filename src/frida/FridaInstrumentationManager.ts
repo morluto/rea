@@ -22,9 +22,9 @@ import type {
   FridaSessionObservation,
   FridaSessionStatus,
   StartFridaSessionInput,
-} from "../application/frida/FridaInstrumentationPort.js";
-import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+} from "../ports/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../ports/frida/FridaInstrumentationPort.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,

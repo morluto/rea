@@ -1,4 +1,4 @@
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type {
   ProviderIdentity,
   ExecutionOptions,

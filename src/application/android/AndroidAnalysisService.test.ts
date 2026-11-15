@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { AndroidAnalysisService } from "./AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../ports/android/AndroidAnalysisPort.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";

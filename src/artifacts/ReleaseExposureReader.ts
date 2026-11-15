@@ -11,7 +11,7 @@ import type {
   ReleaseExposurePort,
   ReleaseExposureScanVisitor,
   ReleaseExposureTextVisitor,
-} from "../application/releaseExposure/ReleaseExposurePort.js";
+} from "../ports/releaseExposure/ReleaseExposurePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   ArtifactReaderFailure,

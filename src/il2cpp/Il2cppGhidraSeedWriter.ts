@@ -5,7 +5,7 @@ import type {
   Il2cppSeedWriterPort,
   Il2cppSeedOutput,
   Il2cppSeedReceipt,
-} from "../application/il2cpp/Il2cppSeedWriterPort.js";
+} from "../ports/il2cpp/Il2cppSeedWriterPort.js";
 import { writeTextParts } from "../application/JsonFiles.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";

@@ -12,7 +12,7 @@ import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {

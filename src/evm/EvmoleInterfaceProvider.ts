@@ -19,7 +19,7 @@ import {
 import type {
   EvmInterfaceExecution,
   EvmInterfacePort,
-} from "../application/evm/EvmInterfacePort.js";
+} from "../ports/evm/EvmInterfacePort.js";
 import {
   completedStableArtifact,
   readStableArtifact,

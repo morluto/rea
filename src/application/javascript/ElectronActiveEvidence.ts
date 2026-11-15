@@ -7,7 +7,7 @@ import type {
   ElectronActiveObservationResult,
 } from "../../domain/javascript/electronActiveObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import type { CanonicalElectronActiveObservationInput } from "./ElectronActiveObservationPort.js";
+import type { CanonicalElectronActiveObservationInput } from "../../ports/javascript/ElectronActiveObservationPort.js";
 
 /** Commit the selected Electron experiment and its observed result. */
 export const createElectronActiveEvidence = (
