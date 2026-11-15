@@ -17,6 +17,11 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import {
+  ArtifactFileCleanupFailure,
+  withArtifactFileHandle,
+} from "../artifacts/ArtifactFileOperation.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,15 +72,27 @@ const executable = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-const readHead = async (path: string): Promise<string> => {
-  const file = await open(path, "r");
-  try {
-    const { buffer, bytesRead } = await file.read(Buffer.alloc(512), 0, 512, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await file.close();
-  }
-};
+const readHead = async (
+  path: string,
+  resources?: ArtifactResourceScope,
+): Promise<string> =>
+  // The artifact file owner binds one cleanup lease to both the retained owner
+  // and the failure it reports, so a later successful retry resolves both.
+  withArtifactFileHandle(
+    path,
+    await open(path, "r"),
+    resources,
+    undefined,
+    async (file) => {
+      const { buffer, bytesRead } = await file.read(
+        Buffer.alloc(512),
+        0,
+        512,
+        0,
+      );
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    },
+  );
 
 /**
  * The Python the agentenv runner runs with, so the helper can import
@@ -85,6 +102,7 @@ const readHead = async (path: string): Promise<string> => {
 export const agentEnvInterpreter = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   operation: string,
+  resources?: ArtifactResourceScope,
 ): Promise<string> => {
   const command = environment.REA_AGENT_ENV_COMMAND;
   if (command === undefined || !isAbsolute(command))
@@ -96,8 +114,9 @@ export const agentEnvInterpreter = async (
   let head: string;
   try {
     program = await realpath(command);
-    head = await readHead(program);
+    head = await readHead(program, resources);
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
     throw unavailable(
       operation,
       `REA_AGENT_ENV_COMMAND ${command} cannot be read.`,

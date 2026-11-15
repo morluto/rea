@@ -1,7 +1,10 @@
 import type { FileHandle } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  controlledCleanup,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
@@ -73,21 +76,18 @@ it.each([false, true])(
         for await (const entry of reader.entries())
           if (entry.path.endsWith("app.pyc")) selected = entry;
         if (selected === undefined) throw new Error("Missing child");
-        let entered!: () => void, release!: () => void;
-        const started = new Promise<void>((resolve) => {
-          entered = resolve;
-        });
-        const gate = new Promise<void>((resolve) => {
-          release = resolve;
-        });
+        const admission = phaseGate();
         const prototype = Object.getPrototypeOf(root) as FileHandle;
         const nativeStat = prototype.stat,
           nativeClose = OwnedFileHandle.prototype.close;
         let admitted: FileHandle | undefined,
-          retained: OwnedFileHandle | undefined,
-          attempts = 0;
+          retained: OwnedFileHandle | undefined;
         const cancelled = new Error("cancel private-image admission"),
           cleanup = new Error("admission cleanup EIO");
+        const admittedClose = controlledCleanup({
+          refused: failClose,
+          failure: cleanup,
+        });
         const signal = new AbortController();
         const stat = vi
           .spyOn(prototype, "stat")
@@ -97,43 +97,36 @@ it.each([false, true])(
           ) {
             if (this !== root && admitted === undefined) {
               admitted = this;
-              entered();
-              await gate;
+              await admission.hold();
             }
             return Reflect.apply(nativeStat, this, args);
           });
         const close = vi
           .spyOn(OwnedFileHandle.prototype, "close")
           .mockImplementation(async function (this: OwnedFileHandle) {
-            if (this.handle === admitted) {
-              retained = this;
-              attempts++;
-              if (failClose && attempts === 1) throw cleanup;
-            }
-            await nativeClose.call(this);
+            if (this.handle !== admitted) return nativeClose.call(this);
+            retained = this;
+            return admittedClose.close(() => nativeClose.call(this));
           });
         const opening = reader.open(selected, signal.signal);
         void opening.catch(() => undefined);
         try {
-          await awaitAcknowledgement(
-            started,
-            opening,
-            "PyInstaller image admission",
-          );
+          await admission.reached(opening, "PyInstaller image admission");
           signal.abort(cancelled);
-          release();
+          admission.release();
           await expect(opening).rejects.toMatchObject({
             reason: "cancelled",
             cancellation: { reason: cancelled },
             ...(failClose ? { cleanup: { reason: cleanup.message } } : {}),
           });
           if (failClose) expect(retained?.handle.fd).toBeGreaterThanOrEqual(0);
+          admittedClose.allow();
           await reader.close();
-          expect(attempts).toBe(failClose ? 2 : 1);
+          expect(admittedClose.attempts).toBe(failClose ? 2 : 1);
           expect(admitted?.fd).toBe(-1);
           expect(root.fd).toBeGreaterThanOrEqual(0);
         } finally {
-          release();
+          admission.release();
           await opening.catch(() => undefined);
           stat.mockRestore();
           close.mockRestore();

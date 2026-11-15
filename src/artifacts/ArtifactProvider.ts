@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import {
   resolveArtifactReaderLimits,
@@ -70,7 +71,8 @@ export class ArtifactProvider implements AnalysisProvider {
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
-    platform: NodeJS.Platform = process.platform,
+    /** The host whose readers run; tests select another host's rules. */
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     private readonly settings?: AnalysisSettingsReader,
   ) {
     this.environment = snapshotEnvironment(environment, platform);

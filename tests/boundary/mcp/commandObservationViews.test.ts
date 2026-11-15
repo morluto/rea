@@ -17,6 +17,7 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
@@ -79,11 +80,10 @@ const connect = async (retain = true) => {
     close: async () => ok({ target_state: "none_observed" as const }),
     retryCleanupFailures: async () => ok(null),
   };
-  const run = vi.fn(async () => ({
-    stdout: "BFD advertised targets\n",
-    stderr: "diagnostic\n",
-  }));
-  const service = new TestReverseEngineeringService({ run });
+  const run = vi.fn(async () =>
+    ownedOutput("BFD advertised targets\n", "diagnostic\n"),
+  );
+  const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
   registerGdbTools(
     server,

@@ -351,8 +351,8 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "function_boundary_observations",
-      current: "ghidra-function-boundary-limitations-v4",
-      legacy: "ghidra-function-boundary-limitations-v3",
+      current: "ghidra-function-boundary-limitations-v5",
+      legacy: "ghidra-function-boundary-limitations-v4",
     },
     {
       parameter: "instruction_references",

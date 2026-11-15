@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { readMachoContainer } from "../../artifacts/apple/MachoLoadCommandReader.js";
 import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
 import {
@@ -10,7 +11,9 @@ import {
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
+  machoArchitectureFamily,
   machoArchitectureName,
+  machoKnownArm32Subtype,
   machoKnownArm64Subtype,
   machoKnownX86_64Subtype,
 } from "../../domain/apple/machoCpuIdentity.js";
@@ -22,9 +25,6 @@ import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
  * join artifact; the report stays the owner of its own recorded rows.
  */
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_UUID = 0x1b;
 const MAX_SLICES = 64;
 
 /** Canonical uppercase UUID text, or the source spelling when not 16 bytes. */
@@ -123,16 +123,16 @@ const sliceAt = (
     const frame = cursor.read(command);
     if (!frame.ok) return null;
     const payload = command.subarray(0, frame.value.size);
-    if (frame.value.command === LC_UUID) {
+    if (frame.value.command === LC.UUID) {
       if (uuidSeen || payload.length !== 24) return null;
       uuidSeen = true;
       uuid = canonicalUuidBytes(payload.subarray(8, 24));
     }
     if (
-      frame.value.command === LC_SEGMENT ||
-      frame.value.command === LC_SEGMENT_64
+      frame.value.command === LC.SEGMENT ||
+      frame.value.command === LC.SEGMENT_64
     ) {
-      const wide = frame.value.command === LC_SEGMENT_64;
+      const wide = frame.value.command === LC.SEGMENT_64;
       if (wide !== header.wide) return null;
       const segment = readMachoSegmentHeader(
         payload,
@@ -175,18 +175,24 @@ const sliceAt = (
 const comparableArch = (value: string): string =>
   value.trim().toLowerCase().replaceAll("-", "");
 
-const ARCH_ALIASES: ReadonlyMap<string, string> = new Map([
+/**
+ * Report spellings the join accepts, including the exact subtype names a
+ * crash producer may record. An exact subtype name only agrees with the same
+ * subtype; a family name also agrees with its known subtypes, because the
+ * report cannot tell them apart.
+ */
+const REPORTED_FAMILIES: ReadonlyMap<string, string> = new Map([
   ["arm64", "arm64"],
   ["arm64e", "arm64e"],
+  ["arm64v8", "arm64v8"],
+  ["arm64e.x1", "arm64e.x1"],
   ["x8664", "x86_64"],
   ["x86_64", "x86_64"],
+  ["x86_64h", "x86_64h"],
   ["armv7", "armv7"],
   ["armv7s", "armv7s"],
   ["armv8", "arm64"],
-  ["arm64v8", "arm64v8"],
-  ["arm64e.x1", "arm64e.x1"],
   ["arm64_32", "arm64_32"],
-  ["x86_64h", "x86_64h"],
   ["i386", "i386"],
   ["arm", "arm"],
 ]);
@@ -195,8 +201,19 @@ const architectureRelation = (
   recorded: string,
   slice: SliceIdentity,
 ): "match" | "mismatch" | "unknown" => {
-  const left = ARCH_ALIASES.get(comparableArch(recorded));
+  const left = REPORTED_FAMILIES.get(comparableArch(recorded));
   if (left === undefined) return "unknown";
+  if (slice.cpuType === 12) {
+    const right = machoKnownArm32Subtype(slice.cpuSubtype);
+    const arm32 = ["arm", "armv7", "armv7s"].includes(left);
+    if (!arm32) return "mismatch";
+    if (right === undefined) return "unknown";
+    // A generic ARM report keeps its family meaning; explicit subtypes must
+    // agree with byte-header identity rather than the shared "arm" display.
+    return left === "arm" || left === right ? "match" : "mismatch";
+  }
+  const leftFamily = machoArchitectureFamily(left);
+  const exact = left === leftFamily ? undefined : left;
   if (
     slice.cpuType === 0x0100000c &&
     machoKnownArm64Subtype(slice.cpuSubtype) === undefined
@@ -209,10 +226,13 @@ const architectureRelation = (
     machoKnownX86_64Subtype(slice.cpuSubtype) === undefined
   )
     return left.startsWith("x86_64") ? "unknown" : "mismatch";
-  const right = ARCH_ALIASES.get(comparableArch(slice.arch));
-  return right === undefined
-    ? "unknown"
-    : left === right
+  const right = REPORTED_FAMILIES.get(comparableArch(slice.arch));
+  if (right === undefined) return "unknown";
+  return exact === undefined
+    ? machoArchitectureFamily(right) === left
+      ? "match"
+      : "mismatch"
+    : right === exact
       ? "match"
       : "mismatch";
 };

@@ -25,7 +25,11 @@ import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { silentLogger } from "../../../../src/logger.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwnershipObservation.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import {
+  HopperFixtureLauncher,
+  transportReplyContracts,
+  type TransportHopperClient,
+} from "./hopperClient.fixture.js";
 
 const identities = {
   hopper: { id: "hopper", name: "Hopper fixture", version: null },
@@ -101,11 +105,12 @@ const stopFixture = async (child: ChildProcess): Promise<void> => {
 class ExternalFixtureBridge {
   readonly fixture = new HopperFixtureLauncher();
   child: ChildProcess | undefined;
-  readonly client: HopperClient;
+  readonly client: TransportHopperClient;
 
   constructor() {
     const thisFixture = this;
     this.client = new HopperClient({
+      replyContracts: transportReplyContracts,
       startupTimeoutMs: 2_000,
       launcher: {
         async launch(session: BridgeSession) {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   rustBinarySummaryViewResultSchema,
   rustBinaryPageViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -13,6 +13,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const RUST_TOOL_CONTRACTS = [
   {
     name: "inspect_rust_binary",
+    availability: "standalone",
     ...toolContractMetadata("inspect_rust_binary"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

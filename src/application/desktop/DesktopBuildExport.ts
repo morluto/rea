@@ -9,7 +9,7 @@ import {
 } from "../../domain/desktop/appTaskReaders.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import { END_CHECKPOINT } from "../../domain/desktop/buildCapture.js";
@@ -372,6 +372,13 @@ export const exportBuild = async (
       }
     | undefined;
   try {
+    // Admit the host folder by the rule the bundle is written under before
+    // running anything in the computer, so an unusable folder is refused
+    // before the in-computer export runs rather than when its bundle returns.
+    await planOutputTree(request.directory, {
+      operation: EXPORT,
+      field: "directory",
+    });
     const argv = [
       "export-desktop-application",
       `${folder}/capture`,
@@ -475,7 +482,7 @@ export const exportBuild = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted && cause === signal.reason
-          ? new AnalysisCancelledError(EXPORT, { cause })
+          ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
               redactSecrets(errorText(cause), capture.secrets),

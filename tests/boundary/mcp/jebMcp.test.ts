@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -230,7 +231,8 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
     throw new Error("JEB tools must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = advertised.outputSchema ?? {};
+  const outputSchema: Record<string, unknown> =
+    canonicalOutputSchema(advertised.name) ?? {};
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(advertised.inputSchema, {})).toBe(true);
   expect(ajv.validate(advertised.inputSchema, { unexpected: 1 })).toBe(false);

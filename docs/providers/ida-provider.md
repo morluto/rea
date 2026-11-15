@@ -2,7 +2,7 @@
 
 REA adapts an existing IDA MCP server into its native analysis tools. Existing IDA Pro profiles use [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); an optional native bridge for IDA Pro and IDA Free is described below. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
 
-Choose one lifecycle mode in an upstream MCP JSON registration. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
+Choose one lifecycle mode in an upstream MCP JSON registration. An attached registration (the default mode) must also name its upstream `protocol`: `"legacy"` for the ida-pro-mcp 1.4 GUI proxy or `"native"` for the ida-free-mcp plugin. Headless registrations omit `protocol`. An attached registration without `protocol` is refused with a configuration error naming the choice; REA no longer assumes the legacy proxy. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
 
 ## Supported upstream versions
 
@@ -12,17 +12,18 @@ Startup failures identify the accepted REA analysis operation. Missing-profile a
 
 The headless profile is defined by the database-supervisor API, not by an upstream version string. The upstream source snapshot [`c133c385`](https://github.com/mrexodia/ida-pro-mcp/tree/c133c3853faa111a9b00ee615c013b720d0c4acd) includes `idb_close` (introduced by [upstream PR #495](https://github.com/mrexodia/ida-pro-mcp/pull/495)) alongside `idb_open` and `idb_list`. Earlier builds may report the same `2.0.0` version while lacking that tool, so REA checks the live catalog rather than treating a version number or branch name as a compatibility guarantee.
 
-| Mode     | Upstream profile    | Known working                                          |
-| -------- | ------------------- | ------------------------------------------------------ |
-| attached | legacy GUI tools    | 1.4.0                                                  |
-| headless | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close` |
+| Mode                              | Upstream profile    | Known working                                          |
+| --------------------------------- | ------------------- | ------------------------------------------------------ |
+| attached (`"protocol": "legacy"`) | legacy GUI tools    | 1.4.0                                                  |
+| headless                          | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close` |
 
 ## Analyze an already-open GUI target
 
-The attached profile supports upstream **1.4.0 legacy tools**, including `get_metadata`, `list_functions`, and `decompile_function`. Copy the upstream registration's `command`, `args`, and optional `env` into a JSON file. An existing `mcpServers` object with an `ida-pro-mcp` entry is also accepted. For example:
+The attached profile supports upstream **1.4.0 legacy tools**, including `get_metadata`, `list_functions`, and `decompile_function`. Copy the upstream registration's `command`, `args`, and optional `env` into a JSON file and add `"protocol": "legacy"`. An existing `mcpServers` object with an `ida-pro-mcp` entry is also accepted; add `"protocol": "legacy"` to that entry. For example:
 
 ```json
 {
+  "protocol": "legacy",
   "command": "python",
   "args": [
     "/absolute/path/to/ida_pro_mcp/server.py",
@@ -73,7 +74,7 @@ IDA Pro and IDA Free can use the separate [ida-free-mcp native plugin](https://g
 }
 ```
 
-Set `REA_IDA_MCP_CONFIG` to this file and select `ida` using the same CLI/MCP commands above. Omitting `protocol` preserves existing IDA Pro registrations. Native mode requires `resources/read` for `ida://idb/metadata` and its recorded input SHA-256; it never substitutes a digest of an unrelated local file. The native resource's `path` describes the IDB in the upstream protocol, not the original input path. REA retains it and checks database identity and image base before and after requests.
+Set `REA_IDA_MCP_CONFIG` to this file and select `ida` using the same CLI/MCP commands above. Attached IDA Pro registrations name `"protocol": "legacy"` instead. Native mode requires `resources/read` for `ida://idb/metadata` and its recorded input SHA-256; it never substitutes a digest of an unrelated local file. The native resource's `path` describes the IDB in the upstream protocol, not the original input path. REA retains it and checks database identity and image base before and after requests.
 
 This experimental profile provides function/string inventory and search, function lookup, assembly, GUI pseudocode, callees, address xrefs, instruction windows, and function dossiers. Direct callers remain unavailable: native code/data xref labels do not prove call edges. It requires neither IDAPython nor idalib. Native headless registrations are rejected.
 
@@ -110,6 +111,7 @@ its modern tool catalog does not select this profile.
    ```json
    {
      "mode": "attached",
+     "protocol": "legacy",
      "command": "python",
      "args": [
        "/absolute/path/to/ida_pro_mcp/server.py",

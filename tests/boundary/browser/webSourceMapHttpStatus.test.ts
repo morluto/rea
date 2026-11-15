@@ -9,7 +9,7 @@ import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
 } from "../../../src/domain/webBundleAnalysis.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it.each([
   { status: 300, followsRedirect: false },
@@ -180,13 +180,13 @@ it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
     });
     const item = result.items[0];
     if (item === undefined) throw new Error("Expected a fetched map result");
-    const legacyItem = { ...item };
-    delete legacyItem.effective_url;
-    const legacy = webSourceMapsSchema.parse({
-      ...result,
-      items: [legacyItem],
-    });
-    expect(legacy.items[0]).not.toHaveProperty("effective_url");
+    const { effective_url: _effective, ...withoutEffectiveUrl } = item;
+    expect(
+      webSourceMapsSchema.safeParse({
+        ...result,
+        items: [withoutEffectiveUrl],
+      }).success,
+    ).toBe(false);
   },
 );
 

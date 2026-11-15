@@ -1216,8 +1216,8 @@ describe("evidence bundle filesystem adapter", () => {
         ),
       },
     });
-    expect(rejected).not.toMatchObject({
-      error: { userMessage: expect.stringContaining("one Evidence record") },
+    expect(rejected).toMatchObject({
+      error: { _tag: "EvidenceIntegrityError" },
     });
 
     const mismatched = join(directory, "mismatched.json");
@@ -1246,9 +1246,8 @@ describe("standalone Evidence bundle inputs", () => {
         _tag: "EvidenceFileError",
         reason: "wrong-kind",
         path: single,
-        userMessage: expect.stringContaining(
-          `this JSON is one Evidence record (${String(record?.evidence_id)})`,
-        ),
+        detectedKind: "evidence-record",
+        userMessage: expect.stringContaining(String(record?.evidence_id)),
       },
     });
 

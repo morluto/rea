@@ -31,7 +31,6 @@ cliTest.for(["pipe", "capacity"] as const)(
         JAVA_HOME: join(root, "missing-jdk"),
         REA_LOG_LEVEL: "silent",
       },
-      timeoutMs: 5000,
     });
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
     expect(result.signal).toBeNull();

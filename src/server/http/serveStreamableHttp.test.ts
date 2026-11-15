@@ -25,6 +25,15 @@ import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
 import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
+import { waitFor } from "../../../tests/support/testWait.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import {
+  CallerAbort,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
+import { EvidenceMcpServer } from "../EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../toolResult.js";
+import { ok } from "../../domain/result.js";
 
 const servers: StreamableHttpServer[] = [];
 
@@ -1318,7 +1327,7 @@ it.each(["chunk", "headers"])(
       .catch(() => undefined);
     let closing: Promise<void> | undefined;
     try {
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(cancelled).toBe(1);
       });
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
@@ -1403,17 +1412,17 @@ it("retains failed response cleanup and blocks provider teardown and further adm
   const response = await fetch(new URL("/failed", served.url));
   try {
     await response.body?.cancel();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     });
     await expect(served.prepareShutdown()).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { failed_cleanup_count: 1 },
+      _tag: "ProviderAdapterError",
+      cleanupIncomplete: true,
+      cleanupResources: ["MCP HTTP response source"],
+      diagnostics: { failed_cleanup_count: 1 },
       cause: expect.any(AggregateError),
     });
-    await expect(served.close()).rejects.toMatchObject({
-      reportedLimits: { failed_cleanup_count: 1 },
-    });
+    await expect(served.close()).rejects.toBeInstanceOf(ProviderCleanupError);
     expect(shutdownHooks()).toBe(0);
     await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
       code: "ECONNREFUSED",
@@ -1459,7 +1468,7 @@ it("retains plain-response admission until asynchronous cancellation settles", a
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     expect(health).not.toHaveBeenCalled();
     cleanup.release();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
   } finally {
@@ -1562,10 +1571,10 @@ it.each(["pending handler", "open response"])(
       await first.promise;
       socket.write(request("/second"));
       socket.write(request("/health").repeat(32));
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(socket.destroyed).toBe(true);
       });
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(finalized).toBe(mode === "pending handler" ? 1 : 0);
       });
       expect(secondCalled).toBe(0);
@@ -1687,12 +1696,12 @@ it("retains admission for an unread upload attached to a long response", async (
   upload.once("error", () => undefined);
   upload.write("prefix");
   try {
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(received).toBe(true);
     });
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     upload.destroy();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
   } finally {
@@ -1737,7 +1746,7 @@ it("bounds HTTP input dispatch globally and releases admission when an upload le
     }
     // A plain route observes the same budget while both sessionless MCP probes
     // wait for the rest of their bodies. Idle SSE connections consume no permit.
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     });
     const refused = await rawHttpRequest(new URL(served.url), {
@@ -1752,7 +1761,7 @@ it("bounds HTTP input dispatch globally and releases admission when an upload le
     expect(refused.headers.connection).toBe("close");
     uploads[0]?.destroy();
     await pending[0];
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
     expect(await echo(first.client, "kept during overload")).toEqual([
@@ -1862,7 +1871,7 @@ it.each(["DELETE", "shutdown"])(
       upload.write('{"jsonrpc":"2.0","id":2,"method":"tools/call",');
     });
     try {
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(
           entered.mock.calls.some(
             ([request]) =>
@@ -2115,6 +2124,79 @@ it.each(["after timeout", "during drain"])(
         },
         async () => {
           await pendingClose;
+        },
+      ]);
+    }
+  },
+);
+
+it.each(["replacement", "shutdown", "DELETE"] as const)(
+  "tells a pending Evidence tool who ended its session after %s",
+  async (ending) => {
+    let release!: () => void;
+    let entered!: () => void;
+    let observed!: (reason: unknown) => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const aborted = new Promise<unknown>((resolve) => {
+      observed = resolve;
+    });
+    const { served } = await start({
+      createMcpServer: () => {
+        const server = new EvidenceMcpServer(
+          { name: "owner-close-http", version: "1" },
+          { capabilities: {} },
+          () => ok("added"),
+          createToolResultDelivery(4096),
+        );
+        server.registerTool(
+          "held",
+          { inputSchema: z.strictObject({}) },
+          async (_args, context) => {
+            context.mcpReq.signal.addEventListener(
+              "abort",
+              () => observed(context.mcpReq.signal.reason),
+              { once: true },
+            );
+            entered();
+            await gate;
+            return { content: [] };
+          },
+        );
+        return server;
+      },
+    });
+    const first = await connect(served.url);
+    const request = first.client
+      .callTool({ name: "held", arguments: {} })
+      .catch(() => undefined);
+    let ended: Promise<unknown> | undefined;
+    try {
+      await awaitAcknowledgement(started, request, "tool start");
+      ended =
+        ending === "DELETE"
+          ? first.transport.terminateSession()
+          : ending === "shutdown"
+            ? served.prepareShutdown()
+            : connect(served.url).then((next) => next.client.close());
+      await awaitAcknowledgement(
+        aborted.then(() => undefined),
+        ended,
+        "tool abort",
+      );
+      const reason = await aborted;
+      if (ending === "DELETE") expect(reason).toBeInstanceOf(CallerAbort);
+      else expect(reason).toBe(OwnerCancellation.ownerClosed);
+    } finally {
+      release();
+      await closeVerifierResources([
+        () => first.client.close(),
+        async () => {
+          await Promise.allSettled([request, ended]);
         },
       ]);
     }

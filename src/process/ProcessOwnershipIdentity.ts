@@ -1,4 +1,5 @@
 import { matchesOwnedProcessCommand } from "./ProcessCommandIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type {
   OwnedProcessGroup,
   ProcessTableEntry,
@@ -22,7 +23,11 @@ export const launcherIdentityFailure = (
     if (launcher.command === undefined)
       return "owned launcher command identity could not be verified";
     if (
-      !matchesOwnedProcessCommand(launcher.command, ownership.expectedCommand)
+      !matchesOwnedProcessCommand(
+        launcher.command,
+        ownership.expectedCommand,
+        HOST_PLATFORM.platform,
+      )
     )
       return `owned launcher command identity did not match (observed=${launcher.command}; expected=${ownership.expectedCommand})`;
   }
