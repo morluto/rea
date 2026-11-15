@@ -22,6 +22,7 @@ const validBudget = (name: string, milliseconds: number): number => {
  */
 export class Deadline {
   readonly #endsAt: number;
+  #finalize: Deadline | undefined;
 
   private constructor(
     /** Work budget in milliseconds. */
@@ -54,10 +55,13 @@ export class Deadline {
   }
 
   /**
-   * Start the finalize budget now, whether or not work expired. The result
-   * is the deadline finalization runs under; it grants no further budget.
+   * Start the finalize budget, whether or not work expired. The first call
+   * starts it; later calls return the same deadline, so cleanup stages share
+   * one window instead of each restarting it. The result grants no further
+   * budget.
    */
   beginFinalize(): Deadline {
-    return new Deadline(this.finalizeMs, 0);
+    this.#finalize ??= new Deadline(this.finalizeMs, 0);
+    return this.#finalize;
   }
 }

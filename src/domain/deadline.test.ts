@@ -37,6 +37,15 @@ it("starts the finalize budget when finalization begins, after work expired", ()
   expect(finalize.beginFinalize().remainingMs()).toBe(0);
 });
 
+it("shares one finalize window across repeated beginFinalize calls", () => {
+  const deadline = Deadline.after(100, { finalizeMs: 500 });
+  const first = deadline.beginFinalize();
+  vi.advanceTimersByTime(300);
+  const second = deadline.beginFinalize();
+  expect(second).toBe(first);
+  expect(second.remainingMs()).toBe(200);
+});
+
 it("grants no finalize budget unless one is declared", () => {
   expect(Deadline.after(100).beginFinalize().expired()).toBe(true);
 });
