@@ -16,6 +16,8 @@ import {
   rpmMismatchedFileModesFixture,
   rpmMismatchedTriggerProgFixture,
   rpmDuplicateTagFixture,
+  rpmMalformedDigestFixture,
+  rpmOverlappingStringTagsFixture,
   rpmOutOfBoundsIndexFixture,
   rpmUnknownBinTagsFixture,
   rpmSourcePackageFixture,
@@ -626,4 +628,25 @@ it("checks unknown tags' placement without decoding their values", () => {
   expect(() => parse(rpmUnknownBinTagsFixture(1, 0, 0x10_0000))).toThrow(
     /tag 90000 value leaves the data store/u,
   );
+});
+
+it("scans the store at most once for unread string tags", () => {
+  expect(parse(rpmOverlappingStringTagsFixture(1)).package.name).toBe("demo");
+  expect(() => parse(rpmOverlappingStringTagsFixture(4000))).toThrow(
+    /unread string tags overlap in the data store/u,
+  );
+});
+
+it("refuses a header value the report cannot carry, keeping the facts read", () => {
+  try {
+    parse(rpmMalformedDigestFixture());
+    throw new Error("expected a malformed digest refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.kind).toBe("malformed");
+    expect(cause.failure.observed).toMatchObject({
+      lead: { magic: "edabeedb" },
+    });
+  }
 });

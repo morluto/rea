@@ -616,3 +616,27 @@ export const rpmUnknownBinTagsFixture = (
     ],
   });
 };
+
+/** Default header plus unknown STRING_ARRAY tags that all read one store range. */
+export const rpmOverlappingStringTagsFixture = (tags: number): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      ...defaultHeaderTags(),
+      ...Array.from({ length: tags }, (_, index) => ({
+        tag: 91_000 + index,
+        type: RPM_TYPE.stringArray,
+        strings: ["shared"],
+        offset: 0,
+      })),
+    ],
+  });
+
+/** Default header whose FILEDIGESTS values are not hexadecimal digests. */
+export const rpmMalformedDigestFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: defaultHeaderTags().map((tag) =>
+      tag.tag === RPM_TAG.fileDigests
+        ? { ...tag, strings: (tag.strings ?? []).map(() => "zz") }
+        : tag,
+    ),
+  });

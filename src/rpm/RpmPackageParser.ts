@@ -1,3 +1,4 @@
+import { rpmPackageSchema } from "../domain/rpm/package.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -327,7 +328,11 @@ const checkEntryPlacement = (store: BinaryReader, entry: IndexEntry): void => {
  * Check that an entry's whole value lies inside the data store without
  * materializing it, for tags the report does not read.
  */
-const checkEntryExtent = (store: BinaryReader, entry: IndexEntry): void => {
+const checkEntryExtent = (
+  store: BinaryReader,
+  entry: IndexEntry,
+  scan: { remaining: number },
+): void => {
   checkEntryPlacement(store, entry);
   const bytes = store.bytes;
   const remaining = bytes.length - entry.offset;
@@ -349,13 +354,20 @@ const checkEntryExtent = (store: BinaryReader, entry: IndexEntry): void => {
     entry.type === RPM_TYPE.stringArray ||
     entry.type === RPM_TYPE.i18nString
   ) {
-    // Each string needs at least one NUL byte, so the scan is bounded by the
-    // store whatever count the header declares.
+    // Each string needs at least one NUL byte, so one entry's scan is bounded
+    // by the store. Entries that share store bytes would rescan them, so all
+    // unread entries together may scan the store only once.
     if (entry.count > remaining) leaves();
     let cursor = entry.offset;
     for (let index = 0; index < entry.count; index += 1) {
       const nul = bytes.indexOf(0, cursor);
       if (nul === -1) leaves();
+      scan.remaining -= nul + 1 - cursor;
+      if (scan.remaining < 0)
+        fail(
+          "RPM unread string tags overlap in the data store; their values were not scanned again.",
+          { field: `tag ${String(entry.tag)}` },
+        );
       cursor = nul + 1;
     }
   }
@@ -629,6 +641,7 @@ const parseHeader = (
   );
   const tags: IndexEntry[] = [];
   const values = new Map<number, HeaderValue>();
+  const unreadScan = { remaining: storeBytes };
   for (let index = 0; index < indexEntries; index += 1) {
     const at = start + 16 + index * 16;
     const entry: IndexEntry = {
@@ -659,7 +672,7 @@ const parseHeader = (
     // Only tags this reader reports are decoded, so unknown tags cannot make
     // the parser materialize values the report never uses.
     if (!specs.has(entry.tag)) {
-      checkEntryExtent(store, entry);
+      checkEntryExtent(store, entry, unreadScan);
       continue;
     }
     checkTagSpec(entry, specs, label, at);
@@ -1308,7 +1321,7 @@ export const parseRpmPackage = (
             "Scriptlet source text is omitted unless include_script_text is true.",
           ]),
     ];
-    return {
+    const report: RpmPackage = {
       artifact,
       lead,
       signature: {
@@ -1388,5 +1401,19 @@ export const parseRpmPackage = (
       },
       limitations,
     };
+    // Header values the report cannot carry (a non-hex digest, an empty
+    // dependency name) are refused here, inside the observed scope, so the
+    // lead and signature facts already read survive the failure.
+    const checked = rpmPackageSchema.safeParse(report);
+    if (!checked.success) {
+      const issue = checked.error.issues[0]!;
+      fail(
+        `RPM header value at ${issue.path.join(".")} is not admissible: ${issue.message}`,
+        {
+          field: issue.path.join("."),
+        },
+      );
+    }
+    return report;
   });
 };
