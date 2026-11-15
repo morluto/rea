@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -73,7 +74,7 @@ it.each([0, 1, 100])(
   "admits enough recovery representation for %i completed batch items",
   (count) => {
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "health",
       parameters: {},
       result: "source",
@@ -149,7 +150,7 @@ it.each([0, 1, 100])(
 
 it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "health",
@@ -238,7 +239,7 @@ it.each([false, true])(
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
 it("retains requested live observations and links their original producer sources", async () => {
-  const upstream = createEvidence(undefined, provider, {
+  const upstream = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "source",
@@ -276,7 +277,7 @@ it("retains requested live observations and links their original producer source
 });
 
 it("keeps an existing session-issued source identity on replay", async () => {
-  const original = createEvidence(undefined, provider, {
+  const original = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "analyze_function",
     parameters: { procedure: "0x1" },
     result: "original",

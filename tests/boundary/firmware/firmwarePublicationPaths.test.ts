@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -60,7 +61,7 @@ const validateAdvertisedFirmwareOutput = async (
     expect(ajv.validateSchema(schema as AnySchema)).toBe(true);
     const validate = ajv.compile(schema as AnySchema);
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "fixture", version: null },
       {
         operation: "extract_firmware",

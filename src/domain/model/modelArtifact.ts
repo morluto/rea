@@ -80,7 +80,7 @@ export const modelArtifactObjectSchema = z.strictObject({
   coverage: z.strictObject({
     header: z.literal("complete"),
     tensor_data: z.literal("not-interpreted"),
-    array_values: z.enum(["complete", "preview"]),
+    array_values: knownCoverageStatusSchema,
     tensor_ranges: knownCoverageStatusSchema,
     storage_sizes: knownCoverageStatusSchema,
   }),

@@ -7,10 +7,6 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
-import {
-  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
-  resolveMcpOutputSchemaProfile,
-} from "../../../src/config/mcpOutputSchemaProfile.js";
 import { createServer as createProductionServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -18,9 +14,13 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
-import type { McpOutputSchemaProfile } from "../../../src/config/mcpOutputSchemaProfile.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import {
+  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+} from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const createServer = (outputSchemaProfile: McpOutputSchemaProfile) =>
   new EvidenceMcpServer(

@@ -63,7 +63,7 @@ const selected = selection?.mode === "selected";
 const expected = !verifyInventory
   ? []
   : selected
-    ? selection.groups.flat()
+    ? selection.files
     : execFileSync("git", ["ls-files", "-z", "--", "src", "tests"], {
         encoding: "utf8",
         maxBuffer: 8 * 1024 * 1024,
@@ -95,7 +95,7 @@ const summary = [
   "",
   ...(selection
     ? [
-        `Portable tests: ${selected ? `${selection.groups.flat().length} selected files` : "complete suite"}. ${selection.reason}.`,
+        `Portable tests: ${selected ? `${selection.files.length} selected files` : "complete suite"}. ${selection.reason}.`,
         "",
       ]
     : []),

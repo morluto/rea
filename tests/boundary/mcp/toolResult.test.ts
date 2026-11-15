@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -403,7 +404,7 @@ describe("tool result projection", () => {
   });
   it("returns one complete Evidence record with its typed normalized result", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "fixture",
@@ -438,7 +439,7 @@ describe("tool result projection", () => {
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -492,7 +493,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Partial observation fixture", version: "1" },
       { operation: "fixture", parameters: {}, result: { observed: true } },
     );
@@ -532,7 +533,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "get_call_graph",

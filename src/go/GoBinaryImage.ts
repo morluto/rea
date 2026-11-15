@@ -13,7 +13,7 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,

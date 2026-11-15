@@ -1,10 +1,14 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { beforeAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import { artifactComparisonInputSchema } from "../../../src/contracts/artifactComparisonContracts.js";
 import {
   compareApplicationVersionsRequestSchema,
@@ -337,7 +341,7 @@ it("validates representative parsed documents with the advertised schema", async
     validateFormats: false,
   }).compile(input.contentSchema as AnySchema);
   const evidence_bundle = {
-    evidence_format: 1,
+    evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: [],
     providers: [],
     environments: [],

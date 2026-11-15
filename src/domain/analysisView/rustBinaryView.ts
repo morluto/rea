@@ -27,6 +27,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const count = z.number().int().nonnegative();
 export const rustBinarySummarySchema = z.strictObject({
@@ -132,10 +133,10 @@ export const projectRustBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)

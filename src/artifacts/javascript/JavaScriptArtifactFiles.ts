@@ -10,8 +10,6 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../resources/index.js";
-import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
   streamChunkToBuffer,

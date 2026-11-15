@@ -6,7 +6,7 @@ import { buildCapabilityInventory } from "../../../src/application/CapabilityInv
 import {
   CLI_COMMAND_NAMES,
   cliCommandNames,
-} from "../../../src/catalogIdentity.js";
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";

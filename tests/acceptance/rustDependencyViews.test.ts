@@ -1,3 +1,4 @@
+import { fileSubjectArchitecture } from "../fixtures/evidenceSubject.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -281,16 +282,12 @@ cliTest(
       await assertRetainedPages(call, full.evidence_id, exported);
       const malformed = structuredClone(report);
       malformed.auditable_metadata!.dependency_edges[0]!.to_index = 999;
-      if (full.subject == null)
-        throw new Error("Missing complete Rust subject");
       const invalid = createEvidence(
         {
           path,
           sha256: report.artifact.sha256,
           format: format === "macho" ? "mach-o" : format,
-          ...(full.subject.architecture === null
-            ? {}
-            : { architecture: full.subject.architecture }),
+          ...fileSubjectArchitecture(full.subject),
         },
         full.provider,
         {
@@ -332,16 +329,12 @@ cliTest(
     const report = rustBinarySchema.parse(full.normalized_result);
     const metadata = report.auditable_metadata;
     if (metadata === null) throw new Error("Expected Rust dependency metadata");
-    if (full.subject == null)
-      throw new Error("Expected Rust artifact identity");
     const historical = createEvidence(
       {
         path,
         sha256: report.artifact.sha256,
         format: "elf",
-        ...(full.subject.architecture === null
-          ? {}
-          : { architecture: full.subject.architecture }),
+        ...fileSubjectArchitecture(full.subject),
       },
       full.provider,
       {

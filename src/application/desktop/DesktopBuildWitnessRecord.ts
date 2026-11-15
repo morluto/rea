@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -318,22 +319,26 @@ export const writeWitnessRecord = async (
   const result = redact(
     recorded as unknown as JsonValue,
   ) as unknown as typeof recorded;
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-build-witness",
-    operation: CHECK,
-    parameters: { task: result.task.name, stages: witness.stages.length },
-    result: result as unknown as JsonValue,
-    confidence: "observed",
-    authority: "controlled-replay",
-    limitations: [
-      howChecked(witness.task),
-      ...("error" in recording
-        ? [`The recording is missing: ${recording.error}`]
-        : []),
-      ...logLimitations(actions, dropped),
-      ...unsettledLimitation(result.stages),
-    ],
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-build-witness",
+      operation: CHECK,
+      parameters: { task: result.task.name, stages: witness.stages.length },
+      result: result as unknown as JsonValue,
+      confidence: "observed",
+      authority: "controlled-replay",
+      limitations: [
+        howChecked(witness.task),
+        ...("error" in recording
+          ? [`The recording is missing: ${recording.error}`]
+          : []),
+        ...logLimitations(actions, dropped),
+        ...unsettledLimitation(result.stages),
+      ],
+    },
+  );
   const files = [
     ...("segments" in recording
       ? recording.segments.flatMap((target, index) => {

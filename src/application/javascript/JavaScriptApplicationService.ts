@@ -29,6 +29,7 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import { err, ok, type Result } from "../../domain/result.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import {
   assertJavaScriptAnalysisActive,
@@ -45,6 +46,8 @@ const OPERATION = "analyze_javascript_application" as const;
 
 /** Execution options plus the composition root's environment for admission settings. */
 export interface JavaScriptApplicationOptions extends ExecutionOptions {
+  /** Composition-bound source analyzer; application never constructs one. */
+  readonly sourceAnalysis: JavaScriptSourceAnalysisFactory;
   readonly settings?: AnalysisSettingsReader;
   readonly environment?: Readonly<Record<string, string | undefined>>;
 }
@@ -53,7 +56,7 @@ export interface JavaScriptApplicationOptions extends ExecutionOptions {
 export const analyzeJavaScriptApplication = async (
   rawInput: unknown,
   scope: ArtifactResourceScope,
-  options: JavaScriptApplicationOptions = {},
+  options: JavaScriptApplicationOptions,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -67,7 +70,7 @@ export const analyzeJavaScriptApplication = async (
 export const analyzeJavaScriptApplicationValidated = async (
   input: z.output<typeof analyzeJavaScriptApplicationInputSchema>,
   scope: ArtifactResourceScope,
-  options: JavaScriptApplicationOptions = {},
+  options: JavaScriptApplicationOptions,
 ): Promise<Result<Evidence, AnalysisError>> => {
   // An invalid setting is refused before analysis, never replaced by the default.
   const asarHeaderAdmission = parseAsarHeaderAdmission(
@@ -110,6 +113,7 @@ export const analyzeJavaScriptApplicationValidated = async (
     reconstructed = await reconstructJavaScriptArtifact(
       input,
       scope,
+      options.sourceAnalysis,
       options.signal,
       options.progress,
       acceptedAdmission,

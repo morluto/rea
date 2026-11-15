@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { registerWebScriptCommands } from "../../../src/cli/webScriptCommands.js";
 import * as webScriptExport from "../../../src/application/WebScriptExportService.js";
-import { cliCommandFor } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";

@@ -13,8 +13,7 @@ import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { phaseGate } from "../support/lifecycleHarness.js";
 
-import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.js";
-import * as artifactHash from "../../src/artifacts/ArtifactHash.js";
+import * as streamDigest from "../../src/resources/StreamDigest.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -28,6 +27,7 @@ import {
 import * as regularFile from "../../src/filesystem/RegularFile.js";
 import { NativeFixtureRunner } from "../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { ArtifactFileSource } from "../../src/resources/index.js";
 
 interface OpenControl {
   path: string | undefined;
@@ -295,8 +295,8 @@ it.each([false, true])(
     const fixture = await machoCarrier();
     const hashCompletion = phaseGate();
     const controller = new AbortController();
-    const originalHash = artifactHash.hashReadable;
-    vi.spyOn(artifactHash, "hashReadable").mockImplementation(
+    const originalHash = streamDigest.digestReadableToCompletion;
+    vi.spyOn(streamDigest, "digestReadableToCompletion").mockImplementation(
       async (...args) => {
         const hashed = await originalHash(...args);
         expect(hashed.sha256).toBe(fixture.sha256);

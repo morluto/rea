@@ -16,15 +16,13 @@ import {
   ArtifactFileCleanupFailure,
   ArtifactReaderFailure,
   ArtifactResourceScope,
-} from "../../resources/index.js";
-import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
-import {
   streamChunkToBuffer,
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   SafeOutputTreeCreationFailure,
 } from "../../resources/index.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import { withRegularFile } from "../../process/RegularFileRead.js";
 import {

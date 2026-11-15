@@ -177,7 +177,7 @@ it.each(["mach-o", "mach-o-universal"] as const)(
         JSON.stringify(inspected.structuredContent),
       ).not.toBe(true);
       expect(inspected.structuredContent).toMatchObject({
-        subject: { format },
+        subject: { identity: { kind: "file", format } },
         normalized_result: { signed: true, identifier: "com.example.fixture" },
       });
     } finally {

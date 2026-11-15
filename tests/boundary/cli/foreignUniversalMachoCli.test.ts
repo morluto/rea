@@ -49,11 +49,11 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = z
       .object({
-        subject: z.object({ format: z.string() }),
+        subject: z.object({ identity: z.object({ format: z.string() }) }),
         normalized_result: listArchitecturesSchema,
       })
       .parse(result.json);
-    expect(evidence.subject.format).toBe("mach-o-universal");
+    expect(evidence.subject.identity.format).toBe("mach-o-universal");
     expect(evidence.normalized_result.architectures).toMatchObject({
       total: 1,
       exhaustive: true,

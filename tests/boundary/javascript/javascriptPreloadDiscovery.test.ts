@@ -12,13 +12,7 @@ import { analyzeParsedJavaScriptStaticSource } from "../../fixtures/javascriptSt
 import { parseJavaScriptSource } from "../../../src/domain/javascript/javascriptSourceParser.js";
 import { ok, err } from "../../../src/domain/result.js";
 import { discoverJavaScriptPreloadPaths } from "../../../src/application/javascript/JavaScriptPreloadDiscovery.js";
-const acquire = vi.hoisted(() => vi.fn());
-vi.mock(
-  "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js",
-  () => ({
-    createJavaScriptSourceAnalysis: acquire,
-  }),
-);
+const acquire = vi.fn();
 const file = (
   path: string,
   text: string,
@@ -82,6 +76,7 @@ it("resolves an exact preload before its declaring source regardless of inventor
     fixture(),
     limits,
     new ArtifactResourceScope(),
+    acquire,
   );
   expect(result).toEqual({
     paths: new Set(["a".repeat(64) + ":preload.js"]),
@@ -113,6 +108,7 @@ it("keeps discovering after one source exceeds its worker limit", async () => {
     { ...files, files: [file("big.js", ""), ...files.files] },
     limits,
     new ArtifactResourceScope(),
+    acquire,
   );
   // The gap stays reported even if source analysis later reads big.js.
   expect(result).toEqual({
@@ -141,6 +137,7 @@ it("does not turn an invalid ESM require declaration into a preload identity", a
         { ...files, files: [...files.files.slice(0, 2), source] },
         limits,
         new ArtifactResourceScope(),
+        acquire,
       )
     ).paths,
   ).toEqual(new Set());
@@ -160,6 +157,7 @@ it("does not transfer preload identity across containers", async () => {
         },
         limits,
         new ArtifactResourceScope(),
+        acquire,
       )
     ).paths,
   ).toEqual(new Set());
@@ -176,6 +174,7 @@ it("skips discovery when package scope cannot change a .js loader", async () => 
     },
     limits,
     new ArtifactResourceScope(),
+    acquire,
   );
   expect(acquire).not.toHaveBeenCalled();
 });
@@ -193,7 +192,13 @@ it("retains a failed close and the original cancellation until scope cleanup ret
   acquire.mockResolvedValue({ analyze: failingAnalyze, close });
   const scope = new ArtifactResourceScope();
   await expect(
-    discoverJavaScriptPreloadPaths(fixture(), limits, scope, controller.signal),
+    discoverJavaScriptPreloadPaths(
+      fixture(),
+      limits,
+      scope,
+      acquire,
+      controller.signal,
+    ),
   ).rejects.toMatchObject({
     cleanupIncomplete: true,
     cause: expect.objectContaining({
