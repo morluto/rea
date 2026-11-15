@@ -7,7 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import {
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
@@ -169,6 +173,12 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
+  /**
+   * Confirms every failure a close of this client reported: the next close
+   * retries the same retained session and launcher, so its success releases
+   * them all.
+   */
+  #closeRetry: AnalysisCleanupRelease | undefined;
   readonly #onSocketData = (chunk: Buffer): void => {
     try {
       this.#responses.push(chunk);
@@ -657,7 +667,7 @@ export class HopperClient {
     const closed = await this.#cleanup();
     const failure = closed.ok
       ? primary
-      : analysisErrorWithCleanupFailure(primary, closed.error, "open_binary");
+      : analysisErrorWithCloseRejection(primary, closed.error, "open_binary");
     this.#startupFailureResult = failure;
     return err(failure);
   }
@@ -860,11 +870,25 @@ export class HopperClient {
             ),
           ),
         );
+      if (closed.ok && (launcherClosed === undefined || launcherClosed.ok)) {
+        this.#closeRetry?.confirm();
+        this.#closeRetry = undefined;
+        return closed;
+      }
+      // Bind each ownerless failed part to the retry before composing, so the
+      // composite completes when a later close of this client succeeds; a part
+      // that already follows its own owner keeps reading that owner.
+      const retry = (this.#closeRetry ??= new AnalysisCleanupRelease());
+      if (!closed.ok) retry.bindUnowned(closed.error);
       if (launcherClosed === undefined || launcherClosed.ok) return closed;
+      retry.bindUnowned(launcherClosed.error);
       return closed.ok
         ? launcherClosed
         : err(
-            analysisErrorWithCleanupFailure(closed.error, launcherClosed.error),
+            analysisErrorWithCloseRejections(
+              closed.error,
+              launcherClosed.error,
+            ),
           );
     } finally {
       if (this.#socket?.destroyed === true) this.#socket = undefined;
