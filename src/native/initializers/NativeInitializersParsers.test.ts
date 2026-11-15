@@ -1622,6 +1622,32 @@ describe("Mach-O fixup sources", () => {
   });
 });
 
+it("reports an object-file import name over the name budget as partial coverage", async () => {
+  const fixture = machoX8664ObjectInitializers();
+  // `_startup` (nlist 2) becomes an undefined external with a 1101-byte name.
+  const strings = Buffer.from(`\0_before\0_${"s".repeat(1100)}\0`, "utf8");
+  const image = Buffer.alloc(0x270 + strings.length);
+  fixture.copy(image, 0, 0, 0x270);
+  strings.copy(image, 0x270);
+  image.writeUInt32LE(strings.length, 284);
+  image.writeUInt8(0x01, 0x260 + 4);
+  image.writeUInt8(0, 0x260 + 5);
+  const report = await read(image);
+  expect(report.entries[0]).toMatchObject({
+    resolution: "unresolved_import",
+    symbol: null,
+  });
+  expect(report.status).toBe("incomplete");
+  // The withheld name is this entry's own: a known gap, not unknown coverage.
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    total_entries: null,
+  });
+  expect(report.limitations).toContain(
+    "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
+  );
+});
+
 describe("Initializer target semantics", () => {
   it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
     const bytes = elfRelocatableCtors();

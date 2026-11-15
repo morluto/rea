@@ -217,11 +217,18 @@ interface MachoSymbols {
   readonly table: SymbolTable | null;
 }
 
-/** Name at `strx`. Index 0 is the empty name; an index outside the table is unreadable. */
+/**
+ * Name at `strx`. Index 0 is the empty name; an index outside the table is
+ * unreadable, which leaves coverage unknown. `overBudget` is the coverage
+ * effect of a name over the name budget: `partial` when it is the reported
+ * entry's own name (a known withheld fact), `unknown` when it only feeds the
+ * symbol index, where which entries it would have named cannot be told.
+ */
 const nameAt = (
   scan: MachoScan,
   strings: Buffer,
   strx: number,
+  overBudget: "partial" | "unknown",
 ): string | null => {
   if (strx === 0) return null;
   const observed = observeElfStringTableEntry(
@@ -231,7 +238,7 @@ const nameAt = (
   );
   if (observed.state === "truncated") {
     scan.notes.tally("long-symbol-name");
-    widen(scan, "unknown");
+    widen(scan, overBudget);
     return null;
   }
   if (observed.state === "outside") {
@@ -322,7 +329,7 @@ const readSymbols = (
               ? scan.bytes.readUInt32LE(at + 8)
               : scan.bytes.readUInt32BE(at + 8),
           );
-      const text = nameAt(scan, strings, strx);
+      const text = nameAt(scan, strings, strx, "unknown");
       if (text === null || names.has(value)) continue;
       names.set(value, text);
     }
@@ -624,13 +631,14 @@ const objectSymbol = (
       );
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
-  const name = nameAt(walk.scan, table.strings, strx);
+  // The name is this entry's own, so one over the budget is a withheld fact.
+  const ownName = () => nameAt(walk.scan, table.strings, strx, "partial");
   // N_UNDF: defined in another object or library.
   if ((type & 0x0e) === 0)
     return {
       method: "unresolved_import",
       value: null,
-      importName: name,
+      importName: ownName(),
       definedName: null,
     };
   // Only N_SECT has an address in this object.
@@ -639,7 +647,8 @@ const objectSymbol = (
     method: "symbol_addend",
     value: BigInt.asUintN(walk.image.bits, value + stored),
     importName: null,
-    definedName: stored === 0n ? name : null,
+    // A nonzero addend points past the symbol, so its name is not reported.
+    definedName: stored === 0n ? ownName() : null,
   };
 };
 
