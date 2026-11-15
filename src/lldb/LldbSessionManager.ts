@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -9,7 +8,9 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisTimeoutError,
+  AnalysisCancelledError,
   cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { coverageStatusSchema } from "../domain/coverage.js";
@@ -21,7 +22,20 @@ import {
   debuggerConstructionLimits,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
-import { debuggerResourceConstraintError } from "../process/ownedDebuggerSession.js";
+import {
+  debuggerResourceConstraintError,
+  stopOwnedDebuggerProcess,
+  type OwnedDebuggerDetachResult,
+} from "../process/ownedDebuggerSession.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+  type OwnedProviderProcessSpawnOptions,
+  type SpawnedOwnedProviderProcess,
+  type ProviderProcessHandle,
+} from "../process/ProviderProcess.js";
+import { OwnedDebuggerSessionRegistry } from "../process/OwnedDebuggerSessionRegistry.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { LLDB_PROVIDER_IDENTITY } from "./LldbProviderIdentity.js";
 
 const initializeResponseSchema = z.object({
@@ -122,25 +136,41 @@ interface PendingRpc {
 
 interface ActiveSession {
   readonly id: string;
-  readonly child: ChildProcess;
+  readonly launched: SpawnedOwnedProviderProcess;
+  readonly supervisor: ProviderProcessSupervisor;
+  readonly child: ProviderProcessHandle;
   readonly rl: readline.Interface;
   readonly pending: Map<number, PendingRpc>;
   nextId: number;
   closed: boolean;
+  exited: boolean;
   state: "ready" | "closed";
   processState: string;
   pid: number | null;
   target: string | null;
-  queue: Promise<unknown>;
+  commandTail: Promise<void>;
   pendingCommandCount: number;
+  detachInferior: () => Promise<OwnedDebuggerDetachResult>;
 }
+
+/** Await a serialized command turn, preserving the caller's cancellation reason. */
+const waitForLldbCommandTurn = (
+  previous: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (signal === undefined) return previous;
+  return waitForAbortable(previous, signal).then((outcome) => {
+    if (outcome instanceof AbortedWait)
+      throw cancelledBy("lldb_command", outcome);
+  });
+};
 
 /**
  * Persistent Apple Silicon LLDB session manager for REA on macOS.
  * Contributed by Hardik Shah <hardik05@gmail.com> (https://fuzzing.in, @hardik05).
  */
 export class LldbSessionManager {
-  readonly #sessions = new Map<string, ActiveSession>();
+  readonly #sessions: OwnedDebuggerSessionRegistry<ActiveSession>;
   readonly #failedCleanups = new Set<string>();
   readonly #environment: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
@@ -148,7 +178,8 @@ export class LldbSessionManager {
   readonly #startupTimeoutMs: number;
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
-  #pendingStarts = 0;
+  readonly #spawnProcess: typeof spawnOwnedProviderProcess;
+  readonly #stopProcess: typeof stopOwnedDebuggerProcess;
 
   constructor(
     options: {
@@ -156,6 +187,8 @@ export class LldbSessionManager {
       readonly platform?: NodeJS.Platform;
       readonly commandTimeoutMs?: number;
       readonly startupTimeoutMs?: number;
+      readonly spawnProcess?: typeof spawnOwnedProviderProcess;
+      readonly stopProcess?: typeof stopOwnedDebuggerProcess;
     } = {},
   ) {
     this.#environment = { ...(options.environment ?? process.env) };
@@ -167,6 +200,18 @@ export class LldbSessionManager {
       options.commandTimeoutMs ?? limits.commandDeadline.value;
     this.#startupTimeoutMs =
       options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
+    this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
+    this.#sessions = new OwnedDebuggerSessionRegistry({
+      provider: "lldb",
+      displayName: "LLDB",
+      sealSession: (session) => {
+        session.closed = true;
+      },
+      stopProcess: (session) =>
+        this.#stopProcess(session, "LLDB", { platform: this.#platform }),
+      stopFailurePrefix: "Owned LLDB shutdown failed",
+    });
   }
 
   async start(
@@ -196,7 +241,17 @@ export class LldbSessionManager {
       );
     }
 
-    const occupied = this.#sessions.size + this.#pendingStarts;
+    return this.#sessions.start("start_lldb_session", signal, (started) =>
+      this.#startWithReservation(started, options),
+    );
+  }
+
+  async #startWithReservation(
+    signal: AbortSignal,
+    options: LldbStartOptions = {},
+  ): Promise<Result<LldbStartResult, AnalysisError>> {
+    if (signal?.aborted) return err(cancelledBy("start_lldb_session", signal));
+    const occupied = this.#sessions.occupied();
     if (occupied >= this.#maxSessions.value) {
       return err(
         debuggerResourceConstraintError(
@@ -212,209 +267,282 @@ export class LldbSessionManager {
         ),
       );
     }
-    this.#pendingStarts += 1;
+
+    const releaseReservation = this.#sessions.reserve();
+    try {
+      return await this.#startReserved(signal, options);
+    } finally {
+      releaseReservation();
+    }
+  }
+
+  async #startReserved(
+    signal: AbortSignal,
+    options: LldbStartOptions = {},
+  ): Promise<Result<LldbStartResult, AnalysisError>> {
+    const sessionId = randomUUID();
+    const childEnv = { ...this.#environment };
+
+    // Supplement PYTHONPATH with Xcode LLDB framework python bindings if not set
+    let addedPythonPath = "";
+    for (const cand of LLDB_FRAMEWORK_PYTHON_CANDIDATES) {
+      if (existsSync(cand)) {
+        addedPythonPath = cand;
+        break;
+      }
+    }
+    if (addedPythonPath) {
+      childEnv.PYTHONPATH = childEnv.PYTHONPATH
+        ? `${addedPythonPath}:${childEnv.PYTHONPATH}`
+        : addedPythonPath;
+    }
+
+    let launched: SpawnedOwnedProviderProcess;
+    try {
+      const spawnOptions: OwnedProviderProcessSpawnOptions = {
+        command: "/usr/bin/python3",
+        arguments: [BRIDGE_SCRIPT],
+        runId: sessionId,
+        stdin: "pipe",
+        hostEnvironment: childEnv,
+        platform: this.#platform,
+        signal,
+      };
+      launched = await this.#spawnProcess(spawnOptions);
+    } catch (cause) {
+      if (
+        (signal?.aborted && cause === signal.reason) ||
+        cause instanceof AnalysisCancelledError
+      ) {
+        return err(cancelledBy("start_lldb_session", carriedReason(cause)));
+      }
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "lldb",
+          "start_lldb_session",
+          cause instanceof Error
+            ? cause.message
+            : "Unable to launch LLDB bridge process.",
+          { cause },
+        ),
+      );
+    }
+
+    const child = launched.process;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: child, ownsProcessLifetime: false },
+      { captureStdout: false, maxDiagnosticBytes: 64 * 1024 },
+    );
+
+    const pending = new Map<number, PendingRpc>();
+    const rl = readline.createInterface({ input: child.stdout! });
+
+    child.on("error", (error: Error) => {
+      for (const [id, rpc] of pending.entries()) {
+        clearTimeout(rpc.timer);
+        rpc.reject(error);
+        pending.delete(id);
+      }
+    });
+
+    child.stdin?.on("error", (error: Error) => {
+      for (const [id, rpc] of pending.entries()) {
+        clearTimeout(rpc.timer);
+        rpc.reject(error);
+        pending.delete(id);
+      }
+    });
+
+    rl.on("line", (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const msg = JSON.parse(trimmed);
+        if (msg.id !== undefined && pending.has(msg.id)) {
+          const rpc = pending.get(msg.id)!;
+          pending.delete(msg.id);
+          clearTimeout(rpc.timer);
+          if (msg.error) {
+            rpc.reject(new Error(msg.error.message ?? "RPC error"));
+          } else {
+            rpc.resolve(msg.result);
+          }
+        }
+      } catch {
+        // Discard unformatted lines from inferior stdout
+      }
+    });
+
+    const session: ActiveSession = {
+      id: sessionId,
+      launched,
+      supervisor,
+      child,
+      rl,
+      pending,
+      nextId: 1,
+      closed: false,
+      exited: false,
+      state: "ready",
+      processState: "no_process",
+      pid: null,
+      target: options.path ?? null,
+      commandTail: Promise.resolve(),
+      pendingCommandCount: 0,
+      detachInferior: async (): Promise<OwnedDebuggerDetachResult> => {
+        if (
+          session.pid === null ||
+          session.processState === "no_process" ||
+          session.processState === "none"
+        ) {
+          return { status: "no-inferior" };
+        }
+        try {
+          const res = await this.#sendSessionRpc(
+            closeResponseSchema,
+            session,
+            "close",
+            {},
+            5000,
+          );
+          if (
+            res?.target_state === "none_observed" ||
+            res?.target_state === "exited"
+          ) {
+            return { status: "no-inferior" };
+          }
+          return { status: "detached", outputSink: "durable" };
+        } catch {
+          return { status: "no-inferior" };
+        }
+      },
+    };
+
+    child.once("exit", () => {
+      session.exited = true;
+      session.closed = true;
+      session.state = "closed";
+      for (const [id, rpc] of pending.entries()) {
+        clearTimeout(rpc.timer);
+        rpc.reject(new Error("LLDB bridge exited unexpectedly."));
+        pending.delete(id);
+      }
+    });
 
     try {
-      const sessionId = randomUUID();
-      const childEnv = { ...this.#environment };
-
-      // Supplement PYTHONPATH with Xcode LLDB framework python bindings if not set
-      let addedPythonPath = "";
-      for (const cand of LLDB_FRAMEWORK_PYTHON_CANDIDATES) {
-        if (existsSync(cand)) {
-          addedPythonPath = cand;
-          break;
-        }
-      }
-      if (addedPythonPath) {
-        childEnv.PYTHONPATH = childEnv.PYTHONPATH
-          ? `${addedPythonPath}:${childEnv.PYTHONPATH}`
-          : addedPythonPath;
+      if (signal?.aborted) {
+        throw cancelledBy("start_lldb_session", signal);
       }
 
-      const child = spawn("/usr/bin/python3", [BRIDGE_SCRIPT], {
-        env: childEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      // 1. Initialize
+      await this.#sendSessionRpc(
+        initializeResponseSchema,
+        session,
+        "initialize",
+        {},
+        this.#startupTimeoutMs,
+        signal,
+      );
 
-      child.stderr?.resume(); // Drain stderr diagnostics to prevent pipe backpressure
-      child.on("error", (error: Error) => {
-        for (const [id, rpc] of pending.entries()) {
-          clearTimeout(rpc.timer);
-          rpc.reject(error);
-          pending.delete(id);
-        }
-      });
-      child.stdin?.on("error", () => {
-        // EPIPE or child exit handled on process exit
-      });
-
-      const pending = new Map<number, PendingRpc>();
-      const rl = readline.createInterface({ input: child.stdout! });
-
-      rl.on("line", (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        try {
-          const msg = JSON.parse(trimmed);
-          if (msg.id !== undefined && pending.has(msg.id)) {
-            const rpc = pending.get(msg.id)!;
-            pending.delete(msg.id);
-            clearTimeout(rpc.timer);
-            if (msg.error) {
-              rpc.reject(new Error(msg.error.message ?? "RPC error"));
-            } else {
-              rpc.resolve(msg.result);
-            }
-          }
-        } catch {
-          // Discard unformatted lines from inferior stdout
-        }
-      });
-
-      const session: ActiveSession = {
-        id: sessionId,
-        child,
-        rl,
-        pending,
-        nextId: 1,
-        closed: false,
-        state: "ready",
-        processState: "no_process",
-        pid: null,
-        target: options.path ?? null,
-        queue: Promise.resolve(),
-        pendingCommandCount: 0,
-      };
-
-      child.on("exit", () => {
-        session.closed = true;
-        session.state = "closed";
-        for (const [id, rpc] of pending.entries()) {
-          clearTimeout(rpc.timer);
-          rpc.reject(new Error("LLDB bridge exited unexpectedly."));
-          pending.delete(id);
-        }
-      });
-
-      const sendRpc = async <T>(
-        schema: z.ZodType<T>,
-        method: string,
-        params: Record<string, unknown> = {},
-        timeoutMs: number = this.#startupTimeoutMs,
-      ): Promise<T> => {
-        const raw = await new Promise<unknown>((resolve, reject) => {
-          if (session.closed || !child.stdin?.writable) {
-            return reject(new Error("LLDB session is closed."));
-          }
-          const reqId = session.nextId++;
-          const timer = setTimeout(
-            () => {
-              pending.delete(reqId);
-              reject(new AnalysisTimeoutError(method, timeoutMs));
-            },
-            Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
-          );
-          timer.unref();
-
-          pending.set(reqId, { resolve, reject, timer });
-          const payload = JSON.stringify({
-            jsonrpc: "2.0",
-            id: reqId,
-            method,
-            params,
-          });
-          child.stdin.write(payload + "\n");
-        });
-
-        const parsed = schema.safeParse(raw);
-        if (!parsed.success) {
-          throw new AnalysisCapabilityUnavailableError(
-            "lldb",
-            method,
-            `Invalid or malformed RPC reply from LLDB daemon: ${parsed.error.message}`,
-          );
-        }
-        return parsed.data;
-      };
-
-      try {
-        // 1. Initialize
-        await sendRpc(initializeResponseSchema, "initialize");
-
-        // 2. Launch target or attach
-        let launchState: LldbStartResult["state"] = "ready";
-        if (options.path) {
-          const launchRes = await sendRpc(
-            launchAttachResponseSchema,
-            "launch",
-            {
-              path: options.path,
-              args: options.args,
-              env: options.env,
-              stop_at_entry: options.stop_at_entry ?? true,
-              disable_aslr: options.disable_aslr ?? true,
-              breakpoints: options.breakpoints,
-            },
-          );
-
-          if (launchRes.error || launchRes.status === "failed") {
-            await this.#terminateChild(child);
-            return err(
-              new AnalysisCapabilityUnavailableError(
-                "lldb",
-                "start_lldb_session",
-                launchRes.error ?? "Failed to launch target",
-              ),
-            );
-          }
-          session.pid = launchRes.pid ?? null;
-          session.processState = launchRes.state ?? "stopped";
-          launchState = "launched";
-        } else if (options.pid) {
-          const attachRes = await sendRpc(
-            launchAttachResponseSchema,
-            "attach",
-            {
-              pid: options.pid,
-            },
-          );
-          if (attachRes.error || attachRes.status === "failed") {
-            await this.#terminateChild(child);
-            return err(
-              new AnalysisCapabilityUnavailableError(
-                "lldb",
-                "start_lldb_session",
-                attachRes.error ?? "Failed to attach to target",
-              ),
-            );
-          }
-          session.pid = attachRes.pid ?? null;
-          session.processState = attachRes.state ?? "stopped";
-          launchState = "attached";
-        }
-
-        this.#sessions.set(sessionId, session);
-
-        return ok({
-          session_id: sessionId,
-          state: launchState,
-          ...(session.pid !== null ? { pid: session.pid } : {}),
-          ...(session.target !== null ? { target: session.target } : {}),
-        });
-      } catch (cause) {
-        await this.#terminateChild(child);
-        if (cause instanceof AnalysisError) return err(cause);
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "lldb",
-            "start_lldb_session",
-            cause instanceof Error ? cause.message : String(cause),
-          ),
+      // 2. Launch target or attach
+      let launchState: LldbStartResult["state"] = "ready";
+      if (options.path) {
+        const launchRes = await this.#sendSessionRpc(
+          launchAttachResponseSchema,
+          session,
+          "launch",
+          {
+            path: options.path,
+            args: options.args,
+            env: options.env,
+            stop_at_entry: options.stop_at_entry ?? true,
+            disable_aslr: options.disable_aslr ?? true,
+            breakpoints: options.breakpoints,
+          },
+          this.#startupTimeoutMs,
+          signal,
         );
+
+        if (launchRes.error || launchRes.status === "failed") {
+          await this.#stopProcess(session, "LLDB", {
+            platform: this.#platform,
+          });
+          supervisor.dispose();
+          rl.close();
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "lldb",
+              "start_lldb_session",
+              launchRes.error ?? "Failed to launch target",
+            ),
+          );
+        }
+        session.pid = launchRes.pid ?? null;
+        session.processState = launchRes.state ?? "stopped";
+        launchState = "launched";
+      } else if (options.pid) {
+        const attachRes = await this.#sendSessionRpc(
+          launchAttachResponseSchema,
+          session,
+          "attach",
+          {
+            pid: options.pid,
+          },
+          this.#startupTimeoutMs,
+          signal,
+        );
+        if (attachRes.error || attachRes.status === "failed") {
+          await this.#stopProcess(session, "LLDB", {
+            platform: this.#platform,
+          });
+          supervisor.dispose();
+          rl.close();
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "lldb",
+              "start_lldb_session",
+              attachRes.error ?? "Failed to attach to target",
+            ),
+          );
+        }
+        session.pid = attachRes.pid ?? null;
+        session.processState = attachRes.state ?? "stopped";
+        launchState = "attached";
       }
-    } finally {
-      this.#pendingStarts -= 1;
+
+      if (signal?.aborted) {
+        throw cancelledBy("start_lldb_session", signal);
+      }
+
+      this.#sessions.add(session);
+
+      return ok({
+        session_id: sessionId,
+        state: launchState,
+        ...(session.pid !== null ? { pid: session.pid } : {}),
+        ...(session.target !== null ? { target: session.target } : {}),
+      });
+    } catch (cause) {
+      session.closed = true;
+      session.state = "closed";
+      rl.close();
+      await this.#stopProcess(session, "LLDB", { platform: this.#platform });
+      supervisor.dispose();
+
+      if (
+        (signal?.aborted && cause === signal.reason) ||
+        cause instanceof AnalysisCancelledError
+      ) {
+        return err(cancelledBy("start_lldb_session", carriedReason(cause)));
+      }
+      if (cause instanceof AnalysisError) return err(cause);
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "lldb",
+          "start_lldb_session",
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      );
     }
   }
 
@@ -457,100 +585,133 @@ export class LldbSessionManager {
       );
     }
     session.pendingCommandCount += 1;
+    const previous = session.commandTail;
+    let release: (() => void) | undefined;
+    let acquired = false;
+    session.commandTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
 
-    const executeOperation = async (): Promise<
-      Result<
-        { readonly result: LldbCommandResult; readonly evidence: Evidence },
-        AnalysisError
-      >
-    > => {
-      try {
-        if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
-        try {
-          const timeoutMs = this.#commandTimeoutMs;
-          const rpcTimeoutMs = Math.min(
-            timeoutMs + 5000,
-            MAX_NODE_TIMER_DELAY_MS,
-          );
-          const res = await this.#sendSessionRpc(
-            commandResponseSchema,
-            session,
-            "command",
-            { command, timeout: timeoutMs / 1000 },
-            rpcTimeoutMs,
-          );
-
-          if (res.process_state) {
-            session.processState = res.process_state;
-          }
-          if (res.pid !== undefined) {
-            session.pid = res.pid;
-          }
-          if (res.target !== undefined) {
-            session.target = res.target;
-          }
-
-          const cmdResult: LldbCommandResult = {
-            command,
-            output: res.output ?? "",
-            ...(res.process_state !== undefined
-              ? { process_state: res.process_state }
-              : {}),
-            output_truncated: res.output_truncated ?? false,
-            completion_status: res.completion_status ?? "complete",
-          };
-
-          const evidence = createEvidence(undefined, LLDB_PROVIDER_IDENTITY, {
-            predicateType: "rea.debugger.console-observation",
-            operation: "lldb_command",
-            parameters: { session_id: sessionId, command },
-            result: {
-              command: cmdResult.command,
-              output: cmdResult.output,
-              ...(cmdResult.process_state !== undefined
-                ? { process_state: cmdResult.process_state }
-                : {}),
-              output_truncated: cmdResult.output_truncated,
-              completion_status: cmdResult.completion_status,
-            },
-            rawResult: {
-              command: cmdResult.command,
-              output: cmdResult.output,
-              ...(cmdResult.process_state !== undefined
-                ? { process_state: cmdResult.process_state }
-                : {}),
-              output_truncated: cmdResult.output_truncated,
-              completion_status: cmdResult.completion_status,
-            },
-            subjectUnavailableReason:
-              "The active LLDB inferior identity is not established by the debugger session identifier.",
-            limitations: [
-              "LLDB commands run unrestricted against the local target inferior and host runtime.",
-            ],
-          });
-
-          return ok({ result: cmdResult, evidence });
-        } catch (cause) {
-          if (cause instanceof AnalysisError) return err(cause);
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "lldb",
-              "lldb_command",
-              cause instanceof Error ? cause.message : String(cause),
-            ),
-          );
-        }
-      } finally {
-        session.pendingCommandCount -= 1;
+    try {
+      await waitForLldbCommandTurn(previous, signal);
+      acquired = true;
+      if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
+      return await this.#executeInTurn(session, sessionId, command, signal);
+    } catch (cause) {
+      if (
+        (signal?.aborted && cause === signal.reason) ||
+        cause instanceof AnalysisCancelledError
+      ) {
+        return err(cancelledBy("lldb_command", carriedReason(cause)));
       }
+      if (cause instanceof AnalysisError) return err(cause);
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "lldb",
+          "lldb_command",
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      );
+    } finally {
+      if (acquired) {
+        session.pendingCommandCount -= 1;
+        release?.();
+      } else {
+        void previous.then(() => {
+          session.pendingCommandCount -= 1;
+          release?.();
+        });
+      }
+    }
+  }
+
+  async #executeInTurn(
+    session: ActiveSession,
+    sessionId: string,
+    command: string,
+    signal?: AbortSignal,
+  ): Promise<
+    Result<
+      { readonly result: LldbCommandResult; readonly evidence: Evidence },
+      AnalysisError
+    >
+  > {
+    if (session.closed) {
+      return err(
+        new AnalysisInputError("lldb_command", undefined, [
+          {
+            path: ["session_id"],
+            reason: "invalid_value",
+            message: "LLDB session was closed while queued.",
+          },
+        ]),
+      );
+    }
+    const timeoutMs = this.#commandTimeoutMs;
+    const rpcTimeoutMs = Math.min(timeoutMs + 5000, MAX_NODE_TIMER_DELAY_MS);
+    const res = await this.#sendSessionRpc(
+      commandResponseSchema,
+      session,
+      "command",
+      { command, timeout: timeoutMs / 1000 },
+      rpcTimeoutMs,
+      signal,
+    );
+
+    if (signal?.aborted) {
+      throw cancelledBy("lldb_command", signal);
+    }
+
+    if (res.process_state) {
+      session.processState = res.process_state;
+    }
+    if (res.pid !== undefined) {
+      session.pid = res.pid;
+    }
+    if (res.target !== undefined) {
+      session.target = res.target;
+    }
+
+    const cmdResult: LldbCommandResult = {
+      command,
+      output: res.output ?? "",
+      ...(res.process_state !== undefined
+        ? { process_state: res.process_state }
+        : {}),
+      output_truncated: res.output_truncated ?? false,
+      completion_status: res.completion_status ?? "complete",
     };
 
-    const task = session.queue.then(executeOperation);
-    session.queue = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    return task;
+    const evidence = createEvidence(undefined, LLDB_PROVIDER_IDENTITY, {
+      predicateType: "rea.debugger.console-observation",
+      operation: "lldb_command",
+      parameters: { session_id: sessionId, command },
+      result: {
+        command: cmdResult.command,
+        output: cmdResult.output,
+        ...(cmdResult.process_state !== undefined
+          ? { process_state: cmdResult.process_state }
+          : {}),
+        output_truncated: cmdResult.output_truncated,
+        completion_status: cmdResult.completion_status,
+      },
+      rawResult: {
+        command: cmdResult.command,
+        output: cmdResult.output,
+        ...(cmdResult.process_state !== undefined
+          ? { process_state: cmdResult.process_state }
+          : {}),
+        output_truncated: cmdResult.output_truncated,
+        completion_status: cmdResult.completion_status,
+      },
+      subjectUnavailableReason:
+        "The active LLDB inferior identity is not established by the debugger session identifier.",
+      limitations: [
+        "LLDB commands run unrestricted against the local target inferior and host runtime.",
+      ],
+    });
+
+    return ok({ result: cmdResult, evidence });
   }
 
   async status(sessionId: string): Promise<LldbStatusResult | undefined> {
@@ -586,7 +747,10 @@ export class LldbSessionManager {
     };
   }
 
-  async close(sessionId: string): Promise<
+  async close(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<
     Result<
       {
         readonly target_state:
@@ -604,19 +768,14 @@ export class LldbSessionManager {
       return ok({ target_state: "none_observed" });
     }
 
-    const closeOperation = async (): Promise<
-      Result<
-        {
-          readonly target_state:
-            | "terminated"
-            | "detached"
-            | "exited"
-            | "none_observed"
-            | "unknown";
-        },
-        AnalysisError
-      >
-    > => {
+    const previous = session.commandTail;
+    let release: (() => void) | undefined;
+    session.commandTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    try {
+      await waitForLldbCommandTurn(previous, signal);
       let targetState:
         | "terminated"
         | "detached"
@@ -625,15 +784,18 @@ export class LldbSessionManager {
         | "unknown" = "none_observed";
 
       try {
-        const res = await this.#sendSessionRpc(
-          closeResponseSchema,
-          session,
-          "close",
-          {},
-          5000,
-        );
-        if (res?.target_state) {
-          targetState = res.target_state;
+        if (!session.closed) {
+          const res = await this.#sendSessionRpc(
+            closeResponseSchema,
+            session,
+            "close",
+            {},
+            5000,
+            signal,
+          );
+          if (res?.target_state) {
+            targetState = res.target_state;
+          }
         }
         this.#failedCleanups.delete(sessionId);
       } catch {
@@ -642,9 +804,15 @@ export class LldbSessionManager {
       } finally {
         session.closed = true;
         session.state = "closed";
-        await this.#terminateChild(session.child);
         session.rl.close();
-        this.#sessions.delete(sessionId);
+        const stopResult = await this.#sessions.stop(session);
+        if (stopResult.status === "incomplete") {
+          targetState = "unknown";
+          this.#failedCleanups.add(sessionId);
+        } else {
+          session.supervisor.dispose();
+          this.#sessions.remove(session);
+        }
       }
 
       if (targetState === "unknown") {
@@ -658,19 +826,13 @@ export class LldbSessionManager {
       }
 
       return ok({ target_state: targetState });
-    };
-
-    const task = session.queue.then(closeOperation);
-    session.queue = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    return task;
+    } finally {
+      release?.();
+    }
   }
 
   async closeAll(): Promise<void> {
-    const sessionIds = Array.from(this.#sessions.keys());
-    await Promise.allSettled(sessionIds.map((id) => this.close(id)));
+    await this.#sessions.closeAll();
     if (this.#failedCleanups.size > 0) {
       throw new Error(
         `Failed to clean up LLDB sessions: ${Array.from(this.#failedCleanups).join(", ")}`,
@@ -679,14 +841,7 @@ export class LldbSessionManager {
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
-    const failedIds = Array.from(this.#failedCleanups);
-    for (const id of failedIds) {
-      const res = await this.close(id);
-      if (res.ok && res.value.target_state !== "unknown") {
-        this.#failedCleanups.delete(id);
-      }
-    }
-    return ok(null);
+    return this.#sessions.retryCleanupFailures((session) => !session.closed);
   }
 
   async #sendSessionRpc<T>(
@@ -695,29 +850,93 @@ export class LldbSessionManager {
     method: string,
     params: Record<string, unknown>,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<T> {
+    if (signal?.aborted) {
+      throw cancelledBy(method, signal);
+    }
+
     const raw = await new Promise<unknown>((resolve, reject) => {
-      if (session.closed || !session.child.stdin?.writable) {
+      const child = session.launched.process;
+      if (session.closed || !child.stdin?.writable) {
         return reject(new Error("LLDB session is closed."));
       }
+
       const reqId = session.nextId++;
+      let onAbort: (() => void) | undefined;
+
       const timer = setTimeout(
         () => {
           session.pending.delete(reqId);
+          if (onAbort !== undefined && signal !== undefined) {
+            signal.removeEventListener("abort", onAbort);
+          }
           reject(new AnalysisTimeoutError(method, timeoutMs));
         },
         Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
       );
       timer.unref();
 
-      session.pending.set(reqId, { resolve, reject, timer });
+      const rpcResolve = (value: unknown) => {
+        clearTimeout(timer);
+        if (onAbort !== undefined && signal !== undefined) {
+          signal.removeEventListener("abort", onAbort);
+        }
+        resolve(value);
+      };
+
+      const rpcReject = (error: Error) => {
+        clearTimeout(timer);
+        if (onAbort !== undefined && signal !== undefined) {
+          signal.removeEventListener("abort", onAbort);
+        }
+        reject(error);
+      };
+
+      if (signal !== undefined) {
+        onAbort = () => {
+          session.pending.delete(reqId);
+          clearTimeout(timer);
+          try {
+            session.child.kill("SIGINT");
+          } catch {}
+          reject(cancelledBy(method, signal));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      session.pending.set(reqId, {
+        resolve: rpcResolve,
+        reject: rpcReject,
+        timer,
+      });
+
       const payload = JSON.stringify({
         jsonrpc: "2.0",
         id: reqId,
         method,
         params,
       });
-      session.child.stdin.write(payload + "\n");
+
+      try {
+        child.stdin.write(payload + "\n", (err) => {
+          if (err) {
+            session.pending.delete(reqId);
+            clearTimeout(timer);
+            if (onAbort !== undefined && signal !== undefined) {
+              signal.removeEventListener("abort", onAbort);
+            }
+            reject(err);
+          }
+        });
+      } catch (err) {
+        session.pending.delete(reqId);
+        clearTimeout(timer);
+        if (onAbort !== undefined && signal !== undefined) {
+          signal.removeEventListener("abort", onAbort);
+        }
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
 
     const parsed = schema.safeParse(raw);
@@ -726,32 +945,14 @@ export class LldbSessionManager {
         "lldb",
         method,
         `Invalid or malformed RPC reply from LLDB daemon: ${parsed.error.message}`,
+        {
+          diagnostics: {
+            method,
+            raw: typeof raw === "object" ? JSON.stringify(raw) : String(raw),
+          },
+        },
       );
     }
     return parsed.data;
-  }
-
-  async #terminateChild(child: ChildProcess): Promise<void> {
-    if (child.exitCode !== null || child.killed) return;
-    try {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already dead
-          }
-          resolve();
-        }, 1500);
-        timer.unref();
-        child.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-    } catch {
-      // Ignore process termination errors
-    }
   }
 }

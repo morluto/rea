@@ -54,8 +54,14 @@ if not hasattr(fake_lldb, "SBDebugger"):
         def GetOutput(self):
             return self._out
 
+        def GetOutputSize(self):
+            return len(self._out)
+
         def GetError(self):
             return self._err
+
+        def GetErrorSize(self):
+            return len(self._err)
 
     fake_lldb.SBDebugger = MockSBDebugger
     fake_lldb.SBCommandReturnObject = MockSBCommandReturnObject

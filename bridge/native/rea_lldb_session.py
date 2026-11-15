@@ -12,6 +12,7 @@ trapping, and process lifecycle with strict timeout boundaries.
 import sys
 import os
 import json
+import signal
 import threading
 import traceback
 
@@ -38,6 +39,7 @@ class ReaLldbSessionDaemon:
     """Manages one persistent LLDB debugging session over stdio JSON-RPC."""
 
     MAX_OUTPUT_CHARS = 2 * 1024 * 1024
+    MAX_MEMORY_READ_BYTES = 1048576  # Bound native allocations before costly read operations
 
     def __init__(self):
         if "lldb" not in sys.modules or not hasattr(lldb, "SBDebugger"):
@@ -45,9 +47,28 @@ class ReaLldbSessionDaemon:
         lldb.SBDebugger.Initialize()
         self.debugger = lldb.SBDebugger.Create()
         self.debugger.SetAsync(False)
+        # Impose bounds on native allocations before large reads can exhaust memory
+        try:
+            self.debugger.HandleCommand(f"settings set target.max-memory-read-size {self.MAX_MEMORY_READ_BYTES}")
+        except Exception:
+            pass
         self.target = None
         self.process = None
         self.is_attached = False
+
+        # Install SIGINT handler to gracefully interrupt execution without terminating daemon
+        def _handle_sigint(signum, frame):
+            try:
+                if self.process and self.process.IsValid() and self.process.GetState() == lldb.eStateRunning:
+                    self.process.Stop()
+                self.debugger.DispatchInputInterrupt()
+            except Exception:
+                pass
+
+        try:
+            signal.signal(signal.SIGINT, _handle_sigint)
+        except Exception:
+            pass
 
     def _process_state_report(self) -> str:
         """Safe human-readable process state description."""
@@ -103,20 +124,32 @@ class ReaLldbSessionDaemon:
         live_pid, live_target = self._get_live_info()
 
         if not t.is_alive():
+            out_size = res.GetOutputSize() if hasattr(res, "GetOutputSize") else 0
+            err_size = res.GetErrorSize() if hasattr(res, "GetErrorSize") else 0
+            truncated = (out_size > self.MAX_OUTPUT_CHARS or err_size > self.MAX_OUTPUT_CHARS)
+
             out = res.GetOutput() or ""
             err = res.GetError() or ""
+
+            if len(out) > self.MAX_OUTPUT_CHARS:
+                out = out[:self.MAX_OUTPUT_CHARS]
+                truncated = True
+            if len(err) > self.MAX_OUTPUT_CHARS:
+                err = err[:self.MAX_OUTPUT_CHARS]
+                truncated = True
+
             combined = f"{out}\n{err}".strip() if (err and out) else (out or err).strip()
-            truncated = False
             if len(combined) > self.MAX_OUTPUT_CHARS:
                 combined = combined[:self.MAX_OUTPUT_CHARS]
                 truncated = True
+
             state_desc = self._process_state_report()
             return {
                 "command": cmd_str,
                 "output": combined,
                 "process_state": state_desc,
                 "output_truncated": truncated,
-                "completion_status": "complete",
+                "completion_status": "complete" if not truncated else "partial",
                 "pid": live_pid,
                 "target": live_target,
             }
@@ -131,11 +164,31 @@ class ReaLldbSessionDaemon:
         t.join(timeout=0.5)
 
         live_pid, live_target = self._get_live_info()
+
+        # Capture partial output if available
+        partial_out = ""
+        partial_err = ""
+        try:
+            if hasattr(res, "GetOutput"):
+                partial_out = (res.GetOutput() or "")[:self.MAX_OUTPUT_CHARS]
+            if hasattr(res, "GetError"):
+                partial_err = (res.GetError() or "")[:self.MAX_OUTPUT_CHARS]
+        except Exception:
+            pass
+
+        partial = f"{partial_out}\n{partial_err}".strip() if (partial_err and partial_out) else (partial_out or partial_err).strip()
+        timeout_msg = f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}"
+        combined_timeout = f"{partial}\n{timeout_msg}".strip() if partial else timeout_msg
+        truncated = False
+        if len(combined_timeout) > self.MAX_OUTPUT_CHARS:
+            combined_timeout = combined_timeout[:self.MAX_OUTPUT_CHARS]
+            truncated = True
+
         return {
             "command": cmd_str,
-            "output": f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}",
+            "output": combined_timeout,
             "process_state": self._process_state_report(),
-            "output_truncated": False,
+            "output_truncated": truncated,
             "completion_status": "unknown",
             "pid": live_pid,
             "target": live_target,
