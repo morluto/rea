@@ -18,7 +18,7 @@ import {
   readStableArtifact,
   type StableArtifactSnapshot,
   type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {

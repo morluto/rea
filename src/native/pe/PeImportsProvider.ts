@@ -6,7 +6,7 @@ import {
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";

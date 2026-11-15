@@ -14,7 +14,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";

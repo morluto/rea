@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { ok } from "../domain/result.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {

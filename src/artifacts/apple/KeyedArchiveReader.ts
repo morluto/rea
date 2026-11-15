@@ -9,7 +9,7 @@ import {
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import { readStableArtifact } from "../readStableArtifact.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";

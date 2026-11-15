@@ -17,7 +17,7 @@ import {
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   WEB_BUNDLE_WORKER_LIMITS as LIMITS,
   includedWebScriptSchema,

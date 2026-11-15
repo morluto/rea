@@ -14,7 +14,7 @@ import {
 import {
   readStableArtifact,
   assertStableArtifactState,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,

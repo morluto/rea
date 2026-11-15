@@ -27,7 +27,7 @@ import {
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

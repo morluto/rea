@@ -5,14 +5,14 @@ import {
   resolvedRegularFile,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactSelectedPathErrno,
   withArtifactFileHandle,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
+} from "./ArtifactFileOperation.js";
 
 /** Exact physical read completed before descriptor finalization. */
 export interface StableArtifactSnapshot {

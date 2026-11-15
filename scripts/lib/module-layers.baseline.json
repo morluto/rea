@@ -14,8 +14,7 @@
     "dotnet -> application": 2,
     "hopper -> application": 2,
     "il2cpp -> application": 1,
-    "native -> application": 2,
-    "process -> artifacts": 1
+    "native -> application": 2
   },
   "cycles": [
     "application <-> artifacts",
@@ -26,7 +25,6 @@
     "artifacts <-> gpu",
     "artifacts <-> javascript",
     "artifacts <-> native",
-    "artifacts <-> process",
     "catalogIdentity.ts <-> recordedCatalogDigests.ts",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",

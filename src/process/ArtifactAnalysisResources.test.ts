@@ -18,7 +18,7 @@ import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCancelledError,

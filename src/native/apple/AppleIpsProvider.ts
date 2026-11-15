@@ -12,7 +12,7 @@ import {
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../../resources/readStableArtifact.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -21,7 +21,7 @@ import {
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,

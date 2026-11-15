@@ -10,7 +10,7 @@ import { artifactFileCancellationCause } from "../../resources/ArtifactFileOpera
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   AnalysisOutputError,
   cancelledBy,
