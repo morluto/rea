@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -290,4 +291,48 @@ it("attributes optional artifact admission to its selected caller field", () => 
     code: "invalid_request",
     details: { issues: [{ path: ["candidate_paths", 2] }] },
   });
+});
+
+it("reports a WABT tool ended by an inherited file-size limit as a resource constraint", () => {
+  const cause = new OwnedCommandFailure("process", "signaled", {
+    stdout: { text: "", bytes: 0, observedBytes: 0 },
+    stderr: { text: "", bytes: 0, observedBytes: 0 },
+    exitCode: null,
+    signal: "SIGXFSZ",
+  });
+  expect(
+    projectAnalysisError(wabtFailure(cause, "producer", "/module.wasm")),
+  ).toMatchObject({
+    code: "resource_constraint",
+    details: { resource: "file-size" },
+  });
+});
+
+it("reports a WABT tool the host refused to start as unavailable", async () => {
+  const refused = await new Promise<unknown>((resolve) => {
+    spawn("/nonexistent-wabt/wasm-objdump").on("error", resolve);
+  });
+  expect(
+    projectAnalysisError(wabtFailure(refused, "producer", "/module.wasm")),
+  ).toMatchObject({ code: "capability_unavailable" });
+});
+
+it("keeps setup guidance when a version probe's output cannot be collected", () => {
+  const cause = new OwnedCommandFailure(
+    "process",
+    "stdout stream failed",
+    {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: { text: "", bytes: 0, observedBytes: 0 },
+      exitCode: 0,
+      signal: null,
+    },
+    null,
+    { collectionFailure: true },
+  );
+  const projected = projectAnalysisError(
+    wabtFailure(cause, "configuration", "/module.wasm"),
+  );
+  expect(projected).toMatchObject({ code: "capability_unavailable" });
+  expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });

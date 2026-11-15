@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -61,7 +61,8 @@ export class HopperRegexSearch {
 
   /** Abort matching workers before their provider session closes. */
   async close(): Promise<void> {
-    for (const controller of this.#active.keys()) controller.abort();
+    for (const controller of this.#active.keys())
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.all(this.#active.values());
   }
 
@@ -115,9 +116,7 @@ export class HopperRegexSearch {
     if (!parsed.ok) return parsed;
     const rows: readonly (typeof parsed.value)[number][] = parsed.value;
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     await options.progress
       ?.report({
         phase: "hopper_regex",
@@ -127,9 +126,7 @@ export class HopperRegexSearch {
       })
       .catch(() => undefined);
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const matched = await matchRegexValues({
       operation,
       pattern: input.data.pattern,
@@ -141,9 +138,7 @@ export class HopperRegexSearch {
     });
     if (!matched.ok) return matched;
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const selected = new Set(matched.value);
     return ok(rows.filter((_, index) => selected.has(index)));
   }

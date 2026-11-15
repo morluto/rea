@@ -5,6 +5,7 @@ import type {
   ProviderProcessOutputSince,
   ProviderProcessSnapshot,
 } from "../process/ProviderProcess.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 
@@ -17,9 +18,6 @@ export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
  */
 export const GHIDRA_DIAGNOSTIC_EXCERPT_BYTES = 64 * 1024;
 const LAUNCHER_LINE_CHARACTERS = 4096;
-
-/** JVM error class located in all launcher output, beyond the retention budget. */
-export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
 
 /** A rejected caller input owns request output, not the launcher's history. */
 export type GhidraDiagnosticsScope = "session" | "request";
@@ -144,9 +142,12 @@ export const ghidraFailureOutput = (
   launcher_failures: observedLauncherFailures(scoped, token),
   observed_oome: (scoped.markers ?? []).map((marker) => {
     const bytes = Buffer.byteLength(marker.line, "utf8");
+    // The supervisor's runtime owns which memory area the line names.
+    const { area } = runtimeExhaustion("jvm", marker.stream, marker);
     return {
       stream: marker.stream,
       offset: marker.offset,
+      ...(area === undefined ? {} : { area }),
       line: redactCapturedTransportCredential(
         {
           text: marker.line,

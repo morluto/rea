@@ -83,12 +83,21 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "limit")
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    cause.failure.kind === "limit"
+  )
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
-      {},
+      // The producing site states what its maximum counts.
+      {
+        boundary: cause.reason,
+        ...(cause.unit === undefined
+          ? {}
+          : { [`maximum_${cause.unit}`]: cause.failure.limit.maximum }),
+      },
       {
         cause,
         ...fixedAllowanceOptions(

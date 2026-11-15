@@ -30,6 +30,12 @@ import {
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
+import {
+  RUNTIME_EXHAUSTION_TOKENS,
+  runtimeExhaustion,
+  type ManagedRuntime,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -147,6 +153,11 @@ export interface ProviderProcessSnapshot {
   readonly stopRequested?: true;
   /** Present when a provider stream was destroyed before all bytes were observed. */
   readonly outputIncomplete?: true;
+  /**
+   * The latest memory exhaustion report of the supervised runtime, observed
+   * from every drained byte regardless of the retention budget.
+   */
+  readonly runtimeExhaustion?: RuntimeExhaustion;
 }
 
 declare const processOutputCheckpointBrand: unique symbol;
@@ -219,13 +230,27 @@ export interface ProviderProcessSupervisorOptions {
    * stream's latest, where a failing command's last words are.
    */
   readonly diagnosticRetention?: "head" | "tail";
-  /**
-   * Single-line token ending at a non-ASCII-word byte or EOF, located before retention
-   * applies, so its latest occurrence survives an exhausted budget.
-   */
-  readonly outputToken?: string;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
 }
+
+/** One output token located before retention applies, so it survives an exhausted budget. */
+export type ProviderProcessOutputTokenOptions =
+  | {
+      /**
+       * Single-line token ending at a non-ASCII-word byte or EOF; its latest
+       * occurrence is reported as a marker.
+       */
+      readonly outputToken?: string;
+      readonly runtime?: never;
+    }
+  | {
+      /**
+       * The managed runtime this process hosts. Its memory exhaustion report is
+       * the scanned token and is surfaced as `runtimeExhaustion`.
+       */
+      readonly runtime: ManagedRuntime;
+      readonly outputToken?: never;
+    };
 
 /** Optional result of provider-specific cleanup performed before stop. */
 export interface ProviderProcessStopOptions {
@@ -377,7 +402,8 @@ export const spawnOwnedProviderProcess = async (
  * bounded TERM-to-KILL escalation for a directly owned child.
  */
 export class ProviderProcessSupervisor {
-  readonly #options: ProviderProcessSupervisorOptions;
+  readonly #options: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   readonly #stdout = new ProcessOutputCapture();
   readonly #stderr = new ProcessOutputCapture();
   readonly #exit = deferred<ProviderProcessExitObservation>();
@@ -453,7 +479,8 @@ export class ProviderProcessSupervisor {
 
   constructor(
     readonly launch: ProviderProcessLaunch,
-    options: ProviderProcessSupervisorOptions = {},
+    options: ProviderProcessSupervisorOptions &
+      ProviderProcessOutputTokenOptions = {},
   ) {
     this.#options = options;
     const budget = options.maxDiagnosticBytes;
@@ -506,6 +533,7 @@ export class ProviderProcessSupervisor {
         : {}),
       ...(this.#stopRequested ? { stopRequested: true } : {}),
       ...(outputIncomplete ? { outputIncomplete: true } : {}),
+      ...this.#runtimeExhaustionWithin({ stdout: 0, stderr: 0 }),
     };
   }
 
@@ -569,6 +597,7 @@ export class ProviderProcessSupervisor {
           ? { memoryLimitReached: true }
           : {}),
         ...(incomplete ? { outputIncomplete: true } : {}),
+        ...this.#runtimeExhaustionWithin(position),
       },
       complete: !incomplete,
       ...this.#markersWithin(position),
@@ -598,8 +627,36 @@ export class ProviderProcessSupervisor {
     return markers.length === 0 ? {} : { markers };
   }
 
+  /** The runtime's exhaustion report after a position; stderr is preferred. */
+  #runtimeExhaustionWithin(position: {
+    readonly stdout: number;
+    readonly stderr: number;
+  }): Pick<ProviderProcessSnapshot, "runtimeExhaustion"> {
+    const runtime = this.#options.runtime;
+    if (runtime === undefined) return {};
+    const stderr = this.#stderrMarker?.latestWithin(
+      position.stderr,
+      this.#stderrObservedBytes,
+    );
+    if (stderr !== undefined)
+      return {
+        runtimeExhaustion: runtimeExhaustion(runtime, "stderr", stderr),
+      };
+    const stdout = this.#stdoutMarker?.latestWithin(
+      position.stdout,
+      this.#stdoutObservedBytes,
+    );
+    return stdout === undefined
+      ? {}
+      : { runtimeExhaustion: runtimeExhaustion(runtime, "stdout", stdout) };
+  }
+
   #resetMarkers(): void {
-    const marker = this.#options.outputToken;
+    const runtime = this.#options.runtime;
+    const marker =
+      runtime === undefined
+        ? this.#options.outputToken
+        : RUNTIME_EXHAUSTION_TOKENS[runtime];
     this.#stdoutMarker =
       marker === undefined ? undefined : new ProcessOutputTokenScanner(marker);
     this.#stderrMarker =

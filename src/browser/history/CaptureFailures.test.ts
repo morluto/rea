@@ -72,6 +72,15 @@ it.each([
       },
       exitCode,
       signal,
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const projected = analysisErrorProjectionSchema.parse(
       projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
@@ -91,6 +100,15 @@ it.each([
           observed_signal: signal,
         },
         captured_output: { stdout: "", stderr },
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
       },
     });
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.

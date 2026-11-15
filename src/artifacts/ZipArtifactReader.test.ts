@@ -859,6 +859,49 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
   }
 });
 
+it("joins the final member accounting read before closing its source", async () => {
+  const fixture = await admittedZip();
+  const reached = createDeferred<void>();
+  const release = createDeferred<void>();
+  const reader = new ZipArtifactReader(fixture.path, "zip", undefined, fixture);
+  const traversal = reader.entries()[Symbol.asyncIterator]();
+  let next: Promise<IteratorResult<ArtifactEntry>> | undefined;
+  const nativeRead = fixture.positional.read.bind(fixture.positional);
+  const reads = vi.spyOn(fixture.positional, "read");
+  try {
+    expect((await traversal.next()).done).toBe(false);
+    reads.mockImplementation(async (...args) => {
+      if (args[3] === 0) {
+        reached.resolve();
+        await release.promise;
+      }
+      return nativeRead(...args);
+    });
+    next = traversal.next();
+    await awaitAcknowledgement(
+      reached.promise,
+      next,
+      "ZIP member accounting read",
+    );
+    let closed = false;
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release.resolve();
+    await expect(next).rejects.toMatchObject({ reason: "unavailable" });
+    await closing;
+    expect(closed).toBe(true);
+  } finally {
+    release.resolve();
+    await next?.catch(() => undefined);
+    await reader.close();
+    reads.mockRestore();
+    await fixture.handle.close();
+  }
+});
+
 it("joins a late ZIP producer and closes the source despite an enumeration cleanup failure", async () => {
   const directory = await createTestTempDirectory("rea-zip-mixed-cleanup-");
   const path = join(directory, "mixed.zip");

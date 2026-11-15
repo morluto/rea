@@ -1575,6 +1575,18 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
 
+A dictionary that declares a key more than once keeps one value in the JSON
+result, the last one. When `inspect_plist` decodes binary, XML or OpenStep
+source directly, it reads each dictionary's keys before they collapse and adds
+a limitation with the count of affected dictionaries and replaced values and the
+first repeated key names. `inspect_keyed_archive`, Interface Builder analysis
+(per archive path) and the `codesign` entitlements in `inspect_signature` add the
+same limitation. Other plist readers may keep a different value. Opening an
+app bundle refuses an `Info.plist` that may declare `CFBundleExecutable` more
+than once, because which declaration names the program is ambiguous. JSON
+sources and plists decoded through a `plutil` conversion are not checked:
+those parsers keep one value per key before REA sees the result.
+
 Known non-finite reals are reported as
 `{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
 These are canonical numeric labels, not a claim about original source spelling.
