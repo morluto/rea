@@ -16,6 +16,7 @@ import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
   machoCpuSubtypeBase,
+  machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
 import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
@@ -24,6 +25,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
@@ -47,8 +49,8 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   >();
   #closed = false;
   #closePromise: Promise<void> | undefined;
-  /** Limitations of the latest enumeration, reported with its coverage. */
-  #coverageLimitations: readonly string[] = [];
+  /** Coverage of the latest enumeration, reported when its iterator ends. */
+  #coverage: ArtifactReaderTraversal = { status: "complete", limitations: [] };
 
   constructor(
     private readonly path: string,
@@ -75,8 +77,8 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       // Every FAT slice is listed. A disagreement with lipo fails the
       // traversal unless the caller chose to record it.
       options?.onCoverage?.({
-        status: "complete",
-        limitations: [...this.#coverageLimitations],
+        status: this.#coverage.status,
+        limitations: [...this.#coverage.limitations],
       });
     } finally {
       this.#enumerations.delete(enumeration);
@@ -88,7 +90,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   ): AsyncGenerator<ArtifactEntry, void> {
     this.#assertOpen(signal);
     this.#entries.clear();
-    this.#coverageLimitations = [];
+    this.#coverage = { status: "complete", limitations: [] };
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
     this.#assertOpen(signal);
@@ -206,6 +208,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const hiddenSlices =
       structural.status === "parsed" ? (structural.hiddenSlices ?? []) : [];
     const matchingSlices = new Map<LipoArchitecture, MachoSlice>();
+    const unmatchedRowLimitations: string[] = [];
     if (slices !== null) {
       if (
         slices.length !== visibleArchitectures.length ||
@@ -234,6 +237,8 @@ export class MachOSliceArtifactReader implements ArtifactReader {
             disagree(
               `lipo slice metadata disagrees with the Mach-O FAT table: ${reported.name} (cputype=${reported.cpu_type ?? "unknown"}, cpusubtype=${reported.cpu_subtype ?? "unknown"}, offset=${reported.file_offset ?? "unknown"}, size=${reported.size ?? "unknown"}, alignment=${reported.alignment ?? "unknown"})`,
             );
+            // The row has no slice to carry its retained field evidence.
+            unmatchedRowLimitations.push(...reported.limitations);
             continue;
           }
           const [observed] = unmatched.splice(match, 1);
@@ -242,31 +247,48 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       }
     }
     if (disagreements.length > 0 && slices !== null) {
-      this.#coverageLimitations = [
-        `Integrity limitation: lipo slice metadata disagrees with the Mach-O FAT table (${disagreements.join("; ")}). Slices were enumerated from REA's FAT table parse; lipo's records were not used.`,
-      ];
-      const lipoNames = new Map(
+      this.#coverage = {
+        status: "complete",
+        limitations: [
+          `Integrity limitation: lipo slice metadata disagrees with the Mach-O FAT table (${disagreements.join("; ")}). Slices were enumerated from REA's FAT table parse; lipo's ranges were not used.`,
+          ...unmatchedRowLimitations,
+        ],
+      };
+      const matchedRows = new Map(
         Array.from(matchingSlices, ([reported, observed]) => [
           observed,
-          reported.name,
+          reported,
         ]),
       );
+      const names = new Set<string>();
       for (const slice of [...slices, ...hiddenSlices]) {
         this.#assertOpen(signal);
+        const reported = matchedRows.get(slice);
         yield this.#sliceEntry(
-          lipoNames.get(slice) ?? slice.architecture,
+          uniqueSliceName(
+            reported?.name ?? structuralSliceName(slice),
+            slice.slice_offset,
+            names,
+          ),
           slice.slice_offset,
           slice.slice_size,
           fileSize,
-          [],
+          // lipo's ranges are not used, but its retained field evidence for a
+          // matched row still describes this slice.
+          reported?.limitations ?? [],
         );
       }
       return;
     }
+    // Without a FAT parse, lipo's rows are the only slice list; a count
+    // disagreement means a slice may be missing from them.
     if (disagreements.length > 0)
-      this.#coverageLimitations = [
-        `Integrity limitation: lipo's architecture counts disagree with its own records (${disagreements.join("; ")}). No structural FAT parse was available, so slice ranges are based on lipo's records.`,
-      ];
+      this.#coverage = {
+        status: "unknown",
+        limitations: [
+          `Integrity limitation: lipo's architecture counts disagree with its own records (${disagreements.join("; ")}). No structural FAT parse was available, so slice ranges are based on lipo's records and the slice list may be incomplete.`,
+        ],
+      };
     for (const architecture of architectures) {
       this.#assertOpen(signal);
       const structuralSlice = matchingSlices.get(architecture);
@@ -614,6 +636,26 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     return source;
   }
 }
+
+/** The most specific name a FAT slice's own CPU identity supports. */
+const structuralSliceName = (slice: MachoSlice): string =>
+  ((slice.fat_cpu_type ?? slice.cpu_type) === 12
+    ? machoKnownArm32Subtype(slice.fat_cpu_subtype ?? slice.cpu_subtype)
+    : undefined) ?? slice.architecture;
+
+/**
+ * Keep slice paths distinct: two FAT slices can share an identity name, so a
+ * repeated name is qualified by the slice's FAT offset, which is unique.
+ */
+const uniqueSliceName = (
+  name: string,
+  offset: number,
+  used: Set<string>,
+): string => {
+  const unique = used.has(name) ? `${name}@${String(offset)}` : name;
+  used.add(unique);
+  return unique;
+};
 
 /** Compare lipo's independent ranges with structurally parsed slice identity. */
 const readStructuralSlices = async (
