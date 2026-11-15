@@ -68,6 +68,11 @@ class CaptureListingTest(unittest.TestCase):
             self.assertFalse(output.exists())
 
 
+SAME_SESSION_MEMBERS_FROM_PROC = unittest.skipUnless(
+    sys.platform.startswith("linux"), "the supervisor finds same-session members through /proc"
+)
+
+
 @unittest.skipIf(sys.platform == "win32", "desktop build computers use Linux")
 class LongRunTest(unittest.TestCase):
     def setUp(self):
@@ -264,6 +269,7 @@ class LongRunTest(unittest.TestCase):
         finally:
             release.touch()
 
+    @SAME_SESSION_MEMBERS_FROM_PROC
     def test_cancel_after_leader_exit_kills_a_same_session_child_holding_stderr(self):
         release = self.root / "release"
         self.assertEqual(self.begin(["group", str(release)], timeout=30), {"started": True})
@@ -287,6 +293,7 @@ class LongRunTest(unittest.TestCase):
         finally:
             release.touch()
 
+    @SAME_SESSION_MEMBERS_FROM_PROC
     def test_cancel_kills_a_same_session_child_that_closes_stderr(self):
         release = self.root / "release"
         stderr_release = self.root / "release.stderr"
