@@ -75,6 +75,7 @@ export const gpuObjectSchema = z.strictObject({
   raw_flags: z.string().nullable(),
   location: gpuLocationSchema,
   metadata_location: gpuLocationSchema,
+  // domain-vocabulary: how deeply one code object was decoded, including format outcomes.
   inspection: z.enum([
     "inventory",
     "complete",

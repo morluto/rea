@@ -63,12 +63,20 @@ export const markedCodeLines = (raw, names) => {
  * @param {string} raw
  * @param {RegExp} pattern a global pattern
  * @param {readonly string[]} names
+ * @param {(match: RegExpMatchArray) => boolean} [counts] which matches the
+ *   guard counts at all; the rest are neither counted nor exempted
  */
-export const unmarkedMatchCount = (raw, pattern, names) => {
+export const unmarkedMatchCount = (
+  raw,
+  pattern,
+  names,
+  counts = () => true,
+) => {
   const { code, lineComments } = scan(raw);
   const source = { codeLines: code.split("\n"), lineComments };
   let count = 0;
   for (const match of code.matchAll(pattern)) {
+    if (!counts(match)) continue;
     const line = newlines(code.slice(0, match.index));
     if (!exempted(source, line, names)) count += 1;
   }
