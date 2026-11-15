@@ -22,7 +22,7 @@
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
     "artifacts -> javascript": 1,
-    "artifacts -> native": 2,
+    "artifacts -> native": 1,
     "browser -> artifacts": 6,
     "browser -> electron": 5,
     "browser -> javascript": 1,
