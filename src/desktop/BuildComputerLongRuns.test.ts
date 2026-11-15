@@ -322,6 +322,61 @@ it("retains an unsettled finished command until computer teardown clears it", as
   expect(failure.cleanupIncomplete).toBe(false);
 });
 
+it.each(["pending", "transport failure"])(
+  "keeps a polled command receipt when cancellation returns %s",
+  async (cancelOutcome) => {
+    const computer = {
+      exec: async (argv: readonly string[]) => {
+        if (argv[4] === "run-begin") return response({ started: true });
+        if (argv[4] === "run-poll")
+          return response({
+            finished: true,
+            settled: false,
+            exit_code: 0,
+            stdout_bytes: 9,
+            stderr: "observed output",
+            timed_out: true,
+            cancelled: false,
+            error: "inherited stderr remains open",
+          });
+        if (argv[4] === "run-cancel") {
+          if (cancelOutcome === "transport failure")
+            throw new Error("transport lost");
+          return response({ pending: true });
+        }
+        throw new Error("unexpected command");
+      },
+      homeFiles: async () => new Map(),
+      redacted: (text: string) => text,
+    } as ControlledComputer;
+    const owner = new BuildComputerLongRuns(computer);
+    const failure = await owner
+      .run(
+        ["export-desktop-application"],
+        options(new AbortController().signal),
+      )
+      .catch((error: unknown) => error);
+    if (!(failure instanceof ProviderCleanupError))
+      throw new Error("expected retained cleanup");
+    const expected = {
+      completed_command: {
+        exit_code: 0,
+        stdout_bytes: 9,
+        stderr: "observed output",
+        settled: false,
+        timed_out: true,
+        cancelled: false,
+      },
+    };
+    expect(failure.diagnostics).toMatchObject(expected);
+    expect(failure.cleanupPrimary?.diagnostics).toMatchObject(expected);
+    expect(owner.cleanupResources).toHaveLength(1);
+    owner.resolveAfterVerifiedComputerTeardown();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.diagnostics).toMatchObject(expected);
+  },
+);
+
 it("keeps command facts when a later release first sees an unsettled result", async () => {
   const controller = new AbortController();
   let stops = 0;

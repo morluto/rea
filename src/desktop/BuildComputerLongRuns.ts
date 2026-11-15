@@ -72,6 +72,7 @@ export class BuildComputerLongRuns {
     };
     this.#jobs.add(job);
     const deadline = performance.now() + options.timeoutS * 1000;
+    let observedCommand: JsonValue | undefined;
     try {
       const started = answerSchema.parse(
         await runBuildController(
@@ -127,12 +128,14 @@ export class BuildComputerLongRuns {
               ? answer.error
               : "The REA command did not report its outcome.",
           );
-        if (answer.settled === false)
+        if (answer.settled === false) {
+          observedCommand = this.#receipt(job, answer);
           throw new Error(
             typeof answer.error === "string"
               ? answer.error
               : "The REA command did not confirm that its process had exited.",
           );
+        }
         this.#jobs.delete(job);
         if (answer.timed_out === true || typeof answer.error === "string") {
           const failure = new ProviderAdapterError(
@@ -172,21 +175,24 @@ export class BuildComputerLongRuns {
             });
       if (signal.aborted && cause instanceof AnalysisError && cause !== primary)
         primary.retainSecondaryFailure(cause);
+      if (observedCommand !== undefined)
+        primary.retainDiagnostics({ completed_command: observedCommand });
       if (!this.#jobs.has(job)) throw primary;
       const released = await this.#cancel(job);
+      const completed = released.completed ?? observedCommand;
       if (signal.aborted && !(primary instanceof AnalysisCancelledError)) {
         const cancelled = cancelledBy(OPERATION, signal);
         cancelled.retainSecondaryFailure(primary);
         primary = cancelled;
       }
       if (released.verified) {
-        if (released.completed !== undefined)
-          primary.retainDiagnostics({ completed_command: released.completed });
+        if (completed !== undefined)
+          primary.retainDiagnostics({ completed_command: completed });
         throw primary;
       }
       const failure = this.#cleanupFailure(released.reason, primary, job);
-      if (released.completed !== undefined)
-        failure.retainDiagnostics({ completed_command: released.completed });
+      if (completed !== undefined)
+        failure.retainDiagnostics({ completed_command: completed });
       throw failure;
     }
   }
@@ -239,7 +245,9 @@ export class BuildComputerLongRuns {
       if (answer.finished === true && answer.settled === false) {
         const completed = this.#receipt(job, answer);
         for (const reference of job.failures)
-          reference.deref()?.retainDiagnostics({ completed_command: completed });
+          reference
+            .deref()
+            ?.retainDiagnostics({ completed_command: completed });
         return {
           verified: false,
           reason:
@@ -295,6 +303,7 @@ export class BuildComputerLongRuns {
       ...(answer.cancelled === undefined
         ? {}
         : { cancelled: answer.cancelled }),
+      ...(answer.settled === undefined ? {} : { settled: answer.settled }),
     };
   }
 
