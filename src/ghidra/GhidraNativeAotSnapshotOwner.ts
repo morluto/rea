@@ -6,6 +6,7 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisArtifactChangedError,
+  type AnalysisCancelledError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -358,7 +359,7 @@ export class GhidraNativeAotSnapshotOwner {
     reason: unknown,
     observations: JsonValue,
     partialObservation?: AnalysisPartialObservation,
-  ): AnalysisError {
+  ): AnalysisCancelledError {
     return cancelledBy(operation, carriedReason(reason), {
       diagnostics: { measured_observation: observations },
       partialObservation,
