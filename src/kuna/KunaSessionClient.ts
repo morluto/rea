@@ -1,5 +1,5 @@
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   snapshotRegexConfiguration,
   type RegexConfigurationSnapshot,
@@ -1765,9 +1765,13 @@ export class KunaSessionClient implements AnalysisClient {
       operation,
       signal,
     );
+    // A deadline refusal is the request's own setting failure with its own
+    // recovery, not a missing fact the dossier can report as unavailable.
     if (
       !relationships.ok &&
-      (relationships.error.cleanupIncomplete || signal?.aborted === true)
+      (relationships.error.cleanupIncomplete ||
+        relationships.error instanceof ConfigurationError ||
+        signal?.aborted === true)
     )
       return relationships;
     const callAvailability = relationships.ok
