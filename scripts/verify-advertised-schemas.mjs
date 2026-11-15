@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,12 @@ import {
   distinctAdvertisedSchemas,
   listAdvertisedCatalogs,
 } from "./lib/advertised-catalog.mjs";
+import {
+  describeSummaryChanges,
+  summarizeAdvertisedCatalogs,
+} from "./lib/advertised-catalog-summary.mjs";
+import { formatGeneratedFile } from "./lib/format-generated-file.mjs";
+import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
 // Compile every regular expression and schema the packaged server advertises,
 // in every schema profile, with the engines and validators clients and
@@ -19,6 +26,10 @@ import {
 // candidate, instead of this checkout's build.
 // `--complete` adds the Python `jsonschema` meta-validation, which takes
 // seconds per profile.
+//
+// The run also compares the listings with the committed summary.json, so a
+// change to many tools' advertised schemas is visible in review.
+// `--update-summary` rewrites it.
 
 const directory = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -30,7 +41,8 @@ let packageRoot;
 for (const option of process.argv.slice(2))
   if (option.startsWith("--package-root="))
     packageRoot = resolve(option.slice("--package-root=".length));
-  else if (option === "--complete") options.add(option);
+  else if (option === "--complete" || option === "--update-summary")
+    options.add(option);
   else throw new Error(`Unknown advertised schema check option: ${option}`);
 const ENGINE_TIMEOUT_MS = 120_000;
 const SHOWN_SITES = 3;
@@ -197,6 +209,45 @@ const results = (
 ).flat();
 
 const problems = [];
+
+// Absolute local paths advertise the host's pattern, so the recorded summary
+// is the POSIX advertisement; Windows hosts cannot reproduce it.
+const summaryPath = join(directory, "summary.json");
+if (process.platform === "win32")
+  console.log("Advertised catalog summary: not compared on Windows hosts.");
+else {
+  const summary = summarizeAdvertisedCatalogs(
+    catalogs,
+    advertisedSchemaPatterns,
+  );
+  let recorded;
+  try {
+    recorded = JSON.parse(await readFile(summaryPath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const changes = describeSummaryChanges(recorded, summary);
+  const update = options.has("--update-summary");
+  if (changes.length > 0)
+    console.log(
+      `Advertised catalog summary ${update ? "updated" : "differs"}:\n${changes.map((line) => `  ${line}`).join("\n")}`,
+    );
+  try {
+    await ensureGeneratedFile({
+      path: summaryPath,
+      source: await formatGeneratedFile(
+        summaryPath,
+        `${JSON.stringify(summary, null, 2)}\n`,
+      ),
+      check: !update,
+      generateCommand: "npm run verify:advertised-schemas -- --update-summary",
+    });
+  } catch (error) {
+    problems.push(
+      `${error.message} Review the changes above; a PR that changes advertised schemas commits the summary with them.`,
+    );
+  }
+}
 console.log(
   `Listed ${String(catalogs.length)} packaged catalogs in ${String(listed)} ms: ${String(advertised.length)} distinct schemas, ${String(patterns.length)} distinct patterns.`,
 );
