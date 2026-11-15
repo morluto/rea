@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../../../src/cli.js";
 import {
   describeContractCommand,
+  describeOperationChoices,
   describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
@@ -296,6 +297,7 @@ const MIGRATED_COMMANDS = [
   "function",
   "instructions",
   "decompile",
+  "search",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -1302,6 +1304,60 @@ describe("Positional selectors with a named option", () => {
       }
     },
   );
+
+  it("refuses an operation choice whose contract projects other options", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z.object({ text: z.string(), extra: z.string() }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      { name: "probe", inputSchema: z.object({ text: z.string() }) },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
+  });
+
+  it("refuses an operation choice whose contract projects other option rules", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z
+              .object({ text: z.string(), limit: z.number().optional() })
+              .meta({ dependentRequired: { limit: ["text"] } }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          text: z.string(),
+          limit: z.number().optional(),
+        }),
+      },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
+  });
 
   it("refuses a selector whose contract admits an empty value", () => {
     expect(() =>
