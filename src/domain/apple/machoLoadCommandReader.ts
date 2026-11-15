@@ -1,35 +1,35 @@
-import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { LC } from "./machoLoadCommandCodes.js";
 import {
   malformedInput,
   ParseFailureError,
   unsupportedInput,
-} from "../../domain/parseFailure.js";
+} from "../parseFailure.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
-} from "../../domain/apple/machoDylibCommand.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+} from "./machoDylibCommand.js";
+import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
   readMachoLinkeditDataCommand,
   type MachoCommandStringFailure,
-} from "../../domain/apple/machoLoadCommands.js";
+} from "./machoLoadCommands.js";
 import {
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
-} from "../../domain/apple/jvmClassFile.js";
+} from "./jvmClassFile.js";
 import type {
   MachoDependency,
   MachoImageFacts,
   MachoSlice,
-} from "../../domain/apple/dylibResolution.js";
-import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
+} from "./dylibResolution.js";
+import { machoArchitectureName } from "./machoCpuIdentity.js";
 import {
   MACHO_VERSION_MIN_PLATFORMS,
   legacyMachoPlatform,
-} from "../../domain/apple/machoPlatform.js";
+} from "./machoPlatform.js";
 import {
   classifyFatContainerIdentity,
   fatSliceOverlapReason,
@@ -44,8 +44,8 @@ import {
   type FatContainerHeader,
   type FatSliceDeclaration,
   type FatSliceRangeIssue,
-} from "../../domain/apple/machoContainer.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+} from "./machoContainer.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
