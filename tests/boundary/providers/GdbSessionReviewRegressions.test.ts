@@ -1159,6 +1159,14 @@ process.stdin.on("data", (chunk) => {
         },
       });
       expect(exited.error.partialObservation).toMatchObject({
+        subject: {
+          identity: {
+            kind: "session",
+            session_kind: "gdb",
+            id: started.value.session_id,
+            target: { kind: "unknown", reason: "not-observed" },
+          },
+        },
         parameters: {
           command: "second command",
           session_id: started.value.session_id,
