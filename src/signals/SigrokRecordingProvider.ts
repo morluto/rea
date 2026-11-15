@@ -43,6 +43,10 @@ import {
   artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
+import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
@@ -111,7 +115,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       SIGROK_PROVIDER_IDENTITY.id,
       OPERATION,
       readArtifact,
@@ -490,6 +494,14 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       operation,
       "producer_limits",
     );
+    // A post-run identity read reports what the resources own about it.
+    if (phase === "integrity")
+      return artifactResourceDialect(this.#resources, {
+        kind: "integrity",
+        operation,
+        path,
+        capturedOutput: observedOutput,
+      });
     return {
       providerId: SIGROK_PROVIDER_IDENTITY.id,
       operation,
@@ -533,13 +545,6 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             operation,
             cause,
             workspacePath,
-          );
-        if (phase === "integrity")
-          return this.#resources.integrityFailure(
-            cause,
-            path,
-            observedOutput,
-            operation,
           );
         if (phase === "configuration")
           return new AnalysisCapabilityUnavailableError(
