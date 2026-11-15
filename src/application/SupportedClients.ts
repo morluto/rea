@@ -1,4 +1,3 @@
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,

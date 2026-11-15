@@ -1,4 +1,3 @@
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "./RegularFileRead.js";
