@@ -785,14 +785,19 @@ summary. Representative Git-diff cases live in
 rejecting failed, cancelled, or unexpectedly skipped work. It rejects missing or
 unknown tiers and requires every canonical scope to be explicitly `true` or
 `false`; incomplete classification cannot silently omit verification lanes.
-The aggregate remains cancellable so superseded runs release their slots.
+The aggregate remains cancellable so superseded runs release their slots,
+except in a merge group, where it always runs so a cancelled group fails.
 Branch protection
 should require this aggregate, `Static checks`, `Portable tests`, and
 `Conventional PR title`. Title validation runs separately on PR opening,
 reopening, commits, and edits; correcting a title refreshes only this lightweight
 check. It reads title text through an environment variable, executes no PR code,
-and has no token permissions. Its separate concurrency group cannot cancel
-test runs. Fast PR runs cancel superseded feedback for the same PR. Main push
+and its token can only read repository contents. In a merge group it validates
+every squash commit subject between the group base and head instead. Its separate
+concurrency group cannot cancel test runs. Fast PR runs cancel superseded feedback
+for the same PR. [Merge-queue](development/testing.md#merge-queue) runs use the
+group's exact head SHA as their concurrency group and are never cancelled by newer
+pushes. Main push
 runs keep one active run and the latest pending run for that branch.
 Scheduled/manual qualification has a separate concurrency group: active work
 finishes and only the latest pending run is retained. Release qualification uses
