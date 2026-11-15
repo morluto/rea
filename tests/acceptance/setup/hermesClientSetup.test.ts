@@ -1,19 +1,18 @@
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
+  realpath,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { userInfo } from "node:os";
 import { parse } from "yaml";
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 for (const [version, keyStyle] of [
   ["1.1", "quoted"],
@@ -673,7 +672,9 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           registrations: expect.arrayContaining([
             expect.objectContaining({
               client: "hermes",
-              state: "invalid",
+              state: "unknown",
+              command: [],
+              command_identity: "unknown",
               remediation: expect.stringContaining("Hermes profile"),
             }),
           ]),
@@ -696,11 +697,17 @@ cliTest.skipIf(process.platform === "win32")(
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-hermes-named-caller-");
     const account = userInfo();
-    const profile = await mkdtemp(join(account.homedir, ".rea-hermes-named-"));
-    onTestFinished(() => removeTestWorkspace(profile));
-    const override = `~${account.username}//${relative(account.homedir, profile)}`;
-    const config = join(profile, "config.yaml");
-    const skill = join(profile, "skills/reverse-engineer-anything/SKILL.md");
+    const temporary = await createTestTempDirectory(
+      "rea-hermes-named-profile-",
+    );
+    const suffix = relative(await realpath(account.homedir), temporary);
+    // Exercise the real named-account lookup without requiring a writable
+    // account home. Resolve parent traversal from its physical directory while
+    // keeping the named home's expanded spelling, including parent segments.
+    const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
+    const override = `~${account.username}//${suffix}`;
+    const config = `${profile}/config.yaml`;
+    const skill = `${profile}/skills/reverse-engineer-anything/SKILL.md`;
     const original =
       "# owned fixture\nmodel: custom\nmcp_servers:\n  other:\n    command: other-server\n";
     await writeFile(config, original);
@@ -727,7 +734,7 @@ cliTest.skipIf(process.platform === "win32")(
       plannedActions: expect.arrayContaining([
         expect.objectContaining({ target: config }),
         expect.objectContaining({
-          target: join(profile, "skills/reverse-engineer-anything"),
+          target: `${profile}/skills/reverse-engineer-anything`,
         }),
       ]),
     });
@@ -797,11 +804,20 @@ cliTest(
         registrations: expect.arrayContaining([
           expect.objectContaining({
             client: "hermes",
-            state: "invalid",
+            state: "unknown",
+            command: [],
+            command_identity: "unknown",
             remediation: expect.stringContaining("absolute HERMES_HOME"),
           }),
         ]),
       },
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "registration:hermes",
+          ok: false,
+          classification: "unknown",
+        }),
+      ]),
     });
     await expect(access(join(home, override))).rejects.toMatchObject({
       code: "ENOENT",
