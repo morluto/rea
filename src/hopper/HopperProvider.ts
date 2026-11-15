@@ -19,6 +19,7 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
@@ -87,6 +88,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform = process.platform,
+    /**
+     * Linux launcher authentication from Hopper setup, supplied by
+     * composition. Without it a Linux launch is refused before Hopper runs.
+     */
+    private readonly linuxLauncherVerification?: LinuxHopperLauncherVerification,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
     // Bind lookup once; retain config's selected spelling for diagnostics.
@@ -300,39 +306,48 @@ export class HopperProvider implements AnalysisProviderCandidate {
       };
     const executionProvider = profile?.provider ?? HOPPER_PROVIDER_IDENTITY;
     const client = new HopperClient({
-      launcher: new HopperApplicationLauncher({
-        environment: this.environment,
-        launcherPath: this.#launcherPath,
-        targetPath: target.path,
-        targetKind: target.kind,
-        ...(target.kind === "executable"
-          ? { targetSha256: target.sha256 }
-          : {}),
-        ...(preparedImage === undefined
+      launcher: new HopperApplicationLauncher(
+        {
+          environment: this.environment,
+          launcherPath: this.#launcherPath,
+          targetPath: target.path,
+          targetKind: target.kind,
+          ...(target.kind === "executable"
+            ? { targetSha256: target.sha256 }
+            : {}),
+          ...(preparedImage === undefined
+            ? {}
+            : {
+                preparedImage: {
+                  image: preparedImage,
+                  sourceSha256: target.sha256,
+                },
+              }),
+          loaderArgs:
+            this.config.hopperLoaderArgs.length > 0
+              ? this.config.hopperLoaderArgs
+              : derivedLoaderArgs.value,
+          bridgeScriptPath: fileURLToPath(
+            new URL("../../bridge/hopper_bridge.py", import.meta.url),
+          ),
+          bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+          ...(this.platform === "linux"
+            ? {
+                launchMode: "verified_linux_demo" as const,
+                demoHelperPath: fileURLToPath(
+                  new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
+                ),
+              }
+            : { launchMode: "native" as const }),
+        },
+        this.linuxLauncherVerification === undefined
           ? {}
           : {
-              preparedImage: {
-                image: preparedImage,
-                sourceSha256: target.sha256,
-              },
-            }),
-        loaderArgs:
-          this.config.hopperLoaderArgs.length > 0
-            ? this.config.hopperLoaderArgs
-            : derivedLoaderArgs.value,
-        bridgeScriptPath: fileURLToPath(
-          new URL("../../bridge/hopper_bridge.py", import.meta.url),
-        ),
-        bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
-        ...(this.platform === "linux"
-          ? {
-              launchMode: "verified_linux_demo" as const,
-              demoHelperPath: fileURLToPath(
-                new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
-              ),
-            }
-          : { launchMode: "native" as const }),
-      }),
+              verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
+              retryPublisherCleanup:
+                this.linuxLauncherVerification.retryCleanup,
+            },
+      ),
       ...(context === undefined ? {} : { runId: context.runId }),
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
       readStartupTimeoutSource: () => this.config.hopperStartupTimeoutSource,
