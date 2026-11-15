@@ -6,8 +6,8 @@ import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -217,11 +217,7 @@ export const compareStaticAndObservedEndpointsEvidence = async (
     if (index % 256 === 0) {
       await setImmediate();
       if (options.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(OPERATION, options.signal));
     }
     const added = accumulator.add(record);
     if (!added.ok) return added;
@@ -237,8 +233,6 @@ export const compareStaticAndObservedEndpointsEvidence = async (
   if (!compared.ok) return compared;
   await setImmediate();
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   return createComparison(sources, compared.value, accumulator);
 };

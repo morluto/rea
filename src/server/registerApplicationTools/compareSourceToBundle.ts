@@ -40,7 +40,6 @@ export const registerCompareSourceToBundleTool = (
             () =>
               executeSourceToBundleComparison(
                 input,
-                contract.inputSchema,
                 options.evidenceById,
                 options.artifactResources,
                 { signal: context.mcpReq.signal },

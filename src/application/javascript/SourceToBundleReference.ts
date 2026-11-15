@@ -1,13 +1,13 @@
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { setImmediate } from "node:timers/promises";
 import type { z } from "zod";
-import type { compareSourceToBundleCliInputSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
+import type { compareSourceToBundleRequestSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
 import {
   historicalSourceGraphSchema,
   type HistoricalSourceGraph,
 } from "../../domain/referenceSourceGraph.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, isAborted } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -25,17 +25,14 @@ export type ResolvedSourceToBundleReference = {
 
 /** Resolve one caller-selected historical graph using the shared bounded regular-file reader. No file cache. */
 export const resolveSourceToBundleReference = async (
-  reference: z.output<typeof compareSourceToBundleCliInputSchema>["reference"],
+  reference: z.output<typeof compareSourceToBundleRequestSchema>["reference"],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  /** The file path as the caller spelled it, when an adapter resolved it. */
+  requestedPath?: string,
 ): Promise<Result<ResolvedSourceToBundleReference, AnalysisError>> => {
-  const cancelled = () => signal?.aborted === true;
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   if (!("kind" in reference)) return ok({ reference });
   const read = await readJsonFileWithSource(
     reference.path,
@@ -45,12 +42,8 @@ export const resolveSourceToBundleReference = async (
   );
   if (!read.ok) return read;
   await setImmediate();
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   const headroom = requireAuthenticationHeadroom(read.value.data, {
     operation: "compare_source_to_bundle",
     path: read.value.path,
@@ -61,12 +54,8 @@ export const resolveSourceToBundleReference = async (
   const parsed = historicalSourceGraphSchema.safeParse(read.value.data);
   // Dispatch aborts queued while synchronous validation and commitment hashing ran.
   await setImmediate();
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(
@@ -84,7 +73,7 @@ export const resolveSourceToBundleReference = async (
     reference_source: {
       kind: "file",
       path: read.value.path,
-      requested_path: reference.path,
+      requested_path: requestedPath ?? reference.path,
     },
   });
 };

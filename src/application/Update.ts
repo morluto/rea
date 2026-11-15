@@ -2,7 +2,11 @@ import { gt, valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { Result } from "../domain/result.js";
-import type { IntegrationMaintenance } from "./UpdateMaintenance.js";
+import {
+  unresolvedMaintenanceClients,
+  unresolvedMaintenanceRemediation,
+  type IntegrationMaintenance,
+} from "./UpdateMaintenance.js";
 
 /** Global npm installation that owns the running package and its entry point. */
 export interface NpmInstallation {
@@ -236,6 +240,11 @@ const runUpdateWorkflow = async (
       remediation: `${installation.manager} completed, but REA could not verify ${targetVersion} in ${installation.packageRoot}: ${verified.ok ? `the executable reported ${verified.value}` : verified.error}. The installation may have changed; repair it before retrying.`,
     };
   const maintenance = await host.planMaintenance(installation);
+  const unresolved = unresolvedMaintenanceClients(maintenance);
+  const unresolvedNotice =
+    maintenance.status === "unavailable" || unresolved.length === 0
+      ? ""
+      : ` ${unresolvedMaintenanceRemediation(unresolved)}`;
   return {
     status: "updated",
     previousVersion: currentVersion,
@@ -244,11 +253,12 @@ const runUpdateWorkflow = async (
     installMethod: installation.manager,
     command: updateInstallCommand(installation, targetVersion),
     maintenance,
-    remediation:
+    remediation: `${
       maintenance.status === "planned"
         ? "REA is updated. Run the maintenance command to review and approve changes to existing REA integrations, then restart affected agents."
         : maintenance.status === "unavailable"
           ? "REA is updated. Integration maintenance could not be planned; inspect the maintenance diagnostic before changing configuration."
-          : "REA is updated. Restart agents running this installation to load the new version.",
+          : "REA is updated. Restart agents running this installation to load the new version."
+    }${unresolvedNotice}`,
   };
 };

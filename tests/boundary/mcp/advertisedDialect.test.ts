@@ -10,10 +10,7 @@ import {
   portablePatternViolations,
   type AdvertisedToolDefinition,
 } from "../../../src/contracts/advertisedDialect.js";
-import {
-  ADVERTISED_INPUT_DIALECT_BASELINE,
-  ADVERTISED_OUTPUT_DIALECT_BASELINE,
-} from "../../../src/contracts/advertisedDialectBaseline.js";
+import { ADVERTISED_INPUT_DIALECT_BASELINE } from "../../../src/contracts/advertisedDialectBaseline.js";
 import { mcpInputSchemaProfileSchema } from "../../../src/config/mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { mcpToolCatalogProfileSchema } from "../../../src/config/mcpToolCatalogProfile.js";
@@ -70,6 +67,67 @@ describe("portable regex grammar", () => {
   });
 });
 
+describe("nullable values", () => {
+  const check = (properties: Record<string, unknown>) =>
+    advertisedInputDialectViolations({
+      name: "probe",
+      inputSchema: { type: "object", properties },
+    }).map(({ path, rule, detail }) => [path, rule, detail]);
+
+  it("accepts anyOf one typed branch and null below the root", () => {
+    expect(
+      check({
+        limit: {
+          description: "Entries; null returns every remaining entry.",
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+        },
+        names: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "null" },
+          ],
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a type list",
+      { type: ["integer", "null"] },
+      ["$.properties.value", "type", "type-list"],
+    ],
+    [
+      "a bare null type",
+      { type: "null" },
+      ["$.properties.value", "type", "type:null"],
+    ],
+    [
+      "an untyped non-null branch",
+      { anyOf: [{ minimum: 1 }, { type: "null" }] },
+      ["$.properties.value", "type", "untyped"],
+    ],
+  ])("refuses %s", (_name, value, violation) => {
+    expect(check({ value })).toContainEqual(violation);
+  });
+
+  it("refuses a nullable root", () => {
+    expect(
+      advertisedInputDialectViolations({
+        name: "probe",
+        inputSchema: {
+          anyOf: [{ type: "object", properties: {} }, { type: "null" }],
+        },
+      }).map(({ rule, detail }) => [rule, detail]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["root-shape", undefined],
+        ["any-of", "root"],
+      ]),
+    );
+  });
+});
+
 const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
@@ -91,6 +149,35 @@ const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   return (await client.listTools()).tools;
 };
 
+it("presents transport discovery through the selected input profile", async () => {
+  const discovery = async (profile: "compact" | "full") =>
+    (
+      await listTools({
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+      })
+    ).find(({ name }) => name === "discover_tools")?.inputSchema;
+  const full = await discovery("full");
+  // The canonical page defaults remain declared in the full profile only.
+  expect(full?.properties).toMatchObject({
+    offset: { default: 0 },
+    limit: { default: 3 },
+  });
+  const compact = await discovery("compact");
+  expect(compact?.properties).toEqual({
+    query: { type: "string" },
+    names: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      minItems: 1,
+      maxItems: 20,
+    },
+    offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+    limit: { type: "integer", minimum: 1, maximum: 20 },
+  });
+});
+
 const distinct = (
   into: Map<string, AdvertisedToolDefinition>,
   definition: AdvertisedToolDefinition,
@@ -98,7 +185,7 @@ const distinct = (
 
 it("advertises every profile within the portable dialect or its recorded baseline", async () => {
   const inputs = new Map<string, Map<string, AdvertisedToolDefinition>>();
-  const outputs = new Map<string, Map<string, AdvertisedToolDefinition>>();
+  const outputViolations: string[] = [];
   const uncompilable: string[] = [];
   for (const input of mcpInputSchemaProfileSchema.options)
     for (const output of mcpOutputSchemaProfileSchema.options)
@@ -120,19 +207,18 @@ it("advertises every profile within the portable dialect or its recorded baselin
         ).toBeGreaterThan(0);
         for (const tool of tools) {
           if (!inputs.has(input)) inputs.set(input, new Map());
-          if (!outputs.has(output)) outputs.set(output, new Map());
           distinct(inputs.get(input)!, {
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
           });
-          distinct(outputs.get(output)!, {
-            name: tool.name,
-            inputSchema: {},
-            outputSchema: tool.outputSchema,
-          });
+          // SDK clients compile every listed output schema.
+          for (const violation of advertisedOutputPatternViolations(tool))
+            outputViolations.push(
+              `${combination} ${tool.name} ${violation.path} ${violation.detail ?? ""}`,
+            );
           // The grammar was checked against seven engines offline; this keeps
-          // V8's own modes, including baselined patterns, checked in CI.
+          // V8's own modes checked in CI.
           for (const schema of [tool.inputSchema, tool.outputSchema])
             for (const { path, pattern } of advertisedSchemaPatterns(schema))
               for (const flags of ["", "u", "v"])
@@ -146,30 +232,21 @@ it("advertises every profile within the portable dialect or its recorded baselin
         }
       }
   expect(uncompilable).toEqual([]);
+  expect(outputViolations).toEqual([]);
 
-  const observed = {
-    input: Object.fromEntries(
-      [...inputs].map(([profile, tools]) => [
-        profile,
-        countAdvertisedDialectViolations(
-          [...tools.values()].flatMap(advertisedInputDialectViolations),
-        ),
-      ]),
-    ),
-    output: Object.fromEntries(
-      [...outputs].map(([profile, tools]) => [
-        profile,
-        countAdvertisedDialectViolations(
-          [...tools.values()].flatMap(advertisedOutputPatternViolations),
-        ),
-      ]),
-    ),
-  };
+  const observed = Object.fromEntries(
+    [...inputs].map(([profile, tools]) => [
+      profile,
+      countAdvertisedDialectViolations(
+        [...tools.values()].flatMap(advertisedInputDialectViolations),
+      ),
+    ]),
+  );
   // New constructs fail first with a named key; a count that dropped below
   // the baseline must be recorded so it cannot grow back.
-  expect({
-    input: Object.fromEntries(
-      Object.entries(observed.input).map(([profile, counts]) => [
+  expect(
+    Object.fromEntries(
+      Object.entries(observed).map(([profile, counts]) => [
         profile,
         advertisedDialectRegressions(
           counts,
@@ -179,28 +256,6 @@ it("advertises every profile within the portable dialect or its recorded baselin
         ),
       ]),
     ),
-    output: Object.fromEntries(
-      Object.entries(observed.output).map(([profile, counts]) => [
-        profile,
-        advertisedDialectRegressions(
-          counts,
-          ADVERTISED_OUTPUT_DIALECT_BASELINE[
-            profile as keyof typeof ADVERTISED_OUTPUT_DIALECT_BASELINE
-          ],
-        ),
-      ]),
-    ),
-  }).toEqual({
-    input: { compact: [], full: [] },
-    output: { full: [], compact: [], off: [] },
-  });
-  // Absolute local paths are advertised with the host's pattern
-  // (`localPath.ts`): POSIX hosts advertise `^\/`, which the grammar counts,
-  // and Windows hosts a drive-or-root pattern, which it does not. Exact counts
-  // are recorded on POSIX; Windows still enforces them as upper bounds above.
-  if (process.platform !== "win32")
-    expect(observed).toEqual({
-      input: ADVERTISED_INPUT_DIALECT_BASELINE,
-      output: ADVERTISED_OUTPUT_DIALECT_BASELINE,
-    });
+  ).toEqual({ compact: [], full: [] });
+  expect(observed).toEqual(ADVERTISED_INPUT_DIALECT_BASELINE);
 });

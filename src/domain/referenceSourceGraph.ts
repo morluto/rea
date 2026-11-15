@@ -135,9 +135,7 @@ const parseFailureSchema = z.strictObject({
 const exclusionSchema = z.discriminatedUnion("reason", [
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum([
       "configured-secret",
       "project-ignored",
@@ -148,9 +146,7 @@ const exclusionSchema = z.discriminatedUnion("reason", [
   }),
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum(["symlink-escape", "unreadable"]),
   }),
 ]);
@@ -366,7 +362,7 @@ const checkSymlinks = (
   );
   const excludedKinds = new Map<
     string,
-    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+    Set<"file" | "directory" | "symlink" | "other" | "unknown">
   >();
   for (const { path, entry_kind } of graph.exclusions) {
     const kinds = excludedKinds.get(path) ?? new Set();

@@ -482,7 +482,7 @@ failed request's physical, cancellation and cleanup facts.
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling. It projects
-  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
   which owns this precedence for owned work: a recorded failure stays primary,
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed
@@ -619,8 +619,11 @@ and rendered for the CLI framework by `registerContractCommand` in
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
-rules refuse at argv parsing or at the service's contract parse. Field schemas
-and decimal argv tokens are derived, and
+rules refuse at argv parsing or at the service's contract parse. A delivery
+`view` is JSON text decoded when the command runs; the contract input then
+admits the view with its `detail` before any target is opened, including a
+`detail`-discriminated union input. Field schemas and decimal argv tokens are
+derived, and
 `tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
 command admits what its contract admits.
 

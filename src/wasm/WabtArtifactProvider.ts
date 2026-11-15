@@ -1,4 +1,5 @@
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { randomUUID, createHash } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -28,12 +29,12 @@ import type {
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  cancelledBy,
-  isAborted,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -119,7 +120,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     input: InspectWasmArtifactInput,
     options?: WasmArtifactExecutionOptions,
   ): Promise<Result<WasmArtifactExecution, AnalysisError>> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     try {
       return await this.#resources.run(() =>
         this.#inspect(input, environment, options),

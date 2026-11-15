@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   lstat as fsLstat,
   mkdir,
@@ -1040,6 +1041,65 @@ it("keeps a supplied registration scope responsible for diagnostics and cleanup 
     expect(held.closeAttempts[0]!.fd).toBe(-1);
   } finally {
     held.release();
+    await resources.close();
+  }
+});
+
+it("keeps a supplied maintenance scope responsible for a refresh-check read whose close fails", async () => {
+  const home = await createTestTempDirectory("rea-maintenance-refusal-close-");
+  const config = join(home, ".cursor/mcp.json");
+  await mkdir(dirname(config), { recursive: true });
+  const environment = { HOME: home };
+  const [command, ...args] = currentClientRegistrationCommand({
+    entrypointPath: "/current/rea",
+    environment,
+  });
+  await writeFile(
+    config,
+    JSON.stringify({ mcpServers: { rea: { command, args } } }),
+  );
+  // The registration inspection reads the file first; fail only the close of
+  // the refresh check's later read of the same file.
+  const closeAttempts: FileHandle[] = [];
+  let opens = 0;
+  let released = false;
+  openMock.mockImplementation(async (...openArgs) => {
+    const handle = await actualFs.open(...openArgs);
+    if (String(openArgs[0]) !== config) return handle;
+    opens += 1;
+    if (opens === 1) return handle;
+    const nativeClose = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      closeAttempts.push(handle);
+      if (!released) throw new Error("held refresh-check descriptor");
+      await nativeClose();
+    });
+    return handle;
+  });
+  const resources = new ArtifactResourceScope();
+  const execute = vi.fn(async () =>
+    ok('{"status":"planned","plannedActions":[]}'),
+  );
+  try {
+    const maintenance = await planIntegrationMaintenance(
+      home,
+      "/current/rea",
+      environment,
+      execute,
+      { resources },
+    );
+    expect(maintenance.status).toBe("unavailable");
+    expect(closeAttempts.length).toBeGreaterThan(0);
+    // The scope owns the failed close, so its close retries it.
+    expect(resources.hasPending).toBe(true);
+    await expect(resources.close()).rejects.toThrow();
+    released = true;
+    await resources.close();
+    expect(resources.hasPending).toBe(false);
+    expect(closeAttempts.every((handle) => handle.fd === -1)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  } finally {
+    released = true;
     await resources.close();
   }
 });

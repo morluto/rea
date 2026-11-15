@@ -1,17 +1,23 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "./ArtifactFileOperation.js";
 
-/** Translate one artifact boundary failure while retaining cleanup evidence. */
+/**
+ * Translate one artifact boundary failure while retaining cleanup evidence. A
+ * broken internal assumption is a REA defect, not an artifact read failure, so
+ * it is rethrown for the provider adapter to report.
+ */
 export const translateArtifactFailure = (
   operation: ArtifactOperationError["operation"],
   cause: unknown,
 ): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
   if (cause instanceof ArtifactReaderFailure) {
     const error = new ArtifactOperationError(
       operation,

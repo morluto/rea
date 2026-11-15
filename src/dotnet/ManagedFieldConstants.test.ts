@@ -183,13 +183,15 @@ describe("unavailable field defaults retain independent facts", () => {
   });
 });
 
-it("does not invent an inspected constant on historical member Evidence", () => {
+it("refuses member Evidence whose fields omit the constant inspection", () => {
   const result = inspectConstant(8, "01000000");
   const fields = result.fields.map(
     ({ constant: _constant, ...field }) => field,
   );
-  const historical = managedMemberInspectionSchema.parse({ ...result, fields });
-  expect(historical.fields[0]).not.toHaveProperty("constant");
+  expect(
+    managedMemberInspectionSchema.safeParse({ ...result, fields }).error
+      ?.issues[0]?.path,
+  ).toEqual(["fields", 0, "constant"]);
 });
 
 it.each([

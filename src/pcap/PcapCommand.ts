@@ -15,10 +15,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   OwnedCommandFailure,
@@ -137,8 +138,7 @@ export const runPcapCommand = async (options: {
       details,
     );
   };
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const hostEnvironment = {
     ...options.environment,
     LC_ALL: "C",
@@ -240,9 +240,10 @@ export const runPcapCommand = async (options: {
       throw cause;
     }
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      throw cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof OwnedCommandFailure &&
       cause.cleanupOwner !== undefined

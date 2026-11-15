@@ -5,6 +5,7 @@ import {
   ManagedDecodeBudget,
 } from "./ManagedDecodeBudget.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 
 describe("managed projection admission", () => {
   it("charges decoded strings by their JSON bytes", () => {
@@ -92,3 +93,14 @@ describe("managed decoding bounds", () => {
     expect(() => budget.admitTransient(bound, null)).not.toThrow();
   });
 });
+
+// Callers admit these allowances through their input schemas, so a value
+// outside them is a REA defect rather than a malformed target.
+it.each([0, -1, 1.5])(
+  "reports a %s representation allowance as a broken internal assumption",
+  (maximumBytes) => {
+    expect(() => new ManagedDecodeBudget(maximumBytes)).toThrow(
+      InternalInvariantError,
+    );
+  },
+);

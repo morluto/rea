@@ -1,3 +1,4 @@
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -270,7 +271,20 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
   };
 };
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+// The Evidence format owner no longer rebuilds 6.7-era summary identities.
+it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
+  "refuses the %s summary with recreate guidance",
+  async (era) => {
+    const { parent, summary } = await summaryAtEra(era);
+    const resolved = resolveArtifactComparisonEvidence(summary, () => parent);
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
+    expect(resolved.error.message).toContain(RECREATE_EVIDENCE_GUIDANCE);
+  },
+);
+
+it.each<SummaryEra>(["current"])(
   "authenticates the exact %s summary against its retained inventory",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
@@ -281,7 +295,7 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it.each<SummaryEra>(["current"])(
   "authenticates a %s summary projected from the caller alias against the original retained parent",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era, "/selected/alias.bin");
@@ -297,7 +311,7 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it.each<SummaryEra>(["current"])(
   "authenticates a %s summary after its retained parent is rebound to an alias path",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
@@ -426,7 +440,7 @@ it("authenticates a retained parent's content instead of trusting its original I
     expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
 });
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it.each<SummaryEra>(["current"])(
   "preserves both immutable Evidence commitments when resolving %s",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era, "/selected/alias.bin");
