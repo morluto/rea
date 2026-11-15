@@ -24,3 +24,15 @@ export const compareCountedBaseline = (counts, baseline, shrink) => {
     else shrunk[path] = count;
   return { grown, stale: [], baseline: shrunk, lowered: true };
 };
+
+/**
+ * Record a comparison's lowered baseline under `key` in the full baseline
+ * map. Returns whether the map changed, so the caller rewrites the file only
+ * then. A key whose last count was removed is deleted rather than kept empty.
+ */
+export const recordLoweredBaseline = (baselines, key, compared) => {
+  if (!compared.lowered) return false;
+  if (Object.keys(compared.baseline).length === 0) delete baselines[key];
+  else baselines[key] = compared.baseline;
+  return true;
+};
