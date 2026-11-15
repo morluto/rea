@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";

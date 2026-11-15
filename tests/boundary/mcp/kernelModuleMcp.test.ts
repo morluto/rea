@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -112,7 +113,7 @@ mcpTest(
         machine: 20,
         applicability: "applicable",
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      expect(fileIdentity(evidence.subject).architecture).toBe("powerpc");
       expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
         key: "license",
         value: "GPL",

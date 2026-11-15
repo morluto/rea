@@ -12,7 +12,7 @@ import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleA
 import { MachOSliceArtifactReader } from "../../../src/artifacts/MachOSliceArtifactReader.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { ok } from "../../../src/domain/result.js";
-import type { NativeCommandRunner } from "../../../src/native/CommandRunner.js";
+import type { NativeCommandRunner } from "../../../src/providers/NativeCommandRunner.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const injected = vi.hoisted(() => ({

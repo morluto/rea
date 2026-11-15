@@ -10,9 +10,9 @@ import {
   AnalysisCleanupLeaseGroup,
   ArtifactResourceScope,
   ArtifactReaderFailure,
+  withArtifactTargetIdentity,
 } from "../resources/index.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import {
   invariantViolation,
   InternalInvariantError,
@@ -109,7 +109,7 @@ import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
-import { machoKnownCodeSignSelector } from "./MachoArchitectureSelection.js";
+import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -127,7 +127,7 @@ import {
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -149,7 +149,10 @@ import {
   architectureLocations,
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -160,7 +163,7 @@ import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.j
 import {
   MachoCommandNamesLimitError,
   readMachoCommandNames,
-} from "./MachoCommandNames.js";
+} from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
@@ -461,12 +464,7 @@ class NativeMacOSClient implements AnalysisClient {
     for (const cleanupError of cleanupErrors)
       result = result.ok
         ? err(cleanupError)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanupError,
-            ).bindCleanupDependencies([result.error, cleanupError]),
-          );
+        : err(analysisErrorWithCleanupDependencies(result.error, cleanupError));
     return result;
   }
 
@@ -543,11 +541,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             result.ok
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   result.error,
                   cleanup,
                   operation,
-                ).bindCleanupDependencies([result.error, cleanup]),
+                ),
           );
         }
         result = finishNativeUiObservation(result, operation, interruption);
@@ -1566,11 +1564,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             primary === undefined
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   primary,
                   cleanup,
                   "inspect_macho",
-                ).bindCleanupDependencies([primary, cleanup]),
+                ),
           );
         }
         if (signal?.aborted && result.ok)

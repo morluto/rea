@@ -12,7 +12,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   buildCapabilityInventory,
@@ -26,7 +26,7 @@ import type {
   ToolAvailability,
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServerIdentity } from "../serverIdentity.js";
+import { createServerIdentity } from "../process/ServerIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -90,11 +90,11 @@ const probeSessionAvailability = async (
           : new ProviderAdapterError("rea", "binary_session", {
               cause: failure,
             });
-      failure = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupDependencies(
         primary,
         result.reason,
         "binary_session",
-      ).bindCleanupDependencies([primary, result.reason]);
+      );
     }
     throw failure;
   }

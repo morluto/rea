@@ -79,9 +79,11 @@ const renamedIssues = (
 
 /**
  * The reported per-call control with the flag that sets it, or undefined
- * when the command takes no flag for it. The longest bound prefix of the
- * parameter path names the flag: a flattened member option, else the option
- * of the whole field (such as `--producer-limits` JSON).
+ * when the command takes no flag for it. A parameter control names it, and so
+ * does a registered setting a request argument can also select. The longest
+ * bound prefix of the parameter path names the flag: a flattened member
+ * option, else the option of the whole field (such as `--producer-limits`
+ * JSON).
  */
 const flaggedLimit = (
   limit: JsonValue | undefined,
@@ -89,8 +91,8 @@ const flaggedLimit = (
 ): Record<string, JsonValue> | undefined => {
   if (
     !isObject(limit) ||
-    limit.control_kind !== "parameter" ||
-    typeof limit.parameter !== "string"
+    typeof limit.parameter !== "string" ||
+    (limit.control_kind !== "parameter" && typeof limit.setting !== "string")
   )
     return undefined;
   const segments = limit.parameter.split(".");

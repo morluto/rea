@@ -95,12 +95,9 @@ export const UNIT_LAYERS = Object.freeze(
       "cli",
       "main",
       "server",
-      "catalogDiscovery.ts",
-      "catalogIdentity.ts",
       "cli.ts",
       "cliBrowserScenarioCommands.ts",
       "cliBuiltinArguments.ts",
-      "cliCommandNames.ts",
       "cliConfiguration.ts",
       "cliEvidenceCommands.ts",
       "cliLogging.ts",
@@ -110,10 +107,8 @@ export const UNIT_LAYERS = Object.freeze(
       "main.ts",
       "mcpDoctor.ts",
       "mcpDoctorOptions.ts",
-      "recordedCatalogDigests.ts",
       "recordedCliCommandRegistrations.ts",
       "recordedMcpCatalog.ts",
-      "serverIdentity.ts",
     ]),
   ]),
 );
@@ -324,6 +319,7 @@ export const ENTRY_FILES = Object.freeze(
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",
+        "analysis/JavaScriptSourceAnalysis.ts",
         "recovery/WakaruCommand.ts",
         "recovery/WakaruProvider.ts",
         "recovery/WakaruProviderIdentity.ts",
@@ -412,12 +408,16 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
       "CdpEndpoint.ts",
       "CdpScriptContextFacts.ts",
       "CdpTargetSessionOwner.ts",
+      "ElectronFileScope.ts",
       "protocol/CdpEvents.ts",
     ]),
     // The V8 inspector speaks the Chrome DevTools Protocol. It reuses
     // browser's CDP client (endpoint discovery, connection, target sessions
     // and captured value projection) instead of keeping a second client.
-    reason: "the V8 inspector reuses the browser provider's CDP client",
+    // For Electron targets it authorizes script files inside app.asar with
+    // browser's Electron file scope, which owns the ASAR descriptors.
+    reason:
+      "the V8 inspector reuses the browser provider's CDP client and Electron file scope",
   }),
   Object.freeze({
     from: "browser",

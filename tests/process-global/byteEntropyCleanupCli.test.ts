@@ -35,7 +35,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { createCli } from "../../src/cli.js";
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -96,7 +96,7 @@ it.each([
         partial_observation: {
           provider: { id: BYTE_ENTROPY_PROVIDER.id },
           subject: {
-            digest: {
+            identity: {
               sha256: createHash("sha256").update(content).digest("hex"),
             },
           },

@@ -33,7 +33,7 @@ import {
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   pwntoolsFailureDialect,
@@ -412,11 +412,7 @@ export const pwndbgContextFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          OPERATION,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, OPERATION)
       : primary.retainSecondaryFailure(finalization);
 
 /** Preserve both stages' exact text and their independently observed truncation state. */

@@ -36,6 +36,7 @@ import {
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
@@ -467,10 +468,10 @@ const parseCaptureParent = (
   const parsed = parseAnalysisViewResult(captureParser, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     report.artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([

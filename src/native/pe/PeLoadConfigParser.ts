@@ -11,7 +11,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import { readPeImage, type PeImage } from "../metadata/PeImage.js";
+import { readPeImage, type PeImage } from "../../domain/native/peImage.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,

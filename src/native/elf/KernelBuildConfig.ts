@@ -769,7 +769,6 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const complete = found === "absent" || config.status === "present";
   const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
@@ -779,7 +778,14 @@ const reportFromSearch = async (
     banner,
     config,
     coverage: {
-      status: complete ? "complete" : "incomplete",
+      status:
+        found === "absent" || config.status === "present"
+          ? "complete"
+          : // A member cut by the searched bytes, or candidates the budget
+            // left uninflated, is a known gap; a malformed config is unreadable.
+            found === "truncated" || found === "exhausted"
+            ? "partial"
+            : "unknown",
       examined_bytes: search.bytes.length,
       examined_entries: config.option_count,
     },
@@ -857,7 +863,12 @@ const closedReport = (
       : null,
   banner: absentBanner("unknown"),
   config: emptyConfig(input, status, reason),
-  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  // Nothing was searched, so whether a config exists cannot be determined.
+  coverage: {
+    status: status === "incomplete" ? "unknown" : status,
+    examined_bytes: 0,
+    examined_entries: 0,
+  },
   limitations: [...baseLimitations(), limitation],
 });
 

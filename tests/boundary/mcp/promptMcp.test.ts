@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -511,7 +512,7 @@ describe("guided prompt completion registry", () => {
     for (let index = 0; index < 150; index += 1)
       expect(
         session.recordEvidence(
-          createEvidence(undefined, fixtureProvider, {
+          createEvidence(unknownTarget("not-observed"), fixtureProvider, {
             operation: `fixture-${String(index)}`,
             parameters: { index },
             result: index,

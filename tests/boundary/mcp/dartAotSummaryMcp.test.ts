@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -235,7 +236,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
   ) =>
     createEvidence(
       sha === null
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: "/source.apk", sha256: sha, format: "apk" },
       { id: "flutter", name: "Flutter", version: null },
       {

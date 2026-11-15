@@ -118,12 +118,12 @@ if (Object.hasOwn(oracle, "conscrypt")) {
 const fingerprints = {};
 for (const relative of [
   ".",
-  "../metadata/ElfPointerRelocations",
-  "../exports/NativeExportParser",
-  "../metadata/ElfImage",
-  "../../domain/native/nativeSectionDirectory",
-  "../../domain/elfRelocation",
-  "../../domain/elfDynamicEntry",
+  "../native/elfPointerRelocations",
+  "../native/nativeExportParser",
+  "../native/elfImage",
+  "../native/nativeSectionDirectory",
+  "../elfRelocation",
+  "../elfDynamicEntry",
 ]) {
   const path =
     relative === "."

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -93,32 +94,36 @@ const createManagedMemberComparisonEvidence = (
   result: ManagedMemberComparisonResult,
   selection?: ManagedMemberComparisonSelection,
 ): Evidence =>
-  createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-member-comparison",
-    operation: "compare_managed_members",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
-      ...(selection === undefined
-        ? {}
-        : {
-            left_path: selection.leftPath,
-            right_path: selection.rightPath,
-            ...selection.inspection,
-          }),
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-member-comparison",
+      operation: "compare_managed_members",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        ...(selection === undefined
+          ? {}
+          : {
+              left_path: selection.leftPath,
+              right_path: selection.rightPath,
+              ...selection.inspection,
+            }),
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      locations:
+        selection === undefined
+          ? []
+          : [
+              { kind: "artifact-path", path: selection.leftPath },
+              { kind: "artifact-path", path: selection.rightPath },
+            ],
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    locations:
-      selection === undefined
-        ? []
-        : [
-            { kind: "artifact-path", path: selection.leftPath },
-            { kind: "artifact-path", path: selection.rightPath },
-          ],
-    evidenceLinks: result.evidence_links,
-  });
+  );

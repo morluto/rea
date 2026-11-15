@@ -32,6 +32,7 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticMemberWriteNodes } from "./javascriptSemanticEffectLog.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   semanticObjectPropertyReferences,
@@ -1101,11 +1102,8 @@ export class JavaScriptRouteScan {
     // selected-source list. Repeated reads share cached object field parsing.
     for (const sources of [binding.initializers, binding.referenceInitializers])
       for (const source of sources) if (!this.#queue(source.node)) return;
-    for (const write of binding.memberWrites) {
-      if (!this.#queue(write.node ?? node)) return;
-      for (const source of write.assignedSources ?? [])
-        if (!this.#queue(source.node)) return;
-    }
+    for (const site of semanticMemberWriteNodes(binding))
+      if (!this.#queue(site ?? node)) return;
     // Value flow excludes proven replacements; lifetime identity eligibility
     // would keep them and incorrectly hide otherwise independent routes.
     const sources = semanticProjectedSourcesAtRead(
