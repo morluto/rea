@@ -47,6 +47,22 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
+/** Keep Goose's system layer inside the temporary home. */
+const isolated = () => ({
+  systemPaths: { gooseSystemConfig: join(home, "goose-system.yaml") },
+});
+
+const plan = (
+  execute: Parameters<typeof planIntegrationMaintenance>[3],
+): ReturnType<typeof planIntegrationMaintenance> =>
+  planIntegrationMaintenance(
+    home,
+    entryPoint,
+    process.env,
+    execute,
+    isolated(),
+  );
+
 const writeClient = async (id: string, content: string): Promise<string> => {
   const client = supportedClients(home).find(({ name }) => name === id);
   if (client === undefined) throw new Error(`Unknown test client ${id}`);
@@ -90,7 +106,7 @@ describe("OMP integration maintenance", () => {
       JSON.stringify({ mcpServers: { rea: { ...entry, enabled: false } } }),
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: [] });
     await writeClient(
       "omp",
@@ -100,7 +116,7 @@ describe("OMP integration maintenance", () => {
       }),
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["omp"] });
   });
 
@@ -113,7 +129,7 @@ describe("OMP integration maintenance", () => {
       `disabled_mcp_servers = ["rea", "other"]\n${registration}`,
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: [] });
     expect(await readFile(configPath, "utf8")).toContain(
       'disabled_mcp_servers = ["rea", "other"]',
@@ -123,7 +139,7 @@ describe("OMP integration maintenance", () => {
       `disabled_mcp_servers = ["other"]\n${registration}`,
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["grok_build"] });
   });
 });
@@ -141,29 +157,20 @@ describe("maintenance activation and layered configuration", () => {
     );
     const before = await readFile(cursor, "utf8");
     const commands: (readonly string[])[] = [];
-    const result = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async (command) => {
-        commands.push(command);
-        return ok(
-          JSON.stringify({
-            status: "planned",
-            // An action for the unresolved client is outside the scope.
-            plannedActions: [{ ...action, id: "configure_client:cursor" }],
-          }),
-        );
-      },
-    );
+    const result = await plan(async (command) => {
+      commands.push(command);
+      return ok(
+        JSON.stringify({
+          status: "planned",
+          // An action for the unresolved client is outside the scope.
+          plannedActions: [{ ...action, id: "configure_client:cursor" }],
+        }),
+      );
+    });
     expect(result).toMatchObject({ status: "unavailable" });
     expect(commands[0]).not.toContain("cursor");
-    const planned = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async () =>
-        ok(JSON.stringify({ status: "planned", plannedActions: [action] })),
+    const planned = await plan(async () =>
+      ok(JSON.stringify({ status: "planned", plannedActions: [action] })),
     );
     expect(planned).toMatchObject({
       status: "planned",
@@ -197,7 +204,7 @@ describe("maintenance activation and layered configuration", () => {
     await writeFile(lower, originalLower);
     const originalUpper = await readFile(upper, "utf8");
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: [] });
     expect(await readFile(lower, "utf8")).toBe(originalLower);
     expect(await readFile(upper, "utf8")).toBe(originalUpper);
@@ -216,7 +223,7 @@ describe("maintenance activation and layered configuration", () => {
     );
     const original = await readFile(configPath, "utf8");
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: [] });
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
@@ -235,7 +242,7 @@ describe("maintenance activation and layered configuration", () => {
     // The fallback row is also FreeBuff's registration, and FreeBuff is the
     // setup action that rewrites it, so both views stay in maintenance scope.
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
   });
 
@@ -250,7 +257,7 @@ describe("maintenance activation and layered configuration", () => {
     );
     await writeClient("opencode", JSON.stringify({ theme: "user-selected" }));
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["opencode"] });
   });
 });
@@ -259,7 +266,12 @@ describe("unknown client locations in maintenance", () => {
   it("maintains other clients while an unresolved MCPorter location stays unknown", async () => {
     vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
     await writeClient("codex", staleCodex);
-    const scope = await existingMaintenanceScope(home, entryPoint, process.env);
+    const scope = await existingMaintenanceScope(
+      home,
+      entryPoint,
+      process.env,
+      isolated(),
+    );
     expect(scope).toMatchObject({
       clients: ["codex"],
       unresolved: [
@@ -271,11 +283,8 @@ describe("unknown client locations in maintenance", () => {
         },
       ],
     });
-    const current = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async () => ok(JSON.stringify({ status: "planned", plannedActions: [] })),
+    const current = await plan(async () =>
+      ok(JSON.stringify({ status: "planned", plannedActions: [] })),
     );
     // Nothing else needs maintenance, yet the unknown client is not hidden.
     expect(current).toMatchObject({
@@ -287,12 +296,7 @@ describe("unknown client locations in maintenance", () => {
   it("names an unknown MCPorter client when planning the known clients fails", async () => {
     vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
     await writeClient("codex", staleCodex);
-    const failed = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async () => err("EACCES codex backup"),
-    );
+    const failed = await plan(async () => err("EACCES codex backup"));
     expect(failed).toMatchObject({
       status: "unavailable",
       remediation: expect.stringMatching(
@@ -362,7 +366,7 @@ describe("registration ownership in maintenance", () => {
       ]),
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: ["codex", "vscode"],
       skill: false,
@@ -374,7 +378,7 @@ describe("registration ownership in maintenance", () => {
 describe("existing REA integration maintenance", () => {
   it("does not install a missing skill or overwrite an unrelated skill", async () => {
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: [],
       skill: false,
@@ -382,7 +386,7 @@ describe("existing REA integration maintenance", () => {
     });
     await writeSkill("---\nname: another-skill\n---\nUser-authored content\n");
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: [],
       skill: false,
@@ -396,7 +400,7 @@ describe("existing REA integration maintenance", () => {
     );
     const original = await readFile(path, "utf8");
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: [],
       skill: true,
@@ -412,15 +416,10 @@ describe("existing REA integration maintenance", () => {
 
   it("skips setup entirely when there is no existing integration", async () => {
     let invoked = false;
-    const result = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async () => {
-        invoked = true;
-        return err("Unexpected setup");
-      },
-    );
+    const result = await plan(async () => {
+      invoked = true;
+      return err("Unexpected setup");
+    });
     expect(result).toEqual({ status: "current", plannedActions: [] });
     expect(invoked).toBe(false);
   });
@@ -428,17 +427,12 @@ describe("existing REA integration maintenance", () => {
   it("returns exact backup and command evidence with a scoped unapplied setup command", async () => {
     await writeClient("codex", staleCodex);
     const recorded: string[][] = [];
-    const result = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async (command) => {
-        recorded.push([...command]);
-        return ok(
-          JSON.stringify({ status: "planned", plannedActions: [action] }),
-        );
-      },
-    );
+    const result = await plan(async (command) => {
+      recorded.push([...command]);
+      return ok(
+        JSON.stringify({ status: "planned", plannedActions: [action] }),
+      );
+    });
     expect(recorded).toEqual([
       [
         process.execPath,
@@ -472,25 +466,15 @@ describe("existing REA integration maintenance", () => {
     }),
   ])("rejects malformed or out-of-scope subprocess plans", async (output) => {
     await writeClient("codex", staleCodex);
-    expect(
-      await planIntegrationMaintenance(
-        home,
-        entryPoint,
-        process.env,
-        async () => ok(output),
-      ),
-    ).toMatchObject({ status: "unavailable" });
+    expect(await plan(async () => ok(output))).toMatchObject({
+      status: "unavailable",
+    });
   });
 
   it("preserves actual setup failure diagnostics", async () => {
     await writeClient("codex", staleCodex);
     expect(
-      await planIntegrationMaintenance(
-        home,
-        entryPoint,
-        process.env,
-        async () => err("EACCES /test/.codex/config.toml"),
-      ),
+      await plan(async () => err("EACCES /test/.codex/config.toml")),
     ).toMatchObject({
       status: "unavailable",
       remediation: "EACCES /test/.codex/config.toml",
@@ -514,7 +498,7 @@ describe("shared registration maintenance", () => {
       }),
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: ["freebuff"],
       skill: false,
@@ -542,7 +526,7 @@ describe("shared registration maintenance", () => {
     );
 
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
   });
 
@@ -554,7 +538,7 @@ describe("shared registration maintenance", () => {
       }),
     );
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: [],
       skill: false,
@@ -576,7 +560,7 @@ describe("shared registration maintenance", () => {
     );
     const original = await readFile(configPath, "utf8");
     await expect(
-      existingMaintenanceScope(home, entryPoint, process.env),
+      existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toEqual({
       clients: [],
       skill: false,
@@ -593,15 +577,10 @@ describe("updated executable maintenance planning", () => {
     const skillContent = `---\nname: ${PRODUCT_IDENTITY.skillName}\nmetadata:\n  version: "1"\n---\n# REA\n`;
     const skillPath = await writeSkill(skillContent);
     vi.stubEnv("npm_command", "exec");
-    const result = await planIntegrationMaintenance(
-      home,
-      entryPoint,
-      process.env,
-      async (command) => {
-        const result = await updateCommands.runProbe(command, process.env);
-        return result.ok ? result : err(result.error.detail);
-      },
-    );
+    const result = await plan(async (command) => {
+      const result = await updateCommands.runProbe(command, process.env);
+      return result.ok ? result : err(result.error.detail);
+    });
     expect(result).toMatchObject({
       status: "planned",
       scope: {

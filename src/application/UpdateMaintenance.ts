@@ -12,6 +12,7 @@ import {
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ClientSystemPaths } from "./SupportedClients.js";
 
 /** Existing REA integrations selected for maintenance, without discovering new targets. */
 export interface MaintenanceScope {
@@ -99,12 +100,19 @@ const unavailableMaintenance = (
   };
 };
 
+/** Where maintenance reads: the caller's resource scope and system layers. */
+export interface MaintenanceInputs {
+  readonly resources?: ArtifactResourceScope;
+  /** System configuration files; tests point them inside their own home. */
+  readonly systemPaths?: ClientSystemPaths;
+}
+
 /** Discover owned registrations and REA skills without writes. */
 export const existingMaintenanceScope = async (
   home: string,
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
-  resources?: ArtifactResourceScope,
+  { resources, systemPaths }: MaintenanceInputs = {},
 ): Promise<MaintenanceScope> => {
   const registrations = await readClientRegistrationInspections(
     home,
@@ -116,6 +124,7 @@ export const existingMaintenanceScope = async (
       // product applicability. Owned rows stay the only ones selected below.
       evidence: "ownership",
       ...(resources === undefined ? {} : { resources }),
+      ...(systemPaths === undefined ? {} : { systemPaths }),
     },
   );
   const clients: string[] = [];
@@ -172,15 +181,16 @@ export const planIntegrationMaintenance = async (
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
-  resources?: ArtifactResourceScope,
+  inputs: MaintenanceInputs = {},
 ): Promise<IntegrationMaintenance> => {
+  const { resources } = inputs;
   let scope: MaintenanceScope | undefined;
   try {
     scope = await existingMaintenanceScope(
       home,
       entryPoint,
       environment,
-      resources,
+      inputs,
     );
     // An unresolved client fails closed on its own: it stays out of the
     // maintained clients and is reported, while every resolved client is
