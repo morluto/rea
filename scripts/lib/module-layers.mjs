@@ -94,7 +94,6 @@ export const UNIT_LAYERS = Object.freeze(
       "cliEvidenceCommands.ts",
       "cliJsonInput.ts",
       "cliLogging.ts",
-      "cliObservationOptions.ts",
       "cliOneShot.ts",
       "cliOutput.ts",
       "doctorRuntime.ts",
