@@ -6,6 +6,7 @@ import {
   webRuntimeCommandTimeoutSchema,
 } from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
+import { javaScriptTimeoutPolicySchema } from "./domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
 /** Accept an agent-selected browser observation duration without an artificial ceiling. */
@@ -132,11 +133,16 @@ export const javascriptApplicationOptions = z.object({
     javaScriptAnalysisResourceControlsSchema.shape.analysis_timeout_ms,
   ),
   artifactFormat: z
-    .enum(["auto", "asar", "directory"])
+    .enum(["auto", "asar", "directory", "file"])
     .default("auto")
     .describe("Application artifact format"),
   integrityPolicy: z
     .enum(["fail", "record-and-continue"])
     .default("fail")
     .describe("Behavior when declared application integrity does not match"),
+  timeoutPolicy: javaScriptTimeoutPolicySchema
+    .optional()
+    .describe(
+      "Behavior when a JavaScript source reaches its per-source analysis_timeout_ms deadline, including preload discovery on module .js files (defaults to stop; record-and-continue enforces no separate whole-run time limit unless bounded via a smaller --analysis-timeout-ms, --source-path, or caller cancellation)",
+    ),
 });

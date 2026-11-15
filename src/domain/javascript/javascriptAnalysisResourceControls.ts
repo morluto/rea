@@ -265,6 +265,6 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
     .max(2_147_483_647)
     .optional()
     .describe(
-      "Maximum startup, analysis and transfer time per JavaScript source, in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop the analysis.",
+      "Maximum startup, analysis and transfer time per JavaScript source (and during preload discovery when module .js files are present), in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop by default (timeout_policy: stop), or record the timed-out source and continue when timeout_policy is record-and-continue (with no separate whole-run time limit unless bounded via a smaller analysis_timeout_ms, source_paths, or caller cancellation).",
     ),
 });

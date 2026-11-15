@@ -162,7 +162,7 @@ const layerSummarySchema = z.strictObject({
   graph_id: prefixedDigestSchema("jag"),
   root_artifact_sha256: digestSchema,
   input_path: z.string().min(1),
-  format: z.enum(["asar", "directory"]),
+  format: z.enum(["asar", "directory", "file"]),
   runtime_mappings: z.array(runtimeLocationMappingSchema),
 });
 

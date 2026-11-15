@@ -18,6 +18,9 @@ for new work, roadmap granularity and producer-owned contracts.
 
 ## Other feature records
 
+- [Single-file JavaScript application analysis](javascript/single-file-application-analysis/spec.md) ([plan](javascript/single-file-application-analysis/plan.md), [tasks](javascript/single-file-application-analysis/tasks.md))
+- [JavaScript per-file worker timeout continuation policy](javascript/per-file-timeout-policy/spec.md) ([plan](javascript/per-file-timeout-policy/plan.md), [tasks](javascript/per-file-timeout-policy/tasks.md))
+
 - [Core WebAssembly interface comparison (#2356)](2356-wasm-interface-comparison/spec.md) ([plan](2356-wasm-interface-comparison/plan.md), [tasks](2356-wasm-interface-comparison/tasks.md), [verification](2356-wasm-interface-comparison/verification.md))
 - [Inspect APK signature schemes (v1–v3.1)](apk-signature/spec.md)
 - [Documentation organization](documentation/organization/spec.md) ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md), [verification](documentation/organization/verification.md))

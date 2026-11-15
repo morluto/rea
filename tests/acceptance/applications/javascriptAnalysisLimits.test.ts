@@ -294,6 +294,85 @@ cliTest(
   },
 );
 
+cliTest(
+  "supports single-file CLI/MCP analysis and --timeout-policy record-and-continue",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-single-and-continue-");
+    const singleFile = join(root, "standalone.mjs");
+    await writeFile(
+      singleFile,
+      'export function navigateStatus(router) { router.push("/status"); }\n',
+    );
+    const cliSingle = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        singleFile,
+        "--artifact-format",
+        "file",
+        "--format",
+        "json",
+      ],
+    });
+    expect(cliSingle.exitCode, cliSingle.stderr).toBe(0);
+    const cliEvidence = parseEvidence(cliSingle.json);
+    expect(cliEvidence.subject?.format).toBe("file");
+    const cliResult = javascriptApplicationAnalysisResultSchema.parse(
+      cliEvidence.normalized_result,
+    );
+    expect(cliResult.format).toBe("file");
+    expect(
+      cliResult.route_inventory?.routes.map((entry) => entry.path),
+    ).toContain("/status");
+
+    const { call } = await connectLocalToolsMcp({
+      NODE_OPTIONS: "--max-old-space-size=512",
+    });
+    const mcpSummary = await call("analyze_javascript_application", {
+      input_path: singleFile,
+      detail: "summary",
+    });
+    expect(mcpSummary.isError, JSON.stringify(mcpSummary.content)).not.toBe(
+      true,
+    );
+    expect(mcpSummary.structuredContent).toMatchObject({
+      normalized_result: {
+        summary: {
+          format: "file",
+          statistics: { relevant_files: 1, parsed_javascript_files: 1 },
+        },
+      },
+    });
+
+    await writeFile(join(root, "package.json"), "{}");
+    const cliContinued = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--analysis-timeout-ms",
+        "1",
+        "--timeout-policy",
+        "record-and-continue",
+        "--format",
+        "json",
+      ],
+    });
+    expect(cliContinued.exitCode, cliContinued.stderr).toBe(0);
+    const continuedEvidence = parseEvidence(cliContinued.json);
+    expect(continuedEvidence.parameters).toMatchObject({
+      timeout_policy: "record-and-continue",
+      analysis_timeout_ms: 1,
+    });
+    const continuedResult = javascriptApplicationAnalysisResultSchema.parse(
+      continuedEvidence.normalized_result,
+    );
+    expect(continuedResult.graph.coverage.status).toBe("partial");
+    expect(
+      continuedResult.graph.nodes.some((node) => node.kind === "package"),
+    ).toBe(true);
+  },
+  60_000,
+);
+
 async function getBundle(call: SharedMcpCall) {
   const response = await call("get_evidence_bundle", { detail: "complete" });
   expect(response.isError).not.toBe(true);
