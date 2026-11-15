@@ -91,11 +91,69 @@ export const unknownTarget = (
   reason: UnknownTargetIdentity["reason"],
 ): UnknownTargetIdentity => ({ kind: "unknown", reason });
 
+/** The origin a URL serializes to, or null for an opaque origin. */
+const urlOrigin = (parsed: URL): string | null =>
+  parsed.origin === "null" ? null : parsed.origin;
+
+/**
+ * A live document's URL with userinfo removed, and its origin. Userinfo is a
+ * transport credential, so an identity that carries it is refused rather
+ * than committed.
+ */
+export const urlTargetIdentitySchema = z
+  .strictObject({
+    kind: z.literal("url"),
+    url: z.string().min(1),
+    origin: z.string().min(1).nullable(),
+  })
+  .superRefine((identity, context) => {
+    const parsed = URL.parse(identity.url);
+    if (parsed === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "A URL target identity must be a parseable URL",
+      });
+      return;
+    }
+    if (parsed.username !== "" || parsed.password !== "")
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "A URL target identity must not carry userinfo",
+      });
+    if (urlOrigin(parsed) !== identity.origin)
+      context.addIssue({
+        code: "custom",
+        path: ["origin"],
+        message: "A URL target identity's origin must be its URL's origin",
+      });
+  });
+
+/** A live document's URL with userinfo removed, and its origin. */
+export interface UrlTargetIdentity {
+  readonly kind: "url";
+  readonly url: string;
+  readonly origin: string | null;
+}
+
 /**
  * What an observation or cache entry is about. Tagged by `kind`; see
  * docs/adr/evidence/target-identity.md for the kinds later slices add.
  */
-export type TargetIdentity = FileTargetIdentity | UnknownTargetIdentity;
+export type TargetIdentity =
+  | FileTargetIdentity
+  | UrlTargetIdentity
+  | UnknownTargetIdentity;
+
+/** A target identity that names no file, and so has no file display facts. */
+export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
+
+/** The identities a subject without file display facts can commit to. */
+export const nonFileTargetIdentitySchema = z.union([
+  unknownTargetIdentitySchema,
+  urlTargetIdentitySchema,
+]);
 
 /** The universal Mach-O slice a target selects, with its FAT CPU declaration when admitted. */
 const universalSliceSelection = (

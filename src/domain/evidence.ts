@@ -15,8 +15,8 @@ import { nulFreeStringSchema } from "./localPath.js";
 import {
   binaryTargetIdentity,
   fileTargetSelectionSchema,
-  unknownTargetIdentitySchema,
-  type UnknownTargetIdentity,
+  nonFileTargetIdentitySchema,
+  type NonFileTargetIdentity,
   sameTargetIdentity,
   type FileTargetIdentity,
   type FileTargetSelection,
@@ -89,13 +89,13 @@ const fileSubjectSchema = z.strictObject({
   name: z.string().min(1),
   local_path: nulFreeStringSchema,
 });
-/** A subject REA did not identify has no display facts to show. */
-const unknownSubjectSchema = z.strictObject({
-  identity: unknownTargetIdentitySchema,
+/** A subject that names no file (a URL, or an unknown target) has no file display facts. */
+const nonFileSubjectSchema = z.strictObject({
+  identity: nonFileTargetIdentitySchema,
   name: z.null(),
   local_path: z.null(),
 });
-const subjectSchema = z.union([fileSubjectSchema, unknownSubjectSchema]);
+const subjectSchema = z.union([fileSubjectSchema, nonFileSubjectSchema]);
 /** The Evidence subject, for persistence formats that embed one. */
 export const evidenceSubjectSchema = subjectSchema;
 /** Source location attached to an evidence observation. */
@@ -242,11 +242,11 @@ export interface EvidenceSubjectTarget {
   readonly name?: string;
 }
 
-/** What a producer names as an Evidence subject: a file target, or an explicit unknown. */
+/** What a producer names as an Evidence subject: a file target, or a non-file identity such as a URL or an explicit unknown. */
 export type EvidenceSubjectInput =
   | EvidenceSubjectTarget
   | BinaryTarget
-  | UnknownTargetIdentity;
+  | NonFileTargetIdentity;
 
 type FileEvidenceSubject = z.infer<typeof fileSubjectSchema>;
 
@@ -274,13 +274,13 @@ export const evidenceSubjectTarget = (
           : { selection: subject.identity.selection }),
       };
 
-/** Name the same subject in a derived observation: the file target, or the same unknown. */
+/** Name the same subject in a derived observation: the file target, or the same non-file identity. */
 export const evidenceSubjectInput = (
   subject: Evidence["subject"],
 ): EvidenceSubjectInput =>
   isFileSubject(subject)
     ? (evidenceSubjectTarget(subject) as EvidenceSubjectTarget)
-    : (subject.identity as UnknownTargetIdentity);
+    : (subject.identity as NonFileTargetIdentity);
 
 /** The one projection of a producer's subject input into its target identity. */
 export const evidenceSubjectTargetIdentity = (
