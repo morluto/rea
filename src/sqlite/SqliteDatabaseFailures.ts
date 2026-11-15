@@ -18,16 +18,14 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
-  AnalysisOutputError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import { providerOutcomeOf } from "../process/ProviderOutcome.js";
-import { runtimeExhaustionReport } from "../process/RuntimeExhaustion.js";
+import type { ProviderOutcome } from "../process/ProviderOutcome.js";
+import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
 import {
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
@@ -138,8 +136,6 @@ export const sqliteDatabaseDialect = (
               ? signal.reason
               : cause,
         });
-      if (cause instanceof OwnedCommandFailure)
-        return ownedCommandFailure(cause, path, workerTimeoutMs);
       // Windows reports a sharing violation as EBUSY: another process holds
       // the file without read sharing. The unchanged request succeeds once
       // that process releases it. Name the member of the file set that was
@@ -163,6 +159,9 @@ export const sqliteDatabaseDialect = (
         );
       return undefined;
     },
+    command: (outcome) =>
+      sqliteWorkerCommand(outcome, path, workerTimeoutMs, dialect.unclassified),
+    commandCleanup: sqliteWorkerCleanup,
     // A database file the read could not open names the selected file set.
     ...(phase === "artifact-read"
       ? { file: { path, description: "database file set" } }
@@ -206,83 +205,94 @@ export const sqliteDatabaseDialect = (
   return dialect;
 };
 
-const ownedCommandFailure = (
-  cause: OwnedCommandFailure,
+/** The selected worker deadline, its setting and what it does not cover. */
+const sqliteWorkerTimeout = (
+  workerTimeoutMs: number,
+): ProviderOutcomeContext["timeout"] => ({
+  ms: workerTimeoutMs,
+  userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
+  remediationAction: `${
+    workerTimeoutMs < MAX_SQLITE_WORKER_TIMEOUT_MS
+      ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
+      : `worker_timeout_ms is already at the maximum supported ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
+  } This per-call setting needs no server restart. It covers worker startup, queries and reply writing, not snapshot acquisition or final reply reads/cleanup. Allow client headroom for the whole call; increasing only the client deadline does not change the worker budget. Keep the selected database/WAL and requested facts; narrow table/columns/schema_scope/row_limit only if the question permits it. Byte and heap safety limits remain fixed. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
+});
+
+/** The fixed diagnostic capture allowance the owned worker's output exceeded. */
+const SQLITE_DIAGNOSTIC_CAPTURE = fixedAllowanceOptions(
+  `The SQLite worker diagnostic capture allowance of ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes (this release has no runtime override; worker_timeout_ms does not raise it)`,
+  "capture",
+  { limit: SQLITE_DATABASE_LIMITS.diagnosticBytes, unit: "bytes" },
+);
+
+/**
+ * How the owned SQLite worker's outcomes report. The shared classifier owns
+ * cancellation, the deadline, the capture allowance and the runtime's heap
+ * report; an exit or a collection failure has no SQLite meaning beyond the
+ * facts the provider's unclassified report keeps.
+ */
+const sqliteWorkerCommand = (
+  outcome: ProviderOutcome,
   selectedPath: string,
   workerTimeoutMs: number,
-): AnalysisError | undefined => {
-  const operation = "inspect_sqlite_database";
-  const capturedOutput =
-    cause.snapshot === null ? undefined : capturedSqliteOutput(cause.snapshot);
-  const options = {
-    cause,
-    ...(capturedOutput === undefined ? {} : { capturedOutput }),
-  };
-  // Preserve the same typed primary whether or not owned cleanup also fails.
-  const timeout =
-    cause.reason === "timeout"
-      ? new AnalysisTimeoutError(operation, workerTimeoutMs, {
-          ...options,
-          userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
-          remediationAction: `${
-            workerTimeoutMs < MAX_SQLITE_WORKER_TIMEOUT_MS
-              ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
-              : `worker_timeout_ms is already at the maximum supported ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
-          } This per-call setting needs no server restart. It covers worker startup, queries and reply writing, not snapshot acquisition or final reply reads/cleanup. Allow client headroom for the whole call; increasing only the client deadline does not change the worker budget. Keep the selected database/WAL and requested facts; narrow table/columns/schema_scope/row_limit only if the question permits it. Byte and heap safety limits remain fixed. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
-        })
-      : undefined;
-  if (cause.cleanupFailure !== null)
-    return createSqliteCleanupError(
-      cause.resources,
-      {
-        reason: cause.cleanupFailure,
-        ...(timeout === undefined
-          ? {
-              previous_error: {
-                failure_kind: cause.reason,
-                message: cause.message,
-              },
-            }
-          : {}),
-      },
-      {
-        ...options,
-        ...(timeout === undefined ? {} : { cleanupPrimary: timeout }),
-      },
-    );
-  if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      ...options,
-      cause:
-        cause.cancellation === undefined ? cause : cause.cancellation.reason,
-    });
-  if (timeout !== undefined) return timeout;
-  // The supervisor observed V8's heap report as output streamed, so a
-  // retention budget or a stack trace that overflowed it cannot hide it.
-  const outcome = providerOutcomeOf(cause);
-  if (outcome.kind === "runtime-exhausted")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      "Owned SQLite worker reported JavaScript heap exhaustion.",
-      {
-        javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES,
-      },
-      {
-        ...options,
-        diagnostics: {
-          selected_path: selectedPath,
-          runtime_exhaustion_report: runtimeExhaustionReport(
-            outcome.exhaustion,
-          ),
-        },
-      },
-    );
-  if (cause.reason === "output-limit")
-    return new AnalysisOutputError(operation, cause.message, {
-      ...options,
-      userMessage: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
-      remediationAction: `The SQLite diagnostic capture allowance is ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
-    });
-  return undefined;
+  unclassified: ProviderFailureDialect["unclassified"],
+): ProviderOutcomeContext => ({
+  operation: OPERATION,
+  capturedOutput: capturedSqliteOutput,
+  details:
+    outcome.kind === "runtime-exhausted"
+      ? { diagnostics: { selected_path: selectedPath } }
+      : {},
+  timeout: sqliteWorkerTimeout(workerTimeoutMs),
+  outputLimit: {
+    reason: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance.`,
+    limits: {
+      diagnostic_capture_bytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+    },
+    recovery: SQLITE_DIAGNOSTIC_CAPTURE,
+  },
+  runtimeExhaustion: () => ({
+    limits: { javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES },
+    recovery: {
+      retryable: false,
+      remediationAction: `The SQLite worker's ${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)} MiB JavaScript heap is fixed in this release; worker_timeout_ms does not raise it. Narrow table, columns, schema_scope or row_limit only if the question permits it; repeating the unchanged request is expected to fail the same way.`,
+    },
+  }),
+  // The unclassified report keeps the exit facts and output in its
+  // diagnostics, so the classified output is not repeated beside them.
+  dialect: (exit, { capturedOutput: _retained, ...details }) =>
+    unclassified(exit.cause, details),
+});
+
+/**
+ * A worker whose cleanup failed reports that cleanup. A deadline stays its
+ * typed primary; any other outcome is recorded as the failure it was.
+ */
+const sqliteWorkerCleanup = (
+  command: OwnedCommandFailure & { readonly cleanupFailure: string },
+  primary: AnalysisError,
+  outcome: ProviderOutcome,
+): AnalysisError => {
+  const timeout = outcome.kind === "timeout" ? primary : undefined;
+  return createSqliteCleanupError(
+    command.resources,
+    {
+      reason: command.cleanupFailure,
+      ...(timeout === undefined
+        ? {
+            previous_error: {
+              failure_kind: command.reason,
+              message: command.message,
+            },
+          }
+        : {}),
+    },
+    {
+      cause: command,
+      ...(command.snapshot === null
+        ? {}
+        : { capturedOutput: capturedSqliteOutput(command.snapshot) }),
+      ...(timeout === undefined ? {} : { cleanupPrimary: timeout }),
+    },
+  );
 };
