@@ -226,6 +226,37 @@ describe("ZIP listing coverage against the member region", () => {
       firstUnaccountedOffset: bytes.length,
     });
   });
+
+  it("accounts for an AE-2 data descriptor whose directory reports no CRC", async () => {
+    const first = member("a.txt");
+    const local = localEntry(first);
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(first.data.length, 8);
+    descriptor.writeUInt32LE(first.data.length, 12);
+    const bytes = Buffer.concat([local, descriptor]);
+    const record = {
+      offset: 0,
+      compressedSize: first.data.length,
+      uncompressedSize: first.data.length,
+      crc32: undefined,
+      zip64: false,
+      dataDescriptor: true,
+    };
+    const read = async (at: number, length: number) =>
+      bytes.subarray(at, at + length);
+    expect(
+      await accountZipMemberRegion([record], bytes.length, read),
+    ).toMatchObject({ unaccountedBytes: 0, unaccountedRanges: 0 });
+    // Sizes still have to match.
+    expect(
+      await accountZipMemberRegion(
+        [{ ...record, compressedSize: first.data.length + 1 }],
+        bytes.length,
+        read,
+      ),
+    ).toMatchObject({ unaccountedRanges: 1 });
+  });
 });
 
 describe("ZIP listing coverage from the central directory", () => {

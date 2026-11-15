@@ -180,7 +180,9 @@ export class ZipArtifactReader implements ArtifactReader {
   readonly #source: NodeFileReader;
   readonly #reader: ZipReader<string>;
   readonly #streams = new Map<Readable, Promise<void>>();
-  readonly #enumerations = new Set<AsyncGenerator<ArtifactEntry, void>>();
+  readonly #enumerations = new Set<AsyncGenerator<Entry, void>>();
+  /** Running traversal steps, including the final accounting pass, that close joins. */
+  readonly #traversalSteps = new Set<Promise<unknown>>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   readonly #entries = new Map<
@@ -204,18 +206,24 @@ export class ZipArtifactReader implements ArtifactReader {
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
-    const pending = this.#enumerate(signal, options);
-    const owners = this.#enumerations;
-    let owned!: AsyncGenerator<ArtifactEntry, void>;
-    owned = (async function* (): AsyncGenerator<ArtifactEntry, void> {
-      try {
-        yield* pending;
-      } finally {
-        owners.delete(owned);
-      }
-    })();
-    owners.add(owned);
-    return owned;
+    const traversal = this.#enumerate(signal, options);
+    const steps = this.#traversalSteps;
+    // Close joins a running step without ending the traversal, so the
+    // caller's next step still observes the close instead of completion.
+    const step = <T>(running: Promise<T>): Promise<T> => {
+      steps.add(running);
+      const settled = () => {
+        steps.delete(running);
+      };
+      running.then(settled, settled);
+      return running;
+    };
+    const iterator: AsyncIterator<ArtifactEntry, void> = {
+      next: () => step(traversal.next()),
+      return: (value) => step(traversal.return(value)),
+      throw: (cause: unknown) => step(traversal.throw(cause)),
+    };
+    return { [Symbol.asyncIterator]: () => iterator };
   }
 
   async *#enumerate(
@@ -231,6 +239,7 @@ export class ZipArtifactReader implements ArtifactReader {
     const enumeration = typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     );
+    this.#enumerations.add(enumeration);
     try {
       for await (const entry of enumeration) {
         await this.#source.verify();
@@ -300,6 +309,7 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       options?.onCoverage?.(zipListingCoverage(account));
     } finally {
+      this.#enumerations.delete(enumeration);
       await enumeration.return();
     }
   }
@@ -354,9 +364,15 @@ export class ZipArtifactReader implements ArtifactReader {
       output.destroy(
         new ArtifactReaderFailure("unavailable", "ZIP reader closed"),
       );
-    const outcomes = await Promise.allSettled([
-      ...this.#streams.values(),
-      ...Array.from(this.#enumerations, (enumeration) => enumeration.return()),
+    // A joined traversal step reports its own failure to its caller.
+    const [outcomes] = await Promise.all([
+      Promise.allSettled([
+        ...this.#streams.values(),
+        ...Array.from(this.#enumerations, (enumeration) =>
+          enumeration.return(),
+        ),
+      ]),
+      Promise.allSettled(this.#traversalSteps),
     ]);
     this.#enumerations.clear();
     // best-effort cleanup: zip-reader close must not mask prior extraction state.

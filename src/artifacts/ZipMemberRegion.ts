@@ -1,3 +1,4 @@
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import {
   apkSigningPairEnd,
   APK_SIGNING_BLOCK_MAX_PAIRS,
@@ -9,6 +10,7 @@ export interface ZipLocalRecord {
   readonly offset: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
+  /** Undefined when the directory reader reports none, as for AES entries. */
   readonly crc32: number | undefined;
   readonly zip64: boolean;
   /** The general-purpose flag that places a data descriptor after the data. */
@@ -62,10 +64,11 @@ export const accountZipMemberRegion = async (
           ),
         ),
       };
-    return new DataView(
-      window.bytes.buffer,
-      window.bytes.byteOffset + offset - window.start,
-      length,
+    const at = offset - window.start;
+    return new BinaryReader(
+      Buffer.from(window.bytes.buffer, window.bytes.byteOffset + at, length),
+      true,
+      "zip",
     );
   };
   let unaccountedBytes = 0;
@@ -91,7 +94,7 @@ export const accountZipMemberRegion = async (
       continue;
     }
     const header = await view(record.offset, LOCAL_HEADER_BYTES);
-    if (header.getUint32(0, true) !== LOCAL_HEADER_SIGNATURE) {
+    if (header.u32(0) !== LOCAL_HEADER_SIGNATURE) {
       unlocatedHeaders += 1;
       continue;
     }
@@ -99,8 +102,8 @@ export const accountZipMemberRegion = async (
     const end =
       record.offset +
       LOCAL_HEADER_BYTES +
-      header.getUint16(26, true) +
-      header.getUint16(28, true) +
+      header.u16(26) +
+      header.u16(28) +
       record.compressedSize;
     // Overlapping records are refused when their data is read.
     if (end > cursor) {
@@ -121,29 +124,26 @@ export const accountZipMemberRegion = async (
  * The bytes of the record's data descriptor at `at`, or 0 when none matches.
  * The descriptor signature is optional and an unsigned descriptor's CRC may
  * equal it, so both layouts are tried against the recorded CRC and sizes.
+ * An entry whose directory reports no CRC (zip.js omits it for AES entries,
+ * whose AE-2 CRC is zero) is matched on its sizes alone.
  */
 const dataDescriptorBytes = async (
   record: ZipLocalRecord,
   at: number,
   end: number,
-  view: (offset: number, length: number) => Promise<DataView>,
+  view: (offset: number, length: number) => Promise<BinaryReader>,
 ): Promise<number> => {
-  if (record.crc32 === undefined) return 0;
   const body = record.zip64 ? 20 : 12;
   const signed =
     end - at >= body + 4 &&
-    (await view(at, 4)).getUint32(0, true) === DATA_DESCRIPTOR_SIGNATURE;
+    (await view(at, 4)).u32(0) === DATA_DESCRIPTOR_SIGNATURE;
   for (const prefix of signed ? [4, 0] : [0]) {
     if (end - at < prefix + body) continue;
     const data = await view(at + prefix, body);
-    const compressed = record.zip64
-      ? data.getBigUint64(4, true)
-      : BigInt(data.getUint32(4, true));
-    const uncompressed = record.zip64
-      ? data.getBigUint64(12, true)
-      : BigInt(data.getUint32(8, true));
+    const compressed = record.zip64 ? data.word(4, 64) : BigInt(data.u32(4));
+    const uncompressed = record.zip64 ? data.word(12, 64) : BigInt(data.u32(8));
     if (
-      data.getUint32(0, true) === record.crc32 &&
+      (record.crc32 === undefined || data.u32(0) === record.crc32) &&
       compressed === BigInt(record.compressedSize) &&
       uncompressed === BigInt(record.uncompressedSize)
     )
@@ -156,7 +156,7 @@ const dataDescriptorBytes = async (
 const apkSigningBlockStart = async (
   cursor: number,
   directoryOffset: number,
-  view: (offset: number, length: number) => Promise<DataView>,
+  view: (offset: number, length: number) => Promise<BinaryReader>,
 ): Promise<number> => {
   if (directoryOffset - cursor < APK_SIGNING_BLOCK_FOOTER_BYTES + 8)
     return directoryOffset;
@@ -165,22 +165,22 @@ const apkSigningBlockStart = async (
     APK_SIGNING_BLOCK_FOOTER_BYTES,
   );
   const magic = new TextDecoder("latin1").decode(
-    new Uint8Array(footer.buffer, footer.byteOffset + 8, 16),
+    footer.range(8, 16, "APK signing block magic"),
   );
   if (magic !== APK_SIGNING_BLOCK_MAGIC) return directoryOffset;
-  const size = footer.getBigUint64(0, true);
+  const size = footer.word(0, 64);
   if (size < 24n) return directoryOffset;
   const start = BigInt(directoryOffset) - size - 8n;
   if (start < BigInt(cursor)) return directoryOffset;
   const header = await view(Number(start), 8);
-  if (header.getBigUint64(0, true) !== size) return directoryOffset;
+  if (header.word(0, 64) !== size) return directoryOffset;
   let offset = Number(start) + 8;
   const pairsEnd = directoryOffset - APK_SIGNING_BLOCK_FOOTER_BYTES;
   let count = 0;
   while (offset < pairsEnd) {
     if (pairsEnd - offset < 8 || count++ >= APK_SIGNING_BLOCK_MAX_PAIRS)
       return directoryOffset;
-    const length = (await view(offset, 8)).getBigUint64(0, true);
+    const length = (await view(offset, 8)).word(0, 64);
     const next = apkSigningPairEnd(length, offset, pairsEnd);
     if (next === undefined) return directoryOffset;
     offset = next;
