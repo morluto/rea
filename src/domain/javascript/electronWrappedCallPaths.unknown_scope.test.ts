@@ -1011,6 +1011,7 @@ describe("later initializer precision", () => {
     "alias = /value/; alias.other = 1;",
     "alias = {}; alias[key] = 1;",
     "alias = {}; const replacement = alias; replacement.other = 1;",
+    "const replacement = {}; alias = replacement; alias.other = 1;",
   ])("keeps bridge methods after replacement alias writes: %s", (writes) => {
     const result = analyze(`
       const { contextBridge, ipcRenderer } = require("electron");
@@ -1049,6 +1050,29 @@ describe("later initializer precision", () => {
     expect(result.parse_status).toBe("partial");
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
+
+  it.each([
+    "const replacement = base;",
+    "let replacement = {}; replacement = base;",
+    "const { replacement } = { replacement: base };",
+  ])(
+    "retains uncertainty when a replacement binding can hold the original object: %s",
+    (replacement) => {
+      const result = analyze(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const base = { ping: () => ipcRenderer.send("ping") };
+      ${replacement}
+      let alias = base;
+      alias = replacement;
+      alias.other = 1;
+      contextBridge.exposeInMainWorld("api", base);
+    `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
 
   it.each([
     "alias.load = require; alias = {};",

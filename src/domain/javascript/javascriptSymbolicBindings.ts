@@ -38,6 +38,7 @@ import {
   resolveSemanticBindingState,
   semanticPrototypeOwners,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
   type SemanticPrototypeOwner,
@@ -2218,8 +2219,24 @@ export class JavaScriptSymbolicBindings {
         (initializer) =>
           initializer === binding.initializers[0] ||
           initializer.projection.length > 0 ||
-          !isFreshObject(initializer.node),
+          !this.#isFreshValue(initializer.node),
       )
+    );
+  }
+
+  /** A fresh allocation, inline or held by a binding that only ever received one. */
+  #isFreshValue(node: t.Node): boolean {
+    if (isFreshObject(node)) return true;
+    if (!t.isIdentifier(node)) return false;
+    const binding = resolveSemanticBindingState(this.state, node, node.name);
+    const initializer = semanticStableInitializer(binding, this.state);
+    return (
+      binding !== undefined &&
+      binding.referenceInitializers.length === 0 &&
+      initializer !== undefined &&
+      initializer.entryBody === undefined &&
+      initializer.projection.length === 0 &&
+      isFreshObject(initializer.node)
     );
   }
 
