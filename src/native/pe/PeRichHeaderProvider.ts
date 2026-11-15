@@ -14,15 +14,14 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import type { PeRichHeaderPort } from "../../application/binaryDiagnostics/PeRichHeaderPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
@@ -37,8 +36,13 @@ import { parsePeRichHeader } from "./PeRichHeaderParser.js";
 
 const OPERATION = "inspect_pe_rich_header";
 
-/** Portable Rich header reader over one bounded, identity-checked regular file. */
-export class PeRichHeaderProvider implements PeRichHeaderPort {
+/**
+ * Portable Rich header reader over one bounded, identity-checked regular file.
+ * It satisfies PeRichHeaderPort structurally; composition checks that where it
+ * hands the provider to PeRichHeaderService, so this adapter needs no upward
+ * import from the application layer.
+ */
+export class PeRichHeaderProvider {
   readonly identity = PE_RICH_HEADER_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -54,7 +58,10 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
     }
   }
 
-  async inspect(input: InspectPeRichHeaderInput, options?: ExecutionOptions) {
+  async inspect(
+    input: InspectPeRichHeaderInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
     const read: { completed?: FileSnapshotPartialObservation } = {};
     try {
       return await this.#resources.run(async () => {
@@ -133,9 +140,10 @@ const peRichHeaderFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

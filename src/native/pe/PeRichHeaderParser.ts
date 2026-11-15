@@ -12,6 +12,7 @@ import {
   type PeRichHeaderEntry,
   type PeRichHeaderRecord,
 } from "../../domain/native/peRichHeader.js";
+import { BinaryReader } from "../metadata/BinaryContainer.js";
 import { readPeHeaders } from "./PeResourceLayout.js";
 
 const DOS_HEADER_BYTES = 0x40;
@@ -39,14 +40,14 @@ const pause = async (signal: AbortSignal | undefined): Promise<void> => {
  * `BYTES_PER_YIELD`, so a stub of any size cannot hold the event loop.
  */
 const lastAlignedDword = async (
-  bytes: Buffer,
+  reader: BinaryReader,
   from: number,
   value: number,
   signal: AbortSignal | undefined,
 ): Promise<number | null> => {
   let scanned = 0;
   for (let at = from - (from % 4); at >= DOS_HEADER_BYTES; at -= 4) {
-    if (bytes.readUInt32LE(at) === value) return at;
+    if (reader.u32(at) === value) return at;
     scanned += 4;
     if (scanned % BYTES_PER_YIELD === 0) await pause(signal);
   }
@@ -59,25 +60,25 @@ const lastAlignedDword = async (
  * the linker writes the image's record directly before the PE header.
  */
 const footerOffset = (
-  bytes: Buffer,
+  reader: BinaryReader,
   peOffset: number,
   signal: AbortSignal | undefined,
 ): Promise<number | null> => {
   const last = peOffset - PE_RICH_HEADER_FOOTER_BYTES;
   return last < DOS_HEADER_BYTES
     ? Promise.resolve(null)
-    : lastAlignedDword(bytes, last, RICH, signal);
+    : lastAlignedDword(reader, last, RICH, signal);
 };
 
 /** Walk back from the footer to the nearest `DanS` encoded with this key. */
 const startOffset = (
-  bytes: Buffer,
+  reader: BinaryReader,
   footer: number,
   key: number,
   signal: AbortSignal | undefined,
 ): Promise<number | null> =>
   lastAlignedDword(
-    bytes,
+    reader,
     footer - PE_RICH_HEADER_START_BYTES,
     (DANS ^ key) >>> 0,
     signal,
@@ -107,16 +108,16 @@ const richChecksum = async (
 };
 
 const richRecord = async (
-  bytes: Buffer,
+  reader: BinaryReader,
   peOffset: number,
   input: InspectPeRichHeaderInput,
   signal: AbortSignal | undefined,
 ): Promise<PeRichHeaderRecord> => {
-  const footer = await footerOffset(bytes, peOffset, signal);
+  const footer = await footerOffset(reader, peOffset, signal);
   if (footer === null) return { state: "absent" };
-  const key = bytes.readUInt32LE(footer + 4);
+  const key = reader.u32(footer + 4);
   const footerLocation = { offset: footer, bytes: PE_RICH_HEADER_FOOTER_BYTES };
-  const start = await startOffset(bytes, footer, key, signal);
+  const start = await startOffset(reader, footer, key, signal);
   if (start === null)
     return {
       state: "malformed",
@@ -139,7 +140,7 @@ const richRecord = async (
       `PE Rich header holds ${String(count)} entries, over the ${String(input.max_entries)}-entry budget.`,
       { boundary: "capacity" },
     );
-  const decode = (at: number): number => (bytes.readUInt32LE(at) ^ key) >>> 0;
+  const decode = (at: number): number => (reader.u32(at) ^ key) >>> 0;
   const entries: PeRichHeaderEntry[] = [];
   for (
     let at = start + PE_RICH_HEADER_START_BYTES;
@@ -153,7 +154,7 @@ const richRecord = async (
       count: decode(at + 4),
     });
   }
-  const computed = await richChecksum(bytes, start, entries, signal);
+  const computed = await richChecksum(reader.bytes, start, entries, signal);
   return {
     state: "present",
     location: {
@@ -178,7 +179,12 @@ export const parsePeRichHeader = async (
   assertArtifactReadActive(signal);
   const { machine, format, optionalHeaderOffset } = readPeHeaders(bytes);
   const peOffset = optionalHeaderOffset - 24;
-  const record = await richRecord(bytes, peOffset, input, signal);
+  const record = await richRecord(
+    new BinaryReader(bytes, true, "pe"),
+    peOffset,
+    input,
+    signal,
+  );
   return {
     artifact,
     format,
