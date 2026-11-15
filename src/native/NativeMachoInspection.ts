@@ -58,6 +58,7 @@ import {
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -184,7 +185,7 @@ export const inspectNativeMacho = async (
     captures.push(captured.value);
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
-  if (lipo === undefined) throw new TypeError("Missing lipo capture");
+  if (lipo === undefined) throw invariantViolation("Missing lipo capture");
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
@@ -261,7 +262,7 @@ export const inspectNativeMacho = async (
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
-    throw new TypeError("Missing nm or dyld_info export capture");
+    throw invariantViolation("Missing nm or dyld_info export capture");
   const selected =
     selection !== null
       ? selection.architecture
@@ -352,7 +353,7 @@ export const inspectNativeMacho = async (
       tool === "dyld_info" && arguments_[0] === "-imports",
   );
   if (dyldImports === undefined)
-    throw new TypeError("Missing dyld_info import capture");
+    throw invariantViolation("Missing dyld_info import capture");
   const hasChainedFixups = load.commands.some(
     ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
   );
@@ -710,7 +711,8 @@ const captureLookup =
   (captures: readonly NativeCommandCapture[]) =>
   (tool: string, occurrence = 0): NativeCommandCapture => {
     const capture = captures.filter((item) => item.tool === tool)[occurrence];
-    if (capture === undefined) throw new TypeError(`Missing ${tool} capture`);
+    if (capture === undefined)
+      throw invariantViolation(`Missing ${tool} capture`);
     return capture;
   };
 
