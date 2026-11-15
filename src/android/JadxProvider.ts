@@ -135,13 +135,21 @@ interface PendingCleanup {
   session: JadxSession | undefined;
   root: JadxWorkspaceRoot | undefined;
   readonly fileHandles: Map<OwnedFileHandle, string>;
-  /** Reports admission failure; bound to `descriptorRelease`. */
+  /** Reports admission failure; bound to `admissionDescriptors.release` when present. */
   readonly previousError: AnalysisError | undefined;
-  /** Confirmed once every descriptor owner from the admission close failure closes. */
-  readonly descriptorRelease: AnalysisCleanupRelease;
+  /**
+   * Descriptors this record owns from the admission close failure, and the
+   * release confirmed once all of them close. Absent when the failure's
+   * descriptors belong to another owner, such as the prerequisite scope.
+   */
+  readonly admissionDescriptors: AdmissionDescriptors | undefined;
   /** Confirmed once this whole retained cleanup completes; errors it reported read it. */
   readonly release: AnalysisCleanupRelease;
-  readonly operationCause: unknown;
+}
+
+interface AdmissionDescriptors {
+  readonly owners: ReadonlySet<OwnedFileHandle>;
+  readonly release: AnalysisCleanupRelease;
 }
 
 /** Every descriptor owner nested in one rejected close, without treating a later owner as the first. */
@@ -158,6 +166,22 @@ const retainedCleanupOwners = (
   };
   visit(cause, new Set());
   return owners;
+};
+
+/**
+ * The descriptors in `fileHandles` that one rejected close left behind, with a
+ * release for them. Undefined when that close retained none of them.
+ */
+const admissionDescriptorsOf = (
+  cause: unknown,
+  fileHandles: ReadonlyMap<OwnedFileHandle, string>,
+): AdmissionDescriptors | undefined => {
+  const owners = new Set(
+    [...retainedCleanupOwners(cause)].filter((owner) => fileHandles.has(owner)),
+  );
+  return owners.size === 0
+    ? undefined
+    : { owners, release: new AnalysisCleanupRelease() };
 };
 
 const cleanupResources = (resources: PendingCleanup): readonly string[] => [
@@ -203,10 +227,7 @@ const cleanup = async (
     sessionCloseFailed = true;
     sessionCloseCause = cause;
   }
-  const tracked = retainedCleanupOwners(resources.operationCause);
-  const trackedInMap = [...tracked].filter((owner) =>
-    resources.fileHandles.has(owner),
-  );
+  const admission = resources.admissionDescriptors;
   const fileCloseCauses: unknown[] = [];
   for (const owner of resources.fileHandles.keys()) {
     try {
@@ -215,10 +236,12 @@ const cleanup = async (
       // One descriptor's release clears only that owner. The admission error
       // stays incomplete until every owner from the same close failure is gone.
       if (
-        trackedInMap.length > 0 &&
-        trackedInMap.every((candidate) => !resources.fileHandles.has(candidate))
+        admission !== undefined &&
+        [...admission.owners].every(
+          (candidate) => !resources.fileHandles.has(candidate),
+        )
       )
-        resources.descriptorRelease.confirm();
+        admission.release.confirm();
     } catch (cause: unknown) {
       fileCloseCauses.push(cause);
     }
@@ -447,9 +470,8 @@ export class JadxProvider implements AndroidAnalysisPort {
         root: this.#retained.root,
         fileHandles: new Map(),
         previousError: undefined,
-        descriptorRelease: new AnalysisCleanupRelease(),
+        admissionDescriptors: undefined,
         release: new AnalysisCleanupRelease(),
-        operationCause: undefined,
       };
       this.#retained = undefined;
     }
@@ -737,11 +759,14 @@ export class JadxProvider implements AndroidAnalysisPort {
       root ??= this.#retained?.root;
       session ??= this.#retained?.session;
       this.#retained = undefined;
-      // The admission failure reads its descriptors' release however it is
-      // first projected: by a cleanup failure or returned on its own.
-      const descriptorRelease = new AnalysisCleanupRelease();
+      // The admission failure reads the release of the descriptors this record
+      // owns however it is first projected: by a cleanup failure or returned on
+      // its own. Descriptors another owner retained keep that owner's record.
+      const admissionDescriptors = admissionDescriptorsOf(cause, fileHandles);
       const admissionFailure = (): AnalysisError =>
-        descriptorRelease.bind(failure());
+        admissionDescriptors === undefined
+          ? failure()
+          : admissionDescriptors.release.bind(failure());
       this.#pendingCleanup = {
         operation: request.operation,
         session,
@@ -750,9 +775,8 @@ export class JadxProvider implements AndroidAnalysisPort {
         get previousError() {
           return admissionFailure();
         },
-        descriptorRelease,
+        admissionDescriptors,
         release: new AnalysisCleanupRelease(),
-        operationCause: cause,
       };
       const retired = await this.#retire();
       return retired.ok ? err(admissionFailure()) : retired;
