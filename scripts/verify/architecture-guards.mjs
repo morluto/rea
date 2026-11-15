@@ -172,7 +172,7 @@ check(
 check(
   "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
   files,
-  /\bnativeInventoryRowsSchemas\b/,
+  /\bnativeInventoryRowsSchemas\b|z\.array\(\s*addressedValueSchema\b|\baddressedValueSchema\s*\.\s*(?:safeParse|parse|pick)\b/,
   [
     "src/domain/native/nativeInventory.ts",
     "src/domain/native/nativeOperationFacts.ts",

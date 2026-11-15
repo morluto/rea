@@ -31,8 +31,9 @@ import {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { parseFunctionDossier } from "../domain/native/functionDossier.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
+import type { AddressedName } from "../domain/native/nativeInventory.js";
 import {
+  listNamesFact,
   listProceduresFact,
   listStringsFact,
 } from "../domain/native/nativeOperationFacts.js";
@@ -305,14 +306,18 @@ export class EnhancedTools {
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const namesExecution = await this.#observe("list_names", {}, signal);
-    if (!namesExecution.ok) return namesExecution;
-    const names = this.#parseAddressed(
-      "list_names",
-      namesExecution.value.result,
+    const inventory = await executeFact(
+      this.#observed,
+      listNamesFact,
+      {},
+      signal === undefined ? {} : { signal },
     );
-    if (!names.ok) return names;
-    const candidates = selectObjcClassCandidates(names.value, pattern);
+    if (!inventory.ok) return inventory;
+    const namesExecution = inventory.value.execution;
+    const candidates = selectObjcClassCandidates(
+      addressedNames(inventory.value.fact),
+      pattern,
+    );
     if (candidates.length === 0)
       return ok(
         projectObjcClassCandidates(candidates, {
@@ -350,10 +355,10 @@ export class EnhancedTools {
     const native = nativeDispatchMetadataResultSchema.safeParse(
       bindingsExecution.value.result,
     );
-    const nameSubject = namesExecution.value.subject;
+    const nameSubject = namesExecution.subject;
     const bindingSubject = bindingsExecution.value.subject;
     const namesSelection = profileMachoTargetSelection(
-      namesExecution.value.analysisProfile,
+      namesExecution.analysisProfile,
     );
     const nativeSelection = native.success
       ? native.data.result.target_selection
@@ -373,8 +378,8 @@ export class EnhancedTools {
       native.data.target_sha256 !== nameSubject.sha256 ||
       native.data.target_architecture !== nameSubject.architecture ||
       native.data.provider.id !== bindingsExecution.value.provider.id ||
-      namesExecution.value.analysisProfile?.provider.id !==
-        namesExecution.value.provider.id ||
+      namesExecution.analysisProfile?.provider.id !==
+        namesExecution.provider.id ||
       nativeSelection === undefined ||
       !machoTargetSelectionMatchesArchitecture(
         nativeSelection,
@@ -397,7 +402,7 @@ export class EnhancedTools {
       );
 
     const coverage = native.data.result.objc_class_import_binding_coverage;
-    const inventoryLimitations = namesExecution.value.limitations;
+    const inventoryLimitations = namesExecution.limitations;
     const inventoryIncomplete = inventoryLimitations.length > 0;
     const coverageReason = [
       coverage.reason,
@@ -783,27 +788,13 @@ export class EnhancedTools {
     tool: "list_names" | "list_procedures",
     signal?: AbortSignal,
   ) {
-    const result = await this.#call(tool, {}, signal);
-    if (!result.ok) return result;
-    return this.#parseAddressed(tool, result.value);
-  }
-
-  #parseAddressed(tool: "list_names" | "list_procedures", value: JsonValue) {
-    const parsed = z.array(addressedValueSchema).safeParse(value);
-    return parsed.success
-      ? ok(
-          parsed.data.map(({ address, value: name, objc_class_label }) => ({
-            address,
-            name,
-            ...(objc_class_label === undefined ? {} : { objc_class_label }),
-          })),
-        )
-      : err(
-          new AnalysisOutputError(
-            tool,
-            "provider returned an invalid inventory",
-          ),
-        );
+    const inventory = await executeFact(
+      this.#observed,
+      tool === "list_names" ? listNamesFact : listProceduresFact,
+      {},
+      signal === undefined ? {} : { signal },
+    );
+    return inventory.ok ? ok(addressedNames(inventory.value.fact)) : inventory;
   }
 
   /** This tool's port: every call goes through `#observe`'s cancellation checks. */
@@ -845,6 +836,19 @@ export class EnhancedTools {
     return execution;
   }
 }
+
+const addressedNames = (
+  rows: readonly {
+    readonly address: string;
+    readonly value: string;
+    readonly objc_class_label?: "hopper_legacy_class_object";
+  }[],
+): AddressedName[] =>
+  rows.map(({ address, value: name, objc_class_label }) => ({
+    address,
+    name,
+    ...(objc_class_label === undefined ? {} : { objc_class_label }),
+  }));
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
