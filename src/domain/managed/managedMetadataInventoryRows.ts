@@ -1,22 +1,22 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
-import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
-import { MAX_TYPE_NESTING_DEPTH } from "./ManagedSignatureTypeNames.js";
-import { readManagedTypeNesting } from "./ManagedTypeNesting.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
+import { readMemberReferenceRowFacts } from "./managedMemberReferenceRows.js";
+import { readTypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import { managedTypeReferences } from "./managedTypeReferences.js";
+import { MAX_TYPE_NESTING_DEPTH } from "./managedSignatureTypeNames.js";
+import { readManagedTypeNesting } from "./managedTypeNesting.js";
+import { memberDeclaringTypeRowLookup } from "./managedMemberOwnership.js";
+import type { TypeMemberListFacts } from "./managedTypeMemberLists.js";
 
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
-} from "../domain/managed/managedArtifact.js";
+} from "./managedArtifact.js";
 import {
   MANAGED_CODED_INDEXES,
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   metadataRowCursor,
   readManagedCompressedUnsigned,
@@ -26,11 +26,11 @@ import {
   readMetadataBlob,
   readMetadataGuid,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
-import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
-import type { ManagedResourceDirectory } from "./ManagedMetadataInventory.js";
-import type { ManagedType, parseTypes } from "./ManagedMemberInspectorCore.js";
+} from "./managedMetadataHeaps.js";
+import { managedFailure, readManagedValue } from "./managedReaderFailure.js";
+import type { ManagedTypeReferenceLookup } from "./managedTypeReferences.js";
+import type { ManagedResourceDirectory } from "./managedMetadataInventory.js";
+import type { ManagedType, parseTypes } from "./managedMemberInspectorCore.js";
 
 type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;

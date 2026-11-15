@@ -1,5 +1,8 @@
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataRowCursor,
+  metadataToken,
+} from "../domain/managed/managedMetadataHeaps.js";
 
 /** Scalar Field facts; consumers own heap admission and field selection. */
 export const readFieldDefinitionRow = (

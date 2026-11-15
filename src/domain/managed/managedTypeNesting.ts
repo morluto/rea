@@ -1,8 +1,8 @@
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import { metadataRowCursor, metadataToken } from "./managedMetadataHeaps.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
+import { managedFailure, readManagedValue } from "./managedReaderFailure.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
 
 /** Parsed NestedClass facts shared by declaring types and signature operands. */
 export interface ManagedTypeNesting {

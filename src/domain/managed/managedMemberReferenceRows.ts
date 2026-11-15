@@ -1,12 +1,12 @@
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   metadataRowCursor,
   metadataToken,
-} from "./ManagedMetadataHeaps.js";
+} from "./managedMetadataHeaps.js";
 
 /** Scalar MemberRef facts; consumers own heap admission and parent diagnostics. */
 export const readMemberReferenceRowFacts = (

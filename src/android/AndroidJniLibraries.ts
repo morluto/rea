@@ -3,8 +3,8 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   streamChunkToBuffer,
+  ZipArtifactReader,
 } from "../resources/index.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
