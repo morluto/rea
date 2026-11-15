@@ -622,13 +622,16 @@ const renameConstraint = (
   );
 };
 
-/** The union keyword naming a root discriminator, checked with the delivery. */
+/**
+ * The union keyword naming a root discriminator, checked with the delivery,
+ * or left to the contract when the projection omits the discriminator.
+ */
 const ROOT_DISCRIMINATOR = "x-rea-root-discriminator";
 
 const projectObjectConstraints = (
   contract: ProjectedContract,
   rename: (field: string) => string,
-  deliveryFields: ReadonlySet<string>,
+  unprojectedFields: ReadonlySet<string>,
   cliOptionDependencies: Readonly<Record<string, readonly string[]>>,
   nullFlagLimits: readonly (readonly [flag: string, limit: string])[],
 ): Record<string, unknown> | undefined => {
@@ -639,7 +642,7 @@ const projectObjectConstraints = (
       !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword) &&
       !(
         keyword === ROOT_DISCRIMINATOR &&
-        deliveryFields.has(String(metadata[keyword]))
+        unprojectedFields.has(String(metadata[keyword]))
       )
     )
       throw new Error(
@@ -675,13 +678,13 @@ const projectObjectConstraints = (
 
 /**
  * Each input field's schema. Branches of a union input must share each field
- * the CLI takes as an argument; only delivery-owned fields may differ, and
- * they admit any branch's value here. The delivery is then checked against
- * the whole union.
+ * the CLI takes as an argument; only delivery-owned fields, and omitted
+ * fields the CLI never supplies, may differ, and they admit any branch's
+ * value here. The delivery is then checked against the whole union.
  */
 const inputFields = (
   contract: ProjectedContract,
-  deliveryFields: ReadonlySet<string>,
+  unprojectedFields: ReadonlySet<string>,
 ): Record<string, z.ZodType> => {
   const schema = contract.inputSchema;
   if (schema instanceof z.ZodObject)
@@ -696,7 +699,7 @@ const inputFields = (
       const [first] = branches;
       if (branches.every((branch) => branch === first)) return [field, first!];
       if (
-        !deliveryFields.has(field) ||
+        !unprojectedFields.has(field) ||
         branches.some((branch) => branch === undefined)
       )
         throw new Error(
@@ -1200,7 +1203,12 @@ export const describeContractCommand = <
         : ["detail", "view"]
       : [],
   );
-  const shape = inputFields(contract, deliveryFields);
+  // Fields the CLI never supplies: the delivery's, and the omitted ones.
+  const unprojectedFields: ReadonlySet<string> = new Set([
+    ...deliveryFields,
+    ...Object.keys(projection.omit ?? {}),
+  ]);
+  const shape = inputFields(contract, unprojectedFields);
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
     throw new Error(`${contract.name} has no optional input field view`);
   const positionals: readonly string[] = projection.positionals ?? [];
@@ -1585,7 +1593,7 @@ export const describeContractCommand = <
     optionConstraints: projectObjectConstraints(
       contract,
       rename,
-      deliveryFields,
+      unprojectedFields,
       cliOptionDependencies,
       nullFlagLimits,
     ),

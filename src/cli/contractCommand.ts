@@ -3,7 +3,10 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -459,6 +462,216 @@ export const registerContractCommand = <
   registered.push(description);
   descriptions.set(cli, registered);
 };
+
+/** One contract a target-routed command runs, with the targets it takes. */
+export interface CliTargetRoute {
+  readonly description: ContractCliDescription;
+  /**
+   * Whether this route takes the target. Only a route that owns every
+   * option the caller gave is asked; the last route takes every other target.
+   */
+  readonly takesTarget: ((target: string) => Promise<boolean>) | undefined;
+  /** What this route's own options need, named when another route refuses them. */
+  readonly requirement: string;
+  readonly run: (
+    input: unknown,
+    context: ContractCommandContext,
+  ) => Promise<unknown>;
+}
+
+/** Describe one route of a target-routed command from its contract. */
+export const targetRoute = <
+  Contract extends ProjectedContract,
+  CliOptions extends CliOptionShape = Record<never, z.ZodType>,
+>(
+  contract: Contract,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
+  run: (
+    input: z.input<Contract["inputSchema"]>,
+    context: ContractCommandContext<CliOptionValues<CliOptions>>,
+  ) => Promise<unknown>,
+  route: {
+    readonly takesTarget?: (target: string) => Promise<boolean>;
+    readonly requirement: string;
+  },
+): CliTargetRoute => {
+  if (projection.operationBy !== undefined)
+    throw new Error(`${contract.name} routes by target and by an option`);
+  return {
+    description: describeContractCommand(contract, projection),
+    takesTarget: route.takesTarget,
+    requirement: route.requirement,
+    run: run as CliTargetRoute["run"],
+  };
+};
+
+/** The argv arguments and options one description takes, keyed by CLI key. */
+const commandShape = (description: ContractCliDescription) => ({
+  args: [
+    ...(description.sessionTarget === undefined
+      ? []
+      : [description.sessionTarget]),
+    ...description.parameters.filter(({ positional }) => positional),
+  ].map(({ key, schema }) => [key, schema] as const),
+  // Routed descriptions declare no object-level rules, so this is the object.
+  options: Object.fromEntries(
+    Object.entries(
+      (incurOptions(description) as z.ZodObject).shape as Readonly<
+        Record<string, z.ZodType>
+      >,
+    ).map(([key, schema]) => [key, withoutDefault(schema)]),
+  ),
+});
+
+/**
+ * An omitted option must stay omitted, since a given option routes the
+ * target; the chosen contract applies its own default on admission. Help and
+ * `--schema` keep the option's metadata.
+ */
+const withoutDefault = (schema: z.ZodType): z.ZodType => {
+  if (!(schema instanceof z.ZodDefault)) return schema;
+  const omittable = (schema.removeDefault() as z.ZodType).optional();
+  const metadata = schema.meta();
+  return metadata === undefined ? omittable : omittable.meta(metadata);
+};
+
+const schemaSignature = (schema: z.ZodType): string =>
+  JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
+
+const routedDescriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
+
+/** Route descriptions of commands registered through `registerTargetRoutedCommand`. */
+export const targetRoutedCommandDescriptions = (
+  cli: CliInstance,
+): readonly ContractCliDescription[] => routedDescriptions.get(cli) ?? [];
+
+/**
+ * Register one CLI command whose target chooses the contract it runs, such
+ * as `analyze` running static JavaScript analysis on an application archive
+ * and the binary overview on a program. Each route is projected from its own
+ * contract; the command takes the union of their options, which must agree
+ * on every shared key. The first route that owns every given option and
+ * takes the target runs; an option the chosen route does not own is refused
+ * naming its CLI key and the route that takes it.
+ */
+export const registerTargetRoutedCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  command: { readonly command: string; readonly description: string },
+  routes: readonly [...CliTargetRoute[], CliTargetRoute],
+): void => {
+  const shapes = routes.map(({ description }) => {
+    if (
+      description.command !== command.command ||
+      description.optionConstraints !== undefined ||
+      description.checkOptions !== undefined ||
+      description.parameters.some(
+        ({ selectorOption }) => selectorOption !== undefined,
+      )
+    )
+      throw new Error(
+        `${description.contract.name} cannot be routed by ${command.command}`,
+      );
+    return commandShape(description);
+  });
+  const args = shapes[0]!.args;
+  const options = new Map<string, z.ZodType>();
+  const owners = new Map<string, CliTargetRoute>();
+  for (const [index, shape] of shapes.entries()) {
+    if (
+      shape.args.length !== args.length ||
+      shape.args.some(
+        ([key, schema], position) =>
+          key !== args[position]![0] ||
+          schemaSignature(schema) !== schemaSignature(args[position]![1]),
+      )
+    )
+      throw new Error(`${command.command} routes take different arguments`);
+    for (const [key, schema] of Object.entries(shape.options)) {
+      const shared = options.get(key);
+      if (
+        shared !== undefined &&
+        schemaSignature(shared) !== schemaSignature(schema)
+      )
+        throw new Error(`${command.command} routes disagree on --${key}`);
+      options.set(key, schema);
+      owners.set(key, routes[index]!);
+    }
+  }
+  const owns = (route: CliTargetRoute, key: string): boolean =>
+    args.some(([argument]) => argument === key) ||
+    Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
+  const [targetKey] = args[0] ?? [];
+  if (targetKey === undefined)
+    throw new Error(`${command.command} routes take no target`);
+  cli.command(command.command, {
+    description: command.description,
+    args: z.object(Object.fromEntries(args)),
+    options: z.object(Object.fromEntries(options)),
+    run: ({
+      args: given,
+      options: chosen,
+    }: {
+      readonly args: Readonly<Record<string, unknown>>;
+      readonly options: Readonly<Record<string, unknown>>;
+    }) => {
+      const values: Record<string, unknown> = { ...chosen, ...given };
+      const supplied = Object.keys(values).filter(
+        (key) => values[key] !== undefined,
+      );
+      return withCommandCancellation((signal) =>
+        logCliCommand(logger, command.command, async () => {
+          const target = values[targetKey] as string;
+          let route = routes.at(-1)!;
+          for (const candidate of routes)
+            if (
+              candidate.takesTarget !== undefined &&
+              supplied.every((key) => owns(candidate, key)) &&
+              (await candidate.takesTarget(target))
+            ) {
+              route = candidate;
+              break;
+            }
+          const { description } = route;
+          const refused = supplied.filter((key) => !owns(route, key));
+          if (refused.length > 0)
+            return projectAnalysisError(
+              new AnalysisInputError(
+                description.contract.name,
+                undefined,
+                refused.map((key) => ({
+                  path: [key],
+                  reason: "invalid_value" as const,
+                  message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; this target runs ${description.contract.name}, which does not take it.`,
+                })),
+              ),
+            );
+          const admitted = description.admit(values);
+          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          const opening = admitOpening(description, values);
+          if (!opening.ok) return projectAnalysisError(opening.error);
+          return route.run(admitted.value.input, {
+            signal,
+            operation: description.contract.name,
+            callerInputs: description.callerInputs(values),
+            sessionTarget:
+              description.sessionTarget === undefined ? undefined : target,
+            opening: opening.value,
+            inputBinding: description.inputBinding,
+            delivery: admitted.value.delivery,
+            cliOptions: description.cliOptionValues(values),
+          });
+        }),
+      );
+    },
+  } as never);
+  const registered = routedDescriptions.get(cli) ?? [];
+  registered.push(...routes.map(({ description }) => description));
+  routedDescriptions.set(cli, registered);
+};
+
+const kebabCase = (key: string): string =>
+  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 /** What a JSON-document command's handler receives besides the document. */
 export interface ContractDocumentContext<
