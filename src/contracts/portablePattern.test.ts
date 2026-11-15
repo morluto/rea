@@ -63,6 +63,9 @@ const samples = (() => {
   }
   return [...strings];
 })();
+const bmpSamples = samples.filter(
+  (value) => !/[\u{10000}-\u{10FFFF}]/u.test(value),
+);
 
 const SOURCES = [
   // Advertised before projection (input and output catalogs).
@@ -121,6 +124,17 @@ describe("portable pattern projection", () => {
         expect(() => new RegExp(projection.pattern, flags)).not.toThrow();
       const original = new RegExp(source, "u");
       const projected = new RegExp(projection.pattern, "u");
+      // Engines differ only on astral characters (see `projectPortablePattern`):
+      // V8 without `u` matches UTF-16 units, the other modes code points.
+      for (const flags of ["", "v"]) {
+        const mode = new RegExp(projection.pattern, flags);
+        expect(
+          bmpSamples
+            .filter((value) => mode.test(value) !== projected.test(value))
+            .map((value) => JSON.stringify(value)),
+          `/${projection.pattern}/${flags}`,
+        ).toEqual([]);
+      }
       const differences = samples.filter(
         (value) => original.test(value) !== projected.test(value),
       );
