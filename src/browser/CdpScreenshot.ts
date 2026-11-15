@@ -25,6 +25,7 @@ import {
 } from "./CdpTargetSession.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -90,10 +91,11 @@ export const captureCdpScreenshot = async (
     invalidIdentity: false,
     completeness: new CdpCaptureCompleteness(),
   };
-  const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    observeScreenshotNavigation(event, origins, navigation);
-  });
+  const removeListener = onCdpTargetEvent(
+    context.connection,
+    context.sessionId,
+    (event) => observeScreenshotNavigation(event, origins, navigation),
+  );
   // A changed document comes first; scope applies to an unchanged one. The
   // visible URL moving within the document still invalidates the image.
   const assertCurrentDocument = () => {
