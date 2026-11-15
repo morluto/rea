@@ -58,7 +58,6 @@ import {
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticScopeState,
   type JavaScriptBindingIndex,
-  type JavaScriptSemanticReferenceEffectsAtSite,
   currentSemanticScope,
   semanticPrototypeOwners,
   type SemanticPrototypeOwner,
@@ -91,7 +90,6 @@ import {
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   semanticBindingAtRead,
-  semanticEffectTiming,
   semanticEffectTimingWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -135,11 +133,7 @@ import {
 
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import {
-  SemanticPropertyPathCoverage,
-  semanticPropertyPathKeyMatches,
-  type JavaScriptSemanticPropertyPath,
-} from "./javascriptSemanticPropertyPaths.js";
+import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
