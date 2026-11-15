@@ -1483,6 +1483,10 @@ reported only when its owning ledger confirms it; an inline result with
 observation cannot fit the MCP response, its corresponding `_omitted` detail
 reports the delivery limit. Cleanup failure and other completed source failures
 remain visible separately.
+A composite request that completes one argument's observation before another
+step fails reports it in `details.argument_observations` as
+`{argument, observation}`, named by the composite's input field, beside the
+failing step's own `partial_observation`.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup
