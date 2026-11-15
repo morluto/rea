@@ -280,8 +280,6 @@
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
-    "src/captures/TsharkCaptureProvider.ts": 1,
-    "src/cutter/CutterBridgeClient.ts": 1,
     "src/domain/localPath.ts": 1,
     "src/electron/ElectronFusePath.ts": 1,
     "src/ida/IdaWorkspace.ts": 1,
