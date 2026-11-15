@@ -421,7 +421,7 @@ export class GhidraClient {
   ): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    const result = await this.#requestQueue.run("ping", {}, options);
+    const result = await this.#enqueue("ping", {}, options);
     if (!result.ok) return result;
     return this.#parseSessionInfo(result.value);
   }
@@ -456,6 +456,18 @@ export class GhidraClient {
     return this.#callTool(operation, parameters, options);
   }
 
+  /** Queue one request with the reply ceiling admitted in the caller's context. */
+  #enqueue(
+    method: string,
+    parameters: JsonValue,
+    options: GhidraRequestOptions,
+  ): Promise<Result<JsonValue, GhidraSessionError>> {
+    return this.#requestQueue.run(method, parameters, {
+      ...options,
+      replyLimit: this.#wire.admitReplyLimit(),
+    });
+  }
+
   async #callTool(
     operation: GhidraOperation,
     parameters: Readonly<Record<string, JsonValue>>,
@@ -473,7 +485,7 @@ export class GhidraClient {
       typeof parameters.pattern === "string"
         ? parameters.pattern
         : undefined;
-    return this.#requestQueue.run(
+    return this.#enqueue(
       operation,
       pattern !== undefined
         ? {

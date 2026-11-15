@@ -171,7 +171,7 @@ export class HopperClient {
     externalApplication: undefined,
   };
   #token: string | undefined;
-  /** Reply ceiling admitted with the latest request; the default before any. */
+  /** Reply ceiling admitted with the request on the wire; the default before any. */
   #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
@@ -241,7 +241,7 @@ export class HopperClient {
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
     };
     this.#requests = new HopperRequestQueue(
-      ({ id, method, params }, failed) => {
+      ({ id, method, params, replyLimit }, failed) => {
         const socket = this.#socket;
         const token = this.#token;
         if (socket === undefined || socket.destroyed || token === undefined) {
@@ -278,6 +278,9 @@ export class HopperClient {
           );
           return;
         }
+        // This request now owns the wire, so its admitted ceiling bounds the
+        // next reply; a queued or refused request never changes it.
+        this.#replyLimit = replyLimit ?? DEFAULT_BRIDGE_MAX_REPLY;
         socket.write(`${payload}\n`, (cause) => {
           if (cause !== undefined && cause !== null) failed();
         });
@@ -1134,7 +1137,7 @@ export class HopperClient {
     // Count escaped JSON before the request can wait in the FIFO. A rejected
     // payload is not serialized, and an admitted one is serialized only when
     // it reaches the wire.
-    this.#replyLimit = admitBridgeReplyLimit(
+    const replyLimit = admitBridgeReplyLimit(
       this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
     );
     const measured = jsonValueByteLength(
@@ -1152,6 +1155,7 @@ export class HopperClient {
       );
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
+      replyLimit,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeoutMs === undefined
         ? {}

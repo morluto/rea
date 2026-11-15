@@ -12,6 +12,7 @@ import {
   HopperRemoteError,
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
+import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 
@@ -25,6 +26,12 @@ interface HopperRequestQueueOptions {
   /** Caller deadline from admission, including time waiting in the FIFO. */
   readonly timeoutMs?: number;
   readonly progress?: ProgressReporter;
+  /**
+   * Reply ceiling admitted with this request. It is handed to the sender only
+   * when the request reaches the wire, so queued work cannot change the
+   * ceiling of the request Hopper is answering.
+   */
+  readonly replyLimit?: BridgeMaxReplyBytes;
 }
 
 export interface HopperRequestActivity {
@@ -40,6 +47,7 @@ type RequestSender = (
     readonly id: number;
     readonly method: string;
     readonly params: JsonValue;
+    readonly replyLimit: BridgeMaxReplyBytes | undefined;
   },
   failed: () => void,
 ) => void;
@@ -48,6 +56,7 @@ interface QueuedRequest {
   readonly id: number;
   readonly method: string;
   readonly params: JsonValue;
+  readonly replyLimit: BridgeMaxReplyBytes | undefined;
   readonly signal: AbortSignal | undefined;
   readonly progress: ProgressReporter | undefined;
   readonly resolve: (result: HopperRequestResult) => void;
@@ -112,6 +121,7 @@ export class HopperRequestQueue {
         id,
         method,
         params,
+        replyLimit: options.replyLimit,
         signal: options.signal,
         progress: options.progress,
         resolve,
@@ -281,6 +291,7 @@ export class HopperRequestQueue {
           id: entry.id,
           method: entry.method,
           params: entry.params,
+          replyLimit: entry.replyLimit,
         },
         () =>
           this.accept(

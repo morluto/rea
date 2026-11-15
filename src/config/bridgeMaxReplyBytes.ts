@@ -36,7 +36,8 @@ export const DEFAULT_BRIDGE_MAX_REPLY: BridgeMaxReplyBytes = {
 /**
  * Copy the effective ceiling when a request is admitted. Socket reads run
  * outside the request's async context, where a runtime override is not
- * visible, so the reader enforces the value its latest request admitted.
+ * visible, so each request carries the value it admitted and the reader
+ * enforces it only while that request is the one on the wire.
  */
 export const admitBridgeReplyLimit = (
   limit: BridgeMaxReplyBytes,

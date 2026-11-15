@@ -41,6 +41,7 @@ const harness = (
   replyCeiling: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY,
 ): WireHarness => {
   const writes: string[] = [];
+  let nextId = 0;
   const socket = {
     destroyed: false,
     write: (payload: string, callback?: (cause?: Error | null) => void) => {
@@ -59,7 +60,7 @@ const harness = (
     wire: new GhidraWire({
       getSocket: () => socket,
       getToken: () => "b".repeat(64),
-      nextId: () => 1,
+      nextId: () => (nextId += 1),
       pending,
       logger: pino({ level: "silent" }),
       failure,
@@ -87,6 +88,32 @@ describe("GhidraWire reply ceiling", () => {
       maximumBytes: 2 * 1024 * 1024,
       source: "runtime",
     });
+  });
+
+  it("activates a queued request's admitted ceiling only when it is written", async () => {
+    const { wire } = harness(limit(512), {
+      maximumBytes: 8 * 1024 * 1024,
+      source: "setting",
+    });
+    const admitted: BridgeMaxReplyBytes = {
+      maximumBytes: 3 * 1024 * 1024,
+      source: "runtime",
+    };
+    void wire.request("ping", {}, { timeoutMs: 1 });
+
+    const refused = await wire.request(
+      "list_strings",
+      { pattern: "x".repeat(1024) },
+      { timeoutMs: 1, replyLimit: { maximumBytes: 1, source: "runtime" } },
+    );
+    expect(refused.ok).toBe(false);
+    expect(
+      wire.replyLimit(),
+      "a refused request leaves the written request's ceiling in force",
+    ).toEqual({ maximumBytes: 8 * 1024 * 1024, source: "setting" });
+
+    void wire.request("ping", {}, { timeoutMs: 1, replyLimit: admitted });
+    expect(wire.replyLimit()).toEqual(admitted);
   });
 });
 
