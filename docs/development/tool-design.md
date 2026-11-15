@@ -294,9 +294,16 @@ fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
 ladder; a `limit` stays with its producer, which knows the budget to name.
+Do not use `RangeError` as a failure channel: a stack overflow, a host string
+or buffer limit, and an unchecked read past the end of a buffer are all
+`RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
-`DataView` reads, plain `Error` throws in parser folders, and plain `JSON.parse`
-of parser input against `scripts/verify/architecture-guard-baselines.json`. A
+`DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
+of parser input, and direct `instanceof RangeError` checks against
+`scripts/verify/architecture-guard-baselines.json`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 

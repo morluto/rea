@@ -1,3 +1,9 @@
+import {
+  isHostLimitFailure,
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import type { Segment } from "./AppleMachoSelection.js";
 import { issue } from "./AppleDispatchDecodeFacts.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
@@ -154,11 +160,15 @@ const libraryFacts = (
   dylibs: FixupCommands["dylibs"],
 ): LibraryName => {
   if (!Number.isSafeInteger(ordinal) || ordinal < -3)
-    throw new RangeError(`Unsupported dylib ordinal ${String(ordinal)}`);
+    throw unsupportedInput(
+      "macho",
+      `Unsupported dylib ordinal ${String(ordinal)}`,
+    );
   if (ordinal > 0) {
     const name = dylibs[ordinal - 1];
     if (name === undefined)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         `Dylib ordinal ${ordinal} exceeds the ${dylibs.length} declared dependencies`,
       );
     return typeof name === "string"
@@ -179,7 +189,10 @@ const symbolName = (bytes: Buffer): SymbolName => {
 const cString = (bytes: Buffer, offset: number, end: number): SymbolName => {
   const stop = bytes.indexOf(0, offset);
   if (offset < 0 || offset >= end || stop < 0 || stop >= end)
-    throw new RangeError("Fixup symbol name is outside the symbol pool");
+    throw malformedInput(
+      "macho",
+      "Fixup symbol name is outside the symbol pool",
+    );
   return symbolName(bytes.subarray(offset, stop));
 };
 
@@ -235,14 +248,20 @@ const chainedImportEntry = (
 ): ChainedImportEntry => {
   const size = header.format === 3 ? 16 : header.format === 2 ? 8 : 4;
   if (header.format < 1 || header.format > 3)
-    throw new RangeError(`Unsupported chained import format ${header.format}`);
+    throw unsupportedInput(
+      "macho",
+      `Unsupported chained import format ${header.format}`,
+    );
   if (
     !Number.isSafeInteger(header.count) ||
     base + header.offset + header.count * size > end
   )
-    throw new RangeError("Chained import table exceeds the fixup data");
+    throw malformedInput(
+      "macho",
+      "Chained import table exceeds the fixup data",
+    );
   if (index < 0 || index >= header.count)
-    throw new RangeError("Chained import index is outside the table");
+    throw malformedInput("macho", "Chained import index is outside the table");
   const at = base + header.offset + index * size;
   if (header.format === 3) {
     const word = bytes.readBigUInt64LE(at);
@@ -300,7 +319,10 @@ export const decodeChainedPointer = (
         ? imports(Number(ordinal))
         : imports[Number(ordinal)];
     if (target === undefined)
-      throw new RangeError(`Chained bind ordinal ${ordinal} has no import`);
+      throw malformedInput(
+        "macho",
+        `Chained bind ordinal ${ordinal} has no import`,
+      );
     return resolvedBind(target, addend);
   };
   if (format === 2 || format === 6) {
@@ -326,7 +348,10 @@ export const decodeChainedPointer = (
       target: format === 1 ? target : target + baseAddress,
     };
   }
-  throw new RangeError(`Unsupported chained pointer format ${format}`);
+  throw unsupportedInput(
+    "macho",
+    `Unsupported chained pointer format ${format}`,
+  );
 };
 
 /** The slice bytes and load-command facts that fixup decoding reads. */
@@ -370,11 +395,15 @@ const readChainedPage = (
   let failure: string | undefined;
   try {
     if ((source.start & 0x8000) !== 0)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         "Multiple chained starts are not valid for 64-bit pointers",
       );
     if (source.start + 8 > source.size)
-      throw new RangeError("Chained pointer leaves its file-backed page");
+      throw malformedInput(
+        "macho",
+        "Chained pointer leaves its file-backed page",
+      );
     // At most one eighth of this file-backed page, not one object per fixup.
     locations = new Uint8Array(Math.ceil(source.size / 8));
     const generic = source.format === 2 || source.format === 6;
@@ -386,12 +415,15 @@ const readChainedPage = (
       const next = Number(bits(raw, 51, generic ? 12 : 11)) * (generic ? 4 : 8);
       if (next === 0) break;
       if (at + next + 8 > source.size)
-        throw new RangeError(
+        throw malformedInput(
+          "macho",
           "Chained pointer link leaves its file-backed page",
         );
       at += next;
     }
   } catch (cause: unknown) {
+    // A decode failure stays with this record; a host limit is not one.
+    if (isHostLimitFailure(cause)) throw cause;
     failure = cause instanceof Error ? cause.message : String(cause);
   }
   return { locations, lastOffset, failure };
@@ -411,9 +443,9 @@ const chainedFixupsHeader = (
     size < 28 ||
     end > bytes.length
   )
-    throw new RangeError("Chained fixup header exceeds the target");
+    throw malformedInput("macho", "Chained fixup header exceeds the target");
   if (bytes.readUInt32LE(base) !== 0)
-    throw new RangeError("Unsupported chained fixup header version");
+    throw unsupportedInput("macho", "Unsupported chained fixup header version");
   const imports = {
     offset: bytes.readUInt32LE(base + 8),
     symbols: bytes.readUInt32LE(base + 12),
@@ -423,16 +455,23 @@ const chainedFixupsHeader = (
   const importSize = imports.format === 3 ? 16 : imports.format === 2 ? 8 : 4;
   const importTableEnd = base + imports.offset + imports.count * importSize;
   if (imports.format < 1 || imports.format > 3)
-    throw new RangeError(`Unsupported chained import format ${imports.format}`);
+    throw unsupportedInput(
+      "macho",
+      `Unsupported chained import format ${imports.format}`,
+    );
   if (
     imports.offset < 28 ||
     imports.symbols < imports.offset ||
     importTableEnd > base + imports.symbols ||
     base + imports.symbols > end
   )
-    throw new RangeError("Chained import table exceeds the fixup data");
+    throw malformedInput(
+      "macho",
+      "Chained import table exceeds the fixup data",
+    );
   if (bytes.readUInt32LE(base + 24) !== 0)
-    throw new RangeError(
+    throw unsupportedInput(
+      "macho",
       "Compressed chained-fixup symbol names are not supported",
     );
   return { startsOffset: bytes.readUInt32LE(base + 4), imports };
@@ -501,12 +540,16 @@ const chainedFixups = (
   const startsEnd = base + importHeader.offset;
   const requireStartsRange = (at: number, size: number): void => {
     if (at < base + 28 || at > startsEnd - size)
-      throw new RangeError("Chained starts table exceeds its fixup data");
+      throw malformedInput(
+        "macho",
+        "Chained starts table exceeds its fixup data",
+      );
   };
   requireStartsRange(starts, 4);
   const segmentCount = bytes.readUInt32LE(starts);
   if (segmentCount > segments.length)
-    throw new RangeError(
+    throw malformedInput(
+      "macho",
       "Chained starts segment count exceeds the Mach-O layout",
     );
   requireStartsRange(starts, 4 + segmentCount * 4);
@@ -555,19 +598,29 @@ const chainedFixups = (
     if (infoOffset === 0) continue;
     const segment = segments[index];
     if (segment === undefined)
-      throw new RangeError("Chained fixup segment table is out of range");
+      throw malformedInput(
+        "macho",
+        "Chained fixup segment table is out of range",
+      );
     const info = starts + infoOffset;
     requireStartsRange(info, 22);
     const infoSize = bytes.readUInt32LE(info);
     const pageSize = bytes.readUInt16LE(info + 4);
     const pageCount = bytes.readUInt16LE(info + 20);
     if (infoSize < 22 + pageCount * 2)
-      throw new RangeError("Chained page starts exceed the segment table size");
+      throw malformedInput(
+        "macho",
+        "Chained page starts exceed the segment table size",
+      );
     requireStartsRange(info, infoSize);
     if (pageSize !== 0x1000 && pageSize !== 0x4000)
-      throw new RangeError("Chained page size must be 4096 or 16384 bytes");
+      throw malformedInput(
+        "macho",
+        "Chained page size must be 4096 or 16384 bytes",
+      );
     if (bytes.readBigUInt64LE(info + 8) !== segment.address - baseAddress)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         "Chained segment offset disagrees with its Mach-O layout",
       );
     ranges.push({
@@ -821,9 +874,11 @@ const chainedFixups = (
           facts.failure !== undefined &&
           (facts.lastOffset === undefined || at > facts.lastOffset)
         )
-          throw new RangeError(facts.failure);
+          throw malformedInput("macho", facts.failure);
         return legacyBind ?? legacyRebase ?? rawPointer();
       } catch (cause: unknown) {
+        // A decode failure stays with this record; a host limit is not one.
+        if (isHostLimitFailure(cause)) throw cause;
         const reason = cause instanceof Error ? cause.message : String(cause);
         recordPointerFailure(reason, address, chainIndex);
         return { kind: "unsupported", reason };
@@ -843,10 +898,11 @@ const uleb = (
   let shift = 0;
   for (;;) {
     if (cursor.at >= end)
-      throw new RangeError(`Truncated ${stream} opcode operand`);
+      throw truncatedInput("macho", `Truncated ${stream} opcode operand`);
     if (rebaseWork !== undefined) {
       if (rebaseWork.workRemaining === 0)
-        throw new RangeError(
+        throw malformedInput(
+          "macho",
           "Legacy rebase parsing exceeded the source-derived work budget",
         );
       rebaseWork.workRemaining--;
@@ -854,7 +910,7 @@ const uleb = (
     const byte = bytes[cursor.at++] ?? 0;
     const slice = byte & 0x7f;
     if ((shift === 63 && slice > 1) || (shift === 64 && slice !== 0))
-      throw new RangeError(`Oversized ${stream} opcode operand`);
+      throw malformedInput("macho", `Oversized ${stream} opcode operand`);
     if (shift < 64) value |= BigInt(slice) << BigInt(shift);
     // Padding may extend the encoding, but never the represented integer.
     shift = Math.min(64, shift + 7);
@@ -909,7 +965,7 @@ function* readRebaseStreamSteps(
     !Number.isSafeInteger(end) ||
     end > bytes.length
   )
-    throw new RangeError("Rebase opcodes exceed the target");
+    throw malformedInput("macho", "Rebase opcodes exceed the target");
   const cursor = { at: range.offset };
   let segmentIndex = -1;
   let segmentOffset = 0n;
@@ -923,23 +979,26 @@ function* readRebaseStreamSteps(
   function* addRun(count: bigint, skip: bigint): Generator<void, void, void> {
     if (count === 0n) return;
     if (type === 0 || type > 3)
-      throw new RangeError(`Unsupported legacy rebase type ${type}`);
+      throw unsupportedInput("macho", `Unsupported legacy rebase type ${type}`);
     const segment = segments[segmentIndex];
     if (segment === undefined)
-      throw new RangeError("Rebase location has no selected segment");
+      throw malformedInput("macho", "Rebase location has no selected segment");
     const stride = REBASE_POINTER_SIZE + skip;
     const lastOffset = segmentOffset + (count - 1n) * stride;
     if (segmentOffset < 0n || lastOffset + REBASE_POINTER_SIZE > segment.size)
-      throw new RangeError("Rebase expansion leaves its file-backed segment");
+      throw malformedInput(
+        "macho",
+        "Rebase expansion leaves its file-backed segment",
+      );
     if (!Number.isSafeInteger(segment.offset) || segment.offset < 0)
-      throw new RangeError("Rebase segment file offset is invalid");
+      throw malformedInput("macho", "Rebase segment file offset is invalid");
     const firstFileOffset = BigInt(segment.offset) + segmentOffset;
     if (
       firstFileOffset < 0n ||
       lastOffset + BigInt(segment.offset) + REBASE_POINTER_SIZE >
         BigInt(bytes.length)
     )
-      throw new RangeError("Rebase location exceeds the source file");
+      throw malformedInput("macho", "Rebase location exceeds the source file");
     const fact = type === 1 ? REBASE_POINTER : REBASE_NON_POINTER;
     const admitted =
       count < BigInt(index.workRemaining) ? count : BigInt(index.workRemaining);
@@ -950,7 +1009,8 @@ function* readRebaseStreamSteps(
     }
     index.workRemaining -= Number(admitted);
     if (admitted < count)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         "Legacy rebase opcode and expansion work exceeded the source-derived budget",
       );
     // dyld advances after the final record too; that cursor may legally be
@@ -961,7 +1021,8 @@ function* readRebaseStreamSteps(
   while (cursor.at < end) {
     if (++opcodes % 4096 === 0) yield;
     if (index.workRemaining === 0)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         "Legacy rebase parsing exceeded the source-derived work budget",
       );
     index.workRemaining--;
@@ -970,7 +1031,8 @@ function* readRebaseStreamSteps(
     switch (byte & 0xf0) {
       case 0x00: // REBASE_OPCODE_DONE; up to 15 trailing bytes are alignment.
         if (end - cursor.at > 15)
-          throw new RangeError(
+          throw malformedInput(
+            "macho",
             "Rebase opcodes terminated before the stream end",
           );
         cursor.at = end;
@@ -981,7 +1043,7 @@ function* readRebaseStreamSteps(
       case 0x20: {
         // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
         if (segments[immediate] === undefined)
-          throw new RangeError("Rebase segment index is out of range");
+          throw malformedInput("macho", "Rebase segment index is out of range");
         segmentIndex = immediate;
         segmentOffset = uleb(bytes, cursor, end, "rebase", index);
         break;
@@ -1015,7 +1077,8 @@ function* readRebaseStreamSteps(
         break;
       }
       default:
-        throw new RangeError(
+        throw unsupportedInput(
+          "macho",
           `Unsupported rebase opcode 0x${byte.toString(16)}`,
         );
     }
@@ -1091,6 +1154,8 @@ function* parseLegacyRebasesSteps(
       yield* readRebaseStreamSteps(image, stream, index);
       decoded++;
     } catch (cause: unknown) {
+      // A decode failure stays with this record; a host limit is not one.
+      if (isHostLimitFailure(cause)) throw cause;
       failures.push(
         `rebase opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
@@ -1115,14 +1180,15 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
   let shift = 0;
   let byte = 0;
   do {
-    if (cursor.at >= end) throw new RangeError("Truncated bind opcode operand");
+    if (cursor.at >= end)
+      throw truncatedInput("macho", "Truncated bind opcode operand");
     byte = bytes[cursor.at++] ?? 0;
     const slice = byte & 0x7f;
     if (
       (shift === 63 && slice !== 0 && slice !== 0x7f) ||
       (shift === 64 && slice !== (value < 0n ? 0x7f : 0))
     )
-      throw new RangeError("Oversized bind opcode operand");
+      throw malformedInput("macho", "Oversized bind opcode operand");
     if (shift < 64)
       value = BigInt.asIntN(64, value | (BigInt(slice) << BigInt(shift)));
     shift = Math.min(64, shift + 7);
@@ -1178,7 +1244,7 @@ const setBindRegister = (
     case 0x40: {
       const stop = bytes.indexOf(0, cursor.at);
       if (stop < 0 || stop >= end)
-        throw new RangeError("Unterminated bind symbol");
+        throw truncatedInput("macho", "Unterminated bind symbol");
       state.symbol = symbolName(bytes.subarray(cursor.at, stop));
       state.weak = (immediate & 0x1) !== 0;
       cursor.at = stop + 1;
@@ -1193,7 +1259,7 @@ const setBindRegister = (
     case 0x70: {
       const segment = image.segments[immediate];
       if (segment === undefined)
-        throw new RangeError("Bind segment index is out of range");
+        throw malformedInput("macho", "Bind segment index is out of range");
       state.segmentIndex = immediate;
       state.address = segment.address + uleb(bytes, cursor, end);
       return true;
@@ -1217,7 +1283,7 @@ function* readBindStreamSteps(
   const { bytes } = image;
   const end = range.offset + range.size;
   if (end > bytes.length)
-    throw new RangeError("Bind opcodes exceed the target");
+    throw malformedInput("macho", "Bind opcodes exceed the target");
   const cursor = { at: range.offset };
   const state: BindState = {
     type: range.stream === "lazy" ? 1 : 0,
@@ -1232,15 +1298,21 @@ function* readBindStreamSteps(
   const preflightRun = (count: bigint, skip: bigint): void => {
     if (count === 0n) return;
     if (state.type < 1 || state.type > 3)
-      throw new RangeError(`Unsupported legacy bind type ${state.type}`);
+      throw unsupportedInput(
+        "macho",
+        `Unsupported legacy bind type ${state.type}`,
+      );
     const segment = image.segments[state.segmentIndex];
     if (segment === undefined)
-      throw new RangeError("Bind location has no selected segment");
+      throw malformedInput("macho", "Bind location has no selected segment");
     const stride = 8n + skip;
     const width = state.type === 1 ? 8n : 4n;
     const end = state.address + (count - 1n) * stride + width;
     if (state.address < segment.address || end > segment.address + segment.size)
-      throw new RangeError("Bind expansion leaves its file-backed segment");
+      throw malformedInput(
+        "macho",
+        "Bind expansion leaves its file-backed segment",
+      );
   };
   const bind = (count: bigint, skip: bigint): void => {
     if (count === 0n) return;
@@ -1250,7 +1322,7 @@ function* readBindStreamSteps(
     let binding: BindRun["binding"];
     try {
       if (state.ordinalFailure !== null)
-        throw new RangeError(state.ordinalFailure);
+        throw malformedInput("macho", state.ordinalFailure);
       const resolvedLibrary = libraryFacts(state.ordinal, image.dylibs);
       const imported: Import = {
         ...state.symbol,
@@ -1272,6 +1344,8 @@ function* readBindStreamSteps(
       binding =
         decoded.kind === "bind" ? { kind: "bind", value: decoded } : decoded;
     } catch (cause: unknown) {
+      // A decode failure stays with this record; a host limit is not one.
+      if (isHostLimitFailure(cause)) throw cause;
       binding = {
         kind: "unsupported",
         reason: cause instanceof Error ? cause.message : String(cause),
@@ -1333,7 +1407,8 @@ function* readBindStreamSteps(
         break;
       case 0xc0: {
         if (range.stream === "lazy")
-          throw new RangeError(
+          throw malformedInput(
+            "macho",
             "Lazy bind streams do not support repeated bind opcodes",
           );
         const count = uleb(bytes, cursor, end);
@@ -1342,7 +1417,10 @@ function* readBindStreamSteps(
         break;
       }
       default:
-        throw new RangeError(`Unsupported bind opcode 0x${byte.toString(16)}`);
+        throw unsupportedInput(
+          "macho",
+          `Unsupported bind opcode 0x${byte.toString(16)}`,
+        );
     }
   }
 }
@@ -1446,6 +1524,8 @@ function* parseLegacyBindsSteps(
       yield* readBindStreamSteps(image, stream, runs);
       decoded++;
     } catch (cause: unknown) {
+      // A decode failure stays with this record; a host limit is not one.
+      if (isHostLimitFailure(cause)) throw cause;
       failures.push(
         `${stream.stream} bind opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
       );

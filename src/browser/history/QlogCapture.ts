@@ -374,7 +374,7 @@ const packetEvent = (name: unknown): boolean =>
 const object = (value: unknown): value is Record<string, unknown> =>
   captureObject(value) && !(value instanceof LosslessNumber);
 const invalid = (message: string, pointer: string): never => {
-  throw new CaptureFormatError("format", message, pointer);
+  throw new CaptureFormatError("malformed", message, pointer);
 };
 
 /** Canonicalize JSON integer notation exactly, checking expansion before allocation. */

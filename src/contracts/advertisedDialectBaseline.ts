@@ -11,14 +11,9 @@
 export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
   Record<"compact" | "full", Readonly<Record<string, number>>>
 > = {
-  // The compact projection (`advertisedDialectProjection.ts`) leaves only
-  // nullable values: the dialect has no null type, so advertising them as
-  // their non-null type would refuse a valid input (for example `limit: null`
-  // requests every remaining entry). Removing this key needs a decision to
-  // admit the nullable idiom in the dialect or to narrow these inputs.
-  compact: {
-    "input type nullable": 29,
-  },
+  // The compact projection (`advertisedDialectProjection.ts`) leaves nothing
+  // outside the dialect.
+  compact: {},
   full: {
     "input any-of fewer-than-two-branches": 176,
     "input any-of untyped-branch": 142,
@@ -45,8 +40,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input keyword propertyNames": 55,
     "input keyword then": 7,
     "input keyword uniqueItems": 5,
-    "input type nullable": 296,
-    "input type type-list": 1,
+    "input type type-list": 53,
     "input type type:null": 6,
     "input type untyped": 1256,
   },
