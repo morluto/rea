@@ -10,6 +10,7 @@ import {
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { isCdpSessionGoneRejection } from "./CdpCommandRejection.js";
 import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
 import {
   withCdpDiscoveryDeadline,
@@ -478,7 +479,17 @@ export class PlaywrightScenarioServiceWorkers {
               { identifier: target.identifier },
             );
           } catch (cause: unknown) {
-            if (this.#targets.get(target.id) === target) throw cause;
+            // A child target can detach while event delivery is stopped by a
+            // listener failure, so its detach notice never retires it. CDP
+            // confirming the session is gone retires it here instead.
+            const gone =
+              target.id !== session.sessionId &&
+              isCdpSessionGoneRejection(cause);
+            if (!gone && this.#targets.get(target.id) === target) throw cause;
+            if (gone) {
+              target.markDetached();
+              this.#targets.delete(target.id);
+            }
           }
           delete target.identifier;
         }
