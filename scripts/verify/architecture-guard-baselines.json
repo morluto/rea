@@ -451,7 +451,6 @@
     "src/ghidra/GhidraJavaProbe.ts": 1,
     "src/ghidra/GhidraNativeAotSnapshotOwner.ts": 2,
     "src/ghidra/GhidraProviderClient.ts": 3,
-    "src/ghidra/GhidraSessionError.ts": 1,
     "src/hopper/BridgeLauncher.ts": 3,
     "src/hopper/HopperAnalysisProfile.ts": 1,
     "src/hopper/HopperClient.ts": 1,
