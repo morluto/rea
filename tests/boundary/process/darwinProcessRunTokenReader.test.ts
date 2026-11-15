@@ -277,11 +277,16 @@ it.skipIf(process.platform === "win32")(
       expect(failure.message).toMatch(
         /ownership helper.*xcrun.*timed out after 3000 ms/iu,
       );
-      expect(failure.message).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
-      expect(failure.message).toContain("1..2147483647");
-      expect(failure.message).toContain("120000 ms");
-      expect(failure.message).toMatch(/restart REA/i);
-      expect(failure.message).toMatch(/next ownership-helper compile/i);
+      expect(failure.compileTimeout?.limit).toEqual({
+        control_kind: "environment",
+        environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+        effective_value: 3_000,
+        unit: "ms",
+        minimum: 1,
+        maximum: 2_147_483_647,
+        default_value: 120_000,
+        applies_at: "next_startup",
+      });
       expect(failure.message).toContain(
         "error: PCH was compiled with module cache path that differs",
       );

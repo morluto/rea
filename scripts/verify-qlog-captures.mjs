@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -41,7 +41,7 @@ const environment = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(environment),
+  env: environment,
   stderr: "pipe",
 });
 let diagnostics = "";
@@ -60,10 +60,10 @@ const report = await withVerifierCleanup(async () => {
   const tool = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_web_network_capture",
   );
-  assert.ok(tool?.outputSchema);
-  for (const schema of [tool.inputSchema, tool.outputSchema])
+  assert.ok(tool);
+  for (const schema of [tool.inputSchema, canonicalOutputSchema(tool.name)])
     assert.ok(ajv.validateSchema(schema));
-  const validateOutput = ajv.compile(tool.outputSchema);
+  const validateOutput = ajv.compile(canonicalOutputSchema(tool.name));
   for (const [lane, path] of [
     ["control", controlPath],
     ["loss", lossPath],

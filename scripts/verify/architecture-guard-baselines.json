@@ -155,6 +155,10 @@
     "src/pcap/PcapDnsWire.ts": 5,
     "src/v8/V8CodeCacheParser.ts": 1
   },
+  "raw-json-schema-meta": {
+    "src/cli/jsonInputArgument.ts": 2,
+    "src/cli/utilityCommands.ts": 1
+  },
   "range-error-interpretation": {
     "src/application/JsonInputFile.ts": 1,
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
@@ -402,25 +406,17 @@
     "scripts/verify-native-ui.mjs": 1,
     "scripts/verify-node-sea.mjs": 1,
     "scripts/verify-package.mjs": 1,
-    "scripts/verify-packaged-ghidra-windows.mjs": 1,
     "scripts/verify-packaged-wasm-artifact.mjs": 1,
     "scripts/verify-packet-capture.mjs": 1,
     "scripts/verify-pe-load-config.mjs": 1,
     "scripts/verify-published-package.mjs": 1,
     "scripts/verify-real-cutter.mjs": 1,
-    "scripts/verify-real-ghidra-checkpoints.mjs": 1,
-    "scripts/verify-real-ghidra-function-bundle.mjs": 1,
-    "scripts/verify-real-ghidra-project-coverage.mjs": 1,
-    "scripts/verify-real-ghidra.mjs": 1,
-    "scripts/verify-real-kuna.mjs": 1,
     "scripts/verify-release-artifact.mjs": 1,
     "scripts/verify-release-exposure.mjs": 1,
     "scripts/verify-test-discovery.mjs": 1,
     "scripts/verify-test-temp-hygiene.mjs": 1,
     "scripts/verify-wasm-interface-comparison.mjs": 1,
-    "scripts/verify-windows-native-inspection.mjs": 1,
-    "scripts/verify-windows-native.mjs": 2,
-    "scripts/verify-windows-package.mjs": 1
+    "scripts/verify-windows-native.mjs": 1
   },
   "macho-load-command-literal": {},
   "lifecycle-plain-throw": {

@@ -546,7 +546,7 @@ describe("guided prompt completion registry", () => {
       undefined,
       delivery,
       undefined,
-      "full",
+      undefined,
       undefined,
       families,
     );

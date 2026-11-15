@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -297,10 +298,12 @@ const assertSdkObservationSchema = async (
   const observeTool = (await client.listTools()).tools.find(
     ({ name }) => name === "observe_javascript_runtime",
   );
-  if (observeTool?.outputSchema === undefined)
+  if (observeTool === undefined)
     throw new Error("Missing Inspector observation output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const schema: Record<string, unknown> = observeTool.outputSchema;
+  const schema: Record<string, unknown> = canonicalOutputSchema(
+    observeTool.name,
+  );
   expect(ajv.validateSchema(schema)).toBe(true);
   expect(ajv.validate(schema, content), JSON.stringify(ajv.errors)).toBe(true);
 };

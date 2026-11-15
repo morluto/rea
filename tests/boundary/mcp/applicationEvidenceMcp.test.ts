@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -141,10 +142,10 @@ async function runUnicodeSourceMapComparison(
   const advertised = (await harness.client.listTools()).tools.find(
     ({ name }) => name === "compare_source_to_bundle",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Comparison tool output schema is missing");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema = advertised.outputSchema as AnySchema;
+  const outputSchema = canonicalOutputSchema(advertised.name) as AnySchema;
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const validateOutput = ajv.compile(outputSchema);
   expect(validateOutput(reply.structuredContent)).toBe(true);
