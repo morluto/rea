@@ -5,6 +5,10 @@ import {
   machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
+import {
+  MACHO_VERSION_MIN_PLATFORMS,
+  type MachoVersionMinPlatform,
+} from "../domain/apple/machoPlatform.js";
 import { readMachoSegmentHeader } from "../domain/apple/machoSegmentHeader.js";
 import { readMachoSectionHeader } from "../domain/apple/machoSectionHeader.js";
 import { createHash } from "node:crypto";
@@ -127,6 +131,7 @@ export interface MachoCommandNames {
         | { readonly kind: "use"; readonly flags: number };
     };
     readonly legacyBuild?: {
+      readonly platform: MachoVersionMinPlatform;
       readonly version: number;
       readonly sdk: number;
     };
@@ -560,7 +565,8 @@ export const readMachoCommandNames = async (
         );
     }
     let legacyBuild: MachoCommandNames["commands"][number]["legacyBuild"];
-    if ([0x24, 0x25, 0x2f, 0x30].includes(frame.command)) {
+    const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(frame.command);
+    if (legacyPlatform !== undefined) {
       if (frame.size < 16)
         throw new MachoBinaryFormatError(
           "Mach-O minimum version command is truncated",
@@ -572,6 +578,7 @@ export const readMachoCommandNames = async (
         bytes.byteLength,
       );
       legacyBuild = {
+        platform: legacyPlatform,
         version: view.getUint32(0, table.littleEndian),
         sdk: view.getUint32(4, table.littleEndian),
       };

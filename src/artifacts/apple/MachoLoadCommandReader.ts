@@ -22,8 +22,8 @@ import type {
 } from "../../domain/apple/dylibResolution.js";
 import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
+  MACHO_VERSION_MIN_PLATFORMS,
   legacyMachoPlatform,
-  type MachoVersionMinPlatform,
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
@@ -60,15 +60,6 @@ const MAX_LAZY_INFO_DEPENDENCIES = 1024;
 const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const CPU_TYPE_ARM64 = 0x0100000c;
-
-/** loader.h command codes and their device platform identities. */
-const VERSION_MIN_PLATFORMS: ReadonlyMap<number, MachoVersionMinPlatform> =
-  new Map([
-    [LC.VERSION_MIN_MACOSX, 1],
-    [LC.VERSION_MIN_IPHONEOS, 2],
-    [LC.VERSION_MIN_TVOS, 3],
-    [LC.VERSION_MIN_WATCHOS, 4],
-  ]);
 
 const LAZY_INFO_HEADER_BYTES = 24;
 /** ld64 may-be-missing bit: the lazy image is allowed to be absent. */
@@ -782,7 +773,7 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = VERSION_MIN_PLATFORMS.get(command);
+  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
   if (legacyPlatform !== undefined) {
     if (body.byteLength < 16)
       throw new MachoFormatIssue(
