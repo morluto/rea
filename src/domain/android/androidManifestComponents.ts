@@ -83,7 +83,7 @@ export type AndroidManifestComponent = Readonly<
   z.output<typeof androidManifestComponentSchema>
 >;
 export const androidManifestComponentsSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unavailable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   items: z.array(androidManifestComponentSchema),
   limitations: z.array(z.string()),
 });

@@ -4,7 +4,7 @@ import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemant
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
-import { knownCoverageStatusSchema } from "./coverage.js";
+import { knownCoverageStatusSchema, coverageStatusSchema } from "./coverage.js";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
@@ -494,7 +494,7 @@ export const webBundleAnalysisSchema = z.object({
             "Statically known own property names from the declared schema projection; a partial list may omit unresolved members.",
           ),
         schema_property_names_coverage: z
-          .enum(["complete", "partial", "unknown", "not_present"])
+          .enum([...coverageStatusSchema.options, "not_present"])
           .describe(
             "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),

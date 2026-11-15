@@ -13,8 +13,7 @@ const offsetSchema = z.int().min(0);
  * examined nothing of that kind, unlike `partial`, which records a known gap.
  */
 export const managedInspectionStateSchema = z.enum([
-  "complete",
-  "partial",
+  ...knownCoverageStatusSchema.options,
   "unavailable",
 ]);
 export type ManagedInspectionState = z.infer<
