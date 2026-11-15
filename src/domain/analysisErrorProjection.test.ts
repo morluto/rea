@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -1850,6 +1851,21 @@ describe("analysis error projection: composed failures for a caller lifetime", (
     expect(projectAnalysisError(composed, "invocation").details).toEqual(
       projectAnalysisError(composed).details,
     );
+  });
+
+  it("keeps the named integrity check when redaction rebuilds an artifact change", () => {
+    const error = new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target/secret-token.bin",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    );
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    expect(redacted).not.toBe(error);
+    expect(projectAnalysisError(redacted)).toMatchObject({
+      code: "artifact_changed",
+      details: { integrity_check: "member-identity" },
+    });
   });
 
   it("keeps continuing guidance through redaction and redacts its text", () => {

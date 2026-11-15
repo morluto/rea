@@ -538,7 +538,7 @@ export class AnalysisArtifactChangedError extends AnalysisError {
     readonly path: string,
     readonly reason: string,
     options?: AnalysisErrorOptions & {
-      readonly integrityCheck?: ArtifactIntegrityCheck;
+      readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
     },
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);

@@ -172,6 +172,7 @@ describe("DirectoryArtifactReader input identity", () => {
       const { sourceIdentity: _identity, ...entry } = await sampleEntry(reader);
       await expect(reader.open(entry)).rejects.toMatchObject({
         reason: "integrity",
+        integrityCheck: "entry-metadata",
       });
     } finally {
       await reader.close();
