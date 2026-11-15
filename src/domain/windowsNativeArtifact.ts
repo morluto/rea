@@ -18,7 +18,7 @@ export type WindowsNativeManifest = typeof WINDOWS_NATIVE_ARTIFACT & {
   readonly artifactSha256: string;
 };
 
-export class WindowsNativeArtifactError extends Error {
+class WindowsNativeArtifactError extends Error {
   readonly _tag = "WindowsNativeArtifactError" as const;
 }
 

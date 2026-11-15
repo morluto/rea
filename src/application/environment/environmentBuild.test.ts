@@ -33,7 +33,6 @@ import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewServic
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  canonicalTemplateRules,
   classifyBuildCapture,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
@@ -333,6 +332,19 @@ describe("buildEnvironment naming and refusals", () => {
     });
   });
 
+  it("does not create parents when the selected build root ends with dot-dot", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-build-invalid-destination-",
+    );
+    const parent = join(root, "untouched");
+    const directory = `${join(parent, "a", "b", "c")}/..`;
+    const result = await buildEnvironment(
+      await buildInput(root, undefined, { directory }),
+    );
+    expect(result.ok).toBe(false);
+    await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses an occupied directory and leaves it as it was", async () => {
     const root = await createTestTempDirectory("rea-environment-build-busy-");
     const input = await buildInput(root);
@@ -497,12 +509,20 @@ describe("classifyBuildCapture", () => {
   });
 });
 
-describe("canonicalTemplateRules", () => {
-  it("orders rules as the views apply them", () => {
-    expect(
-      canonicalTemplateRules(["prefix-variance", "after-uid-literal"]),
-    ).toEqual(["after-uid-literal", "prefix-variance"]);
-  });
+it("reports template rules in the order the views apply them", async () => {
+  const root = await createTestTempDirectory("rea-environment-rule-order-");
+  const built = await buildEnvironment(
+    await buildInput(root, undefined, {
+      dryRun: true,
+      directory: undefined,
+      templateRules: ["prefix-variance", "after-uid-literal"],
+    }),
+  );
+  if (!built.ok) throw built.error;
+  expect(built.value.manifest.template_rules).toEqual([
+    "after-uid-literal",
+    "prefix-variance",
+  ]);
 });
 
 describe("buildEnvironment credential names", () => {

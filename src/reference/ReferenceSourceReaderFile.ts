@@ -283,7 +283,8 @@ const readStableFileEntry = async (
       total: contents.total,
       ...(signal === undefined ? {} : { signal }),
     });
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     if (cause instanceof RegularFileAdmissionFailure) {
       retain(cause.owner);
       cause = cause.cause;

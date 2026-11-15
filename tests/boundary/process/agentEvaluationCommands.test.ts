@@ -224,14 +224,16 @@ processTest.for([
       import { setTimeout as delay } from "node:timers/promises";
       import { DarwinProcessOwnershipInspectionError } from ${JSON.stringify(new URL("../../../dist/process/DarwinProcessRunTokenReader.js", import.meta.url).href)};
       import { ProviderCleanupError } from ${JSON.stringify(new URL("../../../dist/domain/providerCleanupError.js", import.meta.url).href)};
+      import { AnalysisCleanupRelease } from ${JSON.stringify(new URL("../../../dist/domain/analysisCleanupRelease.js", import.meta.url).href)};
       let prepared = false;
-      const cleanup = new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" });
+      const release = new AnalysisCleanupRelease();
+      const cleanup = release.bind(new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" }));
       const preparation = new DarwinProcessOwnershipInspectionError("fixture preparation failure", {
         cleanupFailure: cleanup,
         cleanupOwner: { close: async () => {
           await writeFile(${JSON.stringify(retried)}, "exact preparation owner retried");
           if (${String(incomplete)}) throw new Error("fixture preparation cleanup denied");
-          cleanup.resolveCleanup();
+          release.confirm();
         } },
       });
       export class OwnedCommandFailure extends Error {

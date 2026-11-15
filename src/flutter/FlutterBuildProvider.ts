@@ -39,6 +39,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
   AnalysisProtocolError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
@@ -106,8 +108,7 @@ const sha256File = async (
   try {
     const stream = createReadStream(path, { signal: owner.signal });
     for await (const chunk of stream) {
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
       hash.update(chunk as Buffer);
     }
     return hash.digest("hex");
@@ -117,7 +118,7 @@ const sha256File = async (
       cause.name === "AbortError" &&
       cause.cause === marker
     )
-      throw new AnalysisCancelledError(operation, { cause: signal?.reason });
+      throw cancelledBy(operation, carriedReason(signal?.reason));
     throw cause;
   } finally {
     signal?.removeEventListener("abort", abort);
@@ -197,9 +198,7 @@ const mapInputFailure = (
   if (cause instanceof AnalysisError) return cause;
   const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
-    });
+    return cancelledBy(operation, carriedReason(cancellation.reason));
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -255,9 +254,7 @@ const mapOwnedIoFailure = (
   if (cause instanceof AnalysisError) return cause;
   const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
-    });
+    return cancelledBy(operation, carriedReason(cancellation.reason));
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -369,11 +366,6 @@ const checkApkSize = (operation: string, bytes: number): void => {
     );
 };
 
-export interface FlutterProviderOptions {
-  /** Deterministic root removal for tests; production removes recursively. */
-  readonly removeRoot?: (path: string) => Promise<void>;
-}
-
 /**
  * Flutter build identification by pure parsing: reads `lib/<abi>/libapp.so`
  * and `libflutter.so` through the hardened ZIP reader and reports the Dart
@@ -385,16 +377,12 @@ export class FlutterBuildProvider {
     string,
     Set<{ close(): Promise<void> }>
   >();
-  private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
   private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
   private readonly operations = new ArtifactResourceScope();
 
-  constructor(options: FlutterProviderOptions = {}) {
+  constructor() {
     this.operations.addCloseHook(() => this.closeRoots());
-    this.removeRoot =
-      options.removeRoot ??
-      ((path) => rm(path, { recursive: true, force: true }));
   }
 
   /**
@@ -578,7 +566,7 @@ export class FlutterBuildProvider {
       return false;
     }
     try {
-      await this.removeRoot(root);
+      await rm(root, { recursive: true, force: true });
       this.ownedRoots.delete(root);
       this.cleanupFailures.delete(root);
       return true;
@@ -705,9 +693,7 @@ export class FlutterBuildProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const cancellation = (): AnalysisCancelledError | undefined =>
       options?.signal?.aborted === true
-        ? new AnalysisCancelledError(request.operation, {
-            cause: options.signal.reason,
-          })
+        ? cancelledBy(request.operation, options.signal)
         : undefined;
     const beforeCleanup = cancellation();
     if (beforeCleanup !== undefined) return err(beforeCleanup);
@@ -784,8 +770,7 @@ export class FlutterBuildProvider {
     // the completed facts, composed exactly as the uncancelled Evidence.
     if (signal?.aborted === true && result.ok) {
       result = err(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
+        cancelledBy(request.operation, signal, {
           partialObservation: createAnalysisExecutionEvidence(
             request.operation,
             request.input,
@@ -799,9 +784,7 @@ export class FlutterBuildProvider {
       result = err(
         analysisErrorWithCancellation(
           result.error,
-          new AnalysisCancelledError(request.operation, {
-            cause: signal.reason,
-          }),
+          cancelledBy(request.operation, signal),
         ),
       );
     if (cleanup !== undefined) {
@@ -886,11 +869,7 @@ export class FlutterBuildProvider {
       let headerBytes = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError(operation, {
-              cause: signal.reason,
-            }),
-          );
+          return err(cancelledBy(operation, signal));
         const view = chunk as Buffer;
         headerBytes += view.copy(
           headerPrefix,
@@ -1174,11 +1153,7 @@ export class FlutterBuildProvider {
       let total = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError("inspect_dart_aot", {
-              cause: signal.reason,
-            }),
-          );
+          return err(cancelledBy("inspect_dart_aot", signal));
         const view = chunk as Buffer;
         total += view.byteLength;
         if (total > LIBRARY_MAX_BYTES)
@@ -1208,11 +1183,7 @@ export class FlutterBuildProvider {
       );
       while (imageLength < image.length) {
         if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError("inspect_dart_aot", {
-              cause: signal.reason,
-            }),
-          );
+          return err(cancelledBy("inspect_dart_aot", signal));
         const result = await file.handle.read(
           image,
           imageLength,

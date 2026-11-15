@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import {
-  INVESTIGATION_EXAMPLES,
-  FUNCTION_COMPARISON_EVIDENCE,
-} from "../contracts/investigationExamples.js";
+import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
 import {
   artifactComparisonResultSchema,
   compareArtifacts,

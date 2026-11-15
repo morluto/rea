@@ -46,6 +46,7 @@ import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../../src/domain/analysisErrorCleanup.js";
 import { err } from "../../src/domain/result.js";
 import { deliverCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
+import { releaseOwnedCleanup } from "../support/cleanupRelease.js";
 
 const services: WebNetworkCaptureService[] = [];
 afterEach(async () => {
@@ -256,7 +257,7 @@ it.each(["captured", "over-capacity"] as const)(
     );
     expect(JSON.stringify(projected)).not.toContain("private-read-marker");
     expect(JSON.stringify(projected)).not.toContain(snapshot.sha256);
-    composed.resolveCleanup();
+    releaseOwnedCleanup(composed);
     const finalized = projectAnalysisError(nestedResult.error);
     expect(finalized.details?.partial_observation).toEqual(expected);
   },

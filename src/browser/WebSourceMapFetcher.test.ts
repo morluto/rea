@@ -20,6 +20,26 @@ const request = {
   fetchUrl: "https://app.example.test/app.js.map",
 };
 
+it("reports a source map that is not UTF-8 as invalid with its response identity", async () => {
+  const result = await fetchWebSourceMapsOk(
+    [request],
+    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
+    undefined,
+    { fetch: async () => new Response(Buffer.from([0x7b, 0xff, 0x7d])) },
+  );
+
+  expect(result.items[0]).toMatchObject({
+    status: "invalid",
+    limitation: expect.stringMatching(
+      /^Source-map response is not valid UTF-8\. Response text was not retained/u,
+    ),
+    response_identity: {
+      bytes: 3,
+      representation: "fetch-response-body-bytes",
+    },
+  });
+});
+
 it("reports an empty selected request set without starting fetch work", async () => {
   const result = await fetchWebSourceMapsOk([], input, undefined, {
     fetch: async () => {
@@ -601,84 +621,51 @@ it("does not mistake an independent body AbortError for a falsy caller cancellat
   ).toBe(true);
 });
 
-it("keeps an actual stalled HTTP header deadline local to its map", async () => {
-  const server = createServer(() => {});
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected TCP address");
-  const url = `http://127.0.0.1:${address.port}/map`;
-  try {
-    const result = await fetchWebSourceMaps(
-      [{ ...request, declaredUrl: url, fetchUrl: url }],
-      {
-        ...input,
-        allowed_origins: [new URL(url).origin],
-        source_map_fetch_timeout_ms: 1000,
-      },
-      undefined,
-      { fetch },
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        items: [
-          {
-            status: "fetch_failed",
-            limitation: expect.stringContaining("deadline"),
-          },
-        ],
-      },
+it.each(["headers", "body"] as const)(
+  "keeps an actual stalled HTTP %s deadline local to its map",
+  async (stage) => {
+    const server = createServer((_request, response) => {
+      if (stage === "body") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.write('{"version":3,');
+      }
     });
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-});
-
-it("keeps an actual stalled HTTP response deadline local to its map", async () => {
-  const server = createServer((_request, response) => {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.write('{"version":3,');
-  });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected TCP address");
-  const url = `http://127.0.0.1:${address.port}/map`;
-  try {
-    const result = await fetchWebSourceMaps(
-      [{ ...request, declaredUrl: url, fetchUrl: url }],
-      {
-        ...input,
-        allowed_origins: [new URL(url).origin],
-        source_map_fetch_timeout_ms: 1000,
-      },
-      undefined,
-      { fetch },
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        items: [
-          {
-            status: "fetch_failed",
-            limitation: expect.stringContaining("deadline"),
-          },
-        ],
-      },
-    });
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Expected TCP address");
+    const url = `http://127.0.0.1:${address.port}/map`;
+    try {
+      const result = await fetchWebSourceMaps(
+        [{ ...request, declaredUrl: url, fetchUrl: url }],
+        {
+          ...input,
+          allowed_origins: [new URL(url).origin],
+          source_map_fetch_timeout_ms: 1000,
+        },
+        undefined,
+        { fetch },
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          items: [
+            {
+              status: "fetch_failed",
+              limitation: expect.stringContaining("deadline"),
+            },
+          ],
+        },
+      });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  },
+);
 
 it.each([302, 503])(
   "retains HTTP %s response cleanup without hanging on an independent tee branch",

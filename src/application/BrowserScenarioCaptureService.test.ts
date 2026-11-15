@@ -23,6 +23,7 @@ import {
   expectKeptPartial,
   expectOwnerError,
 } from "../../tests/fixtures/ownerObservationExpectation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const scenario = browserScenarioInputSchema.parse({
   browser: { mode: "launch", executable_path: "/fixture/chrome" },
@@ -110,7 +111,7 @@ it.each([false, true])(
     const result = await runScenario(failure, scenarioIdentity);
     if (result.ok) throw new Error("Expected cleanup failure");
     expect(result.error).toBe(failure);
-    failure.resolveCleanup();
+    releaseOwnedCleanup(failure);
     expect(resolvedAnalysisError(failure)).toBe(primary);
     expect(parseEvidence(primary.partialObservation)).toMatchObject({
       operation: "capture_browser_scenario",
@@ -327,7 +328,7 @@ it.each([false, true])(
       : parseEvidence(primary.partialObservation);
     if (cleanup) {
       expect(result).toMatchObject({ ok: false });
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
       expect(resolvedAnalysisError(failure)).toBe(primary);
     } else expect(result.ok).toBe(true);
     expect(evidence.raw_result).toEqual(source);

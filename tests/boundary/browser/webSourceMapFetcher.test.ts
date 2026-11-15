@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,21 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
       expectInvalidSourceMaps({
         ...result,
         items: [
@@ -323,6 +336,24 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
       { artifact: null, mappings: [], original_sources: [] },
       { artifact: null, mappings: [], original_sources: [] },
     ]);
+    expect(webSourceMapsSchema.parse(result)).toEqual(result);
+    const without = (value: object, omit: string) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== omit));
+    for (const omit of ["source_index", "declaration_index"])
+      expectInvalidSourceMaps({
+        ...result,
+        items: result.items.map((item) => ({
+          ...item,
+          mappings: item.mappings.map((row) => without(row, omit)),
+        })),
+      });
+    // An invalid map was read in full, so its body identity is required.
+    expectInvalidSourceMaps({
+      ...result,
+      items: result.items.map((item) =>
+        item.status === "invalid" ? without(item, "response_identity") : item,
+      ),
+    });
   } finally {
     server.closeAllConnections();
     if (server.listening)
@@ -970,7 +1001,7 @@ describe("selected source-map fetch deadline", () => {
           );
         });
     }
-  }, 3_000);
+  });
 });
 
 describe("browser map decoded validation", () => {
@@ -1802,7 +1833,7 @@ describe("source-map set output admission", () => {
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
       outputLimitBytes,
     );
-  }, 120_000);
+  });
 
   it("reserves large failure contexts and reports unprocessed requests as unknown", async () => {
     const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024 * 1_024)}`;
@@ -1901,7 +1932,7 @@ describe("expanded source-map evidence budget", () => {
       "included",
     ]);
     expect(result.items[2]?.artifact?.text).toBe(valid);
-  }, 15_000);
+  });
 
   it("bounds expanded evidence across individually valid maps", async () => {
     const expanded = JSON.stringify({

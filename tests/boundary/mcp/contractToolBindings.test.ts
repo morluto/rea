@@ -1,0 +1,131 @@
+import { expect } from "vitest";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
+import { silentLogger } from "../../../src/logger.js";
+import {
+  registerContractTools,
+  type ContractToolBindings,
+} from "../../../src/server/contractToolBindings.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+const evidenceServer = () =>
+  new EvidenceMcpServer(
+    { name: "contract-tool-bindings", version: "1" },
+    {},
+    undefined,
+    createToolResultDelivery(undefined),
+  );
+
+mcpTest(
+  "registers a contract added to the registry from its binding alone",
+  async ({ mcp }) => {
+    const synthetic = {
+      ...toolContract("inspect_pe_imports"),
+      name: "inspect_synthetic_fixture",
+      title: "Inspect synthetic fixture",
+    };
+    const received: unknown[] = [];
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        inspect_synthetic_fixture: {
+          admission: "application",
+          run: (input: unknown) => {
+            received.push(input);
+            return Promise.resolve(
+              err(
+                new AnalysisInputError("inspect_synthetic_fixture", undefined, [
+                  {
+                    path: ["path"],
+                    reason: "invalid_value",
+                    message: "fixture refusal",
+                  },
+                ]),
+              ),
+            );
+          },
+        },
+      } as ContractToolBindings,
+      { logger: silentLogger },
+      [...TOOL_CONTRACTS, synthetic],
+    );
+    const client = await mcp.connect(server);
+
+    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+      "inspect_synthetic_fixture",
+    ]);
+    const reply = await client.callTool({
+      name: "inspect_synthetic_fixture",
+      arguments: { path: "/fixture" },
+    });
+    expect(parseMcpToolError(reply)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { operation: "inspect_synthetic_fixture" },
+      },
+    });
+    expect(received).toEqual([{ path: "/fixture" }]);
+  },
+);
+
+mcpTest(
+  "refuses at startup a binding that names no registered contract",
+  () => {
+    expect(() =>
+      registerContractTools(
+        evidenceServer(),
+        {
+          inspect_retired_fixture: {
+            admission: "sdk",
+            run: () => Promise.reject(new Error("must not run")),
+          },
+        } as ContractToolBindings,
+        { logger: silentLogger },
+      ),
+    ).toThrow(/inspect_retired_fixture/);
+  },
+);
+
+type Operation = () => Promise<never>;
+type DevicetreeBinding = NonNullable<
+  ContractToolBindings["inspect_devicetree"]
+>;
+type PeImportsBinding = NonNullable<ContractToolBindings["inspect_pe_imports"]>;
+
+mcpTest(
+  "binds exactly one handler, and a retained summary only to a contract that selects detail",
+  () => {
+    // Type-level checks hold under every supported TypeScript checker,
+    // whichever line it reports an excess-property error on.
+    const summaryAccepted: {
+      readonly admission: "application";
+      readonly summary: Operation;
+    } extends DevicetreeBinding
+      ? true
+      : false = true;
+    const bothRefused: {
+      readonly admission: "application";
+      readonly run: Operation;
+      readonly summary: Operation;
+    } extends DevicetreeBinding
+      ? false
+      : true = true;
+    const summaryWithoutDetailRefused: {
+      readonly admission: "sdk";
+      readonly summary: Operation;
+    } extends PeImportsBinding
+      ? false
+      : true = true;
+    expect([summaryAccepted, bothRefused, summaryWithoutDetailRefused]).toEqual(
+      [true, true, true],
+    );
+  },
+);

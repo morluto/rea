@@ -71,7 +71,7 @@ it("aggregates comparison Evidence and records an approved runtime gap", async (
   } finally {
     await close(session, server, client);
   }
-}, 10_000);
+});
 
 it("builds exact-address paths with qualified callees and dossier citations", async () => {
   const { session, server, client } = await connected();
@@ -226,7 +226,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     await Promise.allSettled(pending);
     await close(session, server, client);
   }
-}, 10_000);
+});
 
 const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;

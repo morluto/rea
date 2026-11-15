@@ -167,11 +167,10 @@ it.each(["unused compressed input", "wrong declared size"])(
         });
         await expect(buffer(await reader.open(module))).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining(
+          integrityCheck:
             fault === "unused compressed input"
-              ? "complete declared source span"
-              : "size disagrees",
-          ),
+              ? "read-coverage"
+              : "declared-size",
         });
       },
     );
@@ -527,7 +526,7 @@ for (const typeCode of ["o", "d"] as const) {
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("declaration"),
+          integrityCheck: "layout-consistency",
         });
       });
     },
@@ -834,7 +833,10 @@ it.each([
   await withPyInstallerReader(image, async (_reader, handle) => {
     await expect(
       readPyzArchive(handle, 0, image.length),
-    ).resolves.toMatchObject({ ok: false, error: { reason: "integrity" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { reason: "integrity", integrityCheck: "layout-consistency" },
+    });
   });
 });
 
@@ -1159,7 +1161,7 @@ it.each([1, 2])(
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("payload region"),
+          integrityCheck: "layout-consistency",
         });
       },
     );
@@ -1289,7 +1291,7 @@ for (const container of ["carchive", "outer-pyz", "inner-pyz"] as const) {
         };
         await expect(consume()).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("complete declared source span"),
+          integrityCheck: "read-coverage",
         });
       });
     },
