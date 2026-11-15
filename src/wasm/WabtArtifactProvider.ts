@@ -35,6 +35,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -520,12 +521,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       }).catch((cause: unknown) => {
         // Node rejects a write this signal aborted with an envelope that
         // carries the signal's own reason; any other failure stays itself.
-        if (
-          isAborted(signal) &&
-          cause instanceof Error &&
-          cause.cause === signal.reason
-        )
-          throw cancelledBy(OPERATION, signal);
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
         throw cause;
       });
       snapshotHash = selected.sha256;

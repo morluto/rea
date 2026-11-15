@@ -17,8 +17,10 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -129,13 +131,11 @@ export const sqliteDatabaseDialect = (
           ? undefined
           : stableArtifactInputFailure(cause, OPERATION);
       }
+      // This signal's own abort carries its reason; another abort error
+      // is still a cancellation, reported as itself.
+      if (isAbortOf(cause, signal)) return cancelledBy(OPERATION, signal);
       if (cause instanceof Error && cause.name === "AbortError")
-        return new AnalysisCancelledError(OPERATION, {
-          cause:
-            signal?.aborted === true && cause.cause === signal.reason
-              ? signal.reason
-              : cause,
-        });
+        return cancelledBy(OPERATION, carriedReason(cause));
       // Windows reports a sharing violation as EBUSY: another process holds
       // the file without read sharing. The unchanged request succeeds once
       // that process releases it. Name the member of the file set that was
