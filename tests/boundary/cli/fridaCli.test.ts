@@ -474,6 +474,17 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
     } as unknown as DeviceManager;
 
     for (const { name } of files) {
+      // The CLI resolves a relative script file against its working
+      // directory; the contract admits only the absolute path. A Windows
+      // temporary directory on another drive than the checkout has no
+      // relative spelling, so only there the absolute path is passed.
+      const relativeSpelling = relative(process.cwd(), join(directory, name));
+      if (name === "ascii.js" && process.platform !== "win32")
+        expect(isAbsolute(relativeSpelling)).toBe(false);
+      const scriptFile =
+        name === "ascii.js" && !isAbsolute(relativeSpelling)
+          ? relativeSpelling
+          : join(directory, name);
       const provider = new FridaInstrumentationManager({ deviceManager });
       let stdout = "";
       let exitCode = 0;
@@ -483,11 +494,7 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
           "attach",
           "71",
           "--script-file",
-          // The CLI resolves a relative script file against its working
-          // directory; the contract admits only the absolute path.
-          name === "ascii.js"
-            ? relative(process.cwd(), join(directory, name))
-            : join(directory, name),
+          scriptFile,
           "--duration-ms",
           "0",
           "--json",
