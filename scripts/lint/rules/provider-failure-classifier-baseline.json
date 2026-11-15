@@ -64,7 +64,6 @@
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/providers/OwnedCommandCleanup.ts": 2,
     "src/rust/RustBinaryProvider.ts": 1,
-    "src/sqlite/SqliteDatabaseFailures.ts": 1,
-    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
+    "src/sqlite/SqliteDatabaseFailures.ts": 1
   }
 }
