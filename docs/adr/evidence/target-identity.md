@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed (2026-11-15). Implementation lands in slices: the first slice does not
-change Evidence IDs, and the slice that does is breaking and ships with the
-next Evidence format revision.
+Accepted (2026-11-15). Implementation lands in slices: the first slice does not
+change Evidence IDs, and the slice that does is breaking (marked `!`, with
+recreate-observations migration notes) and ships with the next Evidence format
+revision.
 
 ## Context
 

@@ -1080,7 +1080,7 @@ export class JavaScriptRouteScan {
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
-        (site !== undefined && index.referenceMayHaveChangedAt(site, node))
+        (site !== undefined && index.mayObserve(site, node))
       )
         return;
       node = initializer.node;
