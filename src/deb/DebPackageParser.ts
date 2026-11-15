@@ -279,9 +279,9 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
             "GNU ar string table extends past the end of the file.",
           ),
         };
+      // The string table is a physical member: it is kept in the inventory
+      // and counted against max_ar_members like any other.
       stringTable = ascii(bytes.subarray(dataStart, dataStart + size));
-      offset = dataStart + size + (size % 2);
-      continue;
     } else if (/^\/\d+$/u.test(name)) {
       const index = Number(name.slice(1));
       if (stringTable === null)

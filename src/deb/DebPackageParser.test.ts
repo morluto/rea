@@ -724,3 +724,18 @@ it("applies PAX owner records over the fixed header fields", () => {
     group: "builders",
   });
 });
+
+it("keeps a GNU ar string table as a counted member", () => {
+  const bytes = debPackageFixture({
+    extraMembers: [{ name: "//", data: Buffer.from("long-member-name/\n") }],
+  });
+  const report = parse(bytes);
+  expect(report.ar.members.map((member) => member.name)).toContain("//");
+  expect(report.ar.extra_member_names).toContain("//");
+  expect(report.coverage.status).toBe("partial");
+  const error = expectFailure(
+    () => parse(bytes, { max_ar_members: 3 }),
+    DebPackageCapacityFailure,
+  );
+  expect(error.resource).toBe("max_ar_members");
+});
