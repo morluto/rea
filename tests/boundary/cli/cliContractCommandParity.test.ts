@@ -125,6 +125,8 @@ const expectedAdmission = (
   // The named option may supply a selector in place of the positional.
   if (parameter.selectorOption !== undefined && value === undefined)
     return true;
+  // An omitted option takes its CLI default, which the contract admits.
+  if (parameter.cliDefault !== undefined && value === undefined) return true;
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -375,7 +377,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "compare-process-captures",
-  "guided-workflows",
   "inspect-android-jni-bindings",
   "inspect-api-contract",
   "inspect-web-network-capture",
