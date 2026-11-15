@@ -12,6 +12,7 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
@@ -146,6 +147,68 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   return provider;
 };
+
+it.skipIf(process.platform === "win32")(
+  "aborts an in-flight Rizin start as owner-closed when the manager closes",
+  async () => {
+    const spawnEntered = createDeferred<void>();
+    const manager = new RizinDebugSessionManager(process.env, {
+      platform: "linux",
+      // Ownership preparation that only an abort of the start ends.
+      spawnProcess: (options) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+          spawnEntered.resolve();
+        }),
+    });
+    managers.push(manager);
+    const starting = manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    await awaitAcknowledgement(spawnEntered.promise, starting, "Rizin spawn");
+
+    await manager.closeAll();
+    const started = await starting;
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: OwnerCancellation.ownerClosed,
+      },
+    });
+  },
+);
+
+it("refuses a Rizin start made after closeAll began as owner-closed, keeping a caller's own abort reason", async () => {
+  const manager = new RizinDebugSessionManager(process.env, {
+    platform: "linux",
+    spawnProcess: () => {
+      throw new Error("a refused start must not spawn Rizin");
+    },
+  });
+  managers.push(manager);
+  await manager.closeAll();
+  const input = { path: "/tmp/fixture.bin", inferior_tty: "/dev/null" };
+  await expect(manager.start(input)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  caller.abort(reason);
+  await expect(manager.start(input, caller.signal)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+});
 
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(

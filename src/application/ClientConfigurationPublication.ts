@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -124,7 +125,7 @@ export class ClientConfigurationPublication {
       if (selection?.requiredMode !== undefined) {
         await owner.handle.chmod(selection.requiredMode);
         if (
-          process.platform !== "win32" &&
+          HOST_PLATFORM.platform !== "win32" &&
           ((await owner.handle.stat()).mode & 0o777) !== selection.requiredMode
         )
           throw new ClientConfigurationWriteError(

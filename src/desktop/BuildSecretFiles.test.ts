@@ -54,6 +54,12 @@ describe("build secret files", () => {
     const directory = await folder({
       master: { text: `${VALUE}\n`, mode: 0o600 },
       crlf: { text: `${VALUE}\r\n`, mode: 0o400 },
+      // An editor's UTF-8 signature is not part of the secret it saved.
+      bom: { text: `﻿${VALUE}\n`, mode: 0o600 },
+    });
+    expect(await readBuildSecretFile(directory, "bom")).toEqual({
+      ok: true,
+      value: VALUE,
     });
     expect(await readBuildSecretFile(directory, "master")).toEqual({
       ok: true,

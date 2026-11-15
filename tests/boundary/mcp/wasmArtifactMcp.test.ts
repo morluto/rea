@@ -553,8 +553,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Missing WASM view schemas");
+  if (advertised === undefined) throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
   for (const [view, expected] of [

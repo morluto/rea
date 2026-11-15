@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   javaScriptSemanticPrecisionSchema,
@@ -258,11 +259,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
     .describe(
       "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap. When REA runs on Bun, which ignores V8 heap flags, Windows instead limits the analyzer's committed memory to this budget plus a 512 MiB runtime reserve; other Bun hosts enforce no limit.",
     ),
-  analysis_timeout_ms: z
-    .number()
-    .int()
-    .min(1)
-    .max(2_147_483_647)
+  analysis_timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
       "Maximum startup, analysis and transfer time per JavaScript source, in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop the analysis.",

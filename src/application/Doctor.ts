@@ -1,12 +1,17 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
@@ -262,11 +267,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(
@@ -278,8 +279,7 @@ export const runDoctorOwned = async (
   }
   const cleanup = await closeDoctorHost(host);
   if (cleanup === undefined && report.healthy && host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", {
-      cause: host.signal.reason,
+    throw cancelledBy("doctor", host.signal, {
       diagnostics: { doctor_report: jsonValueSchema.parse(report) },
     });
   return cleanup === undefined
@@ -292,8 +292,7 @@ const inspectDoctor = async (
   host: DoctorHost,
   requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
-  if (host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: host.signal.reason });
+  if (host.signal?.aborted) throw cancelledBy("doctor", host.signal);
   const scope = normalizeDoctorScope(requestedScope, target);
   const {
     checks: diagnosticChecks,
@@ -701,8 +700,8 @@ export const systemDoctorHost = (
     options.signal === undefined
       ? controller.signal
       : AbortSignal.any([options.signal, controller.signal]);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const environment = options.environment ?? process.env;
   const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),
@@ -722,8 +721,7 @@ export const systemDoctorHost = (
           signal: inspectionSignal,
         });
         if (inspectionSignal.aborted)
-          throw new AnalysisCancelledError("doctor", {
-            cause: inspectionSignal.reason,
+          throw cancelledBy("doctor", inspectionSignal, {
             capturedOutput: {
               stdout: output.stdout,
               stderr: output.stderr,
@@ -738,12 +736,13 @@ export const systemDoctorHost = (
       } catch (cause: unknown) {
         if (cause instanceof ExecFileOutputCancelledError) {
           const output = execFileOutputFailure(cause);
-          throw new AnalysisCancelledError("doctor", {
-            cause: cause.cause,
-            ...(output === undefined
+          throw cancelledBy(
+            "doctor",
+            carriedReason(cause.cause),
+            output === undefined
               ? {}
-              : { capturedOutput: execFileFailureCapturedOutput(output) }),
-          });
+              : { capturedOutput: execFileFailureCapturedOutput(output) },
+          );
         }
         throw cause;
       }
@@ -933,7 +932,7 @@ export const systemDoctorHost = (
         resources,
       ),
     close: async () => {
-      controller.abort(STARTUP_OWNER_CLOSED);
+      controller.abort(OwnerCancellation.startupOwnerClosed);
       try {
         await resources.close();
         return undefined;

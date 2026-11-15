@@ -978,9 +978,10 @@ as `node_modules/`, `dist/`, and `*.log`. Pattern-based exclusions record the
 matched pattern and whether it came from project, default, caller, or sensitive
 path policy. Links into excluded paths retain their internal target metadata;
 the exclusion explains why the target has no inventory entry, and the inventory
-remains partial. Exclusions record `entry_kind` when the importer observed it;
-older saved exclusions without that field have unknown kind. An excluded
-ancestor proves an internal descendant only when its kind is `directory`.
+remains partial. Every exclusion records `entry_kind` (`unknown` when the
+importer could not observe the kind); a saved graph whose exclusion lacks it is
+malformed. An excluded ancestor proves an internal descendant only when its kind
+is `directory`.
 Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to mark selected paths as sensitive; those patterns are
 reported separately as configured-secret exclusions.

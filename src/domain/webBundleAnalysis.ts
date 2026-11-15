@@ -1,4 +1,7 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
@@ -6,7 +9,6 @@ import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
-  MAX_BROWSER_DEADLINE_MS,
   browserDeadlineIncrease,
   browserDeadlineRetry,
   noRuntimeOverrideSentence,
@@ -35,9 +37,9 @@ export const DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
 
 const webBundleHeapDescription = `Heap phase: maximum V8 old-space for the isolated inert-script analyzer, in MiB (default ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}, range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)} and applies on the next call. This is not a total process RSS limit, not analysis_timeout_ms, and not total_analysis_timeout_ms. Bun ignores V8 flags; Windows Bun uses an owned process commit limit plus a 512 MiB runtime reserve, while other Bun hosts have no enforced memory limit. Raising max_heap_mb does not raise the fixed worker protocol or result byte budgets.`;
 
-const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
+const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
 
-const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
+const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
 
 /** Capture-and-analyze input with optional source-map fetching. */
 export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
@@ -267,22 +269,22 @@ const findingSchema = z.object({
 });
 
 const originalSourceSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
-  // Historical observations omit this link to original_sources declarations.
-  declaration_index: z.int().min(0).optional(),
+  /** The original_sources declaration this edge was read from. */
+  declaration_index: z.int().min(0),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   generated_line: z.int().min(1),
   generated_column: z.int().min(0),
   source: z.string().nullable(),
@@ -293,8 +295,8 @@ const sourceMapMappingSchema = z.object({
 const sourceMapContextShape = {
   script_key: z.string(),
   declared_url: z.string(),
-  // Older saved observations omit this field; current fetches emit string/null.
-  effective_url: z.string().nullable().optional(),
+  // Null when no response was observed within the approved origins.
+  effective_url: z.string().nullable(),
 };
 const parsedSourceMapShape = {
   artifact: webTextArtifactSchema,
@@ -324,10 +326,22 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid"]),
+    status: z.literal("fetch_failed"),
     artifact: z.null(),
-    /** Older observations omit this; completed bytes need it only when text is absent. */
+    /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    // A map is judged invalid only after its complete body was read.
+    status: z.literal("invalid"),
+    artifact: z.null(),
+    response_identity: responseIdentitySchema,
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
     mappings: emptyArraySchema,
@@ -436,9 +450,8 @@ export const webBundleAnalysisSchema = z.object({
   route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    // Older saved observations omit this field; current analyses retain the
-    // validated HTTP(S) target origin or null when no browser origin exists.
-    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    // The validated HTTP(S) target origin, or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),
@@ -481,9 +494,8 @@ export const webBundleAnalysisSchema = z.object({
           ),
         schema_property_names_coverage: z
           .enum(["complete", "partial", "unknown", "not_present"])
-          .optional()
           .describe(
-            "Coverage of the schema property-name projection. Missing means unknown for historical observations. Not a schema-validity result.",
+            "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),
         trust: z.literal("page-declared-untrusted"),
         location: sourceLocationSchema,
@@ -509,6 +521,15 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The setting that bounded these scripts, and how to change it. */
+      limit: analysisSettingLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
+      /**
+       * The phase a work allowance refused for these scripts. Their parse
+       * status and text inferences remain; findings that read the phase's
+       * facts were not examined.
+       */
+      refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
     }),
   ),
   completeness: z.object({

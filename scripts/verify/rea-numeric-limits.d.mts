@@ -1,6 +1,12 @@
 /** Relative path of the registry. Its text is a declaration, not a producer. */
 export const NUMERIC_LIMIT_DECLARATION: "src/domain/numericLimitRegistry.ts";
 
+/** Roots scanned for the removed restart-field names. */
+export const FORBIDDEN_FIELD_SCAN_ROOTS: readonly string[];
+
+/** File extensions, without the dot, scanned under those roots. */
+export const FORBIDDEN_FIELD_SCAN_EXTENSIONS: readonly string[];
+
 /** True for a numeric `REA_` limit, including the documented endpoint-candidate count. */
 export function isNumericLimit(name: string): boolean;
 

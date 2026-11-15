@@ -46,7 +46,7 @@ const artifactConsumers = {
   "artifacts:mcp-catalog": [
     "tests/boundary/mcp/deferredRuntime.test.ts",
     "tests/boundary/mcp/contractPresentation.test.ts",
-    "tests/boundary/mcp/toolSchemaValidity.test.ts",
+    "tests/boundary/mcp/generatedToolCatalog.test.ts",
   ],
   "artifacts:product-catalog": [
     "tests/boundary/filesystem/documentationFacts.test.ts",

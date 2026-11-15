@@ -125,7 +125,8 @@ import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
 import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
 import { FirmwareProvider } from "../../src/firmware/FirmwareProvider.js";
-import { firmwareFailure } from "../../src/firmware/FirmwareFailures.js";
+import { firmwareFailureDialect } from "../../src/firmware/FirmwareFailures.js";
+import { classifyProviderFailure } from "../../src/providers/classifyProviderFailure.js";
 import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
@@ -134,6 +135,12 @@ import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { firmwareRequestSchema } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+/** Classify a raw firmware failure the way the firmware producers do. */
+const firmwareFailure = (
+  cause: unknown,
+  context: Parameters<typeof firmwareFailureDialect>[0],
+) => classifyProviderFailure(cause, firmwareFailureDialect(context));
 
 const providers: FirmwareProvider[] = [];
 beforeEach(() => {
@@ -636,11 +643,14 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
   const error = firmwareFailure(raw, {
     engine: "binwalk",
     operation: "inspect_firmware_regions",
-    deadline: {
-      phase: "analysis",
+    phase: {
       signal: deadline.signal,
-      timeoutMs: 120_000,
-      expiresAtMs: performance.now() + 120_000,
+      deadline: {
+        phase: "analysis",
+        signal: deadline.signal,
+        timeoutMs: 120_000,
+        expiresAtMs: performance.now() + 120_000,
+      },
     },
   });
   expect(error.diagnostics?.primary_error).toMatchObject({

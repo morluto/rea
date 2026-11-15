@@ -1274,11 +1274,19 @@ cliTest(
     const refused = await cli.run({ arguments: args });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "target_unavailable",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        path,
-        constraint: "file_format_rejected",
-        reason: "MZ header does not declare a PE image",
+        operation: "inspect_gpu_code_objects",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "MZ header does not declare a PE image",
+            ),
+          }),
+        ],
       },
     });
   },

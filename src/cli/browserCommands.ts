@@ -48,10 +48,11 @@ import { cliProgressReporter } from "./cliProgress.js";
 export const registerBrowserCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   registerTargetList(cli, logger);
   registerPageInspection(cli, logger);
-  registerBundleAnalysis(cli, logger);
+  registerBundleAnalysis(cli, logger, environment);
   registerObservationSession(cli, logger);
 };
 
@@ -168,6 +169,7 @@ const registerPageInspection = (
 const registerBundleAnalysis = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeWebBundle, {
     description:
@@ -224,7 +226,10 @@ const registerBundleAnalysis = (
                   signal,
                 );
           if (precision !== undefined && !precision.ok) return precision.error;
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,

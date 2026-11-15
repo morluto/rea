@@ -494,6 +494,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Compile every advertised pattern and schema from the packaged stdio
+      # entry with the engines and validators clients run (#10830). Runs after
+      # the uploads so dependent lanes keep their artifacts. Go is the runner's
+      # toolchain; the Python engines are pinned wheels in a cached venv.
+      - name: Identify the advertised schema engine interpreter
+        if: needs.changes.outputs.code == 'true'
+        id: schema-python
+        run: python3 -c 'import sys; print(f"version={sys.version_info[0]}.{sys.version_info[1]}")' >> "$GITHUB_OUTPUT"
+      - name: Restore advertised schema engines
+        if: needs.changes.outputs.code == 'true'
+        id: schema-engines
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/rea-schema-engines
+          key: rea-schema-engines-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.schema-python.outputs.version }}-${{ hashFiles('scripts/verify/advertised-schemas/requirements.txt') }}
+      - name: Install advertised schema engines
+        if: needs.changes.outputs.code == 'true' && steps.schema-engines.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv ~/.cache/rea-schema-engines
+          ~/.cache/rea-schema-engines/bin/pip install --disable-pip-version-check --no-input --require-hashes -r scripts/verify/advertised-schemas/requirements.txt
+      - name: Save advertised schema engines
+        if: needs.changes.outputs.code == 'true' && steps.schema-engines.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/rea-schema-engines
+          key: ${{ steps.schema-engines.outputs.cache-primary-key }}
+      - name: Check advertised schemas with client engines and validators
+        if: needs.changes.outputs.code == 'true'
+        env:
+          REA_REQUIRE_SCHEMA_ENGINES: "1"
+          # Full qualification adds the slower Python jsonschema check.
+          SCHEMA_CHECK_OPTIONS: ${{ needs.changes.outputs.tier == 'full' && '--complete' || '' }}
+        run: |
+          REA_SCHEMA_ENGINES_PYTHON="$HOME/.cache/rea-schema-engines/bin/python" \
+            node scripts/verify-advertised-schemas.mjs $SCHEMA_CHECK_OPTIONS
+
   sqlite-runtime:
     # Admit expensive host/provider work after fast static validation
     # (typecheck, lint, format). Deep static does not gate these lanes.
@@ -798,6 +834,7 @@ jobs:
           tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
           tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts
           tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts
+          tests/boundary/cli/hopperLaunchFailureCli.test.ts
           tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts
           tests/boundary/providers/native/nativeDmgArtifactReader.test.ts
           tests/process-global/dmgCancellationReason.test.ts
@@ -935,6 +972,9 @@ jobs:
           src/contracts/sessionPathInputs.test.ts
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
           tests/boundary/mcp/rawBinaryMcp.test.ts
+          tests/boundary/mcp/advertisedDialect.test.ts
+          tests/boundary/mcp/absoluteLocalPathSchema.test.ts
+          tests/boundary/mcp/toolSchemaValidity.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts

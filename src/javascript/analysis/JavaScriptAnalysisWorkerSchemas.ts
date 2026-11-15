@@ -385,7 +385,7 @@ const referenceShape = {
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
     parse_status: z.enum(["complete", "partial", "failed"]),
-    analysis_coverage: javaScriptStaticCoverageSchema.exactOptional(),
+    analysis_coverage: javaScriptStaticCoverageSchema,
     routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
     visited_ast_nodes: count,
