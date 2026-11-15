@@ -121,16 +121,24 @@ it("refuses an option the chosen route does not own by its CLI key", async () =>
   });
 });
 
-it("advertises each option's default but routes as if it were omitted", async () => {
+it("advertises each option's default without supplying it to routing", async () => {
   const { calls, invoke, options } = harness();
   const schema = z.toJSONSchema(options) as {
     readonly properties: Readonly<Record<string, unknown>>;
   };
   expect(schema.properties).toMatchObject({
-    mode: { default: "fast" },
-    policy: { default: '{"rules":[]}' },
+    mode: {
+      default: "fast",
+      description: "Default: fast",
+    },
+    policy: { default: JSON.stringify({ rules: [] }) },
     report: { default: "text" },
   });
-  await invoke("/x/program", { report: "text", policy: '{"rules":[]}' });
-  expect(calls).toEqual([{ route: "program", cliOptions: {}, input: {} }]);
+  // A given option routes the input even when it spells the default.
+  const refused = await invoke("/x/program", { report: "text" });
+  expect(calls).toEqual([]);
+  expect(refused).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["report"] }] },
+  });
 });
