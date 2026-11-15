@@ -1,14 +1,14 @@
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "../../lib/verifier-cleanup.mjs";
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import { schemaVerifierEnvironment } from "../../lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -27,9 +27,12 @@ export async function verifyElectronToolContracts({
   executable,
   repositoryRoot,
 }) {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), "rea-electron-e2e-")),
-  );
+  // A plain directory: Electron creates its profile directory beneath it.
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-electron-e2e-",
+    private: false,
+  });
+  const root = rootFixture.path;
   const main = join(root, "main.cjs");
   const preload = join(root, "preload.cjs");
   const ready = join(root, "ready");
@@ -98,7 +101,22 @@ bridge.exposeInMainWorld("fixture", {
   });
   let application;
   let stderr = "";
-  await withVerifierCleanup(async () => {
+  // The MCP server and the owned application may still use files under the
+  // root: each confirms cleanup before the root is removed.
+  rootFixture.releaseAfter(() => client.close());
+  rootFixture.releaseAfter(() => transport.close());
+  rootFixture.releaseAfter(async () => {
+    if (!application?.pid) return;
+    const cleanup = await cleanupOwnedProcessGroup({
+      runId,
+      leaderPid: application.pid,
+      processGroupId: application.pid,
+      expectedParentPid: process.pid,
+      expectedCommand: executable,
+    });
+    assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+  });
+  await withVerifierFixture(rootFixture, async () => {
     try {
       await readProcessRunId(process.pid);
       application = spawn(
@@ -292,27 +310,7 @@ bridge.exposeInMainWorld("fixture", {
         { cause },
       );
     }
-  }, [
-    async () => {
-      await closeVerifierResources([
-        () => client.close(),
-        () => transport.close(),
-        async () => {
-          if (application?.pid) {
-            const cleanup = await cleanupOwnedProcessGroup({
-              runId,
-              leaderPid: application.pid,
-              processGroupId: application.pid,
-              expectedParentPid: process.pid,
-              expectedCommand: executable,
-            });
-            assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-          }
-        },
-      ]);
-      await rm(root, { recursive: true, force: true });
-    },
-  ]);
+  });
 }
 
 const pause = (milliseconds) =>

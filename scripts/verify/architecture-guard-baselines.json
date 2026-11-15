@@ -585,21 +585,11 @@
     "scripts/verify-windows-native-inspection.mjs": 1,
     "scripts/verify-windows-native.mjs": 2,
     "scripts/verify-windows-package.mjs": 1,
-    "scripts/verify/android/failure-recovery.mjs": 1,
-    "scripts/verify/android/metadata.mjs": 1,
-    "scripts/verify/android/windows-lifecycle.mjs": 1,
-    "scripts/verify/electron/tool-contracts.mjs": 1,
-    "scripts/verify/firmware/analysis.mjs": 1,
-    "scripts/verify/firmware/devicetree.mjs": 1,
-    "scripts/verify/ghidra/seeds.mjs": 1,
-    "scripts/verify/harmony/analysis.mjs": 1,
-    "scripts/verify/inspector/runtime-observation.mjs": 1,
     "scripts/verify/javascript/module-references.mjs": 2,
     "scripts/verify/javascript/native-handoffs.mjs": 2,
     "scripts/verify/javascript/output.mjs": 1,
     "scripts/verify/javascript/recovery.mjs": 1,
-    "scripts/verify/javascript/retained-facts.mjs": 1,
-    "scripts/verify/managed/conformance.mjs": 1
+    "scripts/verify/javascript/retained-facts.mjs": 1
   },
   "macho-load-command-literal": {}
 }
