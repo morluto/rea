@@ -365,6 +365,10 @@ describe("advertised pattern presentation through pointers", () => {
       expect(validate({ first: "con", second: "con" })).toBe(true);
     },
   );
+});
+
+describe("advertised pattern presentation through collapsing unions", () => {
+  const lookAround = "^(?!con$)[a-z]+$";
 
   it.each(PRESENTERS)(
     "keeps %s pointers valid into a boolean anyOf that collapses",
@@ -375,6 +379,55 @@ describe("advertised pattern presentation through pointers", () => {
             anyOf: [
               { type: "boolean", pattern: "^\\s+$" },
               { type: "boolean" },
+            ],
+          },
+        },
+        type: "object",
+        properties: { flag: { $ref: "#/$defs/flags/anyOf/0" } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ flag: true })).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "keeps %s pointers valid into a union whose relaxed reference becomes boolean",
+    (_kind, present) => {
+      // Relaxing the reference into `flags` leaves `outer`'s first branch a
+      // plain boolean; `outer` must still keep the branch `item` targets.
+      const schema = {
+        $defs: {
+          flags: { anyOf: [{ type: "boolean" }, { type: "boolean" }] },
+          outer: {
+            anyOf: [
+              { $ref: "#/$defs/flags/anyOf/0", type: "boolean" },
+              { type: "boolean" },
+            ],
+          },
+        },
+        type: "object",
+        properties: {
+          item: { $ref: "#/$defs/outer/anyOf/1" },
+          name: { type: "string", pattern: lookAround },
+        },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ item: true, name: "con" })).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "keeps %s pointers valid into a union whose resource reference relaxes",
+    (_kind, present) => {
+      // The widened sibling pattern relaxes the reference to the embedded
+      // resource, leaving both branches boolean after normalization.
+      const schema = {
+        $defs: {
+          bool: { $id: "https://example.test/bool", type: "boolean" },
+          flags: {
+            anyOf: [
+              { $ref: "https://example.test/bool", type: "boolean" },
+              { type: "boolean", pattern: "^\\s+$" },
             ],
           },
         },
