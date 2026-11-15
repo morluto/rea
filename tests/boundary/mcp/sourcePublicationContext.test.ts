@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterAll, expect, it } from "vitest";
@@ -123,7 +126,7 @@ it.each(
           name: "inspect_address_context",
           arguments: { address: "0x100", document: "fixture" },
         },
-        { timeout: 120000, toolDefinition: tool },
+        { timeout: 120000, toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
       expect(result.structuredContent).toMatchObject({

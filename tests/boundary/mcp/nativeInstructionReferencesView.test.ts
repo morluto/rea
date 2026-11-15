@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -240,7 +243,7 @@ it.each(["compact"] as const)(
               },
             },
           },
-          { toolDefinition: advertised },
+          { toolDefinition: withCanonicalOutputSchema(advertised) },
         );
         expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
         const page = analysisViewResultSchema.parse(
