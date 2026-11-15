@@ -8,6 +8,7 @@ import {
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 export const PROCEDURES = {
   "0x1": "_TtC7Fixture5Class",
@@ -28,7 +29,10 @@ export const connect = async (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ) => {
   const server = createServer({ kind: "fixed", analysis }, { environment });
-  const client = new Client({ name: "enhanced-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "enhanced-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

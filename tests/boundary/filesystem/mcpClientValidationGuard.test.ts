@@ -1,0 +1,20 @@
+import { expect, it } from "vitest";
+
+import { countDefaultValidationClients } from "../../../scripts/verify/mcp-client-validation.mjs";
+
+// Sources spell the constructor as `NEW(` so this file is not itself counted.
+const source = (text: string) => text.replaceAll("NEW(", "new " + "Client(");
+
+it.each([
+  ["NEW(info)", 1],
+  ["NEW(info, { jsonSchemaValidator: validation })", 0],
+  ["NEW(info, {\n  capabilities: {},\n  jsonSchemaValidator,\n})", 0],
+  // A later client's validator does not hide an earlier default client.
+  ["[NEW(a), NEW(b, { jsonSchemaValidator })]", 1],
+  ["const a = NEW(a);\nconst b = NEW(b, { jsonSchemaValidator });", 1],
+  ["NEW(a, { jsonSchemaValidator }); NEW(b)", 1],
+  ["NEW(make(a), options(b))", 1],
+  ["NEW(a); NEW(b);", 2],
+] as const)("counts default-validation clients in %j", (text, expected) => {
+  expect(countDefaultValidationClients(source(text))).toBe(expected);
+});

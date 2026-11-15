@@ -14,6 +14,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scope = {
   pid: 123,
@@ -51,7 +52,10 @@ const connectNativeUi = async () => {
     new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-ui-facts", version: "1" });
+  const client = new Client(
+    { name: "native-ui-facts", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
     factory.mockRestore();

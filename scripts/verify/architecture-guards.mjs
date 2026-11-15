@@ -10,6 +10,7 @@ import {
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -696,6 +697,22 @@ checkCounted(
   "verifier-fixture-root",
   verifierScripts,
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
+  [],
+);
+
+// The MCP SDK client compiles every listed tool's output schema on its first
+// tool call. With the default Ajv options, REA's catalog costs gigabytes of
+// allocation per client, so test clients take the lazy, reference-preserving
+// validation from tests/fixtures/mcpSchemaValidation (directly, or through
+// tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
+const mcpClientTestFiles = testFiles
+  .filter((file) => file.path.startsWith("tests/"))
+  .map((file) => ({ path: file.path, content: stripComments(file.content) }));
+checkCounted(
+  "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
+  "test-mcp-client-default-validation",
+  mcpClientTestFiles,
+  countDefaultValidationClients,
   [],
 );
 

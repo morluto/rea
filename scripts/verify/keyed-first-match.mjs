@@ -23,7 +23,7 @@ const FILTER_PATTERNS = [
 ];
 
 /** Index just past the parenthesis that closes the one at `open`, or -1. */
-const closingParen = (content, open) => {
+export const closingParen = (content, open) => {
   let depth = 0;
   for (let index = open; index < content.length; index += 1) {
     const character = content[index];

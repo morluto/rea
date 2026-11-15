@@ -14,6 +14,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const exec = promisify(execFile);
 const fixture = fileURLToPath(
@@ -56,10 +57,13 @@ itWithCaptureCapability.each([
         throw new Error("Process capture must not launch a binary provider");
       });
       const server = createServer({ kind: "session", session });
-      client = new Client({
-        name: "descendant-pid-normalization",
-        version: "1",
-      });
+      client = new Client(
+        {
+          name: "descendant-pid-normalization",
+          version: "1",
+        },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const connected = client;
       onTestFinished(async () => {
         await connected.close();

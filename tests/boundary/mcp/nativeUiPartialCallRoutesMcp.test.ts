@@ -22,6 +22,7 @@ import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "typed", name: "Typed provider", version: "1" };
 const fallback = { id: "fallback", name: "Fallback provider", version: "1" };
@@ -227,7 +228,10 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
     },
   };
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "native-ui-partial-routes", version: "1" });
+  const client = new Client(
+    { name: "native-ui-partial-routes", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push({
