@@ -10,13 +10,16 @@ import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Result } from "../domain/result.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import {
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
+  createValueToolHandler,
   type ContractToolService,
+  type ValueToolRequest,
 } from "./contractToolHandler.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import {
@@ -61,10 +64,37 @@ type EvidenceBinding<Input = unknown> =
       readonly admission: "sdk";
       readonly run: EvidenceOperation<Input>;
       readonly summary?: never;
+      readonly value?: never;
     }
   | {
       readonly admission: "application";
       readonly run: EvidenceOperation<unknown>;
+      readonly summary?: never;
+      readonly value?: never;
+    };
+
+type ValueOperation<Input> = (
+  input: Input,
+  request: ValueToolRequest,
+) => Promise<Result<JsonValue, AnalysisError>>;
+
+/**
+ * Run a workflow that returns a plain JSON value rather than Evidence, and
+ * deliver it against the contract's output schema. It records no Evidence
+ * and runs outside analysis admission, so provider-free guidance, discovery
+ * and status reads answer without waiting on an analysis.
+ */
+type ValueBinding<Input = unknown> =
+  | {
+      readonly admission: "sdk";
+      readonly value: ValueOperation<Input>;
+      readonly run?: never;
+      readonly summary?: never;
+    }
+  | {
+      readonly admission: "application";
+      readonly value: ValueOperation<unknown>;
+      readonly run?: never;
       readonly summary?: never;
     };
 
@@ -76,6 +106,7 @@ interface RetainedSummaryBinding<Input> {
   readonly admission: ContractInputAdmission;
   readonly summary: EvidenceOperation<Omit<Input, "detail" | "view">>;
   readonly run?: never;
+  readonly value?: never;
 }
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
@@ -83,6 +114,7 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   // The SDK admits the request frame: declared Evidence inputs stay
   // unchecked until the workflow resolves them.
   | EvidenceBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
+  | ValueBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
@@ -144,6 +176,7 @@ export const registerContractTools = (
     Record<
       string,
       | EvidenceBinding
+      | ValueBinding
       | RetainedSummaryBinding<Readonly<Record<string, unknown>>>
       | undefined
     >
@@ -159,22 +192,24 @@ export const registerContractTools = (
         ? toolRegistrationOptions(contract)
         : applicationToolRegistrationOptions(contract);
     const handler =
-      binding.run !== undefined
-        ? createEvidenceToolHandler(
-            server,
-            binding.run,
-            logger,
-            recordEvidence,
-            withAdmittedAnalysis,
-          )(contract)
-        : createRetainedSummaryToolHandler(
-            server,
-            contract as SummaryContract,
-            binding.summary,
-            logger,
-            retention,
-            withAdmittedAnalysis,
-          );
+      binding.value !== undefined
+        ? createValueToolHandler(server, binding.value, logger)(contract)
+        : binding.run !== undefined
+          ? createEvidenceToolHandler(
+              server,
+              binding.run,
+              logger,
+              recordEvidence,
+              withAdmittedAnalysis,
+            )(contract)
+          : createRetainedSummaryToolHandler(
+              server,
+              contract as SummaryContract,
+              binding.summary,
+              logger,
+              retention,
+              withAdmittedAnalysis,
+            );
     server.registerTool(contract.name, registration, handler);
   }
   if (unbound.size > 0)

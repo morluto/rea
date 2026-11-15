@@ -7,7 +7,8 @@ import {
   searchGuidanceOutputSchema,
 } from "../../../src/contracts/guidanceContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerGuidanceTools } from "../../../src/server/registerGuidanceTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { silentLogger } from "../../../src/logger.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 
 const open: {
@@ -45,7 +46,20 @@ it("advertises strict provider-free contracts and returns packaged guide results
     new ToolResultDelivery(1024 * 1024),
   );
   const resources = new ArtifactResourceScope();
-  registerGuidanceTools(server, resources);
+  const admitted: string[] = [];
+  // Guidance is provider-free: it answers without entering analysis
+  // admission, even when the server supplies one.
+  registerServiceTools(
+    server,
+    { guidance: resources },
+    {
+      logger: silentLogger,
+      withAdmittedAnalysis: (operationName) => {
+        admitted.push(operationName);
+        return Promise.reject(new Error("guidance entered analysis admission"));
+      },
+    },
+  );
   const client = new Client({ name: "guidance-client", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -124,4 +138,5 @@ it("advertises strict provider-free contracts and returns packaged guide results
   expect(
     guidanceOutput(searchGuidanceOutputSchema, nextPage.structuredContent),
   ).toMatchObject({ status: "matches", offset: 1 });
+  expect(admitted).toEqual([]);
 });
