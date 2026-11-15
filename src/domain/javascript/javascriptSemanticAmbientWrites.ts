@@ -6,6 +6,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
+import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
@@ -364,6 +368,13 @@ export const createAmbientPathResolver = (
             : stable === undefined
               ? []
               : [stable];
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call.
+          const argument = possibleWrites
+            ? semanticDirectInvocationArgument(root, binding, state)
+            : undefined;
+          if (argument !== undefined)
+            queue({ node: argument, readsAtSelf: true, suffix });
           for (const initializer of initializers) {
             if (semanticReferenceSourcesInactive(initializer, state)) continue;
             // Pattern assignments share the source selection owner with member
@@ -670,10 +681,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      for (const argument of t.isTaggedTemplateExpression(node)
+      for (const [index, argument] of (t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
-        : node.arguments)
-        if (t.isNode(argument))
+        : node.arguments
+      ).entries())
+        if (
+          t.isNode(argument) &&
+          !semanticArgumentStaysInSource(node, index, state)
+        )
           retainEscape(
             t.isSpreadElement(argument) ? argument.argument : argument,
           );
@@ -757,6 +772,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  for (const node of state.escapingThrows)
+    escapes.push({ node, target: node.argument, browserReceiver: false });
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
     const receiver = ambientWrites(source.target.object, source.mutation);

@@ -218,6 +218,12 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientWrites: SemanticPropertyPathCoverage;
   /** Browser receivers proven to be only the ambient global identity. */
   readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /**
+   * Throw statements whose value leaves the enclosing function or class
+   * body. Their handlers are not linked to the thrown value, so effect
+   * indexing treats the value as escaping at the throw.
+   */
+  readonly escapingThrows: t.ThrowStatement[];
   /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
   readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */

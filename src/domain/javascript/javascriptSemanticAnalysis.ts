@@ -1107,6 +1107,7 @@ const createState = (
     ambientWrites: new SemanticPropertyPathCoverage(),
     escapingReferenceStores: new WeakSet(),
     retainedGlobalCallReceivers: new WeakSet(),
+    escapingThrows: [],
     ambientEscapes: new SemanticPropertyPathCoverage(),
     ambientEscapeEffects: [],
     ambientWriteEffects: [],
@@ -1373,7 +1374,10 @@ function* collectDefinitionsSteps(
     let child: t.Node = node;
     for (let index = ancestors.length - 1; index >= 0; index--) {
       const parent = ancestors[index]!;
-      if (t.isFunction(parent) || t.isClass(parent)) break;
+      if (t.isFunction(parent) || t.isClass(parent)) {
+        state.escapingThrows.push(node);
+        break;
+      }
       if (
         t.isTryStatement(parent) &&
         parent.handler != null &&
