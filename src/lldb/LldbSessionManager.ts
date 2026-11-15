@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+import { z } from "zod";
 
 import {
   AnalysisCapabilityUnavailableError,
@@ -11,6 +12,8 @@ import {
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { coverageStatusSchema } from "../domain/coverage.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -20,6 +23,43 @@ import {
 } from "../config/debuggerSessionLimits.js";
 import { debuggerResourceConstraintError } from "../process/ownedDebuggerSession.js";
 import { LLDB_PROVIDER_IDENTITY } from "./LldbProviderIdentity.js";
+
+const initializeResponseSchema = z.object({
+  status: z.string(),
+  version: z.string(),
+});
+
+const launchAttachResponseSchema = z.object({
+  status: z.string(),
+  pid: z.number().nullable().optional(),
+  state: z.string().optional(),
+  error: z.string().optional(),
+  target: z.string().nullable().optional(),
+  breakpoints: z.array(z.unknown()).optional(),
+});
+
+const commandResponseSchema = z.object({
+  command: z.string(),
+  output: z.string(),
+  process_state: z.string().optional(),
+  output_truncated: z.boolean().optional(),
+  completion_status: coverageStatusSchema,
+  pid: z.number().nullable().optional(),
+  target: z.string().nullable().optional(),
+});
+
+const statusResponseSchema = z.object({
+  state: z.enum(["ready", "closed"]).optional(),
+  process_state: z.string().optional(),
+  pid: z.number().nullable().optional(),
+  target: z.string().nullable().optional(),
+});
+
+const closeResponseSchema = z.object({
+  target_state: z
+    .enum(["terminated", "detached", "exited", "none_observed", "unknown"])
+    .optional(),
+});
 
 const BRIDGE_SCRIPT = fileURLToPath(
   new URL("../../bridge/native/rea_lldb_session.py", import.meta.url),
@@ -63,7 +103,7 @@ export interface LldbCommandResult {
   readonly process_state?: string;
   readonly output_truncated: boolean;
   readonly output_invalid_utf8?: true;
-  readonly completion_status: "complete" | "unknown";
+  readonly completion_status: "complete" | "partial" | "unknown";
 }
 
 export interface LldbStatusResult {
@@ -257,20 +297,24 @@ export class LldbSessionManager {
         }
       });
 
-      const sendRpc = <T>(
+      const sendRpc = async <T>(
+        schema: z.ZodType<T>,
         method: string,
         params: Record<string, unknown> = {},
         timeoutMs: number = this.#startupTimeoutMs,
       ): Promise<T> => {
-        return new Promise<T>((resolve, reject) => {
+        const raw = await new Promise<unknown>((resolve, reject) => {
           if (session.closed || !child.stdin?.writable) {
             return reject(new Error("LLDB session is closed."));
           }
           const reqId = session.nextId++;
-          const timer = setTimeout(() => {
-            pending.delete(reqId);
-            reject(new AnalysisTimeoutError(method, timeoutMs));
-          }, timeoutMs);
+          const timer = setTimeout(
+            () => {
+              pending.delete(reqId);
+              reject(new AnalysisTimeoutError(method, timeoutMs));
+            },
+            Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
+          );
           timer.unref();
 
           pending.set(reqId, { resolve, reject, timer });
@@ -282,28 +326,37 @@ export class LldbSessionManager {
           });
           child.stdin.write(payload + "\n");
         });
+
+        const parsed = schema.safeParse(raw);
+        if (!parsed.success) {
+          throw new AnalysisCapabilityUnavailableError(
+            "lldb",
+            method,
+            `Invalid or malformed RPC reply from LLDB daemon: ${parsed.error.message}`,
+          );
+        }
+        return parsed.data;
       };
 
       try {
         // 1. Initialize
-        await sendRpc<{ status: string; version: string }>("initialize");
+        await sendRpc(initializeResponseSchema, "initialize");
 
         // 2. Launch target or attach
         let launchState: LldbStartResult["state"] = "ready";
         if (options.path) {
-          const launchRes = await sendRpc<{
-            status: string;
-            pid?: number;
-            state?: string;
-            error?: string;
-          }>("launch", {
-            path: options.path,
-            args: options.args,
-            env: options.env,
-            stop_at_entry: options.stop_at_entry ?? true,
-            disable_aslr: options.disable_aslr ?? true,
-            breakpoints: options.breakpoints,
-          });
+          const launchRes = await sendRpc(
+            launchAttachResponseSchema,
+            "launch",
+            {
+              path: options.path,
+              args: options.args,
+              env: options.env,
+              stop_at_entry: options.stop_at_entry ?? true,
+              disable_aslr: options.disable_aslr ?? true,
+              breakpoints: options.breakpoints,
+            },
+          );
 
           if (launchRes.error || launchRes.status === "failed") {
             await this.#terminateChild(child);
@@ -319,14 +372,13 @@ export class LldbSessionManager {
           session.processState = launchRes.state ?? "stopped";
           launchState = "launched";
         } else if (options.pid) {
-          const attachRes = await sendRpc<{
-            status: string;
-            pid?: number;
-            state?: string;
-            error?: string;
-          }>("attach", {
-            pid: options.pid,
-          });
+          const attachRes = await sendRpc(
+            launchAttachResponseSchema,
+            "attach",
+            {
+              pid: options.pid,
+            },
+          );
           if (attachRes.error || attachRes.status === "failed") {
             await this.#terminateChild(child);
             return err(
@@ -416,16 +468,12 @@ export class LldbSessionManager {
         if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
         try {
           const timeoutMs = this.#commandTimeoutMs;
-          const rpcTimeoutMs = timeoutMs + 5000;
-          const res = await this.#sendSessionRpc<{
-            command: string;
-            output: string;
-            process_state?: string;
-            output_truncated?: boolean;
-            completion_status: "complete" | "unknown";
-            pid?: number | null;
-            target?: string | null;
-          }>(
+          const rpcTimeoutMs = Math.min(
+            timeoutMs + 5000,
+            MAX_NODE_TIMER_DELAY_MS,
+          );
+          const res = await this.#sendSessionRpc(
+            commandResponseSchema,
             session,
             "command",
             { command, timeout: timeoutMs / 1000 },
@@ -511,12 +559,13 @@ export class LldbSessionManager {
 
     if (!session.closed) {
       try {
-        const res = await this.#sendSessionRpc<{
-          state?: "ready" | "closed";
-          process_state?: string;
-          pid?: number | null;
-          target?: string | null;
-        }>(session, "status", {}, 3000);
+        const res = await this.#sendSessionRpc(
+          statusResponseSchema,
+          session,
+          "status",
+          {},
+          3000,
+        );
         if (res) {
           if (res.process_state !== undefined)
             session.processState = res.process_state;
@@ -576,14 +625,13 @@ export class LldbSessionManager {
         | "unknown" = "none_observed";
 
       try {
-        const res = await this.#sendSessionRpc<{
-          target_state:
-            | "terminated"
-            | "detached"
-            | "exited"
-            | "none_observed"
-            | "unknown";
-        }>(session, "close", {}, 5000);
+        const res = await this.#sendSessionRpc(
+          closeResponseSchema,
+          session,
+          "close",
+          {},
+          5000,
+        );
         if (res?.target_state) {
           targetState = res.target_state;
         }
@@ -641,21 +689,25 @@ export class LldbSessionManager {
     return ok(null);
   }
 
-  #sendSessionRpc<T>(
+  async #sendSessionRpc<T>(
+    schema: z.ZodType<T>,
     session: ActiveSession,
     method: string,
     params: Record<string, unknown>,
     timeoutMs: number,
   ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
+    const raw = await new Promise<unknown>((resolve, reject) => {
       if (session.closed || !session.child.stdin?.writable) {
         return reject(new Error("LLDB session is closed."));
       }
       const reqId = session.nextId++;
-      const timer = setTimeout(() => {
-        session.pending.delete(reqId);
-        reject(new AnalysisTimeoutError(method, timeoutMs));
-      }, timeoutMs);
+      const timer = setTimeout(
+        () => {
+          session.pending.delete(reqId);
+          reject(new AnalysisTimeoutError(method, timeoutMs));
+        },
+        Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
+      );
       timer.unref();
 
       session.pending.set(reqId, { resolve, reject, timer });
@@ -667,6 +719,16 @@ export class LldbSessionManager {
       });
       session.child.stdin.write(payload + "\n");
     });
+
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      throw new AnalysisCapabilityUnavailableError(
+        "lldb",
+        method,
+        `Invalid or malformed RPC reply from LLDB daemon: ${parsed.error.message}`,
+      );
+    }
+    return parsed.data;
   }
 
   async #terminateChild(child: ChildProcess): Promise<void> {
