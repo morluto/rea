@@ -281,8 +281,8 @@ const originalModuleEdgeSchema = z.object({
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   generated_line: z.int().min(1),
   generated_column: z.int().min(0),
   source: z.string().nullable(),
@@ -324,10 +324,22 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid"]),
+    status: z.literal("fetch_failed"),
     artifact: z.null(),
     /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    // A map is judged invalid only after its complete body was read.
+    status: z.literal("invalid"),
+    artifact: z.null(),
+    response_identity: responseIdentitySchema,
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
     mappings: emptyArraySchema,
@@ -436,9 +448,8 @@ export const webBundleAnalysisSchema = z.object({
   route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    // Older saved observations omit this field; current analyses retain the
-    // validated HTTP(S) target origin or null when no browser origin exists.
-    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    // The validated HTTP(S) target origin, or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),
