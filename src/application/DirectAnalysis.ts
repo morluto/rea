@@ -21,11 +21,9 @@ import {
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import {
-  tryParseEvidence,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
@@ -533,9 +531,10 @@ const runAnalysis = async (
     });
     if (!executed.ok) {
       if (options.includeEvidenceSources) {
-        const partial = tryParseEvidence(executed.error.partialObservation);
-        if (partial !== undefined) {
-          const captured = captureSources(partial);
+        const partial = recognizeEvidence(executed.error.partialObservation);
+        if (!partial.ok) executed.error.retainSecondaryFailure(partial.error);
+        else if (partial.value !== undefined) {
+          const captured = captureSources(partial.value);
           if (!captured.ok)
             executed.error.retainSecondaryFailure(captured.error);
         }

@@ -28,6 +28,19 @@ export const safeParseImmutableEvidence = (
   authenticateEvidence(input, immutableEvidence);
 
 /**
+ * Recognize Evidence in a union of partial observations. Input that names no
+ * `evidence_id` is not an Evidence record. A record that names one but fails
+ * authentication, or was written in another format revision, is a refusal,
+ * never absent: callers must not read it as "no Evidence".
+ */
+export const recognizeEvidence = (
+  input: unknown,
+): Result<Evidence | undefined, EvidenceIntegrityError> =>
+  typeof input === "object" && input !== null && "evidence_id" in input
+    ? readEvidence(input)
+    : ok(undefined);
+
+/**
  * The single refusal of Evidence from another format revision: an integrity
  * mismatch whose message carries the recreate guidance, as for bundles.
  */

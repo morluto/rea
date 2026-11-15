@@ -403,16 +403,6 @@ export const evidenceDisplayMetadataAgree = (
   left.caller_input_path === right.caller_input_path &&
   isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
 
-/** Recognize authenticated Evidence in a union of partial observations. */
-export const tryParseEvidence = (input: unknown): Evidence | undefined => {
-  if (typeof input !== "object" || input === null || !("evidence_id" in input))
-    return undefined;
-  const immutable = immutableEvidenceSnapshots.get(input);
-  if (immutable !== undefined) return immutable;
-  const parsed = authenticatedEvidenceSchema.safeParse(input);
-  return parsed.success ? parsed.data : undefined;
-};
-
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
 export const immutableEvidence = (input: unknown): Evidence => {
   const parsed = parseEvidence(input);
