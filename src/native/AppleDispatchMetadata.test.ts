@@ -1,3 +1,4 @@
+import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
@@ -1963,7 +1964,10 @@ describe("malformed Apple dispatch metadata", () => {
     const bytes = fixture();
     bytes.writeUInt32LE(7, 36);
     expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
-      new RangeError("load command 0 at offset 0 has invalid cmdsize 7"),
+      malformedInput(
+        "macho",
+        "load command 0 at offset 0 has invalid cmdsize 7",
+      ),
     );
     expect(() =>
       decodeAppleDispatchMetadata(Buffer.alloc(10), 100, provenance),

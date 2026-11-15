@@ -35,8 +35,8 @@ import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
+import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -626,11 +626,11 @@ export const classifyArtifactBytes = (
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
-  if (prefix.length >= 4) {
-    if (readMachoHeaderPrefixFacts(prefix).format !== null) return "mach-o";
-    if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-      return "elf";
-  }
+  // Admit ELF and thin Mach-O as target resolution does: a magic number
+  // whose header does not decode is not an executable REA can open.
+  const native = readNativeHeaderFormat(prefix, fileSize);
+  if (!native.ok) return "unknown";
+  if (native.value !== null) return native.value;
   if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
     if (
       !Number.isSafeInteger(fileSize) ||

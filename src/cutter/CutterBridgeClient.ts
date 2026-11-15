@@ -42,6 +42,10 @@ import {
 } from "../domain/cutterDiscovery.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cutterBridgeMac } from "./cutterBridgeMac.js";
+import {
+  cutterBridgeSource,
+  packagedCutterPluginPath,
+} from "./CutterBridgeSource.js";
 import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
@@ -60,7 +64,12 @@ import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSna
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 const descriptorSchema = z.object({
-  ...cutterSessionSchema.shape,
+  ...cutterSessionSchema.omit({ bridge_source: true }).shape,
+  bridge_source_sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable()
+    .optional(),
   host: z.literal("127.0.0.1"),
   port: z.int().min(1).max(65535),
   token: z.string().min(20),
@@ -95,6 +104,17 @@ const responseSchema = z.object({
     .regex(/^[0-9a-f]{16}$/)
     .optional(),
 });
+/** A session runs a plugin whose bytes differ from the packaged copy. */
+const modifiedPluginRefusal = (): AnalysisCapabilityUnavailableError => {
+  const remediation = `Copy ${packagedCutterPluginPath()} into Cutter's plugins/python directory, restart Cutter, and list sessions again. No command was sent.`;
+  return new AnalysisCapabilityUnavailableError(
+    "cutter",
+    "cutter_command",
+    "The Cutter session runs a REA plugin whose source differs from the packaged plugin, so its protocol cannot be trusted to match this REA release.",
+    { remediationAction: remediation, userMessage: remediation },
+  );
+};
+
 const acknowledgementSchema = z.object({
   ok: z.literal(true),
   acknowledged: z.boolean(),
@@ -229,13 +249,15 @@ export interface CutterBridgeExecution {
   readonly requestId: string;
   readonly output: unknown;
   readonly currentFile: string | null;
-  readonly documentGeneration: number;
+  /** Generation the bridge reported after the command; null when it did not. */
+  readonly documentGeneration: number | null;
   readonly identityStatus: "partial";
   readonly cutterVersion: string | null;
   readonly executionState: CutterBridgeExecutionState;
   readonly error: string | null;
   readonly message: string | null;
-  readonly outputTruncated: boolean;
+  /** Whether output was omitted; null when the bridge did not declare it. */
+  readonly outputTruncated: boolean | null;
   readonly completionToken?: string;
 }
 
@@ -383,6 +405,12 @@ export class CutterBridgeClient {
             mismatches.push(advertised);
           return undefined;
         }
+        // Classify outside the per-peer catch: an unreadable packaged plugin
+        // is REA's own failure and must not read as an absent session.
+        const bridgeSource = cutterBridgeSource(
+          descriptor.bridge_source_sha256,
+          "list_cutter_sessions",
+        );
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -414,6 +442,7 @@ export class CutterBridgeClient {
             cutter_version:
               status.data.cutter_version ?? descriptor.cutter_version,
             identity_status: "partial" as const,
+            bridge_source: bridgeSource,
           };
         } catch (cause) {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;
@@ -468,6 +497,13 @@ export class CutterBridgeClient {
       this.#requestLimit();
       const descriptor = await this.#find(input.sessionId, input.signal);
       assertBridgeActive(input.signal, "cutter_command");
+      if (
+        cutterBridgeSource(
+          descriptor.bridge_source_sha256,
+          "cutter_command",
+        ) === "modified"
+      )
+        throw modifiedPluginRefusal();
       const advertised =
         descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
       if (advertised !== this.#requestLimit().maximumBytes)
@@ -513,15 +549,17 @@ export class CutterBridgeClient {
           requestId,
           output: null,
           currentFile: descriptor.current_file,
-          documentGeneration: input.expectedGeneration,
+          // No reply was read, so the generation after the command is unknown.
+          documentGeneration: null,
           identityStatus: "partial",
           cutterVersion: descriptor.cutter_version,
           executionState: "unknown",
           error: "transport-response-missing",
           message: `${cause.message}; the command may have completed; do not retry automatically`,
-          // The carried limit is the framed response ceiling. The command was
-          // sent, and the discarded response is omitted output.
-          outputTruncated: cause.limit !== undefined,
+          // The carried limit is the framed response ceiling: the command was
+          // sent and its discarded response is omitted output. Any other
+          // missing reply leaves truncation unknown.
+          outputTruncated: cause.limit === undefined ? null : true,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -531,20 +569,21 @@ export class CutterBridgeClient {
           requestId,
           output: null,
           currentFile: descriptor.current_file,
-          documentGeneration: input.expectedGeneration,
+          documentGeneration: null,
           identityStatus: "partial",
           cutterVersion: descriptor.cutter_version,
           executionState: "unknown",
           error: "malformed-bridge-response",
           message:
             "Cutter may have completed the command, but its response was invalid; do not retry automatically",
-          outputTruncated: false,
+          outputTruncated: null,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       const response = parsed.data;
+      // Completion is a declaration, never inferred from `ok` alone: a reply
+      // that omits `execution_state` leaves the command's completion unknown.
       const executionState: CutterBridgeExecutionState = response.ok
-        ? response.execution_state === undefined ||
-          response.execution_state === "complete"
+        ? response.execution_state === "complete"
           ? "complete"
           : response.execution_state === "not_started"
             ? "not_started"
@@ -588,14 +627,18 @@ export class CutterBridgeClient {
           response.current_file === undefined
             ? descriptor.current_file
             : response.current_file,
-        documentGeneration:
-          response.document_generation ?? input.expectedGeneration,
+        // An undeclared generation or truncation stays unknown: the command
+        // may have changed the document, and an omitted flag is not "false".
+        documentGeneration: response.document_generation ?? null,
         identityStatus: "partial",
         cutterVersion: response.cutter_version ?? descriptor.cutter_version,
         executionState,
         error: response.ok ? null : (response.error ?? "cutter-command-failed"),
         message: response.message ?? null,
-        outputTruncated: response.output_truncated ?? false,
+        // A command that never started produced no output to omit.
+        outputTruncated:
+          response.output_truncated ??
+          (executionState === "not_started" ? false : null),
         ...(completionToken === undefined ? {} : { completionToken }),
       };
     } catch (cause) {

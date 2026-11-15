@@ -102,7 +102,9 @@ it.skipIf(process.platform === "win32")(
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
-    const clock = vi.spyOn(Date, "now");
+    // The command deadline is monotonic: it starts on the first reading and
+    // expires on the fourth, while the marker frame is still queued.
+    const clock = vi.spyOn(performance, "now");
     clock
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(100)

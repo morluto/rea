@@ -239,6 +239,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       timeoutMs: request.timeoutMs,
       diagnosticBytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      runtime: "v8",
     },
     {
       ...(request.signal === undefined ? {} : { signal: request.signal }),

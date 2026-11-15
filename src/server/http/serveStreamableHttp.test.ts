@@ -26,6 +26,7 @@ import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
 import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 import { waitFor } from "../../../tests/support/testWait.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 
 const servers: StreamableHttpServer[] = [];
 
@@ -1408,13 +1409,13 @@ it("retains failed response cleanup and blocks provider teardown and further adm
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     });
     await expect(served.prepareShutdown()).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { failed_cleanup_count: 1 },
+      _tag: "ProviderAdapterError",
+      cleanupIncomplete: true,
+      cleanupResources: ["MCP HTTP response source"],
+      diagnostics: { failed_cleanup_count: 1 },
       cause: expect.any(AggregateError),
     });
-    await expect(served.close()).rejects.toMatchObject({
-      reportedLimits: { failed_cleanup_count: 1 },
-    });
+    await expect(served.close()).rejects.toBeInstanceOf(ProviderCleanupError);
     expect(shutdownHooks()).toBe(0);
     await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
       code: "ECONNREFUSED",
