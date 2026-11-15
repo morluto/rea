@@ -14,8 +14,8 @@ import {
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+  streamChunkToBuffer,
+} from "../../resources/index.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";

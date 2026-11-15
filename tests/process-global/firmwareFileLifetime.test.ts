@@ -121,7 +121,7 @@ vi.mock("../../src/firmware/FirmwareCommand.js", async (importOriginal) => {
 import { FirmwareFileAccess } from "../../src/firmware/FirmwareFiles.js";
 import { publishFirmwareExtraction } from "../../src/firmware/FirmwarePublication.js";
 import { normalizeUnblobReport } from "../../src/firmware/FirmwareReports.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { FirmwareProvider } from "../../src/firmware/FirmwareProvider.js";

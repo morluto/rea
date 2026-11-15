@@ -18,7 +18,7 @@ import {
   type ArtifactTraversalOptions,
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   findDotnetBundleHeader,

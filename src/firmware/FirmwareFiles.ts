@@ -27,7 +27,10 @@ import {
 } from "./FirmwareFailures.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import {
+  type SafeOutputTree,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import {
   ArtifactResourceScope,
   withArtifactRegularFile,
@@ -35,7 +38,6 @@ import {
   mapArtifactFileFailure,
   artifactSelectedPathErrno,
 } from "../resources/index.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { observedSymlinkTarget } from "../domain/symlinkTarget.js";

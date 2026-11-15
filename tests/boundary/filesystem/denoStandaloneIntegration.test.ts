@@ -14,7 +14,7 @@ import {
   denoIntelTrailer,
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

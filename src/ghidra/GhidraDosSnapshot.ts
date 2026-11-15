@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   dosMzDeclaredImageByteLength,

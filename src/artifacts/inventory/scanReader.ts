@@ -13,7 +13,7 @@ import {
   annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../ArtifactPaths.js";
+} from "../../resources/index.js";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,

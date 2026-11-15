@@ -24,7 +24,7 @@ import {
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import {
   withOwnedFileHandle,
   RegularFileCleanupFailure,

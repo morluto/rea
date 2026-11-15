@@ -4,7 +4,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
 } from "../../resources/index.js";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
+import { normalizeArtifactPath } from "../../resources/index.js";
 import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {

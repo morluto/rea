@@ -10,7 +10,7 @@ import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "./ArtifactPaths.js";
+} from "../resources/index.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {

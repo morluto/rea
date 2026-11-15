@@ -14,10 +14,7 @@ export function isLayerException(file: string, target: string): boolean;
 /** The top-level unit of a production `src/` file, or undefined. */
 export function sourceUnit(path: string): string | undefined;
 
-/** The shared provider core that every provider folder may import. */
-export declare const PROVIDER_CORE: string;
-
-/** Whether a unit is a provider folder (not the shared provider core). */
+/** Whether a unit is a provider folder. */
 export function isProviderUnit(unit: string): boolean;
 
 /** Units every other unit reaches only through src/<unit>/index.ts. */

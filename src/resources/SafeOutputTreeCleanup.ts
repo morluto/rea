@@ -1,7 +1,7 @@
 import { readdir, rmdir, unlink } from "node:fs/promises";
 import { dirname, sep } from "node:path";
 
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   assertFilePathIdentity,
   assertPathIdentity,

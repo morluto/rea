@@ -4,7 +4,7 @@ import {
   type ArtifactResourceScope,
 } from "../resources/index.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
+import { streamChunkToBuffer } from "../resources/index.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,

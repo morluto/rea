@@ -28,9 +28,11 @@ import {
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
 import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
+import {
+  streamChunkToBuffer,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";

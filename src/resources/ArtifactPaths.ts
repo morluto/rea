@@ -6,7 +6,7 @@ import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
   type ArtifactEntry,
-} from "../resources/index.js";
+} from "./ArtifactReader.js";
 
 const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 

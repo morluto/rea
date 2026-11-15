@@ -10,7 +10,7 @@ import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import {
   NonRegularFileReadError,
   sameRegularFileState,

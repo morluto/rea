@@ -15,7 +15,7 @@ import {
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../resources/index.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {
   GhidraSessionError,
