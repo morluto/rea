@@ -9,6 +9,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 
@@ -79,6 +80,29 @@ check(
 );
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
+
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
+// compiler keeps readers on its questions, and only the log and its record
+// module read the recorded sites. A method read on an intrinsic
+// instance asks one owner, which checks the method, the instance's prototype
+// link and the intrinsic prototypes.
+check(
+  "reader-side read of recorded opaque effects (ask javascriptSemanticEffectLog.ts or the javascriptSemanticEffectRecord.ts accessors)",
+  files,
+  /\.opaqueEffects\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticEffectRecord.ts",
+  ],
+);
+
+check(
+  "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
+  files,
+  /mayObserve\([^;]*\["__proto__"\]/u,
+  ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
+);
 
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
@@ -324,6 +348,18 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Recorded effects belong to the effect log. A reader that reads an effect
+// index itself decides on its own which effect kinds and proofs apply; new
+// readers ask the log instead, and each migrated reader lowers this count.
+checkCounted(
+  "read of a JavaScript effect index outside the effect log (ask javascriptSemanticEffectLog.ts)",
+  "javascript-effect-index-read",
+  files,
+  /\.(?:bindingWrites|memberWrites|escapedPaths|ambientWriteEffects|ambientEscapeEffects|ambientBindingWrites|ambientWrites|ambientEscapes)\b/gu,
+  ["src/domain/javascript/javascriptSemanticEffectLog.ts"],
+);
+
 // Coverage status has one vocabulary, coverageStatusSchema in
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
@@ -368,7 +404,7 @@ checkCounted(
   "hand-written budget arithmetic (use Budget from src/domain/budget)",
   "budget-arithmetic",
   files,
-  /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu,
+  budgetArithmeticCount,
   ["src/domain/budget.ts"],
 );
 
@@ -450,6 +486,21 @@ checkCounted(
   files,
   /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
   ["src/gdb/GdbMiRecord.ts"],
+);
+
+// Services name the contract field they refuse or ask the caller to change;
+// the CLI layer owns option spellings (each command's field binding renames
+// issue paths to CLI keys). A `--flag` written outside src/cli copies that
+// mapping and goes stale when the command renames the option.
+checkCounted(
+  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "cli-option-text-outside-cli",
+  files.filter(
+    ({ path }) =>
+      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
+  ),
+  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  [],
 );
 
 // A runtime setting view throws the ConfigurationError of a malformed launch

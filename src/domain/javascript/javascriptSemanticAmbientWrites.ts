@@ -10,6 +10,7 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { ambientEffectCovers } from "./javascriptSemanticEffectLog.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -23,10 +24,7 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
-import {
-  joinSemanticPropertyPaths,
-  semanticPropertyPathKeyMatches,
-} from "./javascriptSemanticPropertyPaths.js";
+import { joinSemanticPropertyPaths } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   GLOBAL_OBJECT_NAMES,
@@ -52,15 +50,6 @@ const canonicalAmbientPath = (
 };
 
 type AmbientPath = readonly (string | null)[];
-
-const ambientEffectCovers = (
-  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-  target: readonly string[],
-): boolean =>
-  effect.path.length <= target.length &&
-  effect.path.every((key, index) =>
-    semanticPropertyPathKeyMatches(key, target[index]!),
-  );
 
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
