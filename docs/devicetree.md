@@ -26,7 +26,11 @@ limitation. Addresses are bus-local; no `ranges` translation is attempted.
 Invalid or ambiguous strings remain raw, rather than being guessed.
 
 The summary is labeled derived and includes root compatible/model, chosen
-bootargs/stdout-path and aliases. An undecodable alias retains its name with a
+bootargs/stdout-path and aliases. For older trees, `linux,stdout-path` supplies
+`summary.stdout_path` only when `/chosen/stdout-path` is absent, following the
+[Devicetree specification](https://devicetree-specification.readthedocs.io/en/stable/devicenodes.html#chosen-node).
+A malformed canonical property does not enable the fallback. Alias names and
+console options after `:` are preserved as written. An undecodable alias retains its name with a
 null path; it is not silently treated as absent. Single-cell `interrupt-parent`, `remote-endpoint` and `msi-parent`
 references resolve through phandle declarations. Missing or duplicate targets
 have null target paths. A node whose `phandle` and `linux,phandle` disagree
@@ -67,7 +71,10 @@ collection and parent Evidence; property indices are scoped to their node.
 | `max_depth`      |      64 |     256 |
 
 Decoded names, paths, values and row overhead share a fixed 32 MiB representation
-allowance, charged before expansion. It has no runtime override.
+allowance, charged before expansion. Only valid decoded strings consume the
+string allowance; malformed values retain their bounded raw preview. The console
+summary charges only the selected property, regardless of property order.
+It has no runtime override.
 
 The reservation count also uses `max_properties`. CLI flags use kebab case,
 for example `--max-nodes 16384`. View pages contain at most 256 rows.
