@@ -7,7 +7,10 @@ import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
 import { ownedJsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import {
+  projectCliAnalysisResult,
+  projectCliInputFields,
+} from "../../../src/cli/projectCliAnalysisResult.js";
 
 const binding = {
   operation: "inspect_keyed_archive",
@@ -27,7 +30,7 @@ it("projects bound input fields without changing canonical facts or nested ident
       ]),
     ),
   );
-  const mapped = projectCliAnalysisResult(err(original), binding);
+  const mapped = projectCliInputFields(original, binding);
   expect(mapped).toEqual({
     ...original,
     details: {
@@ -83,7 +86,7 @@ it("keeps cleanup history and retained output while binding the actionable prima
     projectAnalysisError(analysisErrorWithCleanupFailure(primary, cleanup)),
   );
   expect(original.code).toBe("cleanup_incomplete");
-  const mapped = projectCliAnalysisResult(err(original), binding);
+  const mapped = projectCliInputFields(original, binding);
   expect(mapped).toMatchObject({
     code: "cleanup_incomplete",
     details: {
@@ -111,20 +114,21 @@ it("keeps cleanup history and retained output while binding the actionable prima
 
 it("passes through successful data, unbound operations and unknown error values", () => {
   const value = { path: "caller-selected data" };
-  expect(projectCliAnalysisResult(ok(value), binding)).toBe(value);
+  expect(projectCliInputFields(value, binding)).toBe(value);
   const targetError = projectAnalysisError(
     new AnalysisInputError("open_binary", undefined, [
       { path: ["path"], reason: "invalid_format" },
     ]),
   );
-  expect(projectCliAnalysisResult(err(targetError), binding)).toBe(targetError);
+  expect(projectCliInputFields(targetError, binding)).toBe(targetError);
   const unbound = projectAnalysisError(
     new AnalysisInputError("inspect_keyed_archive", undefined, [
       { path: ["root"], reason: "invalid_value" },
     ]),
   );
-  expect(projectCliAnalysisResult(err(unbound), binding)).toBe(unbound);
+  expect(projectCliInputFields(unbound, binding)).toBe(unbound);
   expect(projectCliAnalysisResult(err(targetError))).toBe(targetError);
+  expect(projectCliAnalysisResult(ok(value))).toBe(value);
   const unknown = {
     code: "future_failure",
     details: {
@@ -132,5 +136,5 @@ it("passes through successful data, unbound operations and unknown error values"
       issues: [{ path: ["path"] }],
     },
   };
-  expect(projectCliAnalysisResult(err(unknown), binding)).toBe(unknown);
+  expect(projectCliInputFields(unknown, binding)).toBe(unknown);
 });

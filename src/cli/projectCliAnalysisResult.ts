@@ -9,24 +9,24 @@ interface CliInputFieldBinding {
 /** Flatten a finalized outcome only when returning the command's JSON output. */
 export const projectCliAnalysisResult = <Value>(
   result: Result<Value, JsonValue>,
-  inputBinding?: CliInputFieldBinding,
-): Value | JsonValue => {
-  if (result.ok) return result.value;
-  if (inputBinding === undefined) return result.error;
-  return projectInputFields(result.error, inputBinding);
-};
+): Value | JsonValue => (result.ok ? result.value : result.error);
 
 export const isObject = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** Rename only the actionable parameter paths owned by this operation binding. */
-const projectInputFields = (
-  error: JsonValue,
+/**
+ * Rename only the actionable parameter paths owned by this operation binding
+ * in a contract command's output: a direct failure, a delivered failure or a
+ * refused publication. Any other output is returned unchanged.
+ */
+export const projectCliInputFields = <Output>(
+  output: Output,
   binding: CliInputFieldBinding,
-): JsonValue => {
-  if (!isObject(error)) return error;
+): Output => {
+  const error = output as JsonValue;
+  if (!isObject(error)) return output;
   const details = error.details;
   if (
     !isObject(details) ||
@@ -38,7 +38,7 @@ const projectInputFields = (
         details.execution_failure === "invalid_request"
       ))
   )
-    return error;
+    return output;
 
   let changed = false;
   const issues = details.issues.map((issue) => {
@@ -53,5 +53,7 @@ const projectInputFields = (
   });
   // Keep retained output, partial Evidence and cleanup history by reference;
   // their source fields are not CLI parameter names.
-  return changed ? { ...error, details: { ...details, issues } } : error;
+  return changed
+    ? ({ ...error, details: { ...details, issues } } as Output)
+    : output;
 };

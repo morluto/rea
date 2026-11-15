@@ -676,7 +676,7 @@ cliTest(
       code: "invalid_request",
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["max_string_literals"] }],
+        issues: [{ path: ["maxStringLiterals"] }],
       },
     });
 

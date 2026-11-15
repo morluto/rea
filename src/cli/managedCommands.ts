@@ -8,7 +8,11 @@ import { projectManagedApplicationGraphEvidence } from "../application/managed/M
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managed/managedWorkflowToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import {
+  registerContractCommand,
+  registerContractDocumentCommand,
+  runOnSessionTarget,
+} from "./contractCommand.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
@@ -21,7 +25,10 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
+import {
+  MANAGED_TOOL_CONTRACTS,
+  managedMembersInputSchema,
+} from "../contracts/managed/managedToolContracts.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -64,29 +71,29 @@ export const registerManagedCommands = (
   registerManagedWorkflowCommands(cli, logger);
 };
 
+/** The one-shot CLI opens its target; MCP may reuse a selected one. */
+const managedTarget = {
+  sessionTarget: { description: "Managed PE executable or assembly path" },
+  omit: { path: "The CLI selects the managed target as its first argument" },
+} as const;
+
 const registerInspectManagedArtifact = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  cli.command(CLI_COMMANDS.inspectManagedArtifact, {
-    description: "Inspect PE/CLI identity without loading target code",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Managed PE executable or assembly path",
-      ),
-    }),
-    options: z.object(managedBudgetOptions),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-managed-artifact", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_managed_artifact",
-          managedBudgetParameters(options),
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_artifact"),
+    {
+      command: CLI_COMMANDS.inspectManagedArtifact,
+      description: "Inspect PE/CLI identity without loading target code",
+      ...managedTarget,
+      evidenceDelivery: true,
+    },
+    runOnSessionTarget(runProviderAnalysis, logger),
+  );
 };
 
 const registerInspectManagedMembers = (
@@ -149,25 +156,18 @@ const registerInspectManagedNativeBoundaries = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  cli.command(CLI_COMMANDS.inspectManagedNativeBoundaries, {
-    description:
-      "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Managed PE executable or assembly path",
-      ),
-    }),
-    options: z.object(managedBudgetOptions),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-managed-native-boundaries", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_managed_native_boundaries",
-          managedBudgetParameters(options),
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_native_boundaries"),
+    {
+      command: CLI_COMMANDS.inspectManagedNativeBoundaries,
+      description:
+        "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
+      ...managedTarget,
+    },
+    runOnSessionTarget(runProviderAnalysis, logger),
+  );
 };
 
 const compareManagedMemberArgs = z.object({

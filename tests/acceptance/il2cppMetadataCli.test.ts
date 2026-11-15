@@ -1476,7 +1476,7 @@ cliTest(
     expect(unlinked.exitCode).not.toBe(0);
     expect(unlinked.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["generic_instances"] }] },
+      details: { issues: [{ path: ["genericInstances"] }] },
     });
   },
 );
