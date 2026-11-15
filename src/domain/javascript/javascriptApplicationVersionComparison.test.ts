@@ -492,6 +492,17 @@ describe("version comparison coverage", () => {
         right_graph_status: status,
         status: "unknown",
       });
+      // The change graph and each changed_from edge make the same claim.
+      expect(result.graph.coverage).toMatchObject({
+        status: "unknown",
+        omitted_count: null,
+      });
+      const changed = result.graph.edges.filter(
+        ({ relation }) => relation === "changed_from",
+      );
+      expect(changed.length).toBeGreaterThan(0);
+      for (const edge of changed)
+        expect(edge.evidence.coverage.status).toBe("unknown");
       // Unknown wins over a known truncation on the other side.
       expect(compareWith(truncated, unknown(status)).coverage.status).toBe(
         "unknown",
