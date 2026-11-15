@@ -34,7 +34,12 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
-import { fakeGdbStartupPreamble } from "../providers/gdbTestHelpers.js";
+import {
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
+  fakeGdbStartupPreamble,
+} from "../providers/gdbTestHelpers.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
@@ -45,15 +50,16 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"))}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    process.stdout.write(match[1] + (line.includes("auto-load off")
-      ? "^error,msg=\\"setting rejected\\"\\n"
-      : "^done\\n"));
+    if (line.slice(match[1].length) === "-gdb-set auto-load off")
+      process.stdout.write(match[1] + "^error,msg=\\"setting rejected\\"\\n");
+    else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -135,7 +141,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }
@@ -278,15 +288,15 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"), { ...FAKE_GDB_SESSION_REPLIES, [`-inferior-tty-set ${JSON.stringify(tty)}`]: "^done" })}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("inferior-tty-show")) process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
-    else if (line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
-    else process.stdout.write(match[1] + "^done\\n");
+    if (line.slice(match[1].length) === "-inferior-tty-show") process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
+    else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -349,7 +359,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }
@@ -365,17 +379,17 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"))}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("auto-load off")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") {
       process.stdout.write(match[1] + "^done\\n");
       process.stdout.write(Buffer.from([0xff, 0x0a]));
-    } else if (line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
-    else process.stdout.write(match[1] + "^done\\n");
+    } else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -420,7 +434,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }

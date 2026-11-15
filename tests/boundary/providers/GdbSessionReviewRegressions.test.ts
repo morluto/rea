@@ -1,5 +1,8 @@
 import {
   createGdbFixtureOwner,
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
 import { readFileSync } from "node:fs";
@@ -30,6 +33,11 @@ const createGdbManagerForInjectedPlatform = (
 let directory: string | undefined;
 const fixtureOwner = createGdbFixtureOwner();
 const managers: Array<{ closeAll(): Promise<void> }> = [];
+/** Where a scripted fake records commands it does not model; checked after each test. */
+const unmodeledPath = (): string => {
+  if (directory === undefined) throw new Error("test directory is not set");
+  return join(directory, "unmodeled");
+};
 
 const expectOwnedProcessExited = async (pid: number): Promise<void> => {
   expect(Number.isSafeInteger(pid)).toBe(true);
@@ -88,13 +96,14 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 await import("node:fs/promises").then(({ writeFile }) => writeFile(${JSON.stringify(markerPath)}, "started"));
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + (line.includes("list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -303,6 +312,7 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 import { appendFile } from "node:fs/promises";
 await appendFile(${JSON.stringify(countPath)}, "spawn\\n");
 process.stdout.write("(gdb)\\n");
@@ -315,7 +325,7 @@ process.stdin.on("data", (chunk) => {
     if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -365,12 +375,13 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -504,9 +515,13 @@ process.stdin.resume();
 
 afterEach(async () => {
   await fixtureOwner.cleanup(managers, async () => {
-    if (directory !== undefined)
+    if (directory === undefined) return;
+    try {
+      await expectNoUnmodeledGdbCommands(unmodeledPath());
+    } finally {
       await rm(directory, { recursive: true, force: true });
-    directory = undefined;
+      directory = undefined;
+    }
   });
 });
 
@@ -519,13 +534,14 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stdout.write("(gdb)\\n" + Array.from({ length: 300 }, (_, index) =>
   "=thread-group-added,id=\\"i" + index + "\\"\\n").join(""));
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -687,6 +703,7 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath(), { ...FAKE_GDB_SESSION_REPLIES, '-interpreter-exec console "third"': "^done" })}
 process.stdout.write("(gdb)\\n");
 let input = "";
 let firstActive = false;
@@ -697,13 +714,13 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line); if (!match) continue;
-    if (line.includes("auto-load off")) process.stdout.write(match[1] + "^done\\n");
-    else if (line.includes("first")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") process.stdout.write(match[1] + "^done\\n");
+    else if (line.slice(match[1].length) === '-interpreter-exec console "first"') {
       firstActive = true;
       setTimeout(() => { firstActive = false; process.stdout.write(match[1] + "^done\\n"); }, 100);
     } else {
-      if (line.includes("third") && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
-      process.stdout.write(match[1] + "^done\\n");
+      if (line.slice(match[1].length) === '-interpreter-exec console "third"' && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
+      answerModeled(match[1], line.slice(match[1].length));
     }
   }
 });
@@ -941,6 +958,7 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stderr.write("x".repeat(100000));
 process.stdout.write("(gdb)\\n");
 let input = "";
@@ -952,7 +970,7 @@ process.stdin.on("data", (chunk) => {
     if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,

@@ -3,6 +3,7 @@ import {
   spawnOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
 import { OwnedDebuggerCleanupError } from "../../../src/process/ownedDebuggerCleanupError.js";
+import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 
 import type { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
@@ -65,6 +66,49 @@ export const fakeGdbStartupPreamble = String.raw`{
     return process.stdin;
   };
 }`;
+
+/** Replies for the commands every fake GDB session sees outside its scenario. */
+export const FAKE_GDB_SESSION_REPLIES: Readonly<Record<string, string>> = {
+  "-gdb-set auto-load off": "^done",
+  "-list-thread-groups --recurse 1": "^done,groups=[]",
+  "-gdb-exit": "^exit",
+};
+
+/**
+ * Source for a scripted fake GDB's command table, placed after
+ * `fakeGdbStartupPreamble`. It defines `answerModeled(token, command)`, which
+ * writes the modeled result record for an exact command. Any other command is
+ * appended to `unmodeledPath` and refused with `^error`, so a fake never
+ * acknowledges a command its scenario does not model;
+ * `expectNoUnmodeledGdbCommands` then names what REA sent.
+ */
+export const fakeGdbModeledReplies = (
+  unmodeledPath: string,
+  replies: Readonly<Record<string, string>> = FAKE_GDB_SESSION_REPLIES,
+): string => String.raw`const modeledGdbReplies = new Map(Object.entries(${JSON.stringify(replies)}));
+const answerModeled = (token, command) => {
+  const reply = modeledGdbReplies.get(command);
+  if (reply !== undefined) {
+    process.stdout.write(token + reply + "\n");
+    return true;
+  }
+  process.getBuiltinModule("node:fs").appendFileSync(${JSON.stringify(unmodeledPath)}, command + "\n");
+  process.stdout.write(token + '^error,msg="unmodeled request"\n');
+  return false;
+};`;
+
+/** Require that a scripted fake GDB received only modeled commands. */
+export const expectNoUnmodeledGdbCommands = async (
+  unmodeledPath: string,
+): Promise<void> => {
+  const received = await readFile(unmodeledPath, "utf8").catch(
+    (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return "";
+      throw cause;
+    },
+  );
+  expect(received, "commands the fake GDB does not model").toBe("");
+};
 
 type GdbSessionStart = Awaited<ReturnType<GdbSessionManager["start"]>>;
 type StartedGdbSession = Extract<GdbSessionStart, { readonly ok: true }>;
