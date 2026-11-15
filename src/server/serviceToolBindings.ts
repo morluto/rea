@@ -54,6 +54,10 @@ import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheS
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { projectManagedApplicationGraphExecution } from "../application/managed/ManagedApplicationGraphService.js";
+import { compareManagedMembersExecution } from "../application/managed/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesExecution } from "../application/managed/ManagedNativeVerificationService.js";
+import { importManagedReconstructionExecution } from "../application/managed/ManagedReconstructionService.js";
 import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
 import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
 import {
@@ -710,6 +714,40 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<SessionDerivedToolOptions>,
+  // Managed-code workflows derive from session-held managed and native
+  // Evidence; the CLI runs the same owners without a session.
+  managedWorkflows: ((session) => ({
+    compare_managed_members: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareManagedMembersExecution(input, evidenceForAnalysis, { signal }),
+    },
+    verify_managed_native_boundaries: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        verifyManagedNativeBoundariesExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    import_managed_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        importManagedReconstructionExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    project_managed_application_graph: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        projectManagedApplicationGraphExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+  })) satisfies Bind<BinarySessionPort>,
   // Application workflows complete Evidence from session-held Evidence or
   // caller-named files under analysis admission; a requested view or summary
   // is staged against it.
