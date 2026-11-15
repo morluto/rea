@@ -137,18 +137,6 @@ export const advertisedInputJsonSchema = <Contract extends ToolContract>(
     target: "draft-2020-12",
   }) as Record<string, unknown>;
 
-/**
- * Return the canonical output JSON Schema: the complete projection of the
- * contract's output, which the full output profile lists. A client that
- * validates a reply uses it whatever the selected profile advertises.
- */
-export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
-  contract: Contract,
-): Record<string, unknown> =>
-  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
 /** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
@@ -181,7 +169,12 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
     ),
   );
 
-/** Return the advertised output JSON Schema registered on MCP for a target. */
+/**
+ * Return the canonical output JSON Schema registered on MCP for a target: the
+ * complete projection of the contract's output, which the full output profile
+ * lists. A client that validates a reply uses it whatever the selected profile
+ * advertises.
+ */
 export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
   target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
