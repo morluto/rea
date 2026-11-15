@@ -358,8 +358,15 @@ const stringsAndNamesResult = ({
       names_and_literals: rightNamesAndLiterals,
     },
     ...context,
-    leftCount: leftStrings.length + (leftNamesAndLiterals?.length ?? 0),
-    rightCount: rightStrings.length + (rightNamesAndLiterals?.length ?? 0),
+    // Names that cannot be placed in the function leave the side's count unknown.
+    leftCount:
+      leftNamesAndLiterals === null
+        ? null
+        : leftStrings.length + leftNamesAndLiterals.length,
+    rightCount:
+      rightNamesAndLiterals === null
+        ? null
+        : rightStrings.length + rightNamesAndLiterals.length,
     textDelta: null,
     limitations,
   });
