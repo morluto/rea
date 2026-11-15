@@ -98,7 +98,7 @@ approve replacing it. A different existing installation path is foreign to the
 current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
-such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
+such as `REA_MCP_OUTPUT_SCHEMA_PROFILE`,
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
@@ -352,7 +352,7 @@ remove it with `claude mcp remove --scope local rea` from the same directory.
 `rea update` doesn't refresh it either, so it continues using the selected installation.
 To move it to a newer release, first back up the project entry in
 `~/.claude.json` and record its environment and other metadata. In particular,
-preserve caller-selected overrides such as `REA_MCP_INPUT_SCHEMA_PROFILE` and
+preserve caller-selected overrides such as `REA_MCP_OUTPUT_SCHEMA_PROFILE` and
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`. Run `claude mcp remove --scope local rea` from the
 same directory, then recreate it with the platform-appropriate command above
 and the new version. Reapply every recorded environment value with Claude
@@ -724,6 +724,10 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Zed                       | `zed`                   |
 | Amp                       | `amp`                   |
 | MCPorter                  | `mcporter`              |
+| fx                        | `fx`                    |
+| Junie                     | `junie`                 |
+| Goose                     | `goose`                 |
+| Kilo Code                 | `kilo`                  |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -741,7 +745,7 @@ not see those registrations. Current releases inspect, refresh and remove them
 like any other setup client. `mcporter` also requires a release after 6.9.0;
 setup never selects it from detection, because MCPorter already imports the
 registrations setup writes for other clients. Select it with
-`--client mcporter`.
+`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1304,10 +1308,15 @@ status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
-update and uninstall inspect, refresh and remove what it wrote. Goose, Junie,
-fx and Kilo Code are registered only by `rea mcp add` until their
-native layers and path overrides are modeled; doctor, update and uninstall do
-not yet see those registrations. Gemini CLI
+update and uninstall inspect, refresh and remove what it wrote. For Kilo Code
+that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
+`~/.kilocode`, `~/.kilo`, then `KILO_CONFIG_DIR`); a relative Kilo path is
+reported as unresolved because Kilo's working directory is unknown.
+`KILO_CONFIG_CONTENT` is read as Kilo's highest layer and never edited: setup
+reports Kilo as needing manual repair when that value changes the `rea` entry,
+and doctor reports the registration Kilo actually loads. Uninstall changes no
+Kilo file when another layer or that value would keep a `rea` entry in effect,
+or expose a different one, after removal. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses

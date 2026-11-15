@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { randomUUID, createHash } from "node:crypto";
@@ -494,10 +495,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         };
         try {
           // Keep source characters intact so locations match the hashed artifact.
-          const source = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(bytes.bytes);
+          const source = decodeStrictUtf8(bytes.bytes, "preserve");
           glue[glueIndex] = {
             artifact: glueArtifact,
             ...associateWasmGlue(

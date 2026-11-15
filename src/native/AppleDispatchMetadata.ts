@@ -1,3 +1,5 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import {
   malformedInput,
   parseFailureFromCause,
@@ -65,6 +67,7 @@ import {
   createSwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -73,7 +76,7 @@ export function* decodeAppleDispatchMetadataSteps(
   provenance: { path: string; sha256: string },
   architecture = "arm64",
   objcClassImportAddresses?: readonly string[],
-  objcClassImportAddressesComplete = true,
+  objcClassImportAddressesComplete?: boolean,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
   const selected = selectMachoSlice(bytes, {
@@ -164,9 +167,7 @@ export function* decodeAppleDispatchMetadataSteps(
       );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(start, end),
-    );
+    return decodeStrictUtf8(bytes.subarray(start, end), "preserve");
   };
   const result = objcSwiftMetadataSchema.parse({
     db_save_result: null,
@@ -361,6 +362,7 @@ const inputBudgetExceeded = (
 export interface AppleDispatchMetadataOptions {
   readonly signal?: AbortSignal | undefined;
   readonly objcClassImportAddresses?: readonly string[] | undefined;
+  /** Whether the addresses cover every class-label row; omitted is unknown. */
   readonly objcClassImportAddressesComplete?: boolean | undefined;
   /** Caller-selected input budget; the default applies when omitted. */
   readonly maxInputBytes?: number | undefined;
@@ -379,7 +381,9 @@ export const inspectAppleDispatchMetadata = async (
 ) => {
   const { signal } = options;
   if (target.kind !== "executable" || !isMachOFormat(target.format))
-    throw new TypeError("Apple dispatch metadata requires a Mach-O target");
+    throw invariantViolation(
+      "Apple dispatch metadata requires a Mach-O target",
+    );
   const admission =
     options.maxInputBytes === undefined
       ? {
@@ -418,7 +422,7 @@ export const inspectAppleDispatchMetadata = async (
     { path: target.path, sha256: digest },
     target.architecture,
     options.objcClassImportAddresses,
-    options.objcClassImportAddressesComplete ?? true,
+    options.objcClassImportAddressesComplete,
     target.format === "mach-o-universal" ? target.universalSlice : undefined,
   );
   let next = steps.next();
@@ -522,9 +526,7 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
         cause,

@@ -1,4 +1,4 @@
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
@@ -63,11 +63,11 @@ export const traceNativeUiAction = async (
         : uiExecution.error;
     if (secondary.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           secondary,
           "trace_native_ui_action",
-        ).bindCleanupDependencies([primary, secondary]),
+        ),
       );
     if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
     return err(primary);

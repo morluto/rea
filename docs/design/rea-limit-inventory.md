@@ -99,6 +99,7 @@ reports the current value, source, and range. A rejected Windows ChangeTime laun
 | Environment                                | Owner                                       |                 Default |   Floor |      Maximum | Applies                                                                                                      | Fields                                                           |
 | ------------------------------------------ | ------------------------------------------- | ----------------------: | ------: | -----------: | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | `REA_BRIDGE_MAX_REQUEST_BYTES`             | `src/config/bridgeMaxRequestBytes.ts`       |                16777216 |    7464 |    536870887 | each bridge request, from the accepted operation snapshot                                                    | `update_mode: "runtime"`, `pending_restart: false`               |
+| `REA_BRIDGE_MAX_REPLY_BYTES`               | `src/config/bridgeMaxReplyBytes.ts`         |               268435456 | 1048576 |    536870888 | each Hopper or Ghidra request, from the accepted operation snapshot                                          | `update_mode: "runtime"`, `pending_restart: false`               |
 | `REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES`  | `src/config/capturePacketJsonExpansion.ts`  |            137438953472 | 1048576 | 137438953472 | each packet-capture reply before parsing, from the accepted operation snapshot                               | `update_mode: "runtime"`, `pending_restart: false`               |
 | `REA_DEBUGGER_COMMAND_DEADLINE_MS`         | `src/domain/analysisResourceLimits.ts`      |                  120000 |       1 |   2147483647 | each command, from the accepted operation snapshot                                                           | `update_mode: "runtime"`, `pending_restart: false`               |
 | `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`    | `src/domain/analysisResourceLimits.ts`      |                16777216 |       1 |     89303718 | each command, from the accepted operation snapshot                                                           | `update_mode: "runtime"`, `pending_restart: false`               |
@@ -236,10 +237,11 @@ control-reply budget stays separate from
 
 ## Static check
 
-`npm run lint` runs `scripts/verify/rea-numeric-limits.mjs` after
-dependencies are installed. `scripts/verify/architecture-guards.mjs` runs the
-same check when `typescript6` is already installed; the pre-install CI step
-cannot. The check scans `src` excluding tests,
+`npm run lint` owns this check: it runs
+`scripts/verify/rea-numeric-limits.mjs` after dependencies are installed, so
+`npm run check:fast`, the pre-push hook and CI's static checks all include it.
+`scripts/verify/architecture-guards.mjs` does not run it. The check scans `src`
+excluding tests,
 keeps names that are numeric limits, and requires each name to be an
 `environment` on an analysis setting or a registry entry with a reason.
 The registry accepts only `restart-only`. A limit checked on each call has to

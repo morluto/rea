@@ -4,6 +4,7 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
+  readerIntegrityFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import {
   type StableArtifactSnapshot,
@@ -21,7 +22,6 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -404,9 +404,7 @@ const artifactReaderFailure = (
   limits: RustProducerLimits,
 ): AnalysisError => {
   if (cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
+    return readerIntegrityFailure(OPERATION, path, cause);
   if (cause.reason === "cancelled")
     return cancelledBy(
       OPERATION,

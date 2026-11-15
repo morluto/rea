@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
@@ -626,10 +627,14 @@ it("retains exact integer settings through a parsed Hermes launcher refresh", ()
   const parsed = parseClientConfiguration(source, "hermes");
   const previous = parsed.servers.rea as Record<string, unknown>;
   const result = serializeClientConfiguration(
-    withClientServers(parsed, {
-      ...parsed.servers,
-      rea: { ...previous, command: "rea" },
-    }),
+    withClientServers(
+      parsed,
+      {
+        ...parsed.servers,
+        rea: { ...previous, command: "rea" },
+      },
+      HOST_PLATFORM.platform,
+    ),
     "hermes",
     source,
   );
@@ -812,9 +817,10 @@ describe("Hermes registration refresh through inherited merges", () => {
   it("keeps an inherited stdio transport through a launcher refresh", () => {
     const source =
       "defaults: &defaults\n  transport: stdio\n  command: rea\n  args: [mcp]\nmcp_servers:\n  rea:\n    <<: *defaults\n";
-    const client = supportedClients("/home/rea-test").find(
-      ({ name }) => name === "hermes",
-    )!;
+    const client = supportedClients(
+      "/home/rea-test",
+      HOST_PLATFORM.platform,
+    ).find(({ name }) => name === "hermes")!;
     const parsed = parseClientConfiguration(source, "hermes");
     const registration = refreshClientRegistration(
       client,
@@ -830,7 +836,11 @@ describe("Hermes registration refresh through inherited merges", () => {
     );
     if (!registration.ok) throw registration.error;
     const written = serializeClientConfiguration(
-      withClientServers(parsed, { ...parsed.servers, rea: registration.value }),
+      withClientServers(
+        parsed,
+        { ...parsed.servers, rea: registration.value },
+        HOST_PLATFORM.platform,
+      ),
       "hermes",
       source,
     );

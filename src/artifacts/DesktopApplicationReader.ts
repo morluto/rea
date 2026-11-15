@@ -175,7 +175,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           cleanup: cause.cleanup,
           cleanupLeases: cause.cleanupLeases,
           partialObservation: partial,
-          ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+          ...cause.primaryFacts(),
         },
         cause.details,
       );

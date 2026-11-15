@@ -17,6 +17,7 @@ import {
   ParseFailureError,
   truncatedInput,
 } from "../domain/parseFailure.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** loader.h defines these with LC_REQ_DYLD; the reader also accepts each code without that bit. */
 const withoutRequiredByDyld = (code: number): number => code & ~LC_REQ_DYLD;
@@ -202,7 +203,9 @@ export const readMachoCommandNames = async (
     !Number.isSafeInteger(maximumProjectedBytes) ||
     maximumProjectedBytes < 0
   )
-    throw new TypeError("Mach-O read limits must be nonnegative safe integers");
+    throw invariantViolation(
+      "Mach-O read limits must be nonnegative safe integers",
+    );
   const exact = async (offset: number, size: number): Promise<Uint8Array> => {
     if (
       !Number.isSafeInteger(offset) ||

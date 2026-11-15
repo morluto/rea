@@ -11,7 +11,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import { isCdpSessionGoneRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { CdpDomainWith } from "./protocol/CdpCommands.js";
 import {
@@ -435,7 +435,7 @@ const cleanupCdpTargetCommands = async (
       );
       return true;
     } catch (cause: unknown) {
-      if (isAlreadyDetachedSessionRejection(cause)) return true;
+      if (isCdpSessionGoneRejection(cause)) return true;
       // If detachment is unconfirmed, transport close becomes the definitive boundary.
       return false;
     }
@@ -444,11 +444,3 @@ const cleanupCdpTargetCommands = async (
     cleanup.abort(OwnerCancellation.noLongerNeeded);
   }
 };
-
-const isAlreadyDetachedSessionRejection = (cause: unknown): boolean =>
-  cause instanceof CdpCommandRejection &&
-  (cause.code === -32_001 ||
-    (cause.reportedMessage !== null &&
-      /no session with given id|session with given id not found/iu.test(
-        cause.reportedMessage,
-      )));

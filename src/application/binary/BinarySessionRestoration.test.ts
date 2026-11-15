@@ -20,6 +20,7 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 it.each([false, true])(
   "refreshes state published by close on alias switch (incoming fails: %s)",
@@ -225,7 +226,7 @@ it.each([
             restorationCloseCalls += 1;
             if (cleanupFails && restorationCloseCalls === 1)
               return err(cleanupFailure);
-            cleanupFailure.resolveCleanup();
+            releaseOwnedCleanup(cleanupFailure);
             return ok(null);
           },
         };

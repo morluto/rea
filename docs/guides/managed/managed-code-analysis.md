@@ -484,8 +484,15 @@ under different enclosing types and different overload signatures stay distinct.
 This is nominal metadata identity, not assembly resolution or runtime binding.
 Edges without a resolved identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
-equivalence. Valid MethodSpecs combine the base member identity with the
-resolved instantiation signature, preserving generic argument distinctions.
+equivalence. The exception is a target the left and right sides reach under the
+same caller and target tokens of the same authenticated artifact, with both
+producers reporting `target_row_resolved: true`: those parsed facts establish
+the same metadata row without a nominal identity. Missing historical row
+resolution, malformed or wrong-kind references, undecoded signatures and
+unresolved TypeSpec operands stay unknown. This fact describes metadata
+resolution, not runtime binding. Valid
+MethodSpecs combine the base member identity with the resolved instantiation
+signature, preserving generic argument distinctions.
 
 Names and semantic labels do not establish durable member identity. Comparison
 preserves observed differences, structural inferences, and unknowns separately.
@@ -543,17 +550,16 @@ custom modifiers are named too. Valid but unresolved TypeSpecs, invalid scopes,
 unreadable type names, cycles and nesting beyond the cap keep their raw operand
 spelling. Invalid or missing metadata coordinates retain the existing malformed
 signature result and source issue; rendering does not bypass validation.
-The attestation is `null` only when member decoding exceeded capacity. When
-either observation does not attest resolution, both sides compare raw digests,
-which pair only where type rows agree, and the comparison reports that
-limitation. The signature is exact whether or
+The attestation is `null` only when member decoding exceeded capacity, and then
+no members were examined: an inspection with `null` resolution and any field,
+method, member reference, call edge or field access is malformed. The signature
+is exact whether or
 not REA decoded it, so undecoded signatures pair by that tuple too, but they
 never enter structural rounds. An unmatched member is therefore reported as
 `unknown`, not added or removed, when its own signature was not decoded or when
 the other side has an unpaired member, one-sided or ambiguous, with the same
-declared type and name whose signature was not decoded. When both observations
-attest type-name resolution, a decoded signature that still compares by its raw
-digest is treated the same way: an unmatched member with one, or beside an
+declared type and name whose signature was not decoded. A decoded signature
+that still compares by its raw digest is treated the same way: an unmatched member with one, or beside an
 unpaired same-named member with one, is `unknown`, because its raw bytes name
 types by build-local row. A matched unresolved signature also remains unknown
 unless another observed dimension establishes a change; identical row bytes

@@ -277,6 +277,27 @@ const snapshotFileHeaderSchema = z.object({
   evidence_bundle: z.unknown(),
 });
 
+/**
+ * The bundle is validated on its own, so locate its schema issues within the
+ * snapshot document, as entry issues are.
+ */
+const parseSnapshotBundle = <Bundle>(
+  value: unknown,
+  parse: (value: unknown) => Bundle,
+): Bundle => {
+  try {
+    return parse(value);
+  } catch (cause: unknown) {
+    if (!(cause instanceof z.ZodError)) throw cause;
+    throw new z.ZodError(
+      cause.issues.map((issue) => ({
+        ...issue,
+        path: ["evidence_bundle", ...issue.path],
+      })),
+    );
+  }
+};
+
 /** Reconstruct file entries only from fully authenticated matching Evidence. */
 export const parsePreparedAnalysisSnapshot = (
   input: unknown,
@@ -284,7 +305,10 @@ export const parsePreparedAnalysisSnapshot = (
   workflowEntries: readonly PreparedSnapshotEntry[],
 ): AnalysisSnapshot => {
   const header = snapshotFileHeaderSchema.parse(input);
-  const bundle = parseImmutableEvidenceBundle(header.evidence_bundle);
+  const bundle = parseSnapshotBundle(
+    header.evidence_bundle,
+    parseImmutableEvidenceBundle,
+  );
   const providerRows = entries.map((handle) => {
     const row = preparedEntries.get(handle);
     if (row?.kind !== "provider")
@@ -712,7 +736,7 @@ const authenticateSnapshot = (
   const parsed = analysisSnapshotSchema.parse(input);
   const restored = restoreSnapshot(
     parsed,
-    parseEvidenceBundle(parsed.evidence_bundle),
+    parseSnapshotBundle(parsed.evidence_bundle, parseEvidenceBundle),
     parsed.entries.map((entry) => ({
       kind: "provider",
       entry,

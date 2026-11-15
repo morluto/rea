@@ -99,12 +99,10 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  // The recorded catalog carries complete output schemas, which the deferred
-  // server either lists (full) or omits (off, the default).
+  // The deferred server omits the recorded output schemas from listings, the
+  // default `off` profile; `compact` composes its bounded presentation.
   const recordedOutputCatalog =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off" ||
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+    config.value.mcpOutputSchemaProfile !== "compact";
   // The recorded catalog holds the complete inventory and its full-catalog
   // identity, so only an unscoped registration can be served from it. A
   // scoped one composes the canonical scope itself instead of advertising

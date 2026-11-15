@@ -5,11 +5,11 @@ import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
-import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
 import type { McpOutputSchemaProfile } from "./mcpOutputSchemaProfile.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
 import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
+import type { BridgeMaxReplyBytes } from "./bridgeMaxReplyBytes.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
@@ -22,7 +22,6 @@ export interface AppConfig {
   readonly mcpMaxInputElements?: number;
   /** Selected tools/list page budget; absent keeps the default page. */
   readonly mcpToolsListPageBudget?: McpToolsListPageBudget;
-  readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly mcpToolCatalogProfile?: McpToolCatalogProfile;
   readonly analysisProvider: AnalysisProviderSelector;
@@ -57,6 +56,8 @@ export interface AppConfig {
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
   /** Hopper and Cutter request payload ceiling resolved at startup. */
   readonly bridgeMaxRequestBytes: BridgeMaxRequestBytes;
+  /** Hopper and Ghidra reply line ceiling resolved at startup. */
+  readonly bridgeMaxReplyBytes: BridgeMaxReplyBytes;
   /** Supervised ECMAScript matching deadline resolved at startup. */
   readonly regexMatchingDeadline: RegexMatchingDeadline;
   /** Regex worker old-generation request resolved at startup. */

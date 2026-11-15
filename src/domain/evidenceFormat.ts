@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ParseFailureError, unsupportedInput } from "./parseFailure.js";
+
 /**
  * The Evidence format revision this REA release writes and reads.
  *
@@ -25,22 +27,19 @@ export const evidenceFormatSchema = z.literal(EVIDENCE_FORMAT_REVISION, {
   error: `evidence_format must be ${String(EVIDENCE_FORMAT_REVISION)}. ${RECREATE_EVIDENCE_GUIDANCE}`,
 });
 
+/** The ParseFailure format name for an Evidence bundle. */
+const EVIDENCE_BUNDLE_FORMAT = "evidence-bundle";
+
 /** A bundle written in a format this release does not read. */
-export class UnsupportedEvidenceFormatError extends TypeError {
-  constructor(
-    /** The declared revision, or `undefined` for an unmarked bundle. */
-    readonly found: unknown,
-  ) {
-    super(
-      `${
-        found === undefined
-          ? "This Evidence bundle predates format revisions"
-          : `Evidence bundle format ${JSON.stringify(found)} is not format ${String(EVIDENCE_FORMAT_REVISION)}`
-      }, which this REA release reads. ${RECREATE_EVIDENCE_GUIDANCE}`,
-    );
-    this.name = "UnsupportedEvidenceFormatError";
-  }
-}
+export type UnsupportedEvidenceFormat = ParseFailureError<"unsupported">;
+
+/** Recognize this module's refusal of a bundle from another format. */
+export const isUnsupportedEvidenceFormat = (
+  cause: unknown,
+): cause is UnsupportedEvidenceFormat =>
+  cause instanceof ParseFailureError &&
+  cause.kind === "unsupported" &&
+  cause.failure.format === EVIDENCE_BUNDLE_FORMAT;
 
 /**
  * Refuse a bundle from another format before reading its shape, so an earlier
@@ -58,5 +57,13 @@ export const admitEvidenceBundleFormat = (input: unknown): void => {
     return;
   const found: unknown = Reflect.get(input, "evidence_format");
   if (found !== EVIDENCE_FORMAT_REVISION)
-    throw new UnsupportedEvidenceFormatError(found);
+    throw unsupportedInput(
+      EVIDENCE_BUNDLE_FORMAT,
+      `${
+        found === undefined
+          ? "This Evidence bundle predates format revisions"
+          : `Evidence bundle format ${JSON.stringify(found)} is not format ${String(EVIDENCE_FORMAT_REVISION)}`
+      }, which this REA release reads. ${RECREATE_EVIDENCE_GUIDANCE}`,
+      { field: "evidence_format", undecodedContent: true },
+    );
 };

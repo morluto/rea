@@ -1,5 +1,4 @@
 import type { ManagedMemberInspection } from "./managedArtifact.js";
-import type { ManagedMemberComparisonSide } from "./managedMemberComparison.js";
 
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
@@ -19,46 +18,3 @@ export const signatureIdentity = ({
   resolved_sha256 === null
     ? `raw:${raw_sha256}`
     : `resolved:${resolved_sha256}`;
-
-/**
- * The producer attests examination independently of whether it could resolve
- * any operands. A current inventory of only unresolved types is not legacy.
- */
-export const hasSignatureResolution = (
-  result: ManagedMemberInspection,
-): boolean =>
-  result.signature_resolution !== null ||
-  (result.methods.length === 0 && result.fields.length === 0);
-
-const withoutResolution = <Member extends Method | Field>(
-  members: readonly Member[],
-): Member[] =>
-  members.map((member) => ({
-    ...member,
-    signature: { ...member.signature, resolved_sha256: null },
-  }));
-
-/**
- * Compare raw signatures on both sides when either observation does not
- * attest resolved digests; a resolved digest never equals a raw one for a signature
- * that names a type, so mixing them would lose pairs a raw comparison finds.
- */
-export const comparableSides = (
-  left: ManagedMemberComparisonSide,
-  right: ManagedMemberComparisonSide,
-): readonly [ManagedMemberComparisonSide, ManagedMemberComparisonSide] => {
-  if (
-    hasSignatureResolution(left.result) &&
-    hasSignatureResolution(right.result)
-  )
-    return [left, right];
-  const raw = (side: ManagedMemberComparisonSide) => ({
-    ...side,
-    result: {
-      ...side.result,
-      methods: withoutResolution(side.result.methods),
-      fields: withoutResolution(side.result.fields),
-    },
-  });
-  return [raw(left), raw(right)];
-};

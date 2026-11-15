@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -170,7 +171,7 @@ export const isSnapshotCacheable = (
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
-): boolean => process.platform === "win32" && providerId === "ghidra";
+): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
 const SNAPSHOT_REPLAY_LIMITATION =

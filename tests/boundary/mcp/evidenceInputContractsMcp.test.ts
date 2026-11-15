@@ -63,18 +63,16 @@ describe("Evidence input SDK boundaries", () => {
     expect(properties.left_observations).toMatchObject({ type: "array" });
   });
 
-  mcpTest.for(["full", "compact"] as const)(
-    "advertises valid reference inputs after actual SDK conversion (%s)",
-    async (profile, { mcp }) => {
+  mcpTest(
+    "advertises valid reference inputs after actual SDK conversion",
+    async ({ mcp }) => {
       const contract = toolContract("build_call_path");
       const server = new EvidenceMcpServer(
         { name: "evidence-contract", version: "1" },
         { capabilities: {} },
         undefined,
         createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-        profile === "compact"
-          ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
-          : undefined,
+        { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
       );
       server.registerTool(
         contract.name,
@@ -90,8 +88,7 @@ describe("Evidence input SDK boundaries", () => {
       const tool = tools.find(({ name }) => name === contract.name);
       if (tool === undefined) throw new Error("named contract not advertised");
       // Compact input guidance is part of the tool description.
-      const guidance =
-        profile === "compact" ? tool.description : tool.inputSchema.description;
+      const guidance = tool.description;
       expect(guidance).toContain(
         '{"kind":"retained-evidence","evidence_id":"ev_..."}',
       );
