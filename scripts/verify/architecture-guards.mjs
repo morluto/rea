@@ -713,8 +713,13 @@ checkCounted(
   "test-mcp-client-default-validation",
   mcpClientTestFiles,
   countDefaultValidationClients,
-  // Checks the SDK default validator itself across catalog refreshes.
-  ["tests/boundary/mcp/outputValidatorReuse.test.ts"],
+  [
+    // Checks the SDK default validator itself across catalog refreshes.
+    "tests/boundary/mcp/outputValidatorReuse.test.ts",
+    // Builds its client in a generated child script over compiled dist/
+    // modules, which cannot load the TypeScript fixture.
+    "tests/boundary/process/nativeValueVerifierComparison.test.ts",
+  ],
 );
 
 const baselineFile = reconcileBaselineFile(
