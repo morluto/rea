@@ -9,6 +9,7 @@ import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDe
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
+  type AndroidCoverage,
   type AndroidManifestComponent,
   type AndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
@@ -149,7 +150,7 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: "complete" | "partial",
+  coverage: AndroidCoverage,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
 ): AndroidManifestComponentInventory => {
