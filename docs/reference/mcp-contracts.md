@@ -537,7 +537,10 @@ to recover the result; do not repeat the committed mutation. A single unknown
 may be too large for a `list_unknowns` page. A delivery failure does not undo
 that revision. If a list response overflows, retry on the same connection with
 the same filters and offset and a smaller limit; export if one head still cannot
-fit.
+fit. When the recovery starts with one MCP operation,
+`details.reported_limits.next_operation` names it: `export_evidence_bundle` for
+a committed unknown or a one-row page, `list_unknowns` for a page that a smaller
+limit can split. It is absent when the recovery is complete CLI JSON output.
 
 To find missing sources before a downstream analysis refuses them, read
 `missing_direct_links` from the summary, or call `get_evidence_bundle` with
