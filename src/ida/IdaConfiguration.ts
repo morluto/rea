@@ -46,9 +46,11 @@ const common = {
     .optional(),
   mode: z.enum(["attached", "headless"]).default("attached"),
   /**
-   * Attached mode serves two upstream protocols, so an attached registration
-   * names one; omitting it no longer selects the legacy 1.4 GUI proxy.
-   * Headless mode has one protocol (the database supervisor).
+   * An attached registration names its upstream protocol. `"legacy"` (the
+   * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
+   * registration is refused with migration guidance rather than reported as an
+   * unknown value or read as another protocol. Headless mode has one protocol
+   * (the database supervisor).
    */
   protocol: z.enum(["legacy", "native"]).optional(),
   timeoutMs: z
@@ -61,6 +63,9 @@ const common = {
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
 };
+/** Refusal for a stored registration that still selects the removed 1.4 proxy. */
+const LEGACY_PROTOCOL_REMOVED =
+  'the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
 const registrationSchema = z
   .union([
     z
@@ -95,13 +100,20 @@ const registrationSchema = z
   )
   .refine(
     (config) => config.protocol !== undefined || config.mode !== "attached",
-    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin) or "legacy" (ida-pro-mcp 1.4 GUI proxy)',
+    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
   )
   // Resolve the upstream protocol once; consumers never infer it from mode.
-  .transform((config) => ({
-    ...config,
-    protocol: config.protocol ?? ("modern" as const),
-  }));
+  .transform((config, context) => {
+    if (config.protocol === "legacy") {
+      context.addIssue({
+        code: "custom",
+        path: ["protocol"],
+        message: LEGACY_PROTOCOL_REMOVED,
+      });
+      return z.NEVER;
+    }
+    return { ...config, protocol: config.protocol ?? ("modern" as const) };
+  });
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -119,13 +131,6 @@ const registrationConstraint = (
 
 /** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
 export const IDA_COMPATIBILITY_PROFILES = {
-  legacy: {
-    protocol: "legacy",
-    mode: "attached",
-    identity: "legacy-1.4",
-    diagnosticIdentity: "legacy-1.4",
-    diagnosticLabel: "attached",
-  },
   modern: {
     protocol: "modern",
     mode: "headless",

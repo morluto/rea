@@ -15,9 +15,9 @@ const resourceScope: RetainedResourceScope = {
   run: (operation) => operation(),
 };
 /** An attached registration names its upstream protocol. */
-const LEGACY_REGISTRATION = JSON.stringify({
+const ATTACHED_REGISTRATION = JSON.stringify({
   command: "python",
-  protocol: "legacy",
+  protocol: "native",
 });
 const read = (path: string) => readIdaConfiguration(path, { resourceScope });
 
@@ -33,13 +33,13 @@ describe("IDA registration and MCP result boundaries", () => {
     roots.push(root);
     const path = join(root, "mcp.json");
     for (const input of [
-      { command: "python", args: ["server.py"], protocol: "legacy" },
+      { command: "python", args: ["server.py"], protocol: "native" },
       {
         mcpServers: {
           "ida-pro-mcp": {
             command: "python",
             args: ["server.py"],
-            protocol: "legacy",
+            protocol: "native",
           },
           unrelated: { command: "untouched" },
         },
@@ -52,7 +52,7 @@ describe("IDA registration and MCP result boundaries", () => {
           command: "python",
           args: ["server.py"],
           mode: "attached",
-          protocol: "legacy",
+          protocol: "native",
         },
       });
     }
@@ -72,7 +72,7 @@ describe("IDA registration and MCP result boundaries", () => {
       { command: "python", workspaceRoot: "relative" },
       { command: "python", args: "server.py" },
     ]) {
-      await writeFile(path, JSON.stringify({ ...input, protocol: "legacy" }));
+      await writeFile(path, JSON.stringify({ ...input, protocol: "native" }));
       expect((await read(path)).ok).toBe(false);
     }
     await writeFile(
@@ -88,13 +88,13 @@ describe("IDA registration and MCP result boundaries", () => {
       "http://host.docker.internal:13337/mcp",
       "http://HOST.CONTAINERS.INTERNAL:13337/mcp",
     ]) {
-      await writeFile(path, JSON.stringify({ url, protocol: "legacy" }));
+      await writeFile(path, JSON.stringify({ url, protocol: "native" }));
       expect(await read(path)).toMatchObject({ ok: true, value: { url } });
     }
     await writeFile(path, "malformed");
     expect((await read(path)).ok).toBe(false);
     expect((await read(join(root, "absent"))).ok).toBe(false);
-    const registration = LEGACY_REGISTRATION;
+    const registration = ATTACHED_REGISTRATION;
     await writeFile(path, registration.padEnd(65_536));
     expect((await read(path)).ok).toBe(true);
     await writeFile(path, registration.padEnd(65_537));
@@ -109,7 +109,7 @@ it("rejects registration growth beyond the byte limit after descriptor admission
   const { root } = await createIdaTarget();
   roots.push(root);
   const path = join(root, "mcp.json");
-  await writeFile(path, LEGACY_REGISTRATION);
+  await writeFile(path, ATTACHED_REGISTRATION);
   const openRegularFile = regularFile.openRegularFile;
   const admission = vi
     .spyOn(regularFile, "openRegularFile")
@@ -133,7 +133,7 @@ describe("IDA registration descriptor ownership", () => {
     const { root } = await createIdaTarget();
     roots.push(root);
     const path = join(root, "mcp.json");
-    await writeFile(path, LEGACY_REGISTRATION);
+    await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
     const owner: RetainedResourceScope = {
       retain: (resource) => retained.push(resource),
@@ -165,7 +165,7 @@ describe("IDA registration descriptor ownership", () => {
     const { root } = await createIdaTarget();
     roots.push(root);
     const path = join(root, "mcp.json");
-    await writeFile(path, LEGACY_REGISTRATION);
+    await writeFile(path, ATTACHED_REGISTRATION);
     const reason = new Error("stop registration inspection");
     const controller = new AbortController();
     controller.abort(reason);
@@ -180,7 +180,7 @@ describe("IDA registration descriptor ownership", () => {
     const { root } = await createIdaTarget();
     roots.push(root);
     const path = join(root, "mcp.json");
-    await writeFile(path, LEGACY_REGISTRATION);
+    await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
     const owner: RetainedResourceScope = {
       retain: (resource) => retained.push(resource),
@@ -221,7 +221,7 @@ describe("IDA registration descriptor ownership", () => {
     const { root } = await createIdaTarget();
     roots.push(root);
     const path = join(root, "mcp.json");
-    await writeFile(path, LEGACY_REGISTRATION);
+    await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
     const owner: RetainedResourceScope = {
       retain: (resource) => retained.push(resource),
@@ -279,8 +279,8 @@ it.each(["env", "headers"] as const)(
     );
     const transport =
       field === "env"
-        ? { command: "python", protocol: "legacy" }
-        : { url: "http://127.0.0.1:8745/mcp", protocol: "legacy" };
+        ? { command: "python", protocol: "native" }
+        : { url: "http://127.0.0.1:8745/mcp", protocol: "native" };
     await writeFile(path, JSON.stringify({ ...transport, [field]: mapping }));
     const result = await read(path);
     if (!result.ok) throw result.error;
@@ -303,8 +303,8 @@ it.each(["env", "headers"] as const)(
     const path = join(root, "mcp.json");
     const transport =
       field === "env"
-        ? { command: "python", protocol: "legacy" }
-        : { url: "http://127.0.0.1:8745/mcp", protocol: "legacy" };
+        ? { command: "python", protocol: "native" }
+        : { url: "http://127.0.0.1:8745/mcp", protocol: "native" };
     for (const value of [42, null, {}]) {
       await writeFile(
         path,
@@ -318,8 +318,35 @@ it.each(["env", "headers"] as const)(
   },
 );
 
-// An attached registration no longer defaults to the legacy 1.4 proxy; it
-// fails closed naming the protocol choice instead of guessing.
+// A stored registration that still selects the removed 1.4 proxy is refused
+// with migration guidance; it is never read as the native or headless protocol.
+it.each([
+  { command: "python", args: ["server.py"], protocol: "legacy" },
+  { url: "http://127.0.0.1:13337/mcp", mode: "attached", protocol: "legacy" },
+  {
+    mcpServers: {
+      "ida-pro-mcp": { command: "python", protocol: "legacy" },
+    },
+  },
+])("refuses the removed legacy protocol in %j", async (input) => {
+  const { root } = await createIdaTarget();
+  roots.push(root);
+  const path = join(root, "mcp.json");
+  await writeFile(path, JSON.stringify(input));
+  const parsed = await read(path);
+  if (parsed.ok) throw new Error("Expected the legacy protocol to fail");
+  const constraint =
+    'protocol: the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
+  expect(parsed.error.settings).toEqual([
+    { setting: "REA_IDA_MCP_CONFIG", constraint },
+  ]);
+  expect(parsed.error.message).toBe(
+    `REA_IDA_MCP_CONFIG: ${constraint}. See docs/providers/ida-provider.md.`,
+  );
+});
+
+// An attached registration has no default protocol; it fails closed naming
+// the protocol choice instead of guessing.
 it.each([
   { command: "python", args: ["server.py"] },
   { command: "python", mode: "attached" },
@@ -359,7 +386,7 @@ it("resolves the single headless protocol without a protocol field", async () =>
     JSON.stringify({
       command: "python",
       mode: "headless",
-      protocol: "legacy",
+      protocol: "native",
     }),
   );
   expect((await read(path)).ok).toBe(false);
