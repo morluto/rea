@@ -43,6 +43,7 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
 } from "../process/RegularFileRead.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface McpClientRegistrationReceipt {
   readonly status: "configured" | "unchanged";
@@ -259,7 +260,7 @@ const registrationFailure = async (
     ? await retryClientConfigurationCleanup(cause, resources)
     : undefined;
   const primary = cleanup?.primary ?? cause;
-  const detail = primary instanceof Error ? primary.message : String(primary);
+  const detail = errorMessage(primary);
   const error = new ConfigurationError(
     `Could not register MCP settings at ${path}: ${detail}`,
     {

@@ -92,6 +92,7 @@ import type {
   TerminalFrame,
 } from "../../domain/process/processCapture.js";
 import { partialProcessCaptureObservationSchema } from "../../domain/process/processCapture.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 interface TerminalExitOptions {
   readonly terminal: Pick<IPty, "onExit" | "kill">;
   readonly scenario: ProcessScenario;
@@ -822,7 +823,7 @@ export const describeUnverifiedCause = (
   cause: unknown,
   fallback: string,
 ): string => {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return message.trim() === "" ? fallback : message;
 };
 

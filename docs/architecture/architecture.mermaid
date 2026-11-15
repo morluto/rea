@@ -1,7 +1,8 @@
 graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
-    %% Layers, innermost first: domain, contracts, foundation, ports (src/ports/:
+    %% Layers, innermost first: kernel (src/kernel/: dependency-free helpers such as
+    %% errorMessage), domain, contracts, foundation, ports (src/ports/:
     %% interfaces providers implement), providerCore (src/providers/: the shared
     %% provider core), providers, application, composition, adapters. An import may point to the same or an
     %% inner layer. scripts/lib/module-layers.mjs declares the layer of every

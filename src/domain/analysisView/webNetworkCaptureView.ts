@@ -3,7 +3,6 @@ import {
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
@@ -37,6 +36,7 @@ import {
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
 import { evidenceFileTarget } from "../evidence.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
@@ -175,7 +175,7 @@ const describesText = (descriptor: BinaryField, text: string): boolean => {
     utf8.toString("utf8") === text &&
     descriptor.bytes === utf8.length &&
     descriptor.content_base64 === utf8.toString("base64") &&
-    descriptor.sha256 === createHash("sha256").update(utf8).digest("hex")
+    descriptor.sha256 === sha256Hex(utf8)
   );
 };
 /**

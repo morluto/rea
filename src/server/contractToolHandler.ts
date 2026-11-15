@@ -201,21 +201,38 @@ export const createValueToolHandler =
       contract,
     );
 
+/** What a derivation may read before it runs. */
+export interface DerivedSources {
+  readonly evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"];
+  readonly signal: AbortSignal;
+}
+
 /**
- * Derive Evidence from Evidence the session holds. The session owner admits
- * the call, resolves its session-held inputs, retains the sources the
- * derivation read and records the derived Evidence with its unknowns, so
- * provenance is the same whichever tool derives it.
+ * Read a derivation's inputs, then return the synchronous derivation over
+ * them. A derivation from session-held Evidence alone acquires nothing.
+ */
+export type DerivedAcquisition = (
+  input: unknown,
+  sources: DerivedSources,
+) => Promise<
+  Result<
+    () => Result<InvestigationWorkflowExecution, AnalysisError>,
+    AnalysisError
+  >
+>;
+
+/**
+ * Derive Evidence from Evidence the session holds and the inputs the binding
+ * acquires. The session owner admits the call, resolves its session-held
+ * inputs, retains the sources the derivation read and records the derived
+ * Evidence with its unknowns, so provenance is the same whichever tool
+ * derives it. An acquisition failure is delivered as is.
  */
 export const createDerivedToolHandler =
   (
     server: EvidenceMcpServer,
     session: BinarySessionPort,
-    derive: (
-      input: unknown,
-      evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"],
-      signal: AbortSignal,
-    ) => Result<InvestigationWorkflowExecution, AnalysisError>,
+    acquire: DerivedAcquisition,
     logger: Logger,
   ) =>
   (contract: ToolContract) => {
@@ -230,28 +247,35 @@ export const createDerivedToolHandler =
         admission,
         contract.name,
         context.mcpReq.signal,
-        async () =>
-          deliverInvestigationWorkflow(
-            server,
-            session,
-            contract,
-            await logToolExecution(logger, contract.name, () =>
-              runDerivedOperation(
+        async () => {
+          const outcome = await logToolExecution(
+            logger,
+            contract.name,
+            async () => {
+              const acquired = await acquire(input, {
+                evidenceForAnalysis,
+                signal: context.mcpReq.signal,
+              });
+              if (!acquired.ok)
+                return { ...acquired, stage: "acquire" as const };
+              const derive = acquired.value;
+              const derived = await runDerivedOperation(
                 context,
                 contract.name,
                 () => {
-                  const result = derive(
-                    input,
-                    evidenceForAnalysis,
-                    context.mcpReq.signal,
-                  );
+                  const result = derive();
                   if (!result.ok) throw result.error;
                   return result.value;
                 },
                 (value) => value,
-              ),
-            ),
-          ),
+              );
+              return { ...derived, stage: "derive" as const };
+            },
+          );
+          return outcome.stage === "acquire"
+            ? server.delivery.toCallToolResult(outcome, contract)
+            : deliverInvestigationWorkflow(server, session, contract, outcome);
+        },
       );
   };
 

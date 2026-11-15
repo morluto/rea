@@ -3,7 +3,7 @@ import {
   readTsharkJsonPackets,
   type TsharkJsonBudget,
   type TsharkPacketLayers,
-} from "./TsharkJsonPackets.js";
+} from "../domain/pcap/tsharkJsonPackets.js";
 import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,

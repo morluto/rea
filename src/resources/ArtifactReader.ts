@@ -24,6 +24,7 @@ import type {
   AnalysisCleanupObservation,
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -439,9 +440,6 @@ const combineCleanup = (
         reason: `${primary.reason}; ${cleanup.reason}`,
         resources: [...new Set([...primary.resources, ...cleanup.resources])],
       };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Read explicit source authority; unrelated domain cleanup remains unresolved. */
 export const artifactPrimaryCleanupLeases = (

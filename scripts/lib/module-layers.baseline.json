@@ -9,8 +9,7 @@
   ],
   "crossProvider": {
     "apktool -> artifacts": 2,
-    "captures -> pcap": 2,
-    "gpu -> artifacts": 2,
+    "gpu -> artifacts": 1,
     "model -> artifacts": 1
   },
   "entry": {

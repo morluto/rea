@@ -114,6 +114,7 @@ import {
   hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
@@ -470,7 +471,7 @@ export class HopperClient<
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Hopper startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -977,7 +978,7 @@ export class HopperClient<
               "hopper",
               ["hopper-launcher"],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             ),

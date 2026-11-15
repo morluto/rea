@@ -1,6 +1,5 @@
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
-import { createHash } from "node:crypto";
 import { err, ok, type Result } from "../result.js";
 
 import { managedDecodeBudget } from "./managedDecodeBudget.js";
@@ -389,10 +388,6 @@ export const metadataTokenFact = (raw: number): MetadataTokenFact => {
   const row = raw & 0x00ff_ffff;
   return { raw, table, row, token: metadataToken(table, row) };
 };
-
-/** Hash bytes without exposing their contents. */
-export const sha256Bytes = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Create a cursor bounded to one admitted metadata table row. */
 export const metadataRowCursor = (

@@ -64,6 +64,7 @@ const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
@@ -277,7 +278,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           actions,
           retained.state,
         );
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         capture = {
           ...retainedCapture,
           limitations: [
@@ -322,9 +323,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
                 "Electron process and transport cleanup failed",
               );
         const reason = failures
-          .map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          )
+          .map((failure) => errorMessage(failure))
           .join("; ");
         const failure = new BrowserObservationError(
           OPERATION,
@@ -585,7 +584,7 @@ const providerError = (cause: unknown): AnalysisError => {
     {
       cause,
       diagnostics: {
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: errorMessage(cause),
       },
     },
   );
