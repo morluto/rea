@@ -22,9 +22,15 @@ permissions restores the retained tarball and verifier runtime. It installs
 that exact archive into an empty prefix, then exercises CLI help/discovery and
 the real stdio MCP catalog/session contract. Installation finishes before the
 protocol deadline begins, with dependency lifecycle scripts disabled. Only a
-successful rehearsal enables the job with npm publishing authority. The publisher
-downloads only
-the original qualified archive and manifest, validates their source/run/attempt,
+successful rehearsal enables the job with npm publishing authority. Both the
+rehearsal and post-publication canary require the hash-pinned client schema
+engines: they check every advertised profile of the installed package, including
+RE2 and Rust validators, and compare it with the reviewed catalog summary.
+A missing engine, incompatible schema or stale summary fails the canary. Engine
+versions and coverage appear in its logs; `clientSchemaEngines: "verified"`
+appears in its JSON result only after a successful required check.
+The publisher downloads only the original qualified archive and manifest,
+validates their source/run/attempt,
 version, Node identity and streamed digest using Node built-ins, then invokes
 `npm publish --ignore-scripts` against the official registry. A shared built-in
 registry reader checks existing bytes and tags afresh on every publisher attempt,

@@ -858,6 +858,30 @@ it("routes website verification through the central PR policy", async () => {
   expect(ci.jobs.website.if).toBe("needs.changes.outputs.website == 'true'");
 });
 
+it("requires every pinned schema engine in the release canaries", async () => {
+  const engines = z
+    .object({ runs: z.object({ steps: z.array(stepSchema) }) })
+    .parse(
+      parse(
+        await readFile(
+          ".github/actions/release-schema-engines/action.yml",
+          "utf8",
+        ),
+      ),
+    );
+  const install = engines.runs.steps[0];
+  expect(install?.if).toBeUndefined();
+  expect(install?.["continue-on-error"]).toBeUndefined();
+  expect(install?.run).toContain("pip install --require-hashes");
+  expect(install?.run).toContain(
+    "scripts/verify/advertised-schemas/requirements.txt",
+  );
+  expect(install?.run).toContain("REA_REQUIRE_SCHEMA_ENGINES=1");
+  expect(install?.run).toContain(
+    "REA_SCHEMA_ENGINES_PYTHON=$engine_root/bin/python",
+  );
+});
+
 // The rehearsal executes the retained archive on a new read-only runner; the
 // process boundary suite exercises its real installation and protocol checks.
 it("rehearses the qualified archive before npm authority and retains registry verification", async () => {
@@ -889,6 +913,20 @@ it("rehearses the qualified archive before npm authority and retains registry ve
     expect(job.steps[inputs]?.id).toBe("package");
     expect(job.steps[inputs]?.if).toBeUndefined();
     expect(job.steps[inputs]?.["continue-on-error"]).toBeUndefined();
+    const engines = job.steps.findIndex(
+      (step) => step.uses === "./.github/actions/release-schema-engines",
+    );
+    const canary = job.steps.findIndex((step) =>
+      step.run?.includes(
+        job === rehearsal
+          ? "verify-release-artifact.mjs"
+          : "verify-published-package.mjs",
+      ),
+    );
+    expect(engines).toBeGreaterThan(inputs);
+    expect(engines).toBeLessThan(canary);
+    expect(job.steps[engines]?.if).toBeUndefined();
+    expect(job.steps[engines]?.["continue-on-error"]).toBeUndefined();
     if (job === rehearsal) expect(exerciseIndex).toBeGreaterThan(inputs);
   }
   const action = z

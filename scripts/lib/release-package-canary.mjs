@@ -4,6 +4,7 @@ import { createVerifierMcpOwner } from "./verifier-mcp-owner.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { FULL_CATALOG_IDENTITY } from "../../dist/catalogIdentity.js";
 import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
@@ -61,6 +62,28 @@ export async function verifyInstalledCanaryPackage(
       timeout: 30000,
       maxBuffer: 16 * 1024 * 1024,
     });
+  const clientSchemaEngines = environment.REA_REQUIRE_SCHEMA_ENGINES === "1";
+  if (clientSchemaEngines) {
+    const checked = await commands.exec(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../verify-advertised-schemas.mjs", import.meta.url),
+        ),
+        `--package-root=${packageRoot}`,
+        "--complete",
+      ],
+      {
+        cwd: workspace,
+        env: environment,
+        timeout: 180_000,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+    // Keep the canary's stdout machine-readable and retain engine coverage in logs.
+    process.stderr.write(checked.stdout);
+    process.stderr.write(checked.stderr);
+  }
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [launcher, "mcp"],
@@ -87,6 +110,7 @@ export async function verifyInstalledCanaryPackage(
       return {
         mcpTools: toolNames.length,
         canonicalMcpTools: FULL_CATALOG_IDENTITY.counts.mcp_tools,
+        clientSchemaEngines: clientSchemaEngines ? "verified" : "not_verified",
       };
     } catch (cause) {
       throw new Error(`Installed package MCP verification failed: ${stderr}`, {

@@ -392,6 +392,7 @@ jobs:
       - run: npm ci
       - uses: ./.github/actions/prepare-release-package
         id: package
+      - uses: ./.github/actions/release-schema-engines
       - name: Exercise the exact qualified tarball
         env:
           VERIFIED_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
@@ -461,6 +462,7 @@ jobs:
       - run: npm ci
       - uses: ./.github/actions/prepare-release-package
         id: package
+      - uses: ./.github/actions/release-schema-engines
       - name: Verify published npm bytes and dist-tag
         env:
           VERIFIED_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}

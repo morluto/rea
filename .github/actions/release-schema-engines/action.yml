@@ -1,0 +1,14 @@
+name: Prepare release schema validators
+description: Require the pinned client engines in the read-only installed-package canaries
+runs:
+  using: composite
+  steps:
+    - name: Install hash-pinned schema engines into an isolated environment
+      shell: bash
+      run: |
+        engine_root="$RUNNER_TEMP/rea-release-schema-engines"
+        python3 -m venv "$engine_root"
+        "$engine_root/bin/python" -m pip install --require-hashes \
+          -r scripts/verify/advertised-schemas/requirements.txt
+        echo "REA_SCHEMA_ENGINES_PYTHON=$engine_root/bin/python" >> "$GITHUB_ENV"
+        echo "REA_REQUIRE_SCHEMA_ENGINES=1" >> "$GITHUB_ENV"
