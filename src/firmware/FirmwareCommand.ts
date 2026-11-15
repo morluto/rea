@@ -325,13 +325,7 @@ export const runFirmwareCommand = async (context: {
         diagnostics: {
           reason:
             "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          stdout_bytes: snapshot.stdout.bytes,
-          stderr_bytes: snapshot.stderr.bytes,
-          truncated: snapshot.diagnosticTruncated === true,
+          ...capturedProviderOutput(snapshot),
         },
         remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
       });
@@ -373,11 +367,7 @@ export const runFirmwareCommand = async (context: {
         operation,
         `Tool diagnostics exceeded the ${FIRMWARE_LIMITS.diagnosticBytes}-byte capture budget`,
         {
-          capturedOutput: {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: true,
-          },
+          capturedOutput: capturedProviderOutput(snapshot),
           userMessage: `Firmware diagnostics exceeded the ${String(FIRMWARE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
           remediationAction: firmwareLimitRecovery(
             `The firmware diagnostic capture allowance is ${String(FIRMWARE_LIMITS.diagnosticBytes)} bytes`,
@@ -448,6 +438,20 @@ export const runFirmwareCommand = async (context: {
   };
 };
 
+/** The captured output of a completed firmware command, from the shared owner. */
+export const firmwareExecutionOutput = (
+  execution: Pick<
+    Awaited<ReturnType<typeof runFirmwareCommand>>,
+    "stdout" | "stderr" | "exit_code" | "signal"
+  >,
+) =>
+  capturedProviderOutput({
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exit_code,
+    signal: execution.signal,
+  });
+
 /**
  * Consume the report a completed command was asked to write. A successful exit
  * status is not analysis Evidence by itself: an absent, empty or malformed report
@@ -486,15 +490,7 @@ export const readFirmwareCommandReport = async (context: {
       );
       if (cause.partialObservation !== undefined)
         failure.retainPartialObservation(cause.partialObservation);
-      throw failure.retainCapturedOutput({
-        stdout: execution.stdout.text,
-        stderr: execution.stderr.text,
-        stdout_bytes: execution.stdout.bytes,
-        stderr_bytes: execution.stderr.bytes,
-        exit_code: execution.exit_code ?? null,
-        signal: execution.signal,
-        truncated: false,
-      });
+      throw failure.retainCapturedOutput(firmwareExecutionOutput(execution));
     }
     const { engine, operation, execution } = context;
     const reportFailure =
@@ -508,12 +504,7 @@ export const readFirmwareCommandReport = async (context: {
       command: execution.command,
       args: execution.args,
       resource_limiter: execution.resource_limiter,
-      exit_code: execution.exit_code ?? null,
-      signal: execution.signal,
-      stdout: execution.stdout.text,
-      stderr: execution.stderr.text,
-      stdout_bytes: execution.stdout.bytes,
-      stderr_bytes: execution.stderr.bytes,
+      ...firmwareExecutionOutput(execution),
     };
     if (execution.exit_code === 1)
       throw new ProviderAdapterError(engine, operation, {

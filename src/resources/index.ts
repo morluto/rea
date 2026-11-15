@@ -34,6 +34,7 @@ export {
   sameArtifactEntry,
   sameArtifactSourceIdentity,
 } from "./ArtifactReader.js";
+export { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 export type {
   ArtifactEntry,
   ArtifactReader,
