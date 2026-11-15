@@ -152,6 +152,16 @@ it("reads the record before the PE header, not one embedded in the stub", async 
   });
 });
 
+it("does not take the record of an image embedded in the stub", async () => {
+  // tcblaunch.exe has this shape with a record of its own as well. Without
+  // one, the embedded image's PE header follows its footer, so the footer
+  // is not padded to this image's PE signature.
+  const stub = Buffer.concat([Buffer.alloc(0x40, 0x90), peRichHeaderImage()]);
+  const report = await parse({ stub, block: false });
+  expect(report.rich_header).toEqual({ state: "absent" });
+  expect(report.limitations).toContain(PE_RICH_HEADER_ABSENT_LIMITATION);
+});
+
 it("reports a footer without its DanS marker as malformed", async () => {
   const report = await parse({ omitStart: true });
   expect(report.rich_header).toEqual({

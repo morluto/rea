@@ -27,7 +27,8 @@ one of:
 - `malformed`: a `Rich` footer exists, but the record does not decode. `reason`
   is `start_marker_missing` when no `DanS` encoded with that key precedes the
   footer, or `partial_entry` when the record ends inside an entry.
-- `absent`: no `Rich` footer precedes the PE signature. Other linkers omit the
+- `absent`: no `Rich` footer ends directly before the PE signature, with only
+  zero bytes between them. Other linkers omit the
   record, and it can be stripped after linking, so absence does not show how
   the image was built. A PE header that starts inside the 64-byte DOS header
   leaves no room for a record, so it is `absent` too.
@@ -38,12 +39,16 @@ malformed record.
 ## How the record is found
 
 REA takes the last DWORD-aligned `Rich` marker whose key ends at or before the
-PE signature. It then walks back one DWORD at a time to the nearest `DanS`
-encoded with that key.
+PE signature. Only zero bytes may follow that key up to the PE signature,
+because the linker pads its record that way. A footer followed by anything
+else is not the image's record, and the report is `absent`. REA then walks back
+one DWORD at a time to the nearest `DanS` encoded with that key.
 
 The last marker matters. A custom DOS stub can hold a whole image with its own
 Rich header. On one Windows 11 host, `C:\Windows\System32\tcblaunch.exe` has a
-footer at `0xE8` inside its stub and the image's own record at `0x2D20`.
+footer at `0xE8` inside its stub and the image's own record at `0x2D20`. When
+the outer image has no record, the embedded image's headers follow its footer,
+so that footer is not taken.
 `DanS` is not always at `0x80` either: drivers on the same host place it at
 `0x58` and `0x200`.
 

@@ -16,14 +16,16 @@ read-only inspection that reports the record without running the image.
   paths are absolute.
 - `rich_header.state` is `present`, `malformed` or `absent`.
 - Find the record from the last DWORD-aligned `Rich` footer whose key ends at or
-  before the PE signature. Then walk back to the nearest `DanS` encoded with
-  that key. Do not assume `DanS` at `0x80`, and do not take the first footer.
+  before the PE signature, with only zero bytes after the key up to the
+  signature. Then walk back to the nearest `DanS` encoded with that key. Do not
+  assume `DanS` at `0x80`, and do not take the first footer.
 - A present record reports its file range, footer range, key, decoded padding,
   and each entry's product ID, build and use count.
 - Recompute the linker checksum and report whether it reproduces the stored key.
 - A footer with no matching `DanS` is `malformed` with `start_marker_missing`.
   A record that ends inside an entry is `malformed` with `partial_entry`.
-- No footer before the PE signature is `absent`. Its limitation says absence
+- No such footer is `absent`, including a footer that belongs to an image
+  embedded in the DOS stub. Its limitation says absence
   does not show how the image was built. A PE header inside the 64-byte DOS
   header is `absent` too.
 - A DOS MZ image with no PE header is `unsupported_target`.
@@ -39,7 +41,8 @@ read-only inspection that reports the record without running the image.
 Parser tests on synthetic PE32 and PE32+ images compare the key with an
 independent checksum. They cover zero entries, nonzero padding, an edited stub,
 a wrong key, an overlapping footer, unaligned markers, an earlier footer in the
-stub, malformed records, the entry budget, cancellation and non-PE input.
+stub, an embedded image with no outer record, malformed records, the entry
+budget, cancellation and non-PE input.
 Service, provider, CLI, MCP and filesystem tests cover the public contract and
 its failures. `scripts/verify-pe-rich-header.mjs` compares key and entries with
 pefile on real images and fails on any unexplained difference.

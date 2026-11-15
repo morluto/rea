@@ -120,6 +120,25 @@ const richChecksum = async (
   return checksum;
 };
 
+/**
+ * Whether only zero bytes lie in `[from, to)`. The linker pads from its record
+ * to the PE signature with zeros. A footer followed by anything else, such as
+ * the headers of an image embedded in a custom DOS stub, is not this image's
+ * record.
+ */
+const onlyZeros = async (
+  bytes: Buffer,
+  from: number,
+  to: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> => {
+  for (let at = from; at < to; at++) {
+    if (bytes[at] !== 0) return false;
+    if ((at + 1 - from) % BYTES_PER_YIELD === 0) await pause(signal);
+  }
+  return true;
+};
+
 const richRecord = async (
   reader: BinaryReader,
   peOffset: number,
@@ -127,7 +146,16 @@ const richRecord = async (
   signal: AbortSignal | undefined,
 ): Promise<PeRichHeaderRecord> => {
   const footer = await footerOffset(reader, peOffset, signal);
-  if (footer === null) return { state: "absent" };
+  if (
+    footer === null ||
+    !(await onlyZeros(
+      reader.bytes,
+      footer + PE_RICH_HEADER_FOOTER_BYTES,
+      peOffset,
+      signal,
+    ))
+  )
+    return { state: "absent" };
   const key = reader.u32(footer + 4);
   const footerLocation = { offset: footer, bytes: PE_RICH_HEADER_FOOTER_BYTES };
   const start = await startOffset(reader, footer, key, signal);

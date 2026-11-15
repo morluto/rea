@@ -84,13 +84,13 @@ export type PeRichHeaderRecord = z.infer<typeof richHeaderSchema>;
 /** Limits that apply to every successful Rich header report. */
 export const PE_RICH_HEADER_LIMITATIONS = [
   "The Rich header is an undocumented linker record. Product IDs and build numbers are reported as stored; this inspection does not name the tools or Visual Studio releases they stand for.",
-  "Only the last Rich footer before the PE signature is examined. An earlier footer, such as one inside an image embedded in a custom DOS stub, is not reported.",
+  "Only a Rich footer followed by nothing but zero bytes up to the PE signature is read, as the linker writes it. An earlier footer, such as one inside an image embedded in a custom DOS stub, is not reported.",
   "The checksum covers the DOS header except e_lfanew, the bytes before the DanS marker and the decoded entries. A match does not show that the rest of the image is unchanged, and a mismatch does not show which covered bytes changed.",
 ] as const;
 
-/** Added when no Rich footer precedes the PE signature. */
+/** Added when no Rich footer ends directly before the PE signature. */
 export const PE_RICH_HEADER_ABSENT_LIMITATION =
-  "No Rich footer precedes the PE signature. That is observed absence of the record; linkers other than Microsoft's omit it, and it can be removed after linking." as const;
+  "No Rich footer ends directly before the PE signature, with only zero bytes between them. That is observed absence of the record; linkers other than Microsoft's omit it, and it can be removed after linking." as const;
 
 /** Static Rich header record of one PE32/PE32+ image. */
 export const peRichHeaderSchema = z.strictObject({
