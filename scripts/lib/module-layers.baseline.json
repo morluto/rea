@@ -27,7 +27,6 @@
     "browser -> javascript": 1,
     "captures -> pcap": 2,
     "desktop -> browser": 1,
-    "desktop -> electron": 1,
     "flutter -> artifacts": 1,
     "go -> native": 2,
     "gpu -> artifacts": 2,
