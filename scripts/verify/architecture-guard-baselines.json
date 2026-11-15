@@ -280,10 +280,6 @@
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
-    "src/adb/AdbConfiguration.ts": 1,
-    "src/adb/AdbDeviceOutput.ts": 1,
-    "src/adb/AdbHostFileName.ts": 1,
-    "src/adb/AdbProvider.ts": 1,
     "src/captures/TsharkCaptureProvider.ts": 1,
     "src/cli/desktopCaptureCommands.ts": 1,
     "src/cli/mcpRegistration.ts": 2,

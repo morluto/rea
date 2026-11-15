@@ -44,7 +44,7 @@ processTest.skipIf(process.platform !== "win32")(
         if (['path', 'pathext', 'nodefaultcurrentdirectoryinexepath', 'rea_adb_path', 'rea_apktool_command'].includes(key.toLowerCase())) delete environment[key];
       environment.Path = ${JSON.stringify(trusted)};
       environment.PathExt = '.EXE;.CMD';
-      const adb = await resolveAdbBinary(environment);
+      const adb = await resolveAdbBinary(environment, 'win32');
       assert.equal(adb.binary.toLowerCase(), ${JSON.stringify(join(trusted, "adb.exe").toLowerCase())});
       const native = await execFileOutput(adb.binary, ['-e', 'process.stdout.write(process.execPath)'], { env: adb.environment, timeout: 5000 });
       assert.equal(native.stdout.toLowerCase(), adb.binary.toLowerCase());
@@ -58,12 +58,12 @@ processTest.skipIf(process.platform !== "win32")(
         assert.deepEqual(await runner.runProbe(['npm', 'prefix', '--global'], environment), { ok: true, value: 'selected' });
         assert.deepEqual(await runner.runInstall(['npm', 'install', '--global', 'fixture@0.0.0'], environment, 'structured'), { ok: true, value: '' });
         const missing = { ...environment, Path: '' };
-        await assert.rejects(resolveAdbBinary(missing), { code: 'binary_missing' });
+        await assert.rejects(resolveAdbBinary(missing, 'win32'), { code: 'binary_missing' });
         await assert.rejects(resolveApktoolCommand(missing, 'win32'), { code: 'command_missing' });
         assert.equal((await runner.runProbe(['npm', 'prefix'], missing)).ok, false);
         // A caller who explicitly includes '.' still selects that directory.
         const explicit = { ...environment, Path: '.' };
-        assert.equal((await resolveAdbBinary(explicit)).binary.toLowerCase(), ${JSON.stringify(join(working, "adb.exe").toLowerCase())});
+        assert.equal((await resolveAdbBinary(explicit, 'win32')).binary.toLowerCase(), ${JSON.stringify(join(working, "adb.exe").toLowerCase())});
         assert.equal((await resolveApktoolCommand(explicit, 'win32')).command.toLowerCase(), ${JSON.stringify(join(working, "apktool.cmd").toLowerCase())});
         assert.deepEqual(await runner.runProbe(['npm', 'prefix'], explicit), { ok: true, value: 'cwd' });
       } finally { await runner.close(); }
