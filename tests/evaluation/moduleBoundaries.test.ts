@@ -666,7 +666,7 @@ describe("layer baseline ratchet", () => {
       upward: { "native -> application": 1 },
       cycles: [],
       crossProvider: {},
-      providerEntry: {},
+      entry: {},
     });
     expect(run(root).status).toBe(0);
   });

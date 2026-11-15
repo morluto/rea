@@ -56,7 +56,7 @@
     "python -> native": 1,
     "rust -> native": 3
   },
-  "providerEntry": {
+  "entry": {
     "application -> artifacts": 21,
     "application -> browser": 2,
     "application -> desktop": 51,

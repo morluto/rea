@@ -114,7 +114,7 @@ if (selected.length === 0) {
           upward: facts.upward,
           cycles: facts.cycles,
           crossProvider: facts.crossProvider,
-          providerEntry: facts.providerEntry,
+          entry: facts.entry,
         },
         null,
         2,
