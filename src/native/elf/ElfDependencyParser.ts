@@ -12,6 +12,13 @@ import {
 } from "../../domain/elfStringTable.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
+  readElfGnuHashSymbolCount,
+  readElfHashSymbolCount,
+  type ElfGnuHashCountWalk,
+  type ElfHashWordReader,
+} from "../../domain/elfHashSymbolCount.js";
+import { err, ok } from "../../domain/result.js";
+import {
   DF_1_FLAG_BITS,
   DF_FLAG_BITS,
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
@@ -482,6 +489,33 @@ const tableFromVirtual = (
   };
 };
 
+/**
+ * Reads hash-table words from file bytes `[base, end)`. File mapping stays
+ * here; `elfHashSymbolCount.ts` owns the DT_HASH and DT_GNU_HASH layouts.
+ */
+const hashWords =
+  (reader: BinaryReader, base: number, end: number): ElfHashWordReader =>
+  (offset) => {
+    const at = base + offset;
+    return offset >= 0 && at + 4 <= Math.min(end, reader.bytes.length)
+      ? ok(reader.u32(at))
+      : err("extends past its mapped bytes");
+  };
+
+const drainGnuHashCount = (walk: ElfGnuHashCountWalk): number | null => {
+  for (let step = walk.next(); ; step = walk.next())
+    if (step.done === true) return step.value.ok ? step.value.value : null;
+};
+
+const sysvSymbolCountAt = (
+  reader: BinaryReader,
+  header: number,
+  limit: number,
+): number | null => {
+  const count = readElfHashSymbolCount(hashWords(reader, header, limit));
+  return count.ok ? count.value : null;
+};
+
 const sysvSymbolCount = (
   reader: BinaryReader,
   mappings: readonly FileMapping[],
@@ -489,47 +523,26 @@ const sysvSymbolCount = (
 ): number | null => {
   const header = mapAddress(mappings, address, 8);
   if (header === null) return null;
-  const buckets = reader.u32(header);
-  const count = reader.u32(header + 4);
-  const table = mapAddress(mappings, address, 8 + 4 * (buckets + count));
-  if (table === null) return null;
-  return count;
+  const limit = mappedExtentEnd(mappings, address);
+  if (limit === null) return null;
+  return sysvSymbolCountAt(reader, header, limit);
 };
 
+// With every bucket empty the table hashes nothing, and its first-symbol
+// index does not bound the unhashed imports: GNU ld writes 1 there for any
+// image with no hashable exports. The shared reader returns null for that.
 const gnuSymbolCountAt = (
   reader: BinaryReader,
   header: number,
   limit: number,
   bits: 32 | 64,
-): number | null => {
-  const end = Math.min(limit, reader.bytes.length);
-  if (header + 16 > end) return null;
-  const buckets = reader.u32(header);
-  const firstSymbol = reader.u32(header + 4);
-  const bloomWords = reader.u32(header + 8);
-  if (buckets === 0 || bloomWords === 0) return null;
-  const prefixBytes = 16 + bloomWords * (bits === 64 ? 8 : 4) + buckets * 4;
-  if (header + prefixBytes > end) return null;
-  let last = 0;
-  const bucketsAt = header + 16 + bloomWords * (bits === 64 ? 8 : 4);
-  for (let index = 0; index < buckets; index += 1) {
-    const value = reader.u32(bucketsAt + index * 4);
-    if (value !== 0 && value < firstSymbol) return null;
-    last = Math.max(last, value);
-  }
-  // With every bucket empty the table hashes nothing, and its first-symbol
-  // index does not bound the unhashed imports: GNU ld writes 1 there for any
-  // image with no hashable exports. The count is unknown from this table.
-  if (last === 0) return null;
-  let index = last;
-  for (;;) {
-    const span = prefixBytes + (index - firstSymbol + 1) * 4;
-    if (header + span > end) return null;
-    const chain = reader.u32(header + span - 4);
-    index += 1;
-    if ((chain & 1) !== 0) return index;
-  }
-};
+): number | null =>
+  drainGnuHashCount(
+    readElfGnuHashSymbolCount(
+      hashWords(reader, header, limit),
+      bits === 64 ? 8 : 4,
+    ),
+  );
 
 const gnuSymbolCount = (
   reader: BinaryReader,
@@ -1174,7 +1187,7 @@ const locateSymbolCount = (
     });
   const sysv =
     hash !== undefined && hashInFile && hash.size >= 8
-      ? reader.u32(hash.offset + 4)
+      ? sysvSymbolCountAt(reader, hash.offset, hash.offset + hash.size)
       : tags.has(DT_HASH)
         ? sysvSymbolCount(reader, mappings, tags.get(DT_HASH)!)
         : null;
