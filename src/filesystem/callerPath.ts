@@ -35,6 +35,12 @@ export const absoluteCallerPath = (
   if (platform === "win32") return win32.resolve(cwd ?? process.cwd(), path);
   if (!posix.isAbsolute(path)) {
     const selectedCwd = cwd ?? process.cwd();
+    // This process's own directory must be POSIX-absolute to anchor POSIX
+    // semantics; resolving a Windows directory against itself never ends.
+    if (cwd === undefined && !posix.isAbsolute(selectedCwd))
+      throw new TypeError(
+        `Cannot resolve ${path} with POSIX semantics from the non-POSIX working directory ${selectedCwd}`,
+      );
     const base = posix.isAbsolute(selectedCwd)
       ? selectedCwd
       : absoluteCallerPath(selectedCwd, { platform });

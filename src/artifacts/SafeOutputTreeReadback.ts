@@ -41,6 +41,7 @@ export const hashOutputFile = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Readback exceeded the bytes written",
+        { integrityCheck: "output-readback" },
       );
     hash.update(chunk);
   }

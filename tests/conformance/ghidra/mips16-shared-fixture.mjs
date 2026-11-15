@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 const source = fileURLToPath(new URL("./mips16-shared.S", import.meta.url));
@@ -24,8 +25,8 @@ export async function buildMips16SharedFixture(directory, byteOrder, variant) {
       "section-relocations",
     ].includes(variant),
   );
-  const assembler = process.env.REA_MIPS_AS ?? "mips-linux-gnu-as";
-  const linker = process.env.REA_MIPS_LD ?? "mips-linux-gnu-ld";
+  const assembler = fixtureCommand(FIXTURE_TOOLS.mipsAssembler);
+  const linker = fixtureCommand(FIXTURE_TOOLS.mipsLinker);
   const endian = byteOrder === "little" ? "-EL" : "-EB";
   const prefix = join(directory, `${byteOrder}-${variant}`);
   const object = `${prefix}.o`;
@@ -97,7 +98,7 @@ export async function buildMips16SharedFixture(directory, byteOrder, variant) {
     return u32(mappings[0] + 4) + address - u32(mappings[0] + 8);
   };
   const readelf = await execute(
-    process.env.REA_MIPS_READELF ?? "readelf",
+    fixtureCommand(FIXTURE_TOOLS.mipsReadelf),
     ["-W", "-h", "-l", "-s", "-r", path],
     { timeout: 10000 },
   );

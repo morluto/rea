@@ -92,16 +92,15 @@ Setup Claude Code, Codex, Cursor, Gemini CLI, Grok Build aur
 configuration aur manual MCP registration ke liye
 [installation aur setup](../getting-started/installation.md) dekhein.
 
-Context overhead kam rakhne ke liye MCP default mein compact input schemas use
-karta hai. Agar tamam advertised fields ki guidance aur nested validation details
-chahiye hon to apni MCP registration mein `REA_MCP_INPUT_SCHEMA_PROFILE=full`
-set karein. Dono profiles mein tamam tools aur canonical server validation
-maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
+Context overhead kam rakhne ke liye MCP compact input schemas advertise karta
+hai; jo guidance compact schema chhor deta hai woh tool description ke baad aati
+hai. Tamam tools aur canonical server validation baghair tabdeeli ke maujood
+rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
 Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
 
-Mukammal output schemas default mein advertise hote hain. Agar client `tools/list` ko limit karta hai to MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ya `off` set karein. Server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
+Default mein output schemas `tools/list` se nikal diye jate hain: koi model API inhein nahin parhti, aur REA har result ko khud validate karta hai. Har output schema ko 4096 bytes ki had mein advertise karne ke liye MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein. Har setting mein server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
 
 ### Apne agent se kahein
 

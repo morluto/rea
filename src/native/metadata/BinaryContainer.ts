@@ -4,17 +4,39 @@ import {
   type ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+
+/** Native container facts a format failure can name. */
+interface BinaryFormatFailureFacts {
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  readonly undecodedContent?: boolean;
+  /** The native format, when the reader knows it. */
+  readonly format?: string;
+  readonly offset?: number;
+  readonly field?: string;
+}
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
-export class BinaryFormatFailure extends Error {
+export class BinaryFormatFailure extends ParseFailureError<
+  "malformed" | "truncated" | "unsupported"
+> {
   constructor(
-    readonly kind: "malformed" | "unsupported",
+    kind: "malformed" | "truncated" | "unsupported",
     message: string,
-    /** The image holds the metadata, in a form this reader cannot decode. */
-    readonly undecodedContent = false,
+    facts: BinaryFormatFailureFacts = {},
   ) {
-    super(message);
+    const { undecodedContent = false, format = "native-binary", ...at } = facts;
+    super(
+      kind === "unsupported"
+        ? { kind, format, detail: message, undecodedContent, ...at }
+        : { kind, format, detail: message, ...at },
+    );
     this.name = "BinaryFormatFailure";
+  }
+
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  get undecodedContent(): boolean {
+    return this.failure.kind === "unsupported" && this.failure.undecodedContent;
   }
 }
 
@@ -28,34 +50,65 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
   }
 }
 
-/** Resource boundary exceeded while decoding metadata or native container structure. */
-export class BinaryResourceFailure extends Error {
+/**
+ * Resource boundary exceeded while decoding metadata or native container
+ * structure. `allowance` names the exhausted allowance in the failure's
+ * `LimitRef`; it defaults to the boundary when a decoder has only one.
+ */
+export class BinaryResourceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
+    allowance: string = boundary,
   ) {
-    super(message);
+    super({
+      kind: "limit",
+      format: "native-binary",
+      detail: message,
+      limit: { name: allowance, maximum: maximum_bytes },
+    });
     this.name = "BinaryResourceFailure";
   }
 }
 
-/** A bounded read could not establish termination; it does not prove invalid text. */
-export class BinaryStringReadLimitFailure extends Error {
-  constructor(readonly maximumBytes: number) {
-    super(
-      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
-    );
-    this.name = "BinaryStringReadLimitFailure";
-  }
-}
+/** The failure's allowance when it is one of `allowances`, else `null`. */
+export const binaryResourceAllowance = <Allowance extends string>(
+  failure: BinaryResourceFailure,
+  allowances: readonly Allowance[],
+): Allowance | null =>
+  allowances.find((allowance) => allowance === failure.failure.limit.name) ??
+  null;
+
+/** Limit name of the fixed per-string NUL-termination read allowance. */
+const STRING_READ_LIMIT = "string-read-bytes";
+
+/** A string read stopped at its allowance; this does not prove invalid text. */
+export type BinaryStringReadLimit = ParseFailureError<"limit">;
+
+/** A bounded read could not establish termination within `maximumBytes`. */
+export const binaryStringReadLimit = (
+  maximumBytes: number,
+): BinaryStringReadLimit =>
+  decodeLimit(
+    "native-binary",
+    `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
+    { name: STRING_READ_LIMIT, maximum: maximumBytes },
+  );
+
+/** Whether a cause is a string read that stopped at its allowance. */
+export const isBinaryStringReadLimit = (
+  cause: unknown,
+): cause is BinaryStringReadLimit =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.limit.name === STRING_READ_LIMIT;
 
 /** Recognized format failures and bounded string-read failures. */
 export const isBinaryFormatOrStringLimitFailure = (
   cause: unknown,
-): cause is BinaryFormatFailure | BinaryStringReadLimitFailure =>
-  cause instanceof BinaryFormatFailure ||
-  cause instanceof BinaryStringReadLimitFailure;
+): cause is BinaryFormatFailure | BinaryStringReadLimit =>
+  cause instanceof BinaryFormatFailure || isBinaryStringReadLimit(cause);
 
 /** Native loader region facts; language-specific fallback selection belongs to consumers. */
 export interface LoadRegion {
@@ -177,6 +230,8 @@ export class BinaryReader {
   constructor(
     readonly bytes: Buffer,
     readonly little: boolean,
+    /** The native format these bytes hold, named in every failure. */
+    readonly format: string,
   ) {}
 
   range(offset: number, size: number, label: string): Buffer {
@@ -185,12 +240,22 @@ export class BinaryReader {
       !Number.isSafeInteger(size) ||
       offset < 0 ||
       size < 0 ||
-      offset > this.bytes.length ||
-      size > this.bytes.length - offset
+      offset > this.bytes.length
     )
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is truncated or outside the file`,
+        {
+          format: this.format,
+          field: label,
+          ...(Number.isSafeInteger(offset) ? { offset } : {}),
+        },
+      );
+    if (size > this.bytes.length - offset)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is truncated or outside the file`,
+        { format: this.format, offset, field: label },
       );
     return this.bytes.subarray(offset, offset + size);
   }
@@ -212,13 +277,25 @@ export class BinaryReader {
   }
 
   fileRange(offset: bigint, size: bigint, label: string): FileMapping {
-    if (
-      offset > BigInt(this.bytes.length) ||
-      size > BigInt(this.bytes.length) - offset
-    )
+    const length = BigInt(this.bytes.length);
+    if (offset < 0n || offset > length)
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is outside the file`,
+        {
+          format: this.format,
+          field: label,
+          ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+          offset <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? { offset: Number(offset) }
+            : {}),
+        },
+      );
+    if (size > length - offset)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is outside the file`,
+        { format: this.format, offset: Number(offset), field: label },
       );
     const result = { address: 0n, offset: Number(offset), size: Number(size) };
     this.range(result.offset, result.size, label);
@@ -540,7 +617,7 @@ const readMappedString = (
     chunks.push(chunk);
     length += size;
   }
-  throw new BinaryStringReadLimitFailure(maximumBytes);
+  throw binaryStringReadLimit(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */

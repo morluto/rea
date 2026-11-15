@@ -329,6 +329,7 @@ const readValidatedSourceFacts = (
       const capture = readEvidencePayload(
         processCaptureSchema,
         source.normalized_result,
+        { within: ["normalized_result"] },
       );
       if (!capture.ok) throw capture.error;
       processSources.push({
@@ -339,6 +340,7 @@ const readValidatedSourceFacts = (
       const parsedDossier = readEvidencePayload(
         functionDossierSchema,
         source.normalized_result,
+        { within: ["normalized_result"] },
       );
       if (!parsedDossier.ok) throw parsedDossier.error;
       const dossier = parsedDossier.value;

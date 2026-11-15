@@ -7,41 +7,46 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { execFileOutput } from "../../src/process/ExecFileOutput.js";
-
-type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
+import { ok } from "../../src/domain/result.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
+import type { runOwnedCommand } from "../../src/process/OwnedCommand.js";
+import {
+  fixtureCommandRepair,
+  ownedLaunchRefusal,
+  ownedOutput,
+} from "../support/reverseEngineeringCompositionFixtures.js";
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));
   const path = join(directory, "fixture.bin");
   await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
-  const run = vi.fn(
-    async (
-      _command: string,
-      _args: readonly string[],
-      _options?: ExecFileOutputOptions,
-    ) => ({ stdout: "injected", stderr: "" }),
+  const run = vi.fn<typeof runOwnedCommand>(async () =>
+    ownedOutput("injected"),
   );
   const service = new ReverseEngineeringService({
     environment: { REA_OBJDUMP_COMMAND: "ambient-objdump" },
     commands: {
-      objdump: () => ({
-        executable: "injected-objdump",
-        arguments: ["--injected", path],
-        identity: {
-          id: "test.objdump",
-          name: "Injected objdump",
-          version: null,
-        },
-        environmentOverrides: { INJECTED_PROFILE: "yes" },
-      }),
-      rizin: () => ({
-        executable: "injected-rizin",
-        arguments: ["--injected", path],
-        identity: { id: "test.rizin", name: "Injected Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "injected-objdump",
+          arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.objdump",
+            name: "Injected objdump",
+            version: null,
+          },
+          environmentOverrides: { INJECTED_PROFILE: "yes" },
+        }),
+      rizin: () =>
+        ok({
+          executable: "injected-rizin",
+          arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.rizin", name: "Injected Rizin", version: null },
+        }),
     },
-    run,
+    runOwned: run,
   });
 
   try {
@@ -50,10 +55,10 @@ it("uses provider profiles supplied through the application port", async () => {
       operation: "file_headers",
     });
     expect(result.ok).toBe(true);
-    const call = run.mock.calls[0];
-    expect(call?.[0]).toBe("injected-objdump");
-    expect(call?.[1]).toEqual(["--injected", path]);
-    expect(call?.[2]?.env?.INJECTED_PROFILE).toBe("yes");
+    const spawn = run.mock.calls[0]?.[0];
+    expect(spawn?.command).toBe("injected-objdump");
+    expect(spawn?.arguments).toEqual(["--injected", path]);
+    expect(spawn?.env?.INJECTED_PROFILE).toBe("yes");
     if (result.ok) expect(result.value.provider.id).toBe("test.objdump");
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -67,38 +72,38 @@ it("does not reintroduce ambient variables absent from the captured provider env
   const previous = process.env[variable];
   await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
   process.env[variable] = "late-ambient-value";
-  const run = vi.fn(
-    async (
-      _command: string,
-      _args: readonly string[],
-      _options?: ExecFileOutputOptions,
-    ) => ({ stdout: "captured", stderr: "" }),
+  const run = vi.fn<typeof runOwnedCommand>(async () =>
+    ownedOutput("captured"),
   );
   const service = new ReverseEngineeringService({
     environment: { REA_OBJDUMP_COMMAND: "captured-objdump" },
     commands: {
-      objdump: () => ({
-        executable: "captured-objdump",
-        arguments: [path],
-        identity: {
-          id: "test.objdump",
-          name: "Captured objdump",
-          version: null,
-        },
-        environmentOverrides: { PROFILE_VALUE: "explicit" },
-      }),
-      rizin: () => ({
-        executable: "captured-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Captured Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "captured-objdump",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.objdump",
+            name: "Captured objdump",
+            version: null,
+          },
+          environmentOverrides: { PROFILE_VALUE: "explicit" },
+        }),
+      rizin: () =>
+        ok({
+          executable: "captured-rizin",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.rizin", name: "Captured Rizin", version: null },
+        }),
     },
-    run,
+    runOwned: run,
   });
 
   try {
     await service.inspectWithObjdump({ path, operation: "file_headers" });
-    expect(run.mock.calls[0]?.[2]?.env).toEqual({
+    expect(run.mock.calls[0]?.[0].env).toEqual({
       REA_OBJDUMP_COMMAND: "captured-objdump",
       PROFILE_VALUE: "explicit",
     });
@@ -114,25 +119,29 @@ it("projects missing and non-file objdump targets with actionable path reasons",
     join(tmpdir(), "rea-reverse-invalid-target-"),
   );
   const missing = join(directory, "missing.bin");
-  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+  const run = vi.fn(async () => ownedOutput());
   const service = new ReverseEngineeringService({
     commands: {
-      objdump: () => ({
-        executable: "unused-objdump",
-        arguments: [missing],
-        identity: {
-          id: "test.objdump",
-          name: "Test objdump",
-          version: null,
-        },
-      }),
-      rizin: ({ path }) => ({
-        executable: "unused-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Test Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "unused-objdump",
+          arguments: [missing],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.objdump",
+            name: "Test objdump",
+            version: null,
+          },
+        }),
+      rizin: ({ path }) =>
+        ok({
+          executable: "unused-rizin",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
     },
-    run,
+    runOwned: run,
   });
 
   try {
@@ -187,26 +196,30 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
   const stat = vi.fn(async () => {
     throw ioFailure;
   });
-  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+  const run = vi.fn(async () => ownedOutput());
   const service = new ReverseEngineeringService({
     stat,
     commands: {
-      objdump: () => ({
-        executable: "unused-objdump",
-        arguments: [path],
-        identity: {
-          id: "test.objdump",
-          name: "Test objdump",
-          version: null,
-        },
-      }),
-      rizin: () => ({
-        executable: "unused-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Test Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "unused-objdump",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.objdump",
+            name: "Test objdump",
+            version: null,
+          },
+        }),
+      rizin: () =>
+        ok({
+          executable: "unused-rizin",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
     },
-    run,
+    runOwned: run,
   });
 
   try {
@@ -253,26 +266,30 @@ it.each([
     const stat = vi.fn(async () => {
       throw pathFailure;
     });
-    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const run = vi.fn(async () => ownedOutput());
     const service = new ReverseEngineeringService({
       stat,
       commands: {
-        objdump: () => ({
-          executable: "unused-objdump",
-          arguments: [path],
-          identity: {
-            id: "test.objdump",
-            name: "Test objdump",
-            version: null,
-          },
-        }),
-        rizin: () => ({
-          executable: "unused-rizin",
-          arguments: [path],
-          identity: { id: "test.rizin", name: "Test Rizin", version: null },
-        }),
+        objdump: () =>
+          ok({
+            executable: "unused-objdump",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.objdump",
+              name: "Test objdump",
+              version: null,
+            },
+          }),
+        rizin: () =>
+          ok({
+            executable: "unused-rizin",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: { id: "test.rizin", name: "Test Rizin", version: null },
+          }),
       },
-      run,
+      runOwned: run,
     });
 
     try {
@@ -308,3 +325,105 @@ it.each([
     }
   },
 );
+
+it.each([
+  {
+    operation: "inspect_with_objdump",
+    environment: { PATH: "", REA_OBJDUMP_COMMAND: "rea-missing-objdump" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.inspectWithObjdump(
+        { path: "artifact", operation: "file_headers" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rea-missing-objdump",
+    reason: { lookup_failure: "not_found" },
+  },
+  {
+    operation: "execute_rizin_command",
+    environment: { PATH: "C:\\tools", PATHEXT: ".EXE;C:\\bad" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.executeRizinCommand(
+        { path: "artifact", command: "i" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rizin",
+    reason: { lookup_failure: "invalid_pathext", pathext_entry: "C:\\bad" },
+  },
+])(
+  "refuses $operation on Windows when the bare command is not found on PATH, launching nothing",
+  async ({ operation, environment, run: execute, command, reason }) => {
+    const run = vi.fn(async () => ownedOutput());
+    const service = new ReverseEngineeringService({
+      environment,
+      commands: createReverseEngineeringCommandPort(environment, "win32"),
+      runOwned: run,
+    });
+    const result = await execute(service);
+    if (result.ok) throw new Error("Expected a lookup refusal");
+    const projection = projectAnalysisError(result.error);
+    expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
+      true,
+    );
+    expect(projection).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        operation,
+        diagnostics: { boundary: "provider-lookup", command, ...reason },
+      },
+    });
+    // Capability discovery reports the refusal and its repair, as it does
+    // for a launch failure.
+    expect(service.observedLaunchFailures()).toEqual({
+      [operation]: {
+        reason: projection.message,
+        remediation: projection.remediation.action,
+      },
+    });
+    // Cancellation is reported before the lookup refusal.
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped");
+    controller.abort(abortReason);
+    const cancelled = await execute(service, controller.signal);
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: abortReason },
+    });
+    expect(run).not.toHaveBeenCalled();
+  },
+);
+
+it("reports a launch refusal with the repair the command port names", async () => {
+  const profile = {
+    executable: "fixture-command",
+    arguments: [],
+    repair: fixtureCommandRepair,
+    identity: { id: "test.fixture", name: "Fixture", version: null },
+  };
+  const service = new ReverseEngineeringService({
+    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+    runOwned: async (spawn) => {
+      throw ownedLaunchRefusal("ENOENT", spawn.command);
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    if (result.ok) throw new Error("Expected a launch refusal");
+    const projection = projectAnalysisError(result.error);
+    expect(projection.message).toContain(
+      'selected fixture executable "fixture-command"',
+    );
+    expect(projection.remediation.action).toBe(
+      fixtureCommandRepair.remediationAction,
+    );
+    expect(service.observedLaunchFailures()).toEqual({
+      inspect_with_objdump: {
+        reason: projection.message,
+        remediation: fixtureCommandRepair.remediationAction,
+      },
+    });
+  } finally {
+    await service.close();
+  }
+});

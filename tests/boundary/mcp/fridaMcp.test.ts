@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -200,10 +204,12 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
   );
   const tools = (await client.listTools()).tools;
   const tool = tools.find((t) => t.name === "frida_session_status");
-  if (!tool?.outputSchema) throw new Error("Missing Frida status schema");
+  if (tool === undefined) throw new Error("Missing Frida status schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = tool.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    tool.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   for (const truncated of [false, true]) {
     statusTruncated = truncated;
@@ -228,7 +234,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(explicit.structuredContent).toEqual(parent);
     const summary = await client.callTool(
       { name: tool.name, arguments: { session_id: id, detail: "summary" } },
-      { toolDefinition: tool },
+      { toolDefinition: withCanonicalOutputSchema(tool) },
     );
     expect(summary.isError).not.toBe(true);
     const evidence = toolContract("frida_session_status").outputSchema.parse(
@@ -363,7 +369,8 @@ const expectFridaSelectorGuidance = async (
     (tool) => tool.name === "list_frida_processes",
   );
   if (processTool === undefined) throw new Error("Missing Frida process tool");
-  expect(processTool.inputSchema.description).toMatch(
+  // Compact input guidance is part of the tool description.
+  expect(processTool.description).toMatch(
     /exactly one of device_id or remote/u,
   );
   expect(ajv.validateSchema(processTool.inputSchema)).toBe(true);
@@ -415,14 +422,13 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
 
   const tools = (await client.listTools()).tools;
   const advertised = tools.find((tool) => tool.name === "list_frida_devices");
-  if (
-    advertised?.inputSchema === undefined ||
-    advertised.outputSchema === undefined
-  )
-    throw new Error("Missing advertised Frida schemas");
+  if (advertised === undefined)
+    throw new Error("Missing advertised Frida definition");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const response = await client.callTool(
@@ -432,7 +438,7 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
         remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
       },
     },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   expect(JSON.stringify(response.structuredContent)).not.toContain(
@@ -540,10 +546,10 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const oneShotContract = tools.find(
     (tool) => tool.name === "instrument_with_frida",
   );
-  if (oneShotContract?.outputSchema === undefined)
-    throw new Error("Missing one-shot Frida output schema");
+  if (oneShotContract === undefined)
+    throw new Error("Missing one-shot Frida definition");
   const validateOneShot = ajv.compile(
-    oneShotContract.outputSchema as AnySchema,
+    canonicalOutputSchema(oneShotContract.name) as AnySchema,
   );
   expect(validateOneShot(oneShot.structuredContent)).toBe(true);
 

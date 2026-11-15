@@ -305,7 +305,7 @@ export const projectApkSignatureView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const ids = view.ids === undefined ? undefined : new Set(view.ids);
   const signers =
