@@ -548,7 +548,6 @@
     "src/wasm/WabtArtifactProvider.ts": 1
   },
   "strict-utf8-decoder": {
-    "src/browser/PlaywrightScenarioRequest.ts": 1,
-    "src/evm/EvmBytecodeCarrier.ts": 1
+    "src/browser/PlaywrightScenarioRequest.ts": 1
   }
 }
