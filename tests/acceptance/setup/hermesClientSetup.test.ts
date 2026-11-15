@@ -1,4 +1,11 @@
-import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { userInfo } from "node:os";
 import { parse } from "yaml";
@@ -693,9 +700,10 @@ cliTest.skipIf(process.platform === "win32")(
     const temporary = await createTestTempDirectory(
       "rea-hermes-named-profile-",
     );
-    const suffix = relative(account.homedir, temporary);
+    const suffix = relative(await realpath(account.homedir), temporary);
     // Exercise the real named-account lookup without requiring a writable
-    // account home. Keep the expanded spelling, including parent segments.
+    // account home. Resolve parent traversal from its physical directory while
+    // keeping the named home's expanded spelling, including parent segments.
     const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
     const override = `~${account.username}//${suffix}`;
     const config = `${profile}/config.yaml`;
