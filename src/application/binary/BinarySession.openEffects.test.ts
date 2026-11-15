@@ -4,7 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import type { AnalysisProvider } from "../AnalysisProvider.js";
 import { BinarySession } from "./BinarySession.js";
-import { toolSessionEffects } from "../../contracts/toolEffects.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { ok } from "../../domain/result.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
@@ -94,7 +94,7 @@ it.each([
       await expect(readFile(checkpointPath, "utf8")).rejects.toMatchObject({
         code: "ENOENT",
       });
-    expect(toolSessionEffects(operation)).toMatchObject({
+    expect(toolContract(operation).sessionEffects).toMatchObject({
       writesFilesystem: true,
       mayDiscardData: true,
     });

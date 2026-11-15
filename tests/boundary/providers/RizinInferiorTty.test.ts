@@ -17,7 +17,7 @@ import {
   RizinDebugSessionManager,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import {
   createRizinTestManager,
@@ -151,7 +151,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("declares that Rizin close can resume target code and mutate target state", () => {
-  expect(TOOL_EFFECTS.close_rizin_debug_session).toMatchObject({
+  expect(toolContract("close_rizin_debug_session").effects).toMatchObject({
     mutatesTarget: true,
     executesForeignCode: true,
   });
