@@ -462,6 +462,7 @@ const MAIN_TAG_SPECS: ReadonlyMap<number, TagSpec> = new Map([
   [RPM_TAG.triggerIndex, int32List("TRIGGERINDEX")],
   [RPM_TAG.triggerScriptProg, stringList("TRIGGERSCRIPTPROG")],
   [RPM_TAG.fileSizes, int32List("FILESIZES")],
+  [RPM_TAG.longFileSizes, { name: "LONGFILESIZES", types: [RPM_TYPE.int64] }],
   [RPM_TAG.fileModes, { name: "FILEMODES", types: [RPM_TYPE.int16] }],
   [RPM_TAG.fileDigests, stringList("FILEDIGESTS")],
   [RPM_TAG.fileFlags, int32List("FILEFLAGS")],
@@ -915,7 +916,9 @@ const files = (
     return fail("RPM DIRINDEXES count does not match BASENAMES.", {
       field: "file inventory",
     });
-  const sizes = intArray(header, RPM_TAG.fileSizes);
+  // Packages with large files store sizes in LONGFILESIZES instead.
+  const longSizes = intArray(header, RPM_TAG.longFileSizes);
+  const sizes = longSizes ?? intArray(header, RPM_TAG.fileSizes);
   const modes = intArray(header, RPM_TAG.fileModes);
   const digests = stringArray(header, RPM_TAG.fileDigests);
   const flags = intArray(header, RPM_TAG.fileFlags);
@@ -925,7 +928,7 @@ const files = (
   // A present per-file array must have one value per BASENAMES row, so a
   // short or long array is not read as a missing value.
   for (const [name, values] of [
-    ["FILESIZES", sizes],
+    [longSizes === undefined ? "FILESIZES" : "LONGFILESIZES", sizes],
     ["FILEMODES", modes],
     ["FILEDIGESTS", digests],
     ["FILEFLAGS", flags],

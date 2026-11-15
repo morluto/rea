@@ -103,6 +103,7 @@ export const RPM_TAG = {
   enhanceFlags: 5057,
   payloadDigest: 5092,
   payloadDigestAlgo: 5093,
+  longFileSizes: 5008,
 } as const;
 
 export const RPM_SENSE = {

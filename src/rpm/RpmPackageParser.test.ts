@@ -12,6 +12,7 @@ import {
   rpmGroupedTriggerFixture,
   rpmInt32PreinFixture,
   rpmInvalidUtf8FilenameFixture,
+  rpmLongFileSizesFixture,
   rpmMismatchedFileModesFixture,
   rpmMismatchedTriggerProgFixture,
   rpmOutOfBoundsIndexFixture,
@@ -603,3 +604,8 @@ it.each([
     }
   },
 );
+
+it("reads file sizes from LONGFILESIZES when the package stores them there", () => {
+  const report = parse(rpmLongFileSizesFixture());
+  expect(report.files?.map((file) => file.size)).toEqual([5_000_000_000, 12]);
+});

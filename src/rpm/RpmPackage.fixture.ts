@@ -523,6 +523,20 @@ export const rpmGroupedTriggerFixture = (
     ],
   });
 
+/** Binary RPM that stores its file sizes in LONGFILESIZES instead of FILESIZES. */
+export const rpmLongFileSizesFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: defaultHeaderTags().map((tag) =>
+      tag.tag === RPM_TAG.fileSizes
+        ? {
+            tag: RPM_TAG.longFileSizes,
+            type: RPM_TYPE.int64,
+            int64: [5_000_000_000n, 12n],
+          }
+        : tag,
+    ),
+  });
+
 /** Binary RPM whose FILEMODES array has one value for two BASENAMES rows. */
 export const rpmMismatchedFileModesFixture = (): Buffer =>
   encodeRpmPackage({
