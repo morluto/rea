@@ -25,7 +25,6 @@ import {
   normalizeArtifactPath,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {
