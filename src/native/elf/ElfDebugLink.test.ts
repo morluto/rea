@@ -410,6 +410,30 @@ it("matches a candidate by CRC32 and build-id and records its sections", () => {
   });
 });
 
+it("counts legacy .zdebug_info as present candidate debug info", () => {
+  const candidate = elfDebugCandidateFixture({ zdebugInfo: true });
+  const sections = readElfImage(candidate).sections;
+  expect(
+    sections.some(
+      (section) => section.format === "elf" && section.name === ".zdebug_info",
+    ),
+  ).toBe(true);
+  expect(
+    sections.some(
+      (section) => section.format === "elf" && section.name === ".debug_info",
+    ),
+  ).toBe(false);
+  const image = elfDebugLinkFixture({
+    debuglink: debuglinkSection(
+      FIXTURE_DEBUG_NAME,
+      gnuDebuglinkCrc32(candidate),
+      true,
+    ),
+  });
+  const report = verify(image, candidate, "/artifacts/prog.debug");
+  expect(report.candidate).toMatchObject({ debug_info: "present" });
+});
+
 /** Point one named section of a little-endian ELF64 candidate past its end. */
 const moveSectionPastEnd = (candidate: Buffer, name: string): Buffer => {
   const damaged = Buffer.from(candidate);

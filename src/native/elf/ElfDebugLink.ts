@@ -582,15 +582,23 @@ const candidateSections = (
   const namesComplete =
     image.section_names_limitation === undefined &&
     sections.every((section) => section.name !== null);
-  const status = (name: string): "present" | "absent" | "unknown" => {
-    const named = sections.filter((section) => section.name === name);
+  const status = (
+    names: readonly string[],
+  ): "present" | "absent" | "unknown" => {
+    const named = sections.filter((section) =>
+      names.some((name) => name === section.name),
+    );
     // A declaration whose range is not inside the file does not supply that
     // content, so its presence stays unknown rather than present.
     if (named.some((section) => section.file_backed)) return "present";
     if (named.length > 0) return "unknown";
     return namesComplete ? "absent" : "unknown";
   };
-  return { debug_info: status(".debug_info"), symtab: status(".symtab") };
+  // `.zdebug_info` is the zlib-gnu name for compressed `.debug_info`.
+  return {
+    debug_info: status([".debug_info", ".zdebug_info"]),
+    symtab: status([".symtab"]),
+  };
 };
 
 /**

@@ -67,7 +67,8 @@ build-id. The `.gnu_debugaltlink` build-id is not that comparison. A mismatch
 on either check is `does_not_match`. A match on either check, with no
 mismatch, is `matches`. If neither check can run, the status is
 `cannot_verify`. `candidate.debug_info` and `candidate.symtab` say whether
-those sections are present, so the result shows what the file would add.
+those sections are present, and the legacy compressed `.zdebug_info` name
+also counts, so the result shows what the file would add.
 
 The candidate is streamed in bounded chunks, so its size is not limited by
 `max_file_bytes`. A candidate within `max_file_bytes` is also decoded for its

@@ -83,6 +83,8 @@ export interface ElfDebugLinkFixtureOptions {
   /** Null omits the note section. Undefined uses one GNU build-id note. */
   readonly notes?: Buffer | null;
   readonly debugInfo?: Buffer | null;
+  /** When true, name the debug-info body `.zdebug_info`. */
+  readonly zdebugInfo?: boolean;
   readonly symtab?: Buffer | null;
   /** When false, e_shstrndx is 0 and section names stay unreadable. */
   readonly sectionNames?: boolean;
@@ -144,7 +146,11 @@ export const elfDebugLinkFixture = (
   }
   add(".gnu_debugaltlink", 1, options.debugaltlink ?? null);
   add(".gnu_debugdata", 1, options.debugdata ?? null);
-  add(".debug_info", 1, options.debugInfo ?? null);
+  add(
+    options.zdebugInfo === true ? ".zdebug_info" : ".debug_info",
+    1,
+    options.debugInfo ?? null,
+  );
   add(".symtab", 1, options.symtab ?? null);
   const labels = [
     ...new Set([...bodies.map((section) => section.name), ".shstrtab"]),
@@ -233,6 +239,8 @@ export const elfDebugCandidateFixture = (
     /** Null omits the build-id note. Undefined uses the fixture build-id. */
     readonly buildIdHex?: string | null;
     readonly debugInfo?: Buffer | null;
+    /** When true, name debug info `.zdebug_info` instead of `.debug_info`. */
+    readonly zdebugInfo?: boolean;
     readonly symtab?: Buffer | null;
   } = {},
 ): Buffer => {
@@ -248,6 +256,7 @@ export const elfDebugCandidateFixture = (
     ...(options.type === undefined ? {} : { type: options.type }),
     debuglink: null,
     notes,
+    ...(options.zdebugInfo === true ? { zdebugInfo: true } : {}),
     debugInfo:
       options.debugInfo === undefined
         ? Buffer.from("debug-info", "latin1")
