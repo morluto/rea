@@ -464,22 +464,6 @@ export class GdbSessionManager {
           },
         ]),
       );
-    if (this.#closing || signal?.aborted)
-      return err(
-        signal?.aborted
-          ? cancelledWithCallerReason("start_gdb_session", signal)
-          : cancelledBy("start_gdb_session", OwnerCancellation.ownerClosed),
-      );
-    if (!persistentDebuggerHostSupported(this.#platform))
-      return err(
-        new AnalysisCapabilityUnavailableError(
-          "gdb",
-          "start_gdb_session",
-          this.#platform === "win32"
-            ? "Persistent Windows GDB sessions are unavailable because owned Job Object cleanup can terminate debugger inferiors."
-            : "Persistent GDB sessions are available only on Linux because REA verifies live inferior output descriptors through /proc.",
-        ),
-      );
     return this.#sessions.start("start_gdb_session", signal, (started) =>
       this.#startWithReservation(started, options),
     );
@@ -495,6 +479,16 @@ export class GdbSessionManager {
     >
   > {
     if (signal?.aborted) return err(cancelledBy("start_gdb_session", signal));
+    if (!persistentDebuggerHostSupported(this.#platform))
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "gdb",
+          "start_gdb_session",
+          this.#platform === "win32"
+            ? "Persistent Windows GDB sessions are unavailable because owned Job Object cleanup can terminate debugger inferiors."
+            : "Persistent GDB sessions are available only on Linux because REA verifies live inferior output descriptors through /proc.",
+        ),
+      );
     const occupied = this.#sessions.occupied();
     if (occupied >= this.#maxSessions.value)
       return err(
@@ -1360,7 +1354,7 @@ export class GdbSessionManager {
   }
 
   async #drainStartsAndCloseSessions(): Promise<void> {
-    await this.#sessions.abortStarts();
+    await this.#sessions.closeStarts();
     await Promise.all(
       [...this.#sessions.values()].map((session) => session.commandTail),
     );

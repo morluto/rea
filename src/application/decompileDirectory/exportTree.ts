@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -737,10 +738,7 @@ const parseJournal = (
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
   let committed: string;
   try {
-    committed = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes.subarray(0, committedBytes));
+    committed = decodeStrictUtf8(bytes.subarray(0, committedBytes), "preserve");
   } catch {
     return err(incompatibleJournal());
   }

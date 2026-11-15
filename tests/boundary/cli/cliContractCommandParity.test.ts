@@ -768,6 +768,8 @@ describe("JSON-document contract commands", () => {
         "compare-artifacts",
         "inspect-analysis-view",
         "match-native-functions",
+        "build-reconstruction-obligation-ledger",
+        "evaluate-reconstruction-coverage",
       ]),
     );
   });

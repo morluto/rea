@@ -1,7 +1,7 @@
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { setImmediate } from "node:timers/promises";
 import type { z } from "zod";
-import type { compareSourceToBundleCliInputSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
+import type { compareSourceToBundleRequestSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
 import {
   historicalSourceGraphSchema,
   type HistoricalSourceGraph,
@@ -25,9 +25,11 @@ export type ResolvedSourceToBundleReference = {
 
 /** Resolve one caller-selected historical graph using the shared bounded regular-file reader. No file cache. */
 export const resolveSourceToBundleReference = async (
-  reference: z.output<typeof compareSourceToBundleCliInputSchema>["reference"],
+  reference: z.output<typeof compareSourceToBundleRequestSchema>["reference"],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  /** The file path as the caller spelled it, when an adapter resolved it. */
+  requestedPath?: string,
 ): Promise<Result<ResolvedSourceToBundleReference, AnalysisError>> => {
   if (isAborted(signal))
     return err(cancelledBy("compare_source_to_bundle", signal));
@@ -71,7 +73,7 @@ export const resolveSourceToBundleReference = async (
     reference_source: {
       kind: "file",
       path: read.value.path,
-      requested_path: reference.path,
+      requested_path: requestedPath ?? reference.path,
     },
   });
 };

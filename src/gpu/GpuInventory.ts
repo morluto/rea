@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
@@ -366,10 +367,7 @@ export class GpuInventory {
         const content = bytes.subarray(0, length);
         let text: string;
         try {
-          text = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(content);
+          text = decodeStrictUtf8(content, "preserve");
         } catch {
           return rejectGpu("PTX is not valid UTF-8 text");
         }

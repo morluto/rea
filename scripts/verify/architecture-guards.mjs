@@ -330,6 +330,19 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
+);
+
 // Turning a completed result into a cancellation after cleanup is the
 // finalization precedence that runOwned owns (src/providers/runOwned.ts).
 checkCounted(
@@ -425,11 +438,28 @@ checkCounted(
 // An input fault is a ParseFailureError; a broken internal assumption is a
 // defect, not an input fault, and throws invariantViolation from
 // src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 
@@ -500,7 +530,7 @@ checkCounted(
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/providers/runOwned.ts"],
 );
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;

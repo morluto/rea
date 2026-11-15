@@ -38,6 +38,8 @@ import {
   resolvedAnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { signatureInspectionFixture } from "../../tests/fixtures/nativeCommands.js";
 
@@ -863,6 +865,64 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
   });
   expect(result.error.cleanupResources).toEqual([]);
   await resources.close();
+});
+
+it("releases the private copy before reporting an inspection defect", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    createRoot,
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
+  expect(result.error).toMatchObject({
+    operation: "inspect_signature",
+    cause: defect,
+    cleanupIncomplete: false,
+  });
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  await resources.close();
+});
+
+it("keeps an inspection defect primary when releasing the private copy fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(roots);
+  const primary = result.error.cleanupPrimary;
+  expect(primary).toBeInstanceOf(ProviderAdapterError);
+  expect(primary?.cause).toBe(defect);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "execution_failure" },
+        cleanup_error: { code: "cleanup_incomplete" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)).toBe(primary);
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it.each(["io", "cancelled"] as const)(
