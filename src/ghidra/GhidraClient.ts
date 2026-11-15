@@ -12,11 +12,15 @@ import type { FileHandle } from "node:fs/promises";
 import type { Socket } from "node:net";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   providerRetryAction,
   type ProviderOperationHealth,
@@ -33,11 +37,8 @@ import {
   Utf8NdjsonLineBuffer,
   Utf8NdjsonDecodingError,
 } from "../process/Utf8NdjsonLineBuffer.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
@@ -163,7 +164,8 @@ export class GhidraClient {
     | { readonly path: string; readonly disposition: "publish" | "discard" }
     | undefined;
   #checkpointRestore: GhidraPackedProgram | undefined;
-  readonly #cleanupFailures = new Set<AnalysisError>();
+  /** Reported by every cleanup failure until a close releases everything. */
+  #cleanupRelease = new AnalysisCleanupRelease();
   #targetAdmission: JsonValue | undefined;
   #token: string | undefined;
   // Retain authentication identities for diagnostics from late request settlement.
@@ -298,7 +300,7 @@ export class GhidraClient {
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then(
         (closed) =>
-          closed === ABORTED
+          closed instanceof AbortedWait
             ? err(this.#startupWaitCancellation(signal))
             : this.start(signal),
         (cause: unknown) =>
@@ -359,7 +361,7 @@ export class GhidraClient {
     const signalAborted = (): boolean => signal?.aborted === true;
     if (signalAborted()) return err(this.#startupWaitCancellation(signal));
     const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited === ABORTED || (waited.ok && signalAborted()))
+    if (waited instanceof AbortedWait || (waited.ok && signalAborted()))
       return err(this.#startupWaitCancellation(signal));
     if (waited.ok || waited.error.cleanupFailure !== undefined) return waited;
     return this.start(signal);
@@ -894,8 +896,7 @@ export class GhidraClient {
         ];
       },
     });
-    this.#cleanupFailures.add(failure);
-    return failure;
+    return this.#cleanupRelease.bind(failure);
   }
 
   /** Observed failures that prevent a retained session from being reused. */
@@ -1436,8 +1437,8 @@ export class GhidraClient {
       this.#runId = undefined;
       this.#responseLines.reset();
       if (forcedStopFailure !== undefined) throw forcedStopFailure.cause;
-      for (const failure of this.#cleanupFailures) failure.resolveCleanup();
-      this.#cleanupFailures.clear();
+      this.#cleanupRelease.confirm();
+      this.#cleanupRelease = new AnalysisCleanupRelease();
     } finally {
       this.#closing = false;
     }
@@ -1560,7 +1561,7 @@ export class GhidraClient {
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.signal.reason === OwnerCancellation.startupOwnerClosed)
       return this.#failure(
         "process",
         "Ghidra session closed during startup",

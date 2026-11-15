@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { win32 } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "./AbortablePromise.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 
 /** Parse PATH once, preserving quoted semicolons and explicit relative entries. */
@@ -85,7 +85,7 @@ export const findWindowsExecutable = async (
           stat(candidate),
           options.signal,
         );
-        if (metadata === ABORTED || options.signal.aborted)
+        if (metadata instanceof AbortedWait || options.signal.aborted)
           return err({ kind: "interrupted" });
         if (metadata.isFile()) return ok(candidate);
       } catch (cause: unknown) {

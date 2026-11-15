@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../../domain/analysisErrorCore.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, statSync, type BigIntStats } from "node:fs";
 import { open, mkdtemp, rm, stat } from "node:fs/promises";
@@ -933,7 +934,7 @@ export const awaitTerminalExit = async ({
           })),
         ])
           .finally(() => {
-            deliveryBound.abort();
+            deliveryBound.abort(OwnerCancellation.noLongerNeeded);
           })
           .then(
             ({ delivery, reason: deliveryReason }) => {
@@ -1044,7 +1045,7 @@ export const awaitTerminalExit = async ({
         }).catch(() => undefined),
       ])
         .finally(() => {
-          grace.abort();
+          grace.abort(OwnerCancellation.noLongerNeeded);
         })
         .then(finish);
     });

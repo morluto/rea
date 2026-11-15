@@ -1,8 +1,13 @@
 import type { LiteralFeatureMatch } from "../domain/native/literalFeatureMatch.js";
-import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
+import {
+  searchProceduresFact,
+  searchStringsFact,
+} from "../domain/native/nativeOperationFacts.js";
+import { executeFact } from "./AnalysisOperationFacts.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
+  AnalysisOperationPort,
 } from "./AnalysisProvider.js";
 import {
   AnalysisCancelledError,
@@ -30,20 +35,10 @@ type ObserveCall = (
   signal?: AbortSignal,
 ) => Promise<Result<AnalysisExecution, AnalysisError>>;
 
-type LiteralSearchSource = readonly [
-  "search_strings" | "search_procedures",
-  "string" | "procedure",
-];
-
 interface ReferenceTraceRequest {
   readonly matches: readonly LiteralFeatureMatch[];
   readonly signal?: AbortSignal;
 }
-
-const LITERAL_SEARCH_SOURCES: readonly LiteralSearchSource[] = [
-  ["search_strings", "string"],
-  ["search_procedures", "procedure"],
-];
 
 export interface LiteralTraceInput {
   readonly query: string;
@@ -52,17 +47,21 @@ export interface LiteralTraceInput {
 
 /** Trace matching strings and procedures through provider xrefs. */
 export const traceLiteralFeature = async (
-  call: AnalysisCall,
-  observe: ObserveCall,
+  analysis: AnalysisOperationPort,
   input: LiteralTraceInput,
   signal?: AbortSignal,
 ): EnhancedResult => {
-  const searched = await literalMatches(
-    call,
-    input,
-    LITERAL_SEARCH_SOURCES,
-    signal,
-  );
+  const observe: ObserveCall = (name, arguments_, operationSignal) =>
+    analysis.execute(
+      name,
+      arguments_,
+      operationSignal === undefined ? {} : { signal: operationSignal },
+    );
+  const call: AnalysisCall = async (name, arguments_, operationSignal) => {
+    const observed = await observe(name, arguments_, operationSignal);
+    return observed.ok ? ok(observed.value.result) : observed;
+  };
+  const searched = await literalMatches(analysis, input, signal);
   if (!searched.ok) return searched;
   const traced = await traceReferences(call, observe, {
     matches: searched.value.matches,
@@ -80,44 +79,42 @@ export const traceLiteralFeature = async (
 };
 
 const literalMatches = async (
-  call: AnalysisCall,
+  analysis: AnalysisOperationPort,
   input: LiteralTraceInput,
-  sources: readonly LiteralSearchSource[],
   signal?: AbortSignal,
 ): Promise<Result<{ matches: LiteralFeatureMatch[] }, AnalysisError>> => {
-  const matches: LiteralFeatureMatch[] = [];
-  for (const [tool, type] of sources) {
-    const result = await call(
-      tool,
-      {
-        pattern: input.query,
-        mode: "literal",
-        case_sensitive: input.case_sensitive,
-      },
-      signal,
-    );
-    if (!result.ok) return result;
-    const items = (
-      type === "string"
-        ? nativeInventoryRowsSchemas.strings
-        : nativeInventoryRowsSchemas.names
-    ).safeParse(result.value);
-    if (!items.success)
-      return err(
-        new AnalysisOutputError(
-          tool,
-          "provider returned an invalid search result",
-        ),
-      );
-    for (const item of items.data) {
-      matches.push(
-        type === "string"
-          ? { ...item, type: "string" }
-          : { ...item, type: "procedure" },
-      );
-    }
-  }
-  return ok({ matches });
+  const parameters = {
+    pattern: input.query,
+    mode: "literal",
+    case_sensitive: input.case_sensitive,
+  };
+  const options = signal === undefined ? {} : { signal };
+  const strings = await executeFact(
+    analysis,
+    searchStringsFact,
+    parameters,
+    options,
+  );
+  if (!strings.ok) return strings;
+  const procedures = await executeFact(
+    analysis,
+    searchProceduresFact,
+    parameters,
+    options,
+  );
+  if (!procedures.ok) return procedures;
+  return ok({
+    matches: [
+      ...strings.value.fact.map((item) => ({
+        ...item,
+        type: "string" as const,
+      })),
+      ...procedures.value.fact.map((item) => ({
+        ...item,
+        type: "procedure" as const,
+      })),
+    ],
+  });
 };
 
 const traceReferences = async (

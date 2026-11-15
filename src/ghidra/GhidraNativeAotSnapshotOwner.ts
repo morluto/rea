@@ -8,6 +8,7 @@ import {
   AnalysisArtifactChangedError,
   cancelledBy,
   carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -24,10 +25,7 @@ import {
 } from "../domain/native/nativeAotSnapshotObservation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { GhidraClient, GhidraTargetSnapshot } from "./GhidraClient.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 
@@ -70,7 +68,11 @@ export class GhidraNativeAotSnapshotOwner {
       return err(this.#cancelled(operation, callerSignal.reason, observations));
     if (this.#closed)
       return err(
-        this.#cancelled(operation, STARTUP_OWNER_CLOSED, observations),
+        this.#cancelled(
+          operation,
+          OwnerCancellation.startupOwnerClosed,
+          observations,
+        ),
       );
     if (this.#conflict !== undefined)
       return err(this.#identityError(operation, imageBase, observations));
@@ -115,7 +117,7 @@ export class GhidraNativeAotSnapshotOwner {
               operation,
               callerSignal?.aborted
                 ? callerSignal.reason
-                : STARTUP_OWNER_CLOSED,
+                : OwnerCancellation.startupOwnerClosed,
               observations,
               this.#observation(cached),
             ),
@@ -179,7 +181,7 @@ export class GhidraNativeAotSnapshotOwner {
           callerSignal?.aborted
             ? callerSignal.reason
             : this.#closed
-              ? STARTUP_OWNER_CLOSED
+              ? OwnerCancellation.startupOwnerClosed
               : attempt.signal.reason,
           observations,
           this.#observation(settled.value),

@@ -20,10 +20,7 @@ import type { ProviderInspectionScope } from "../application/ProviderInspectionS
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -73,6 +70,7 @@ import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
@@ -340,7 +338,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   closeOwnedResources() {
     this.#closing ??= Promise.resolve()
       .then(async () => {
-        this.#lifetime.abort(STARTUP_OWNER_CLOSED);
+        this.#lifetime.abort(OwnerCancellation.startupOwnerClosed);
         this.#inspectionAttempt?.close();
         await Promise.allSettled([
           ...this.#inspectionWork,
