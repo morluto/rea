@@ -9,10 +9,8 @@ import {
   writeIdaDiagnostic,
   type IdaDiagnosticMatch,
 } from "./IdaDiagnosticWriter.js";
-import {
-  isIdaAuthenticationHeader,
-  idaExplicitSensitiveValues,
-} from "./IdaRegistrationIdentity.js";
+import { idaExplicitSensitiveValues } from "./IdaRegistrationIdentity.js";
+import { isTransportCredentialHeader } from "../domain/explicitSensitiveValues.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
@@ -155,7 +153,7 @@ export const createIdaDiagnosticRedactor = (
       ? Object.entries(config.headers)
       : [];
   const values = headers.flatMap(([name, value]) => {
-    if (!isIdaAuthenticationHeader(name)) return [];
+    if (!isTransportCredentialHeader(name)) return [];
     // Fetch normalizes surrounding HTTP whitespace before sending headers.
     const normalized = value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
     if (normalized.length === 0) return [];
