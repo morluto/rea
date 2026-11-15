@@ -131,7 +131,7 @@ it("does not replace a parsed contradictory lipo range with structural fallback"
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "integrity",
-      message: expect.stringContaining("disagrees with the Mach-O FAT table"),
+      integrityCheck: "layout-consistency",
     });
   } finally {
     await reader.close();

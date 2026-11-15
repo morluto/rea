@@ -70,7 +70,7 @@ export const projectFridaSessionStatusView = (
     source_provider: parent.provider ?? null,
     source_parameters: parameters.data,
     summary: { ...status, messages_retained: messages.length },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [
         ...parent.limitations,

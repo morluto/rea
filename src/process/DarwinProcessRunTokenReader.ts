@@ -19,6 +19,7 @@ import {
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
@@ -197,6 +198,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
         readonly timeoutMs: number;
         readonly userMessage: string;
         readonly remediationAction: string;
+        readonly limit: AnalysisControlLimit;
       }
     | undefined {
     const outcome = this.compilerOutcome;
@@ -206,6 +208,16 @@ export class DarwinProcessOwnershipInspectionError extends Error {
       timeoutMs: outcome.timeoutMs,
       userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(outcome.timeoutMs)} ms.`,
       remediationAction: swiftcCompileTimeoutRecovery(outcome.timeoutMs),
+      limit: {
+        control_kind: "environment",
+        environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+        effective_value: outcome.timeoutMs,
+        unit: "ms",
+        minimum: 1,
+        maximum: MAX_NODE_TIMER_DELAY_MS,
+        default_value: DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
+        applies_at: "next_startup",
+      },
     };
   }
 

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { chmod } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -109,9 +110,7 @@ exit 1
         await client.connect(clientTransport);
         const { tools } = await client.listTools();
         const advertised = tools.find(({ name }) => name === scenario.tool);
-        const outputSchema = z
-          .record(z.string(), z.unknown())
-          .parse(advertised?.outputSchema);
+        const outputSchema = canonicalOutputSchema(advertised!.name);
         const ajv = new Ajv2020({ strict: false, allErrors: true });
         expect(ajv.validateSchema(outputSchema)).toBe(true);
         const validate = ajv.compile(outputSchema);

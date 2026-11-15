@@ -1,8 +1,9 @@
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { expect, it } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { sqliteDatabaseFailure } from "../../../src/sqlite/SqliteDatabaseFailures.js";
+import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
@@ -22,12 +23,9 @@ it.each([null, "owned stop unconfirmed"])(
       undefined,
       ["pid:owned-fixture"],
     );
-    const failure = sqliteDatabaseFailure(
+    const failure = classifyProviderFailure(
       cause,
-      "/selected.db",
-      "worker",
-      undefined,
-      1234,
+      sqliteDatabaseDialect("/selected.db", "worker", undefined, 1234),
     );
     expect(failure.cause).toBe(cause);
     const projected = projectAnalysisError(failure);
@@ -77,12 +75,9 @@ it.each([null, "owned stop unconfirmed"])(
 
 it("does not recommend a timer above the supported maximum", () => {
   const failure = projectAnalysisError(
-    sqliteDatabaseFailure(
+    classifyProviderFailure(
       new OwnedCommandFailure("timeout", "deadline"),
-      "/selected.db",
-      "worker",
-      undefined,
-      2_147_483_647,
+      sqliteDatabaseDialect("/selected.db", "worker", undefined, 2_147_483_647),
     ),
   );
   expect(failure.details).toMatchObject({ timeout_ms: 2_147_483_647 });
@@ -92,10 +87,9 @@ it("does not recommend a timer above the supported maximum", () => {
 
 it("says diagnostic capture has no runtime override", () => {
   const projected = projectAnalysisError(
-    sqliteDatabaseFailure(
+    classifyProviderFailure(
       new OwnedCommandFailure("output-limit", "diagnostics exceeded"),
-      "/selected.db",
-      "worker",
+      sqliteDatabaseDialect("/selected.db", "worker"),
     ),
   );
   expect(projected.remediation.action).toContain(
@@ -131,7 +125,10 @@ it.each(["/selected.db", "./Database files/another.db"])(
         invalidUtf8: false,
       },
     });
-    const failure = sqliteDatabaseFailure(cause, path, "worker");
+    const failure = classifyProviderFailure(
+      cause,
+      sqliteDatabaseDialect(path, "worker"),
+    );
     expect(failure.cause).toBe(cause);
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "resource_constraint",
@@ -162,11 +159,9 @@ it("does not infer cancellation from a later signal when cleanup carries no canc
     cleanup: { reason: "close failed", resources: ["/owned/reply.json"] },
   });
   controller.abort(new Error("later caller cancellation"));
-  const failure = sqliteDatabaseFailure(
+  const failure = classifyProviderFailure(
     cause,
-    "/selected.db",
-    "worker",
-    controller.signal,
+    sqliteDatabaseDialect("/selected.db", "worker", controller.signal),
   );
   expect(failure.cleanupIncomplete).toBe(true);
   expect(failure.cleanupPrimary).toBeUndefined();

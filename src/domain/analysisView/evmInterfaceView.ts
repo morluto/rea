@@ -112,10 +112,7 @@ export const projectEvmInterfaceView = (
         diagnostics: { ...diagnostics, stdout_code_units: stdout.length },
         limitations: report.limitations,
       },
-      coverage: completeWithinViewCoverage(
-        report.functions.length,
-        report.functions.length,
-      ),
+      coverage: completeWithinViewCoverage(report.functions.length),
     });
   }
   if (view.facet === "functions") {

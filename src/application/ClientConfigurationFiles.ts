@@ -123,8 +123,8 @@ export const readConfigurationFile = async (
 /** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
-  resources?: ArtifactResourceScope,
-  platform: NodeJS.Platform = process.platform,
+  resources: ArtifactResourceScope | undefined,
+  platform: NodeJS.Platform,
   writeOverrides?: Readonly<Record<string, string>>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
@@ -156,9 +156,9 @@ export const readClientConfigurationFiles = async (
       const environment = clientRegistrationEnvironment(
         document.value,
         client,
+        platform,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
-        platform,
       );
       if (!environment.ok)
         return err(
@@ -182,9 +182,9 @@ export const readClientConfigurationFiles = async (
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
     client,
+    platform,
     writeOverrides,
     "effective",
-    platform,
   );
   if (!environment.ok)
     return err(
@@ -249,11 +249,13 @@ export const clientConfigurationForWrite = (
 /** Project a client's effective user registration without modifying its source files. */
 export const effectiveClientConfiguration = (
   sources: readonly ClientConfigurationSource[],
-  target?: {
-    readonly client: Pick<SetupClient, "configPath" | "configPaths">;
-    readonly document: ClientConfigurationDocument | undefined;
-  },
-  platform: NodeJS.Platform = process.platform,
+  target:
+    | {
+        readonly client: Pick<SetupClient, "configPath" | "configPaths">;
+        readonly document: ClientConfigurationDocument | undefined;
+      }
+    | undefined,
+  platform: NodeJS.Platform,
 ): ClientConfigurationDocument | undefined => {
   const documents =
     target === undefined
@@ -389,7 +391,7 @@ export const launchedRegistrationEntry = (
 /** Merge admitted layers without re-reading or changing their source documents. */
 export const mergeClientConfigurationDocuments = (
   documents: readonly ClientConfigurationDocument[],
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): ClientConfigurationDocument | undefined => {
   const last = documents.at(-1);
   if (last === undefined) return undefined;
@@ -439,8 +441,8 @@ export const mergeClientConfigurationDocuments = (
 /** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
-  resources?: ArtifactResourceScope,
-  platform: NodeJS.Platform = process.platform,
+  resources: ArtifactResourceScope | undefined,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<
     {

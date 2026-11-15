@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type {
+  AnalysisControlLimit,
   AnalysisInvocationSettingLimit,
+  AnalysisLimit,
   AnalysisSettingId,
   AnalysisSettingLimit,
 } from "./analysisSettings.js";
@@ -650,7 +652,17 @@ export const analysisSettingLimit = (
 };
 
 /** Re-scope an enforced limit for a caller whose runtime ended with this invocation. */
-export const invocationSettingLimit = ({
+export const invocationLimit = (
+  limit: AnalysisLimit,
+): AnalysisInvocationSettingLimit | AnalysisControlLimit => {
+  if (!("control_kind" in limit)) return invocationSettingLimit(limit);
+  // A new invocation reads its environment without restarting a running REA.
+  return limit.control_kind === "environment"
+    ? { ...limit, applies_at: "next_invocation" }
+    : { ...limit };
+};
+
+const invocationSettingLimit = ({
   applies_at: _appliesAt,
   scope: _scope,
   ...facts

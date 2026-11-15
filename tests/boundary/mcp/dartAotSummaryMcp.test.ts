@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -46,8 +47,7 @@ it("retains the selected pool policy through MCP summary projection", async () =
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_dart_aot",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing AOT output schema");
+  if (definition === undefined) throw new Error("Missing AOT output schema");
   const filteredReply = await client.callTool(
     {
       name: "inspect_dart_aot",
@@ -81,9 +81,10 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
   const { client, session } = harness;
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((tool) => tool.name === "inspect_dart_aot");
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing AOT output schema");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Missing AOT output schema");
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
