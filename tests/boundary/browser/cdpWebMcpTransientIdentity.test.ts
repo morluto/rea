@@ -527,3 +527,78 @@ it.each([
       );
   },
 );
+
+// Without a subframe in the initial tree, discovery starts with full
+// coverage, so only the unverified navigation can mark it limited.
+it.each([
+  ["no loader", {}, true],
+  ["a known loader", { loaderId: "loader-A" }, false],
+] as const)(
+  "limits coverage for a live subframe's tools after a navigation with %s",
+  async (_label, loader, limited) => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: origin + "/app",
+                },
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }, origin) => {
+        if (method !== "WebMCP.enable") return undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        const child = (extra: Record<string, unknown>) => ({
+          method: "Page.frameNavigated",
+          ...scope,
+          params: {
+            frame: {
+              id: "child",
+              parentId: "frame-main",
+              url: origin + "/child",
+              ...extra,
+            },
+          },
+        });
+        return [
+          child({ loaderId: "loader-A" }),
+          {
+            method: "WebMCP.toolsAdded",
+            ...scope,
+            params: {
+              tools: [{ name: "live", frameId: "child", inputSchema: {} }],
+            },
+          },
+          child(loader),
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items.map((tool) => tool.name)).toEqual(["live"]);
+    expect(
+      result.value.completeness.attach_limited_sections.includes(
+        "webmcp_tools",
+      ),
+    ).toBe(limited);
+    expect(
+      result.value.limitations.filter((limitation) =>
+        limitation.startsWith("Document identity could not be established"),
+      ),
+    ).toEqual(limited ? [expect.stringContaining("frames child:")] : []);
+  },
+);
