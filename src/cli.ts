@@ -1,5 +1,9 @@
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
 import {
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
+import {
   CLI_COMMAND_REGISTRATIONS,
   CLI_REGISTRATION_ORDER,
   type CliCommandModules,
@@ -141,3 +145,13 @@ export const createCli = (
       module: CLI_COMMAND_MODULES[id],
     })),
   });
+
+// This module registers the command catalog and exports `createCli`; it does not
+// serve. Running the compiled file directly is not a CLI invocation, so it must
+// not exit 0 silently and look like a successful run.
+if (isDirectEntrypoint(CURRENT_ENTRYPOINT_PATH, import.meta.url)) {
+  process.stderr.write(
+    "dist/cli.js is the command registry, not the CLI entry point. Run `rea` (scripts/rea.mjs) instead.\n",
+  );
+  process.exitCode = 1;
+}
