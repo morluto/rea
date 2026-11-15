@@ -34,7 +34,6 @@ import {
   fromSetup,
   present,
   fixedProjectLocation,
-  fxLocation,
   gooseLocation,
   junieLocation,
   type McpRegistrationLocationContext,
@@ -104,26 +103,7 @@ export const MCP_REGISTRATION_CLIENTS = {
   codex: tableClient("codex"),
   cursor: tableClient("cursor"),
   "factory-droid": tableClient("droid"),
-  fx: {
-    kind: "registration-only",
-    displayName: "fx",
-    format: "fx",
-    globalLocation: fxLocation,
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url", "args"],
-      stdio: [
-        { kind: "optional-enum", field: "type", values: ["local", "stdio"] },
-        {
-          kind: "all",
-          conditions: [
-            { kind: "missing", field: "type" },
-            { kind: "present", field: "url" },
-          ],
-        },
-      ],
-    },
-  },
+  fx: tableClient("fx"),
   "gemini-cli": tableClient("gemini_cli"),
   goose: {
     kind: "registration-only",
@@ -236,11 +216,7 @@ export interface McpRegistrationClient {
   readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
   readonly scope: "global" | "project";
   readonly format: ClientConfigurationFormat;
-  /**
-   * fx keeps a profile only its owner may read. `home` is the caller's home
-   * folder, which the private folder mode must never reach through a link.
-   */
-  readonly privateProfile?: { readonly home: string };
+  readonly privateProfile?: SetupClient["privateProfile"];
   /**
    * The table row resolved for this user-scope registration. Its read-scope
    * facts (Gemini settings policy, MSIX package storage) govern the write.
@@ -332,7 +308,9 @@ const globalTarget = async (
       ...(resolved.inlineConfiguration === undefined
         ? {}
         : { inlineConfiguration: resolved.inlineConfiguration }),
-      ...(id === "fx" ? { privateProfile: { home: context.home } } : {}),
+      ...(setupClient?.privateProfile === undefined
+        ? {}
+        : { privateProfile: setupClient.privateProfile }),
       ...(setupClient === undefined ? {} : { setupClient }),
     },
     markers: resolved.markers.map((marker) => selectedPath(marker, context)),
