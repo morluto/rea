@@ -87,6 +87,7 @@ const responseSchema = z.object({
   identity_status: z.literal("partial").optional(),
   error: z.string().optional(),
   message: z.string().optional(),
+  // lifecycle-state: the bridge's report of how far the command ran.
   execution_state: z
     .enum(["not_started", "running", "complete", "failed", "unknown"])
     .optional(),
@@ -95,6 +96,7 @@ const responseSchema = z.object({
     .array(
       z.object({
         request_id: z.string().uuid(),
+        // lifecycle-state: how far each completed command ran.
         execution_state: z.enum(["not_started", "complete", "failed"]),
       }),
     )

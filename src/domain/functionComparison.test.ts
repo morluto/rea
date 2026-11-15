@@ -1292,6 +1292,26 @@ describe("function comparison Swift string literals", () => {
       stringsDimension("7", withLiterals("0x1000", []), "8", named),
     ).toMatchObject({ status: "changed" });
   });
+
+  it("leaves a side's count unknown when its names cannot be placed in the function", () => {
+    const withString = (base: "0x1000" | "0x2000", value: string) =>
+      functionDossierSchema.parse({
+        ...dossier("return 0;", base),
+        referenced_strings: [
+          { address: "0x9000", source_address: base, value },
+        ],
+      });
+    // A name read from below the procedure start has no function offset.
+    const unplaced = functionDossierSchema.parse({
+      ...withString("0x1000", "before"),
+      referenced_names: [
+        { address: "0x3000", value: "helper", source_address: "0x0800" },
+      ],
+    });
+    expect(
+      stringsDimension("9", unplaced, "a", withString("0x2000", "after")),
+    ).toMatchObject({ status: "changed", left_count: null, right_count: 1 });
+  });
 });
 
 describe("function comparison partial Swift literal coverage", () => {
