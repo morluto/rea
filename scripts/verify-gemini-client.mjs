@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -24,6 +23,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const { geminiUnsupportedLiteral } = await importVerifierSource(
   new URL("./lib/gemini-schema-literals.mts", import.meta.url).href,
@@ -49,7 +49,9 @@ assert(
   "Usage: verify-gemini-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-gemini-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-gemini-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");

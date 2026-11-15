@@ -228,7 +228,7 @@ describe("Windows Claude Desktop configuration location", () => {
           environment: env,
         })
       ).find(({ client: name }) => name === "claude_desktop");
-      expect(status).toMatchObject({ state: "invalid", config_path: foreign });
+      expect(status).toMatchObject({ state: "unknown", config_path: foreign });
       await expect(
         inspectClientConfiguration(client, {}, command),
       ).resolves.toMatchObject({ status: "invalid" });

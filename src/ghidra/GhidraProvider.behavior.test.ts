@@ -123,6 +123,7 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 const GHIDRA_ANNOTATIONS_RETAINED =
@@ -4795,6 +4796,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
@@ -5014,7 +5031,7 @@ describe("Ghidra missing project program", () => {
 });
 
 describe("Ghidra changed project", () => {
-  const launchFailure = async (cause: unknown) => {
+  const launchFailure = async (cause: unknown, viaLauncher = true) => {
     const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
     onTestFinished(async () => {
       await rm(root, { recursive: true, force: true });
@@ -5026,9 +5043,9 @@ describe("Ghidra changed project", () => {
       "Ghidra headless launch failed",
       { failure_kind: "start" },
       {
-        cause: new GhidraLaunchError("Ghidra headless launch failed", {
-          cause,
-        }),
+        cause: viaLauncher
+          ? new GhidraLaunchError("Ghidra headless launch failed", { cause })
+          : cause,
       },
     );
     const ghidra = provider(
@@ -5082,6 +5099,28 @@ describe("Ghidra changed project", () => {
     );
     expect(error.cause).toBe(physical);
   });
+
+  it.each([true, false])(
+    "keeps the integrity check a changed artifact named (via launcher: %s)",
+    async (viaLauncher) => {
+      const { projected } = await launchFailure(
+        new AnalysisArtifactChangedError(
+          "open_binary",
+          "/projects/selected",
+          GHIDRA_PROJECT_PROFILE_MISMATCH,
+          { integrityCheck: "container-identity" },
+        ),
+        viaLauncher,
+      );
+      expect(projected).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          operation: "list_documents",
+          integrity_check: "container-identity",
+        },
+      });
+    },
+  );
 
   it("keeps the generic start failure for other launch failures", async () => {
     const { projected } = await launchFailure(new Error("spawn failed"));
@@ -6586,6 +6625,14 @@ it("refuses a changed installation before creating a target-bound native client"
         current_installation: { provider_version: "12.1.5" },
       },
     });
+    // The actionable reason reaches the caller, not only details.
+    const projected = projectAnalysisError(result.error);
+    expect(projected.message).toContain(
+      "installation version differs from the selected analysis profile",
+    );
+    expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).toContain("close_binary");
+    expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);
   } finally {
@@ -6846,7 +6893,7 @@ it("session-observation failure clears only its resolved cleanup dependency afte
       close: async () => {
         closes++;
         if (closes === 1) return err(retained);
-        retained.resolveCleanup();
+        releaseOwnedCleanup(retained);
         return ok(null);
       },
     }),

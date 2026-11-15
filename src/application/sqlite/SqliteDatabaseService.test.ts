@@ -177,10 +177,11 @@ it("accepts sqlite_schema rows without requiring a fabricated declaration", asyn
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
-it("parses historical report omissions as unknown without supplying a default", () => {
+// Evidence format 1 requires the reported worker deadline; a report from an
+// earlier format is refused rather than read as unknown.
+it("refuses a report without its worker deadline", () => {
   const { worker_timeout_ms: _default, ...historical } = fixture();
-  const parsed = sqliteDatabaseSchema.parse(historical);
-  expect(parsed).not.toHaveProperty("worker_timeout_ms");
+  expect(sqliteDatabaseSchema.safeParse(historical).success).toBe(false);
 });
 
 it("preserves producer failures and rejects pre-cancelled requests before effects", async () => {

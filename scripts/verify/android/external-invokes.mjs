@@ -5,7 +5,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { artifactMcpCall } from "../../lib/artifact-e2e.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../lib/mcp-verification-environment.mjs";
+import {
+  INLINE_EVIDENCE_MCP_ENVIRONMENT,
+  schemaVerifierEnvironment,
+} from "../../lib/mcp-verification-environment.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -104,7 +107,10 @@ const verifyApk = async (options, path, dexEntry) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: { ...options.environment, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
+    env: schemaVerifierEnvironment({
+      ...options.environment,
+      ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    }),
     stderr: "pipe",
   });
   const client = new Client({
@@ -250,7 +256,10 @@ const verifySiteBudget = async (options, path, control) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: { ...options.environment, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
+    env: schemaVerifierEnvironment({
+      ...options.environment,
+      ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    }),
     stderr: "pipe",
   });
   const client = new Client({ name: "rea-external-site-budget", version: "1" });

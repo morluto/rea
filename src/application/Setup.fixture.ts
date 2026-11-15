@@ -29,7 +29,7 @@ export class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory = "/fixture/home";
   skillDestinations(clientIds: readonly string[]) {
-    return skillDestinations(this.homeDirectory, clientIds);
+    return skillDestinations(this.homeDirectory, clientIds, {}, this.platform);
   }
   registrationCommand: readonly string[];
   registrationCommandBlocker?: string;

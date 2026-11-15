@@ -164,6 +164,8 @@ export const answerSchema = z.looseObject({
   output_bytes: z.int().nonnegative().optional(),
   stdout_bytes: z.int().nonnegative().optional(),
   stderr: z.string().optional(),
+  /** False when the supervisor published a result but the process group is not confirmed gone. */
+  settled: z.boolean().optional(),
   apt: z
     .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
     .optional(),

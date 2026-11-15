@@ -38,6 +38,7 @@ it.each([2, 3])(
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

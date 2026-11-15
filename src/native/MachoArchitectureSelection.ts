@@ -5,7 +5,13 @@ import {
   X86_64_HOST_SUBTYPE_PREFERENCE,
   X86_HOST_SUBTYPE_PREFERENCE,
 } from "../domain/apple/machoCpuIdentity.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { LipoArchitecture } from "./parsers/lipo.js";
+import type {
+  AdmittedMachoSlice,
+  MachoSliceSelectionRefusal,
+} from "./metadata/MachoSliceSelection.js";
 
 /** Apple tool names for the domain-owned host subtype preference. */
 const preferredSubtypes = <Subtype extends number>(
@@ -54,6 +60,24 @@ export const MACHO_ARCHITECTURE_POLICIES: Readonly<
     }),
   },
 };
+
+/**
+ * Each policy's subtypes by Apple tool name. The table is this module's
+ * static configuration, and every name in it is distinct, so a name lookup
+ * selects no member of parsed data.
+ */
+const SUBTYPES_BY_NAME: ReadonlyMap<
+  MachoArchitecturePolicy,
+  ReadonlyMap<string, MachoArchitecturePolicy["subtypes"][number]>
+> = new Map(
+  Object.values(MACHO_ARCHITECTURE_POLICIES).map((policy) => [
+    policy,
+    new Map(policy.subtypes.map((subtype) => [subtype.name, subtype])),
+  ]),
+);
+
+const subtypeNamed = (policy: MachoArchitecturePolicy, name: string) =>
+  SUBTYPES_BY_NAME.get(policy)?.get(name);
 
 /** Unlisted subtypes follow the preferred slices in FAT table order. */
 const machoSubtypeRank = (
@@ -112,7 +136,7 @@ export const machoKnownCodeSignSelector = (
 };
 
 /** Keep the selected lipo record, including its container coordinates. */
-export const selectMachoArchitecture = (
+const selectPreferredArchitecture = (
   policy: MachoArchitecturePolicy,
   available: readonly LipoArchitecture[],
 ): LipoArchitecture | undefined => {
@@ -124,9 +148,7 @@ export const selectMachoArchitecture = (
       architecture.cpu_type_code !== policy.cpuType
     )
       continue;
-    const namedSubtype = policy.subtypes.find(
-      ({ name }) => name === architecture.name,
-    );
+    const namedSubtype = subtypeNamed(policy, architecture.name);
     const recognizedName =
       namedSubtype !== undefined || policy.variantName?.test(architecture.name);
     if (
@@ -149,15 +171,101 @@ export const selectMachoArchitecture = (
 };
 
 /** lipo may label ARM64 V8 as arm64 even though tools select it as arm64v8. */
-export const machoToolArchitectureName = (
+const machoToolArchitectureName = (
   policy: MachoArchitecturePolicy,
   architecture: LipoArchitecture,
 ): string => {
-  const named = policy.subtypes.find(({ name }) => name === architecture.name);
+  const named = subtypeNamed(policy, architecture.name);
   const actual = policy.subtypes.find(
     ({ subtype }) => subtype === architecture.cpu_subtype_base,
   );
   return named !== undefined && actual !== undefined && named !== actual
     ? actual.name
     : architecture.name;
+};
+
+/**
+ * lipo appends the pointer-auth ABI version to arm64e (`arm64e.v1`). Only
+ * dyld_info accepts that spelling; the other Apple tools select the slice by
+ * its CPU-family name. Other variants are distinct subtypes (`arm64e.x1`)
+ * that the tools address only by their exact name.
+ */
+export const architectureBaseName = (architecture: string): string =>
+  architecture.replace(/\.v\d+$/u, "");
+
+/** The lipo record one request addresses, and the name tools select it by. */
+export interface SelectedLipoArchitecture {
+  readonly architecture: LipoArchitecture;
+  readonly toolName: string;
+}
+
+/**
+ * Select the lipo record slice tools read, in the same modes as
+ * `selectMachoSlice`: an admitted universal slice by its file range, or a
+ * caller's architecture by CPU policy (by lipo name when REA has no policy
+ * for it). A selector that tools would resolve to more than one record is
+ * refused rather than associated with one record's offset.
+ */
+export const selectLipoArchitecture = (
+  request:
+    | {
+        readonly mode: "admitted";
+        readonly architecture: string;
+        readonly slice: AdmittedMachoSlice;
+      }
+    | { readonly mode: "architecture"; readonly architecture: string },
+  available: readonly LipoArchitecture[],
+): Result<SelectedLipoArchitecture, MachoSliceSelectionRefusal> => {
+  const policy = MACHO_ARCHITECTURE_POLICIES[request.architecture];
+  const toolName = (record: LipoArchitecture): string =>
+    policy === undefined
+      ? record.name
+      : machoToolArchitectureName(policy, record);
+  const spelled =
+    request.architecture === "x86" ? "i386" : request.architecture;
+  const absent = (
+    kind: "architecture_not_present" | "admitted_slice_mismatch",
+  ): Result<never, MachoSliceSelectionRefusal> =>
+    err({
+      kind,
+      message: `lipo did not list ${spelled}; refusing to read another slice`,
+    });
+  const ambiguous = (
+    selector: string,
+  ): Result<never, MachoSliceSelectionRefusal> =>
+    err({
+      kind: "ambiguous_architecture",
+      message: `lipo listed multiple slices addressable as ${selector}; refusing to associate a slice offset with an ambiguous tool selection`,
+    });
+  if (request.mode === "admitted") {
+    const { slice } = request;
+    const matches = available.filter(
+      (candidate) =>
+        candidate.file_offset === slice.offset &&
+        (candidate.size === null || candidate.size === slice.size),
+    );
+    const [admitted] = matches;
+    if (admitted === undefined) return absent("admitted_slice_mismatch");
+    if (matches.length > 1) return ambiguous(spelled);
+    return ok({ architecture: admitted, toolName: toolName(admitted) });
+  }
+  let selected: LipoArchitecture | undefined;
+  if (policy === undefined) {
+    const named = uniqueKeyed(
+      keyedBy(available, ({ name }) => name),
+      spelled,
+    );
+    if (!named.ok) return ambiguous(spelled);
+    selected = named.value;
+  } else selected = selectPreferredArchitecture(policy, available);
+  if (selected === undefined) return absent("architecture_not_present");
+  const name = toolName(selected);
+  const selector = architectureBaseName(name);
+  return available.some(
+    (candidate) =>
+      candidate !== selected &&
+      architectureBaseName(toolName(candidate)) === selector,
+  )
+    ? ambiguous(selector)
+    : ok({ architecture: selected, toolName: name });
 };

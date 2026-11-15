@@ -54,8 +54,9 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -334,12 +335,13 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       // Capture and analyzer work can still throw the exact caller reason.
       if (options.signal?.aborted === true && cause === options.signal.reason) {
         return err(
-          new AnalysisCancelledError("analyze_web_bundle", {
-            cause,
-            ...(captured === undefined
+          cancelledBy(
+            "analyze_web_bundle",
+            carriedReason(cause),
+            captured === undefined
               ? {}
-              : { partialObservation: captured.inspection }),
-          }),
+              : { partialObservation: captured.inspection },
+          ),
         );
       }
       return err(providerError(cause, "analyze_web_bundle", options.signal));
@@ -615,11 +617,8 @@ const withTargetSession = async <
   if (outcome.ok && options.signal?.aborted === true)
     outcome = err(
       partialObservation === undefined
-        ? new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          })
-        : new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
+        ? cancelledBy(operation, options.signal)
+        : cancelledBy(operation, options.signal, {
             partialObservation: partialObservation(outcome.value),
           }),
     );
@@ -724,7 +723,7 @@ const providerError = (
     : cause instanceof AnalysisError
       ? cause
       : signal?.aborted === true
-        ? new AnalysisCancelledError(operation, { cause })
+        ? cancelledBy(operation, carriedReason(cause))
         : new ProviderAdapterError(
             CDP_BROWSER_PROVIDER_IDENTITY.id,
             operation,

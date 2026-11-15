@@ -145,7 +145,8 @@ it.each([
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
         expect(result.error.cleanupPrimary?.cause).toMatchObject({
-          _tag: "KunaDocumentError",
+          name: "KunaDocumentError",
+          kind: "truncated",
           code: "span_short",
         });
         expect(result.error.diagnostics?.span_read).toBeUndefined();

@@ -3,6 +3,7 @@ import {
   schemaDepth,
   serializedBytes,
 } from "./compactJsonSchema.js";
+import { isRecord } from "../domain/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -42,7 +43,8 @@ export type AdvertisedDialectRule =
   | "root-shape"
   // Each keyword outside the allowlist is rejected by at least one target.
   | "keyword"
-  // Gemini, Moonshot and Ark reject type lists and untyped nodes (#7103, #3800).
+  // Gemini, Moonshot and Ark reject type lists and untyped nodes (#7103,
+  // #3800); a value is nullable only as `anyOf` a typed branch and null.
   | "type"
   // VS Code and OpenAI reject arrays without `items`; Gemini rejects `items`
   // beside a non-array type (#3576, #7103).
@@ -90,8 +92,10 @@ const PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,53}$/u;
 const PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
 const TOOL_DESCRIPTION_LIMIT = 4096;
-const DESCRIPTION_LIMIT = 1024;
-const BOUND_LIMIT = 1999;
+/** VS Code truncates a nested description above this many characters. */
+export const ADVERTISED_DESCRIPTION_MAX_CHARACTERS = 1024;
+/** llama.cpp grammars fail at length and item bounds of this value or more. */
+export const ADVERTISED_BOUND_LIMIT = 1999;
 // Moonshot's function-calling API rejects requests while any single tool
 // parameters schema exceeds its literal serialized size cap. Community
 // measurements bound the cap between ~13.7 KB (accepted) and ~15 KB
@@ -335,9 +339,6 @@ export const portablePatternViolations = (
 
 type SchemaKind = "input" | "output";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Visit every schema position; instance literals stay opaque. */
 const visitSchemas = (
   schema: unknown,
@@ -392,6 +393,31 @@ const patternViolations = (
     })),
   );
 
+const isNullBranch = (branch: unknown): boolean =>
+  isRecord(branch) &&
+  branch.type === "null" &&
+  Object.keys(branch).length === 1;
+
+/**
+ * The dialect's one nullable form: `anyOf` a single typed branch and
+ * `{"type": "null"}`, below the root. Every surveyed target accepts a nested
+ * `anyOf` with typed branches, while type lists such as `[T, "null"]` are
+ * rejected by Gemini's legacy schema (#7103) and rewritten differently by
+ * Codex, Goose, VS Code and Gemini CLI. Dropping the null branch would refuse
+ * a valid call such as `limit: null`. The union carries its type in its
+ * branches, so it is not an untyped node.
+ */
+const isNullableUnion = (node: Readonly<Record<string, unknown>>): boolean =>
+  Array.isArray(node.anyOf) &&
+  node.anyOf.length === 2 &&
+  node.anyOf.some(isNullBranch) &&
+  node.anyOf.some(
+    (branch) =>
+      isRecord(branch) &&
+      typeof branch.type === "string" &&
+      PRIMITIVE_TYPES.has(branch.type),
+  );
+
 const nodeViolations = (
   tool: string,
   node: unknown,
@@ -420,7 +446,16 @@ const nodeViolations = (
     if (!ALLOWED_KEYWORDS.has(key)) add("keyword", key);
   const { type } = node;
   if (Array.isArray(type)) add("type", "type-list");
-  else if (type === undefined) add("type", "untyped");
+  else if (type === undefined) {
+    if (!isNullableUnion(node)) add("type", "untyped");
+  }
+  // The null branch of a nullable union is typed by its own `type`.
+  else if (
+    type === "null" &&
+    keyword === "anyOf" &&
+    Object.keys(node).length === 1
+  )
+    return violations;
   else if (typeof type !== "string" || !PRIMITIVE_TYPES.has(type))
     add("type", `type:${String(type)}`);
   if (type === "array" && node.items === undefined)
@@ -449,11 +484,14 @@ const nodeViolations = (
   }
   if (
     typeof node.description === "string" &&
-    node.description.length > DESCRIPTION_LIMIT
+    node.description.length > ADVERTISED_DESCRIPTION_MAX_CHARACTERS
   )
     add("description-length");
   for (const bound of ["minLength", "maxLength", "minItems", "maxItems"])
-    if (typeof node[bound] === "number" && node[bound] >= BOUND_LIMIT)
+    if (
+      typeof node[bound] === "number" &&
+      node[bound] >= ADVERTISED_BOUND_LIMIT
+    )
       add("bound", bound);
   if (isRecord(node.properties))
     for (const name of Object.keys(node.properties))

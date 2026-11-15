@@ -4,7 +4,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -42,6 +42,7 @@ import type {
   ProviderProcessSnapshot,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { admitKunaCommand } from "./KunaAdmission.js";
 import {
   readKunaConfiguration,
   type KunaConfiguration,
@@ -384,32 +385,24 @@ export const inspectKunaInstallation = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   options: KunaInstallationOptions,
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
-  const configuration = readKunaConfiguration(environment, options.platform);
-  if (!configuration.ok)
-    return err({
-      code: configuration.error.code,
-      reason: configuration.error.reason,
-      remediation: configuration.error.remediation,
-      diagnostics: {
-        configured: configuration.error.code !== "not_configured",
-        ...(configuration.error.setting === null
-          ? {}
-          : { setting: configuration.error.setting }),
-      },
-    });
-  const { command } = configuration.value;
+  // An already-cancelled caller keeps its cancellation, not a lookup result.
   assertRegularFileActive(options.signal);
+  const admission = admitKunaCommand(environment, options.platform);
+  if (!admission.ok) {
+    const { code, reason, remediation, diagnostics } = admission.error;
+    return err(
+      code === "executable_missing"
+        ? { code, reason, diagnostics }
+        : { code, reason, remediation, diagnostics },
+    );
+  }
+  const configuration = admission;
+  const { command } = configuration.value;
 
+  // Admission established an executable regular file; resolve its identity.
   let executable: string;
   try {
     executable = await realpath(command);
-    await access(executable, constants.X_OK);
-    if (!(await stat(executable)).isFile())
-      return failure(
-        "executable_missing",
-        `REA_KUNA_COMMAND is not a regular file: ${command}. ${KUNA_COMMAND_REMEDIATION}`,
-        { command },
-      );
   } catch (cause: unknown) {
     return failure(
       "executable_missing",

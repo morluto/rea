@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -31,7 +32,8 @@ import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
-const WINDOWS = process.platform === "win32";
+// Resolution reads paths on this host's filesystem.
+const WINDOWS = HOST_PLATFORM.platform === "win32";
 /** Concurrent four-byte magic reads while enumerating bundle roots. */
 const MAGIC_READ_CONCURRENCY = 8;
 

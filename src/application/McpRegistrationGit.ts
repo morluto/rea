@@ -1,9 +1,14 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   ExecFileOutputCancelledError,
@@ -30,9 +35,7 @@ const gitFailure = (
   cause: unknown,
 ): ConfigurationError | AnalysisCancelledError =>
   cause instanceof ExecFileOutputCancelledError
-    ? new AnalysisCancelledError("Kilo project root discovery", {
-        cause: cause.cause,
-      })
+    ? cancelledBy("Kilo project root discovery", carriedReason(cause.cause))
     : new ConfigurationError(
         "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
         { cause },
@@ -63,7 +66,7 @@ const gitOutput = async (
     throw gitFailure(cause);
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(observation.stdout);
+    return decodeStrictUtf8(observation.stdout, "strip-signature");
   } catch {
     // The failure keeps the exact observation it could not decode.
     throw gitFailure(
@@ -199,9 +202,7 @@ export const resolveKiloRegistrationWorktree = async (
     if (context.signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("Kilo project root discovery", {
-          cause: context.signal.reason,
-        }),
+        cancelledBy("Kilo project root discovery", context.signal),
       );
     throw failure;
   }

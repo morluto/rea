@@ -1,14 +1,17 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
 } from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import { isCdpSessionGoneRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { CdpDomainWith } from "./protocol/CdpCommands.js";
 import {
@@ -178,7 +181,7 @@ export const openCdpEndpoint = async (
   // The browser-socket handshake and discovery commands stay on the discovery
   // deadline. The selected command deadline starts only after discovery returns.
   const discoveryGuardTimeoutMs = Math.min(
-    MAX_BROWSER_DEADLINE_MS,
+    MAX_NODE_TIMER_DELAY_MS,
     discoveryTimeoutMs + 1_000,
   );
   const discoveryLimits = {
@@ -398,7 +401,10 @@ const cleanupCdpTargetCommands = async (
     signal === undefined
       ? cleanup.signal
       : AbortSignal.any([cleanup.signal, signal]);
-  const timeout = setTimeout(() => cleanup.abort(), 1_000);
+  const timeout = setTimeout(
+    () => cleanup.abort(OwnerCancellation.deadlineElapsed),
+    1_000,
+  );
   timeout.unref();
   try {
     if (signal?.aborted !== true) {
@@ -429,20 +435,12 @@ const cleanupCdpTargetCommands = async (
       );
       return true;
     } catch (cause: unknown) {
-      if (isAlreadyDetachedSessionRejection(cause)) return true;
+      if (isCdpSessionGoneRejection(cause)) return true;
       // If detachment is unconfirmed, transport close becomes the definitive boundary.
       return false;
     }
   } finally {
     clearTimeout(timeout);
-    cleanup.abort();
+    cleanup.abort(OwnerCancellation.noLongerNeeded);
   }
 };
-
-const isAlreadyDetachedSessionRejection = (cause: unknown): boolean =>
-  cause instanceof CdpCommandRejection &&
-  (cause.code === -32_001 ||
-    (cause.reportedMessage !== null &&
-      /no session with given id|session with given id not found/iu.test(
-        cause.reportedMessage,
-      )));

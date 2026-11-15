@@ -22,7 +22,7 @@ export interface TerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
   readonly data: string;
-  /** Pre-normalization PTY projection; sensitive captures redact it, older captures may omit it. */
+  /** Pre-normalization PTY projection, omitted when it equals `data`; sensitive captures redact it. */
   readonly raw_data?: string | undefined;
 }
 
@@ -353,7 +353,7 @@ export interface IncompleteProcessCaptureObservations {
   readonly manifest: PartialProcessObservationField<
     UnverifiedProcessCapture["manifest"]
   >;
-  /** Facts retained after completion failed; historical records may omit them. */
+  /** Facts retained after completion failed; omitted when the failure retained none. */
   readonly residual_unknowns?:
     | UnverifiedProcessCapture["residual_unknowns"]
     | undefined;

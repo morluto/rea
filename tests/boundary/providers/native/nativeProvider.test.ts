@@ -55,6 +55,7 @@ import {
   nativeMachoTargetForFile,
   nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 /** The file runner identifies selected .plist inputs as XML. */
 const writeFixturePlist = async (path: string): Promise<void> => {
@@ -1243,7 +1244,7 @@ describe("native command failure projection", () => {
       const result = await client.execute("list_architectures", {});
       if (result.ok) throw new Error("Expected native command failure");
       expect(result.error.cleanupIncomplete).toBe(true);
-      marker.resolveCleanup();
+      releaseOwnedCleanup(marker);
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([
         "run:known",
@@ -1976,7 +1977,7 @@ it("does not reopen a resolved preparation cleanup marker or invent absent compi
     "controlled preparation failure",
     { capturedOutput, cleanupFailure: marker },
   );
-  marker.resolveCleanup();
+  releaseOwnedCleanup(marker);
   const failure = new NativeCommandFailure("swift-demangle", "io", null, {
     cause: inspection,
   });
@@ -2033,7 +2034,7 @@ it("retains an owned preparation cleanup marker when the command deadline expire
       _tag: "AnalysisTimeoutError",
       cause: failure,
     });
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     await client.close();
@@ -2084,7 +2085,7 @@ it("reports the selected command deadline when preparation times out", async () 
     expect(projected.remediation.action).toContain(
       `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance`,
     );
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     await client.close();

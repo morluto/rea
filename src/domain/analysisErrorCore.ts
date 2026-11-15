@@ -1,6 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
+import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -333,7 +334,33 @@ export class AnalysisCancelledError extends AnalysisError {
 /** Why REA ended work on its own authority when no caller abort exists. */
 export type OwnerCancellationKind =
   /** The provider, session, or service owning the work was closed or disposed. */
-  "owner-closed";
+  | "owner-closed"
+  /**
+   * The owner of a shared provider startup closed it. Startup consumers compare
+   * a startup signal's reason with this one to tell owner closure from a
+   * caller's cancellation, so only that startup's owner may abort with it.
+   */
+  | "startup-owner-closed"
+  /**
+   * A bound REA set on its own work elapsed. The owner that set it reports the
+   * timeout; this reason only ends the bounded wait or request.
+   */
+  | "deadline-elapsed"
+  /**
+   * REA stopped work whose result nobody will consume: its wait settled, its
+   * consumer closed, the last waiter left, or a sibling already failed.
+   */
+  | "no-longer-needed";
+
+const OWNER_CANCELLATION_MESSAGES: Readonly<
+  Record<OwnerCancellationKind, string>
+> = {
+  "owner-closed": "REA closed the owner of this operation before it completed",
+  "startup-owner-closed":
+    "REA closed the owner of this operation before it completed",
+  "deadline-elapsed": "An internal REA bound on this operation elapsed",
+  "no-longer-needed": "REA stopped work whose result is no longer needed",
+};
 
 /**
  * A cancellation REA initiated itself, such as a provider closing. It stands
@@ -342,7 +369,7 @@ export type OwnerCancellationKind =
 export class OwnerCancellation extends Error {
   override readonly name = "OwnerCancellation";
   private constructor(readonly kind: OwnerCancellationKind) {
-    super("REA closed the owner of this operation before it completed");
+    super(OWNER_CANCELLATION_MESSAGES[kind]);
   }
 
   /**
@@ -350,6 +377,57 @@ export class OwnerCancellation extends Error {
    * the way repeated observations of one caller abort do.
    */
   static readonly ownerClosed = new OwnerCancellation("owner-closed");
+
+  /** Reserved for the owner of a `SharedStartupAttempt`; see its kind. */
+  static readonly startupOwnerClosed = new OwnerCancellation(
+    "startup-owner-closed",
+  );
+
+  /** An internal bound elapsed; see its kind. */
+  static readonly deadlineElapsed = new OwnerCancellation("deadline-elapsed");
+
+  /** Work nobody will consume was stopped; see its kind. */
+  static readonly noLongerNeeded = new OwnerCancellation("no-longer-needed");
+}
+
+/** How the caller ended work, as the CLI, MCP or HTTP adapter observed it. */
+export type CallerAbortKind =
+  /** The CLI or direct-analysis process received SIGINT. */
+  | "interrupt"
+  /** The CLI or direct-analysis process received SIGTERM. */
+  | "terminate"
+  /** The MCP client sent `notifications/cancelled` for the request. */
+  | "request-cancelled"
+  /** The MCP or HTTP client left before its request settled. */
+  | "client-disconnected";
+
+const CALLER_ABORT_MESSAGES: Readonly<Record<CallerAbortKind, string>> = {
+  interrupt: "The caller interrupted this operation (SIGINT)",
+  terminate: "The caller terminated this operation (SIGTERM)",
+  "request-cancelled": "The MCP client cancelled this request",
+  "client-disconnected": "The client disconnected before this request settled",
+};
+
+/**
+ * The abort reason an adapter gives when its caller ends work. It is the
+ * platform's `AbortError` shape, so consumers that recognize a platform abort
+ * keep recognizing it, and it records which adapter observed the abort and any
+ * reason the client supplied. Like any caller reason it is opaque: its kind
+ * never establishes failure origin or cleanup authority.
+ */
+export class CallerAbort extends DOMException {
+  constructor(
+    readonly kind: CallerAbortKind,
+    /** The client's own stated reason, such as an MCP cancellation's `reason`. */
+    readonly clientReason?: unknown,
+  ) {
+    super(CALLER_ABORT_MESSAGES[kind], "AbortError");
+  }
+
+  /** The reason for a process signal delivered to a one-shot command. */
+  static forProcessSignal(signal: "SIGINT" | "SIGTERM"): CallerAbort {
+    return new CallerAbort(signal === "SIGINT" ? "interrupt" : "terminate");
+  }
 }
 
 /** A caller abort reason recovered from an earlier observation of that abort. */
@@ -409,6 +487,20 @@ export const cancelledBy = (
     cause: cancellationCause(reason),
   });
 
+/**
+ * A provider's recovery for its elapsed deadline: which deadline elapsed, the
+ * setting or action that changes it, the accepted setting, and the facts that
+ * explain it.
+ */
+export interface AnalysisTimeoutRecovery {
+  /** Provider-specific explanation of which deadline elapsed. */
+  readonly userMessage?: string;
+  /** Provider-specific setting or action that changes that deadline. */
+  readonly remediationAction?: string;
+  readonly limit?: AnalysisErrorOptions["limit"];
+  readonly diagnostics?: AnalysisErrorOptions["diagnostics"];
+}
+
 /** Provider-neutral operation exceeded its declared execution deadline. */
 export class AnalysisTimeoutError extends AnalysisError {
   readonly _tag = "AnalysisTimeoutError";
@@ -418,12 +510,7 @@ export class AnalysisTimeoutError extends AnalysisError {
   constructor(
     readonly operation: string,
     readonly timeoutMs: number,
-    options?: AnalysisErrorOptions & {
-      /** Provider-specific explanation of which deadline elapsed. */
-      readonly userMessage?: string;
-      /** Provider-specific setting or action that changes that deadline. */
-      readonly remediationAction?: string;
-    },
+    options?: AnalysisErrorOptions & AnalysisTimeoutRecovery,
   ) {
     super(
       `Analysis operation timed out after ${String(timeoutMs)}ms: ${operation}`,
@@ -453,12 +540,17 @@ export class AnalysisAccessDeniedError extends AnalysisError {
 /** Selected artifact acquisition observed a change, so no stable identity can be reported. */
 export class AnalysisArtifactChangedError extends AnalysisError {
   readonly _tag = "AnalysisArtifactChangedError";
+  /** The consistency check the producing reader named, when it named one. */
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
+    },
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
+    this.integrityCheck = options?.integrityCheck;
   }
 }

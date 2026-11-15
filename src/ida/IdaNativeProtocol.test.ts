@@ -127,7 +127,11 @@ describe("native IDA attached protocol", () => {
     const path = join(root, "mutable-registration.json");
     await writeFile(
       path,
-      JSON.stringify({ command: "first-server", mode: "attached" }),
+      JSON.stringify({
+        command: "first-server",
+        mode: "attached",
+        protocol: "legacy",
+      }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
@@ -169,7 +173,10 @@ describe("native IDA attached protocol", () => {
   it("does not reuse a registration across independent scopes sharing one signal", async () => {
     const { root, target } = await fixture();
     const path = join(root, "independent-registration.json");
-    await writeFile(path, JSON.stringify({ command: "first-server" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "first-server", protocol: "legacy" }),
+    );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
     const provider = new IdaProvider(config.value, {});
@@ -187,7 +194,10 @@ describe("native IDA attached protocol", () => {
       resourceScope,
     });
     if (!firstProfile.ok) throw firstProfile.error;
-    await writeFile(path, JSON.stringify({ command: "second-server" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "second-server", protocol: "legacy" }),
+    );
     const secondScope = new ProviderInspectionScope();
     const second = await provider.inspectReadinessSnapshot({
       signal: controller.signal,
@@ -232,7 +242,10 @@ describe("IDA selected registration factories", () => {
     }[] = [];
     const signal = new AbortController().signal;
     for (let index = 0; index < 40; index += 1) {
-      await writeFile(path, JSON.stringify({ command: `server-${index}` }));
+      await writeFile(
+        path,
+        JSON.stringify({ command: `server-${index}`, protocol: "legacy" }),
+      );
       const scope = new ProviderInspectionScope();
       const resolution = await provider.resolveAnalysisProfile(target, {
         signal,
@@ -298,9 +311,12 @@ describe("IDA selected registration factories", () => {
     expect((await readIdaConfiguration(path, { resourceScope })).ok).toBe(
       false,
     );
-    await writeFile(path, JSON.stringify({ command: "python" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "python", protocol: "legacy" }),
+    );
     const old = await readIdaConfiguration(path, { resourceScope });
-    expect(old.ok && old.value.protocol).toBeUndefined();
+    expect(old.ok && old.value.protocol).toBe("legacy");
   });
 
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {

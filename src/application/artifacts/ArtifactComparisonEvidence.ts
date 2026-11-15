@@ -25,7 +25,7 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
-import { artifactInventorySummaryProjectionIds } from "../../domain/analysisView/artifactInventorySummaryProjection.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "compare_artifacts";
@@ -178,18 +178,15 @@ export const resolveArtifactComparisonEvidence = (
     (evidenceId) => (evidenceId === parentId ? presentation : undefined),
   );
   if (!reprojected.ok) return reprojected;
-  if (
-    !artifactInventorySummaryProjectionIds(reprojected.value).includes(
-      evidence.evidence_id,
-    )
-  )
-    return mismatch();
+  // Only the current format's projection identifies the summary; the format
+  // owner refuses earlier projections instead of rebuilding them.
+  if (reprojected.value.evidence_id !== evidence.evidence_id) return mismatch();
   return ok(owner);
 };
 
 const mismatch = (): Result<never, EvidenceIntegrityError> =>
   err(
     new EvidenceIntegrityError(
-      "Artifact summary does not match its retained parent inventory.",
+      `Artifact summary does not match its retained parent inventory. A summary from an earlier Evidence format no longer matches. ${RECREATE_EVIDENCE_GUIDANCE}`,
     ),
   );

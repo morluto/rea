@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -14,8 +15,6 @@ export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
 /** Execution budget, bounded by the runtime's signed 32-bit timer range. */
 export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
-export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
-const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
 const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
@@ -113,7 +112,7 @@ export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
     path: absoluteLocalPathStringSchema.describe(
       "Absolute path to an offline SQLite database snapshot",
     ),
-    worker_timeout_ms: workerTimeout
+    worker_timeout_ms: timerDurationMsSchema
       .optional()
       .describe(
         `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
@@ -151,11 +150,9 @@ export const sqliteDatabaseSchema = z
       name: z.literal("SQLite"),
       version: z.string().min(1),
     }),
-    worker_timeout_ms: workerTimeout
-      .exactOptional()
-      .describe(
-        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
-      ),
+    worker_timeout_ms: timerDurationMsSchema.describe(
+      "Actual parent-supervised worker deadline in milliseconds.",
+    ),
     database_encoding: encoding,
     schema: z.strictObject({
       scope: z.enum(["inventory", "selected_table", "database"]),
