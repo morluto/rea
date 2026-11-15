@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { JavaScriptAnalysisWorker } from "./JavaScriptAnalysisWorker.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 
 const text = "export const observed = 1;";
 const file: JavaScriptArtifactFile = {
@@ -34,15 +35,17 @@ const alive = (pid: number): boolean => {
 /** Launch a stand-in worker script under the real owned-process launcher. */
 const standInWorker = (script: string) => {
   const pids: number[] = [];
+  const spawned = phaseArrival();
   const launcher: typeof spawnOwnedProviderProcess = async (options) => {
-    const spawned = await spawnOwnedProviderProcess({
+    const owned = await spawnOwnedProviderProcess({
       ...options,
       arguments: ["-e", script],
     });
-    if (spawned.process.pid !== undefined) pids.push(spawned.process.pid);
-    return spawned;
+    if (owned.process.pid !== undefined) pids.push(owned.process.pid);
+    spawned.arrive();
+    return owned;
   };
-  return { launcher, pids };
+  return { launcher, pids, spawned };
 };
 
 it("refuses a worker that emits facts before its ready frame and stops it", async () => {
@@ -69,13 +72,24 @@ it("refuses a worker that emits facts before its ready frame and stops it", asyn
 
 it("times out a worker whose ready frame never arrives and stops it", async () => {
   const fixture = standInWorker("setInterval(() => {}, 1000);");
+  const timeoutMs = 500;
   const worker = new JavaScriptAnalysisWorker(
-    { heapMb: 128, timeoutMs: 500 },
+    { heapMb: 128, timeoutMs },
     fixture.launcher,
   );
   onTestFinished(() => worker.close());
 
-  const refused = await worker.analyze(file, budget);
+  // The startup budget also covers the launch. Hold the deadline clock until
+  // the stand-in is running, so a slow launch cannot end the test before the
+  // missing ready frame is what the deadline interrupts.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  onTestFinished(() => vi.useRealTimers());
+  const analysis = worker.analyze(file, budget);
+  await fixture.spawned.reached(analysis, "stand-in worker launched");
+  vi.advanceTimersByTime(timeoutMs);
+  vi.useRealTimers();
+
+  const refused = await analysis;
   if (refused.ok) throw new Error("Expected a startup deadline");
   expect(primaryAnalysisError(refused.error.error)).toBeInstanceOf(
     AnalysisTimeoutError,
