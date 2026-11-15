@@ -1069,11 +1069,20 @@ describe("Session targets of contract commands", () => {
       expect(description.inputBinding.operation).toBe(
         description.contract.name,
       );
-      for (const { field, key, member } of description.parameters)
-        if (member === undefined)
+      // A selector field is named by its own option, which selection
+      // issues already use; its positional may share another key.
+      for (const {
+        field,
+        key,
+        member,
+        selectorOption,
+      } of description.parameters)
+        if (member === undefined) {
+          const named = selectorOption?.key ?? key;
           expect(description.inputBinding.fields[field]).toBe(
-            key === field ? undefined : key,
+            named === field ? undefined : named,
           );
+        }
     },
   );
 
