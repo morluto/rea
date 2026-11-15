@@ -34,7 +34,6 @@
     "src/browser/assets/WebArtifactReads.ts": 1,
     "src/browser/history/CaptureFailures.ts": 2,
     "src/browser/history/playwrightTrace/TraceFailure.ts": 1,
-    "src/captures/TsharkCaptureProvider.ts": 1,
     "src/cutter/CutterBridgeClient.ts": 1,
     "src/dotnet/ManagedSnapshot.ts": 1,
     "src/electron/ElectronFuseFailures.ts": 1,
@@ -69,14 +68,12 @@
     "src/native/pe/PeImportsProvider.ts": 1,
     "src/native/pe/PeLoadConfigProvider.ts": 1,
     "src/native/windows/WindowsShortcutProvider.ts": 1,
-    "src/pcap/PcapProvider.ts": 2,
     "src/process/ArtifactAnalysisResources.ts": 3,
     "src/process/capture/ProcessTerminalObservation.ts": 2,
     "src/process/privateWorkspaceFailure.ts": 1,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/providers/OwnedCommandCleanup.ts": 2,
     "src/rust/RustBinaryProvider.ts": 1,
-    "src/signals/SigrokRecordingProvider.ts": 1,
     "src/sqlite/SqliteDatabaseFailures.ts": 1,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
   }
