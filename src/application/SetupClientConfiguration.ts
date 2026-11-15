@@ -1,3 +1,4 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
@@ -505,10 +506,11 @@ const readClientRefresh = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  resources?: ArtifactResourceScope,
 ): Promise<ClientRefresh | undefined> => {
   const files = await readClientConfigurationFiles(
     client,
-    undefined,
+    resources,
     undefined,
     providerEnvironment,
   );
@@ -518,7 +520,10 @@ const readClientRefresh = async (
   }
   let original: string | undefined;
   try {
-    original = await readRegularFileText(client.configPath);
+    original = await readRegularFileText(
+      client.configPath,
+      resources === undefined ? {} : { resources },
+    );
   } catch (cause: unknown) {
     if (!isMissing(cause)) throw cause;
   }
@@ -540,7 +545,12 @@ const readClientRefresh = async (
   const override = inlineOverrideBlocker(client, files.value, desired);
   if (override !== undefined)
     return { original, parsed, desired, refusal: override };
-  const policy = await readClientPolicyBlock(client, parsed, desired);
+  const policy = await readClientPolicyBlock(
+    client,
+    parsed,
+    desired,
+    resources,
+  );
   if (!policy.ok) {
     throwCleanupFailure(policy.error);
     return { original, parsed, desired, refusal: policy.error.detail };
@@ -584,16 +594,25 @@ export const clientConfigurationAligned = async (
  * the refreshed entry. Update maintenance asks before selecting a client,
  * because one refused client blocks the whole setup plan. Registration
  * ownership is not checked here; the caller has already established it.
+ * A supplied scope retains the owner of a file whose cleanup failed.
  */
 export const clientRefreshRefusal = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
+  resources?: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   if (client.configPathError !== undefined) return client.configPathError;
   try {
-    return (await readClientRefresh(client, providerEnvironment, command))
-      ?.refusal;
+    return (
+      await readClientRefresh(
+        client,
+        providerEnvironment,
+        command,
+        undefined,
+        resources,
+      )
+    )?.refusal;
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof ConfigurationError)

@@ -164,7 +164,12 @@ export const existingMaintenanceScope = async (
     // so ask setup's own refusal check first and report that client instead
     // of selecting it. An aligned registration is checked too: setup still
     // preflights it.
-    const refusal = await clientRefreshRefusal(client, settings, command);
+    const refusal = await clientRefreshRefusal(
+      client,
+      settings,
+      command,
+      resources,
+    );
     if (refusal !== undefined) {
       unresolved.push({ ...registration, remediation: refusal });
       continue;
