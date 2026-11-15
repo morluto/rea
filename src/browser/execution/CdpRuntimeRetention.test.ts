@@ -19,6 +19,21 @@ describe("RuntimeRetention", () => {
     );
   });
 
+  it("charges nothing for a refused retention", () => {
+    const retention = new RuntimeRetention("observe_web_runtime", "requests");
+    retention.charge(10);
+    const room = WEB_RUNTIME_LIMITS.retainedEventBytes - 10;
+    expect(() => retention.charge(room + 1)).toThrow(
+      expect.objectContaining({
+        reportedLimits: expect.objectContaining({
+          retained_bytes: WEB_RUNTIME_LIMITS.retainedEventBytes + 1,
+        }),
+      }),
+    );
+    // The refused charge left the remaining room intact.
+    expect(() => retention.charge(room)).not.toThrow();
+  });
+
   it("keeps the source-text limit separate from metadata", () => {
     const retention = new RuntimeRetention("observe_web_runtime", "sources");
     expect(() => retention.charge(WEB_RUNTIME_LIMITS.sourceBytes + 1)).toThrow(
