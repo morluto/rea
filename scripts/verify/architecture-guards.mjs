@@ -364,14 +364,32 @@ checkCounted(
 
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
-// index itself decides on its own which effect kinds and proofs apply; new
-// readers ask the log instead, and each migrated reader lowers this count.
+// index itself decides on its own which effect kinds and proofs apply; readers
+// ask the log instead. Every reader has moved; the remaining counts are the
+// producers that build these indexes (javascriptSemanticAmbientWrites.ts,
+// javascriptSemanticMemberMutations.ts, and javascriptSemanticAnalysis.ts,
+// which creates and settles them) and the timing-proof owner
+// (javascriptSemanticMutationInitializers.ts), whose position proofs over
+// recorded sites the log delegates to.
 checkCounted(
   "read of a JavaScript effect index outside the effect log (ask javascriptSemanticEffectLog.ts)",
   "javascript-effect-index-read",
   files,
   /\.(?:bindingWrites|memberWrites|escapedPaths|ambientWriteEffects|ambientEscapeEffects|ambientBindingWrites|ambientWrites|ambientEscapes)\b/gu,
   ["src/domain/javascript/javascriptSemanticEffectLog.ts"],
+);
+
+// Effect timing has one owner (javascriptSemanticMutationInitializers.ts) and
+// one consumer, the effect log. Everything else asks the log whether an effect
+// may precede a read, naming the ordering it relies on.
+check(
+  "semanticEffectTiming outside the effect log (ask semanticEffectMayPrecede or a query in javascriptSemanticEffectLog.ts)",
+  files,
+  /\bsemanticEffectTiming\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticMutationInitializers.ts",
+  ],
 );
 
 // Coverage status has one vocabulary, coverageStatusSchema in

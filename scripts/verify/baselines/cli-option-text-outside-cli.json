@@ -6,7 +6,7 @@
   "src/domain/analysisErrorPresentation.ts": 2,
   "src/domain/javascript/javascriptAnalysisResourceControls.ts": 4,
   "src/domain/javascript/javascriptSemanticResourceLimits.ts": 1,
-  "src/dotnet/ManagedDecodeBudget.ts": 1,
+  "src/domain/managed/managedDecodeBudget.ts": 1,
   "src/dotnet/ManagedMemberRecovery.ts": 1,
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
   "src/ghidra/GhidraProviderClient.ts": 2,

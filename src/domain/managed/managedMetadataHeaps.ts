@@ -1,15 +1,15 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
 import { createHash } from "node:crypto";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../result.js";
 
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
 
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+} from "./managedMetadataLayout.js";
+import { managedFailure } from "./managedReaderFailure.js";
 
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {

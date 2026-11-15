@@ -245,6 +245,11 @@ export const ENTRY_FILES = Object.freeze(
         "ArtifactProviderMetadata.ts",
         "DesktopApplicationReader.ts",
         "ReleaseExposureReader.ts",
+        // JavaScript reconstruction owns one resource scope across the
+        // inventory scan, the format reader and the source read.
+        "inventory/scanCanonical.ts",
+        "javascript/JavaScriptArtifactFiles.ts",
+        "javascript/JavaScriptArtifactReader.ts",
       ],
       browser: [
         "CdpBrowserProvider.ts",

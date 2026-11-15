@@ -1,5 +1,5 @@
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
 
 /** Header facts admitted before an unsupported table layout was identified. */
 export interface ManagedMetadataHeaderFacts {

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished } from "vitest";
@@ -15,7 +16,7 @@ import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 const provider = { id: "fixture", name: "Fixture", version: "1" };
-const source = createEvidence(undefined, provider, {
+const source = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "health",
   parameters: {},
   result: "source",

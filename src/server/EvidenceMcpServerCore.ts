@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
@@ -938,7 +939,7 @@ class ErrorEvidenceTransport implements Transport {
     // The SDK error contains its rendered issue, not a separate argument bag;
     // transport authentication and caller arguments are never added here.
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("unsupported-subject"),
       { id: "rea-mcp", name: "REA MCP delivery", version: "1" },
       {
         operation: "mcp_tool_error",

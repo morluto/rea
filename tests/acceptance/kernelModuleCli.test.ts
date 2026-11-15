@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -165,6 +166,6 @@ cliTest(
       next_probe: { operation: "external_decompression" },
       modinfo: null,
     });
-    expect(evidence.subject?.format).toBe("file");
+    expect(fileIdentity(evidence.subject).format).toBe("file");
   },
 );
