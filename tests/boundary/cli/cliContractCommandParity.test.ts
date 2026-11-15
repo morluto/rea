@@ -292,6 +292,8 @@ const ARGV_SATISFYING_RULES: Readonly<
   "list-browser-targets": { endpoint: "http://127.0.0.1:9222" },
   "observe-web-session": { endpoint: "http://127.0.0.1:9222" },
   "inspect-web-page": { endpoint: "http://127.0.0.1:9222" },
+  "list-electron-targets": { endpoint: "http://127.0.0.1:9222" },
+  "inspect-electron-page": { endpoint: "http://127.0.0.1:9222" },
   "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
   "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
