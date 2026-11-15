@@ -3,7 +3,15 @@ import { createInspectionResources } from "../../tests/fixtures/inspectionResour
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
@@ -571,10 +579,12 @@ it.each([
 ] as const)(
   "doctor and provider readiness project one admission: $name",
   async ({ platform, java, native }) => {
-    if (native !== undefined)
-      vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue(
-        native,
-      );
+    if (native !== undefined) {
+      const authority = vi
+        .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+        .mockReturnValue(native);
+      onTestFinished(() => authority.mockRestore());
+    }
     const overrides = java ? {} : { probeJava: () => missingJavaProbe };
     const doctor = projectGhidraDoctorInspection(
       await inspection({ installDir: INSTALL, platform }, overrides),
