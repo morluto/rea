@@ -79,7 +79,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
-import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (

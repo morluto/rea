@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileText } from "./RegularFileRead.js";
+import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,

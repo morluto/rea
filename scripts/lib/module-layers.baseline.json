@@ -4,17 +4,12 @@
     "application -> catalogIdentity.ts": 2,
     "application -> mcpStartupPolicy.ts": 3,
     "application -> serverIdentity.ts": 1,
-    "artifacts -> application": 2,
+    "artifacts -> application": 1,
     "composition -> cliCommandNames.ts": 3,
-    "config -> native": 1,
-    "desktop -> application": 5,
-    "dotnet -> application": 2,
-    "il2cpp -> application": 1,
-    "native -> application": 2
+    "dotnet -> application": 1
   },
   "cycles": [
     "application <-> artifacts",
-    "application <-> desktop",
     "application <-> dotnet",
     "artifacts <-> firmware",
     "artifacts <-> gpu",
@@ -25,8 +20,6 @@
     "cli <-> cliEvidenceCommands.ts",
     "cli <-> cliObservationOptions.ts",
     "cli <-> cliOutput.ts",
-    "config <-> filesystem",
-    "main <-> server",
-    "process <-> windows"
+    "main <-> server"
   ]
 }

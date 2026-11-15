@@ -8,7 +8,7 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 
 interface SetupCleanupTask {
   readonly rejectedPrefix?: string;

@@ -170,7 +170,7 @@ import {
   type NativeUiHelperRuntime,
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
 
 type SignatureRuntimeRootFactory = () => Promise<

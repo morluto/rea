@@ -40,7 +40,7 @@ import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import {
   readRegularFileText,
   readRegularFileTextSnapshot,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 export interface McpClientRegistrationReceipt {
   readonly status: "configured" | "unchanged";

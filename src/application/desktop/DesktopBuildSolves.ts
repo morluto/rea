@@ -14,7 +14,7 @@ import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "../../desktop/AgentEnvComputer.js";
-import { writeTextFile } from "../JsonFiles.js";
+import { writeTextFile } from "../../resources/TextFileWrite.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";

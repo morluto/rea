@@ -16,7 +16,7 @@ import {
   OwnedRegularFileOperationFailure,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { readBoundedFileBytes } from "./BoundedFileBytes.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,

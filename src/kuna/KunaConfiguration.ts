@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import { defaultKunaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import { err, ok, type Result } from "../domain/result.js";

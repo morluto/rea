@@ -7,7 +7,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { FileHandle } from "node:fs/promises";
 import type { z } from "zod";
 import type { inspectPlistSchema } from "../domain/native/nativeInspection.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,

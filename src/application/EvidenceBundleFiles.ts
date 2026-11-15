@@ -29,7 +29,8 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
-import { readJsonFile, writeTextParts } from "./JsonFiles.js";
+import { readJsonFile } from "./JsonFiles.js";
+import { writeTextParts } from "../resources/TextFileWrite.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 type EvidenceBundleFileFailure =

@@ -34,7 +34,7 @@ import {
   hasParentTraversal,
   sameLexicalDirectory,
   withinLexicalDirectory,
-} from "../config/kunaCacheDirectory.js";
+} from "../filesystem/cacheDirectory.js";
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
@@ -64,7 +64,7 @@ import {
   InvalidUtf8FileError,
   readRegularFileText,
   bindRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {

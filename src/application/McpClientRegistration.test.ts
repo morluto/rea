@@ -51,7 +51,7 @@ const register = (
   signal?: AbortSignal,
 ) => registerMcpClient(clientFor(path), launcher, signal, resources);
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
-import * as regularReads from "./RegularFileRead.js";
+import * as regularReads from "../process/RegularFileRead.js";
 
 const launcher = {
   command: "/fixture/server path",

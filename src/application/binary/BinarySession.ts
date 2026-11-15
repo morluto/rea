@@ -92,10 +92,8 @@ import {
   parseBinaryTarget,
   type BinaryTargetResolverOptions,
 } from "../BinaryTargetResolver.js";
-import {
-  resolveAppBundleResourceRoot,
-  type ResolvedAppBundleResourceRoot,
-} from "../AppBundleExecutable.js";
+import { resolveAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import {
   BUNDLE_RESOURCE_OPERATIONS,
   type ActiveBundleResourceSession,

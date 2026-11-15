@@ -53,7 +53,7 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import { withRegularFile } from "../process/RegularFileRead.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */

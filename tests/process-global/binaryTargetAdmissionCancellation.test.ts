@@ -55,7 +55,7 @@ import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-} from "../../src/application/RegularFileRead.js";
+} from "../../src/process/RegularFileRead.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";

@@ -66,7 +66,7 @@ import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
 } from "../resources/AnalysisCleanupLease.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";

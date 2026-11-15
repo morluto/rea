@@ -10,7 +10,7 @@ import {
   RegularFileCleanupFailure,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
-import { retryRegularFileCleanupFailures } from "./RegularFileRead.js";
+import { retryRegularFileCleanupFailures } from "../process/RegularFileRead.js";
 
 /** Completion and exact staging owner retained when publication cleanup fails. */
 export class ClientConfigurationPublicationFailure<

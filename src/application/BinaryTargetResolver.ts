@@ -16,7 +16,7 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";

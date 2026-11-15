@@ -22,7 +22,7 @@ import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { withRegularFile } from "../RegularFileRead.js";
+import { withRegularFile } from "../../process/RegularFileRead.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   type EnvironmentBundlePlan,
