@@ -107,7 +107,7 @@ cliTest(
     expect(complete.exitCode, complete.stderr).toBe(0);
     expect(complete.json).toMatchObject({
       subject: {
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       },
       parameters: {
         max_snapshot_bytes: bytes.length,

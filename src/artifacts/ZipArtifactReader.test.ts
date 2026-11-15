@@ -32,7 +32,7 @@ import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../resources/index.js";
 
 import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
 import { waitFor } from "../../tests/support/testWait.js";

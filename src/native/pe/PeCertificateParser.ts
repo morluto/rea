@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
 import type {
   InspectPeCertificatesInput,
   PeCertificates,
@@ -11,10 +14,19 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "../../artifacts/pe/PeResourceLayout.js";
+import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
+};
+
+/** Shared PE header admission, with malformed headers as format failures. */
+const readCertificateImageHeaders = (bytes: Buffer) => {
+  try {
+    return readPeHeaders(bytes);
+  } catch (cause) {
+    throw artifactParseFailure(cause, undefined);
+  }
 };
 
 const requireRange = (bytes: Buffer, offset: number, length: number): void => {
@@ -58,7 +70,7 @@ export const parsePeCertificates = (
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
   const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
-    readPeHeaders(bytes);
+    readCertificateImageHeaders(bytes);
   const security = dataDirectories[4];
   if (
     security === undefined ||

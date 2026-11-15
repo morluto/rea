@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../tests/fixtures/evidenceSubject.js";
 import { projectAnalysisView } from "./analysisView/analysisView.js";
 import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
@@ -2091,7 +2092,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
       operation: "analyze_web_bundle",
       normalizedResult: report,
       limitations: report.limitations,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
   const summary = projectAnalysisView(
     parent,

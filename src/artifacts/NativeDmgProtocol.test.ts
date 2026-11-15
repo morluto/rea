@@ -6,7 +6,7 @@ import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "./NativeDmgArtifactReader.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../resources/index.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

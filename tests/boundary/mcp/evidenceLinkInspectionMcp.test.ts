@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
@@ -275,13 +279,12 @@ it("pages selected link rows in a stable order without skips or duplicates", asy
 
 it("reports the source a composed workflow refuses, and clears it on import", async () => {
   const dossier = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (dossier.subject === null) throw new Error("Expected a subject");
   const health = record("get_project_health");
   const linked = createEvidence(
     {
-      path: dossier.subject.local_path,
-      sha256: dossier.subject.digest.sha256,
-      format: dossier.subject.format,
+      path: fileSubjectDisplay(dossier.subject).local_path,
+      sha256: fileIdentity(dossier.subject).sha256,
+      format: fileIdentity(dossier.subject).format,
     },
     dossier.provider,
     {
