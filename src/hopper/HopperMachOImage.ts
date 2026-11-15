@@ -9,10 +9,7 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type {
-  BinaryTarget,
-  HeaderArchitecture,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -26,7 +23,6 @@ import {
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 import { MACHO_CPU_TYPES } from "../domain/apple/machoTargetSelection.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   HopperCancelledError,
   HopperStartError,
@@ -359,6 +355,10 @@ const inspectHopperMachOImage = async (
     littleEndian,
   });
   if (parsed.status === "malformed") return invalid(parsed.reason);
+  if (target.format !== "mach-o-universal")
+    return invalid(
+      "Universal Mach-O source disagrees with its admitted format",
+    );
   if (
     target.architecture !== "x86" &&
     target.architecture !== "x86_64" &&
@@ -367,7 +367,10 @@ const inspectHopperMachOImage = async (
   )
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
-  const matches = [];
+  // Target admission chose the slice; reading another one would analyze bytes
+  // the session's Evidence does not name.
+  const admitted = target.universalSlice;
+  const matches: FatSliceDeclaration[] = [];
   for (const slice of parsed.slices) {
     if (signal?.aborted)
       return err(
@@ -393,14 +396,19 @@ const inspectHopperMachOImage = async (
       );
     const identityError = validateFatSliceIdentity(slice, identity);
     if (identityError !== null) return invalid(identityError);
-    if (slice.cpuType === MACHO_CPU_TYPES[architecture]) matches.push(slice);
+    if (slice.offset === admitted.offset && slice.size === admitted.size)
+      matches.push(slice);
   }
   if (findOverlappingFatSlices(parsed.slices) !== null)
     return invalid("FAT slices overlap");
-  const selected = selectHopperSlice(matches, architecture);
-  if (selected === undefined)
+  const [selected] = matches;
+  if (selected === undefined || matches.length > 1)
     return invalid(
-      `FAT selection for ${architecture} is ${matches.length === 0 ? "missing" : "ambiguous"}; extract the exact architecture into a thin image before opening it`,
+      `The admitted ${architecture} slice at file offset ${String(admitted.offset)} is ${selected === undefined ? "not declared by" : "declared more than once in"} the FAT table; open the stable source again`,
+    );
+  if (selected.cpuType !== MACHO_CPU_TYPES[architecture])
+    return invalid(
+      `The admitted slice at file offset ${String(admitted.offset)} is not ${architecture}; open the stable source again`,
     );
   return ok({
     method: wide ? "fat64_thin_slice" : "fat32_thin_slice",
@@ -414,28 +422,6 @@ const inspectHopperMachOImage = async (
     cpu_type: selected.cpuType,
     cpu_subtype: selected.cpuSubtype,
   });
-};
-
-/**
- * Plain arm64 (cpusubtype 0) and arm64e (cpusubtype 2) function-entry encodings
- * decode under Hopper's --aarch64; Apple's arm64e.x1 variant (cpusubtype 12)
- * does not, so it is selected only when it is the arm64 family's only candidate.
- * Every other ambiguity stays fail-closed.
- */
-const selectHopperSlice = (
-  matches: readonly FatSliceDeclaration[],
-  architecture: HeaderArchitecture,
-): FatSliceDeclaration | undefined => {
-  if (matches.length === 1) return matches[0];
-  if (architecture !== "arm64") return undefined;
-  for (const cpuSubtype of [0, 2]) {
-    const preferred = matches.filter(
-      (slice) => machoCpuSubtypeBase(slice.cpuSubtype) === cpuSubtype,
-    );
-    if (preferred.length === 1) return preferred[0];
-    if (preferred.length > 1) return undefined;
-  }
-  return undefined;
 };
 
 /** Copy a selected slice and verify the entire original source in the same pass. */
