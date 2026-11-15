@@ -110,10 +110,14 @@ export const runPcapCommand = async (options: {
         snapshot.diagnosticTruncated === true ||
         snapshot.outputIncomplete === true,
     });
-  /** A version probe that fails names the tool; a capture read names the file. */
+  /**
+   * A version probe that fails names the tool; a capture read names the file
+   * when the tool says it is not a capture. `unrecognised` reports the rest.
+   */
   const pcapToolFailure = (
     diagnostic: string,
     details: AnalysisErrorOptions,
+    unrecognised: (reason: string) => AnalysisError,
   ): AnalysisError => {
     if (options.inputPath === undefined)
       return pcapToolUnavailable(
@@ -132,10 +136,7 @@ export const runPcapCommand = async (options: {
         diagnostic,
         details,
       );
-    return new AnalysisProtocolError(
-      `Packet capture tool ${command} failed: ${diagnostic}`,
-      details,
-    );
+    return unrecognised(`Packet capture tool ${command} failed: ${diagnostic}`);
   };
   if (signal?.aborted)
     throw new AnalysisCancelledError(operation, { cause: signal.reason });
@@ -294,7 +295,11 @@ export const runPcapCommand = async (options: {
           `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
           details,
         );
-      throw pcapToolFailure(diagnostic, details);
+      throw pcapToolFailure(
+        diagnostic,
+        details,
+        (reason) => new AnalysisProtocolError(reason, details),
+      );
     }
     throw classifyProviderOutcome(outcome, {
       operation,
@@ -309,7 +314,10 @@ export const runPcapCommand = async (options: {
         ),
       },
       memoryLimitBytes: options.nativeBound?.memoryLimitBytes,
-      dialect: (failure, details) => {
+      dialect: (failure, details, unclassified) => {
+        // The examined outcome carries the exit facts; `detail` names the stage.
+        const unrecognised = (reason: string) =>
+          unclassified("pcap", { diagnostics: { detail: reason } });
         if (
           failure.kind === "launch-refused" &&
           // Only a launcher naming the launched path identifies who refused.
@@ -340,15 +348,13 @@ export const runPcapCommand = async (options: {
           failure.output?.snapshot.stderr.text.trim() || failure.message;
         if (!commandAttempted) return preparationFailure(diagnostic, details);
         if (failure.kind === "launch-refused")
-          return new AnalysisProtocolError(
+          return unrecognised(
             `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
-            details,
           );
         if (selectedLimiter !== undefined) {
           if (failure.kind !== "exited" || failure.output === undefined)
-            return new AnalysisProtocolError(
+            return unrecognised(
               `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
-              details,
             );
           const attributed = attributePcapLimitedExit(selectedLimiter, {
             exitCode: failure.exitCode,
@@ -378,7 +384,7 @@ export const runPcapCommand = async (options: {
             );
           // Otherwise prlimit started the tool; its exit and output are the tool's.
         }
-        return pcapToolFailure(diagnostic, details);
+        return pcapToolFailure(diagnostic, details, unrecognised);
       },
     });
   }
