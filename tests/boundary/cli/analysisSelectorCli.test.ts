@@ -280,6 +280,31 @@ for (const [command, option] of [
     },
   );
 }
+cliTest(
+  "admits search selectors against the inventory --kind selects",
+  async ({ cli }) => {
+    for (const [kind, operation] of [
+      [[], "search_strings"],
+      [["--kind", "strings"], "search_strings"],
+      [["--kind", "procedures"], "search_procedures"],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "search",
+          "does-not-exist",
+          "first",
+          "--pattern=second",
+          ...kind,
+          "--json",
+        ],
+      });
+      expect(result.json, operation).toMatchObject({
+        code: "invalid_request",
+        details: { operation },
+      });
+    }
+  },
+);
 cliTest("keeps address-looking search text exact", async ({ cli }) => {
   const result = await cli.run({
     arguments: ["search", "does-not-exist", "0x1a", "--pattern=0x1A", "--json"],

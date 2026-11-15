@@ -1516,6 +1516,24 @@ it("does not offer entry-policy retries for integrity refusals without a declare
   expect(native.remediation.action).not.toContain("record-and-continue");
 });
 
+it.each([undefined, false, true])(
+  "projects whether a refused request was sent (%s) and omits an unknown value",
+  (requestSent) => {
+    const details = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "cutter_command",
+        "transport",
+        "Cutter request exceeds its frame limit",
+        { max_request_bytes: 8192 },
+        requestSent === undefined ? {} : { requestSent },
+      ),
+    ).details;
+    if (requestSent === undefined)
+      expect(details).not.toHaveProperty("request_sent");
+    else expect(details).toMatchObject({ request_sent: requestSent });
+  },
+);
+
 it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
   const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
   const original = projectAnalysisError(
