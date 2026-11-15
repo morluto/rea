@@ -1,4 +1,4 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -1292,11 +1292,7 @@ const discoveryFailure = (
       primary instanceof AnalysisError
         ? primary
         : new ProviderAdapterError("cutter", operation, { cause: primary });
-    return analysisErrorWithCleanupFailure(
-      original,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([cleanup]);
+    return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
     return cancelledBy(

@@ -4,7 +4,7 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -201,11 +201,11 @@ export const kunaExportFailure = (
     bindArtifactFileCleanup(cause, cleanup);
     if (completion !== undefined && completion.cancellation === undefined)
       return cleanup;
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       KUNA_EXPORT_OPERATION,
-    ).bindCleanupDependencies([cleanup]);
+    );
   }
   if (cause instanceof RegularFileCleanupFailure)
     return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
