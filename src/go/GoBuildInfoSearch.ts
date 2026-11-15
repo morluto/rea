@@ -5,6 +5,7 @@ import {
   mappedFileOffset,
   type BinaryContainer,
 } from "../native/metadata/BinaryContainer.js";
+import { firstKeyed, keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 
 export interface GoBuildInfoSearchRange extends FileMapping {
   /** Native file mapping containing inline strings after a named Mach-O header. */
@@ -29,12 +30,17 @@ const fallbackSearchRanges = (
       .slice(0, 1)
       .map((region) => region.mapping);
   if (container.image_base === undefined) return [];
-  const section = container.sections.find(
-    (candidate) =>
+  const section = firstKeyed(
+    keyedBy(container.sections, (candidate) =>
       candidate.format === "pe" &&
       candidate.virtual_address !== 0 &&
       candidate.raw_size !== 0 &&
-      (candidate.characteristics & ~0x00600000) >>> 0 === 0xc0000040,
+      (candidate.characteristics & ~0x00600000) >>> 0 === 0xc0000040
+        ? "writable-initialized-data"
+        : undefined,
+    ),
+    "writable-initialized-data",
+    "Go's debug/buildinfo (peExe.DataStart) searches the first writable initialized-data section.",
   );
   return section?.format === "pe"
     ? [
@@ -58,13 +64,28 @@ export const goBuildInfoSearch = (
     container.format,
   );
   const named: GoBuildInfoSearchRange[] = [];
-  for (const section of container.sections) {
-    if (section.format === "elf" && section.name === ".go.buildinfo") {
-      if (named.length !== 0)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "ELF contains ambiguous build-info sections",
-        );
+  // The build-info section is declared once; a repeat leaves Go's reader
+  // with no defined choice, whatever the repeated sections contain.
+  const selected = uniqueKeyed(
+    keyedBy(container.sections, (section) =>
+      section.format === "elf"
+        ? section.name
+        : section.format === "macho"
+          ? section.section_name
+          : undefined,
+    ),
+    container.format === "elf" ? ".go.buildinfo" : "__go_buildinfo",
+  );
+  if (!selected.ok)
+    throw new BinaryFormatFailure(
+      "malformed",
+      container.format === "elf"
+        ? "ELF contains ambiguous build-info sections"
+        : "Mach-O has ambiguous build-info sections",
+    );
+  const section = selected.value;
+  if (section !== undefined) {
+    if (section.format === "elf") {
       if (section.type !== 1)
         throw new BinaryFormatFailure(
           "malformed",
@@ -97,10 +118,7 @@ export const goBuildInfoSearch = (
           "ELF build-info section disagrees with its load mapping",
         );
       named.push(search);
-    } else if (
-      section.format === "macho" &&
-      section.section_name === "__go_buildinfo"
-    ) {
+    } else if (section.format === "macho") {
       if (section.segment_unmapped)
         throw new BinaryFormatFailure(
           "malformed",
@@ -139,10 +157,5 @@ export const goBuildInfoSearch = (
       named.push(search);
     }
   }
-  if (named.length > 1)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "Mach-O has ambiguous build-info sections",
-    );
   return named.length > 0 ? named : fallbackSearchRanges(container);
 };

@@ -1996,6 +1996,31 @@ describe("GhidraClient process output drain before startup failure", () => {
     });
   });
 
+  it("drains output under a finalize budget after the startup deadline expires", async () => {
+    const { launcher, finishOutput } = preExitedProcessLauncher({
+      output: oomeOutput,
+      closeOutput: true,
+      // Output closes 700 ms after launch: after the 400 ms startup deadline
+      // whenever launch beat it, and inside the 1 s finalize budget.
+      outputDelayMs: 700,
+    });
+    onTestFinished(finishOutput);
+    const client = clientFor(launcher, { startupTimeoutMs: 400 });
+    const result = await client.start();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.diagnostics).toMatchObject({
+      exit_code: 73,
+      stdout: { text: oomeOutput },
+      failure_output: { complete: true, stdout: { text: oomeOutput } },
+    });
+    expect(result.error.diagnostics).not.toHaveProperty(
+      "output_incomplete",
+      true,
+    );
+  });
+
   it("preserves an observed process exit when cancellation interrupts diagnostic drain", async () => {
     const { launcher, finishOutput } = preExitedProcessLauncher({
       output: oomeOutput,

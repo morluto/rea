@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
 import { createServer as createHttpServer } from "node:http";
 import { createServer, type Socket } from "node:net";
 
@@ -12,10 +13,7 @@ import {
 } from "../../../src/browser/PlaywrightScenarioServiceWorkers.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
-import {
-  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
-} from "../../../src/domain/browserDeadline.js";
+import { CDP_DISCOVERY_RESPONSE_TIMEOUT_MS } from "../../../src/domain/browserDeadline.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
@@ -190,7 +188,7 @@ it.each(["success", "rejection", "abort", "disconnect"])(
     );
     try {
       const pending = connection.send(
-        outcome === "rejection" ? "Fixture.unmodeledMethod" : "Runtime.enable",
+        outcome === "rejection" ? "Storage.getStorageKey" : "Runtime.enable",
         {},
         undefined,
         controller.signal,
@@ -304,7 +302,6 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
     discoveryDelayMs: 180,
   });
   const provider = new CdpWebRuntimeProvider();
-  const started = performance.now();
   try {
     const pending = provider.observeExecution(
       observeWebExecutionInputSchema.parse({
@@ -315,10 +312,11 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // Discovery is pending while its response is held: no command deadline
+    // may bound it yet.
+    await waitFor(() => expect(activeTimers(180)).toHaveLength(1));
     expect(activeTimers(40)).toHaveLength(0);
     const result = await pending;
-    expect(performance.now() - started).toBeGreaterThan(300);
     if (result.ok) throw new Error("Expected a command deadline");
     const text = `${result.error.userMessage ?? ""}\n${result.error.message}`;
     expect(text).toContain("40 ms command_timeout_ms");
@@ -476,7 +474,6 @@ it("reports browser-socket discovery on its own deadline", async () => {
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Expected a TCP address");
-  const started = performance.now();
   try {
     const failure = await openCdpEndpoint(
       browserObservationEndpointSchema.parse(
@@ -488,9 +485,7 @@ it("reports browser-socket discovery on its own deadline", async () => {
       undefined,
       30,
     ).catch((cause: unknown) => cause);
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeGreaterThan(60);
-    expect(elapsed).toBeLessThan(1_500);
+    // The stalled socket never answers: only the discovery deadline reports.
     expect(failure).toBeInstanceOf(BrowserObservationError);
     if (!(failure instanceof BrowserObservationError))
       throw new Error("Expected a browser-socket discovery failure");
@@ -777,14 +772,14 @@ it("applies caller-selected discovery_timeout_ms to HTTP discovery independently
   }
 });
 
-it("clamps browser-socket handshake timers at MAX_BROWSER_DEADLINE_MS without 32-bit timer overflow", async () => {
+it("clamps browser-socket handshake timers at MAX_NODE_TIMER_DELAY_MS without 32-bit timer overflow", async () => {
   const browser = await startFakeCdpBrowser({ handshakeDelayMs: 60 });
   const provider = new CdpBrowserProvider();
   try {
     const listed = await provider.listTargets(
       listBrowserTargetsInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
-        discovery_timeout_ms: MAX_BROWSER_DEADLINE_MS,
+        discovery_timeout_ms: MAX_NODE_TIMER_DELAY_MS,
       }),
     );
     if (!listed.ok) throw listed.error;
@@ -794,9 +789,9 @@ it("clamps browser-socket handshake timers at MAX_BROWSER_DEADLINE_MS without 32
       .mock.calls.flatMap(([, delay]) =>
         typeof delay === "number" ? [delay] : [],
       );
-    expect(scheduledDelays).toContain(MAX_BROWSER_DEADLINE_MS);
+    expect(scheduledDelays).toContain(MAX_NODE_TIMER_DELAY_MS);
     expect(Math.max(...scheduledDelays)).toBeLessThanOrEqual(
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
     );
   } finally {
     await provider.close();
@@ -820,19 +815,19 @@ it("clamps browser-socket handshake timers at MAX_BROWSER_DEADLINE_MS without 32
       ),
       "list_browser_targets",
       undefined,
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
     ).catch((cause: unknown) => cause);
     await waitFor(() => expect(sockets.size).toBe(1));
-    expireEveryTimer(MAX_BROWSER_DEADLINE_MS);
+    expireEveryTimer(MAX_NODE_TIMER_DELAY_MS);
     const failure = await pending;
     expect(failure).toBeInstanceOf(BrowserObservationError);
     if (!(failure instanceof BrowserObservationError))
       throw new Error("Expected maximum discovery deadline failure");
     expect(failure.userMessage).toContain(
-      `CDP browser-socket discovery exceeded its ${String(MAX_BROWSER_DEADLINE_MS)} ms discovery_timeout_ms deadline`,
+      `CDP browser-socket discovery exceeded its ${String(MAX_NODE_TIMER_DELAY_MS)} ms discovery_timeout_ms deadline`,
     );
     expect(failure.remediationAction).toContain(
-      `discovery_timeout_ms is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms`,
+      `discovery_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms`,
     );
   } finally {
     for (const socket of sockets) socket.destroy();

@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import * as artifact from "../../scripts/lib/artifact-e2e.mjs";
+import { schemaVerifierEnvironment } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 const [mode, target] = process.argv.slice(2);
@@ -144,10 +145,10 @@ async function standaloneConnections() {
         fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
         "mcp",
       ],
-      env: {
+      env: schemaVerifierEnvironment({
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         REA_LOG_LEVEL: "silent",
-      },
+      }),
       stderr: "pipe",
     });
     await withVerifierCleanup(async () => {

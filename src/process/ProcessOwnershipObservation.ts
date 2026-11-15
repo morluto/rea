@@ -1,5 +1,11 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import {
+  describeSystemPs,
+  LINUX_SYSTEM_PS_LOCATIONS,
+  resolveSystemPs,
+  type SystemPs,
+} from "./systemPs.js";
+import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipIdentityBatchFailure,
   rethrowProcessOwnershipInspectionFailure,
@@ -1183,8 +1189,17 @@ export const createSystemProcessOwnershipHost = (
     readonly darwinModuleCachePath?: string;
     /** Deadline for Darwin ownership-helper compilation. */
     readonly compileTimeoutMs?: number;
+    /** Fixed Linux `ps` locations checked before PATH; tests model a host without them. */
+    readonly linuxPsLocations?: readonly string[];
   } = {},
 ): ProcessOwnershipHost => {
+  const selectPs = () =>
+    resolveSystemPs(
+      platform,
+      options.linuxPsLocations === undefined
+        ? {}
+        : { linuxLocations: options.linuxPsLocations },
+    );
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
     hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
@@ -1219,12 +1234,11 @@ export const createSystemProcessOwnershipHost = (
             : { compileTimeoutMs: options.compileTimeoutMs }),
         })
       : undefined;
-  const listProcesses = async (signal?: AbortSignal) => {
-    if (platform === "win32") return [];
+  const listProcessesWith = async (ps: SystemPs, signal?: AbortSignal) => {
     let stdout: string;
     try {
       ({ stdout } = await execFileOutput(
-        "ps",
+        ps.command,
         ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
         {
           env: hostEnvironment,
@@ -1521,9 +1535,18 @@ export const createSystemProcessOwnershipHost = (
       );
     }
   };
+  /**
+   * Execution failures keep their identity; the message names the `ps` that
+   * ran (`spawn /usr/bin/ps ENOENT`, or bare `ps` for the PATH fallback).
+   */
+  const listProcesses = async (signal?: AbortSignal) =>
+    platform === "win32"
+      ? []
+      : await listProcessesWith(await selectPs(), signal);
   const safeListProcesses = async (signal?: AbortSignal) => {
+    const ps = await selectPs();
     try {
-      return await listProcesses(signal);
+      return await listProcessesWith(ps, signal);
     } catch (cause: unknown) {
       rethrowInspectionFailure(cause);
       const failure = execFileOutputFailure(cause);
@@ -1545,10 +1568,15 @@ export const createSystemProcessOwnershipHost = (
         throw new LinuxOwnedProcessPrerequisiteError(cause, {
           missing: systemCode === "ENOENT",
           systemCode,
+          ps,
         });
       throw new ProcessAdmissionError(
         "baseline_unavailable",
-        systemCode === undefined ? undefined : { system_code: systemCode },
+        {
+          ...(systemCode === undefined ? {} : { system_code: systemCode }),
+          ps_command: ps.command,
+          ps_source: ps.source,
+        },
         { cause },
       );
     }
@@ -1635,7 +1663,7 @@ export const createSystemProcessOwnershipHost = (
         return environment;
       }
       const { stdout } = await execFileOutput(
-        "ps",
+        (await selectPs()).command,
         ["eww", "-p", String(pid)],
         {
           env: hostEnvironment,
@@ -1788,13 +1816,14 @@ export const signalProcessWithStartIdentity = async (
 };
 
 /** Actionable remediation when Linux `ps` is missing or incompatible. */
-export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
-  "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
+export const LINUX_PROCESS_OWNERSHIP_REMEDIATION = `Install your distribution's procps or procps-ng package so a procps-compatible ps exists at ${LINUX_SYSTEM_PS_LOCATIONS.join(", ")}; REA uses its own PATH only when none of those exists. Then retry.`;
 
 /** Options describing why Linux process ownership inspection could not run `ps`. */
 export interface LinuxOwnedProcessPrerequisiteOptions {
   readonly missing?: boolean;
   readonly systemCode?: string | undefined;
+  /** The `ps` that failed, recorded in the diagnostics and reason. */
+  readonly ps?: SystemPs;
 }
 
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
@@ -1829,12 +1858,14 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
       admissionCode === undefined &&
       (options.missing ??
         (resolvedCode === "ENOENT" || resolvedCode === undefined));
+    const ran =
+      options.ps === undefined ? "" : ` (ran ${describeSystemPs(options.ps)})`;
     const reason =
       admissionCode !== undefined || isMissing
-        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+        ? `Linux process ownership inspection requires a procps-compatible ps before launching a child: ${errorMessage(cause)}${ran}`
         : resolvedCode !== undefined
-          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`
-          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
+          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}${ran}`
+          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}${ran}`;
     const remediation =
       admissionCode !== undefined
         ? processOwnershipAdmissionRecovery(admissionCode, "linux")
@@ -1855,6 +1886,9 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
           ? {}
           : { admission_code: admissionCode }),
         ...(resolvedCode === undefined ? {} : { system_code: resolvedCode }),
+        ...(options.ps === undefined
+          ? {}
+          : { ps_command: options.ps.command, ps_source: options.ps.source }),
       },
     });
     this.systemCode = resolvedCode;
@@ -1884,12 +1918,12 @@ export const processOwnershipAdmissionRecovery = (
   if (code === "baseline_unavailable") {
     if (systemCode === "ENOENT")
       return platform === "darwin"
-        ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+        ? "Ensure /bin/ps runs and process ownership inspection is supported on macOS before launching captured children."
         : LINUX_PROCESS_OWNERSHIP_REMEDIATION;
     if (systemCode !== undefined)
       return `Verify host process table inspection can execute ps (${systemCode}) before launching captured children, then retry.`;
     return platform === "darwin"
-      ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+      ? "Ensure /bin/ps runs and process ownership inspection is supported on macOS before launching captured children."
       : "Ensure process ownership inspection is supported on the host platform before launching captured children.";
   }
   return "Verify host process ownership inspection prerequisites before retrying.";

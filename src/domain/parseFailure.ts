@@ -65,10 +65,10 @@ type ParseFailureSite = Pick<ParseFailureFacts, "offset" | "field"> & {
   readonly cause?: unknown;
 };
 
-const failureWith = (
-  failure: ParseFailure,
+const failureWith = <Kind extends ParseFailureKind>(
+  failure: Extract<ParseFailure, { readonly kind: Kind }>,
   cause: unknown,
-): ParseFailureError =>
+): ParseFailureError<Kind> =>
   new ParseFailureError(failure, cause === undefined ? undefined : { cause });
 
 /** The bytes violate the format's structure. */
@@ -76,7 +76,7 @@ export const malformedInput = (
   format: string,
   detail: string,
   { cause, ...at }: ParseFailureSite = {},
-): ParseFailureError =>
+): ParseFailureError<"malformed"> =>
   failureWith({ kind: "malformed", format, detail, ...at }, cause);
 
 /** A declared structure starts in the bytes but ends past them. */
@@ -84,7 +84,7 @@ export const truncatedInput = (
   format: string,
   detail: string,
   { cause, ...at }: ParseFailureSite = {},
-): ParseFailureError =>
+): ParseFailureError<"truncated"> =>
   failureWith({ kind: "truncated", format, detail, ...at }, cause);
 
 /** The bytes use a form outside this decoder's coverage. */
@@ -96,7 +96,7 @@ export const unsupportedInput = (
     undecodedContent = false,
     ...at
   }: ParseFailureSite & { readonly undecodedContent?: boolean } = {},
-): ParseFailureError =>
+): ParseFailureError<"unsupported"> =>
   failureWith(
     { kind: "unsupported", format, detail, ...at, undecodedContent },
     cause,
@@ -108,7 +108,7 @@ export const decodeLimit = (
   detail: string,
   limit: { readonly name: string; readonly maximum: number },
   { cause, ...at }: ParseFailureSite = {},
-): ParseFailureError =>
+): ParseFailureError<"limit"> =>
   failureWith({ kind: "limit", format, detail, ...at, limit }, cause);
 
 /**

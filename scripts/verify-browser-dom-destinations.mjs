@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { newPlaywrightCdpSession } from "../dist/browser/PlaywrightCdpSession.js";
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -53,7 +54,11 @@ await withVerifierCleanup(async () => {
     ),
   );
   assert.deepEqual(native, Array(4).fill(page.url()));
-  const session = await context.newCDPSession(page);
+  const session = await newPlaywrightCdpSession(
+    context,
+    page,
+    "inspect_web_page",
+  );
   const { targetInfo } = await session.send("Target.getTargetInfo");
   await session.detach();
   const [port] = (

@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+
+/** The slice-selection refusal an admitted decode reports as REA's inconsistency. */
+const refusalOf = (decode: () => unknown) => {
+  try {
+    decode();
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ProviderAdapterError);
+    return (cause as ProviderAdapterError).diagnostics;
+  }
+  throw new Error("expected the decode to be refused");
+};
 
 const base = 0x100000000n;
 const fixture = (
@@ -2033,10 +2045,20 @@ describe("FAT64 dispatch slice validation", () => {
   };
   const admitted = () => ({ offset: 256, size: fixture().length });
 
-  it("rejects a truncated architecture table", () => {
+  it("does not select from a table that extends past the file", () => {
+    // Generic admission reads such a table as not universal, so the bytes
+    // are read whole and refused as an unsupported header.
     expect(() =>
       decodeAppleDispatchMetadata(wrapped().subarray(0, 32), 100, provenance),
-    ).toThrow("Malformed FAT architecture table");
+    ).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: "Only little-endian 64-bit Mach-O metadata is supported",
+      }),
+    );
+    expect(
+      refusalOf(() => decodeAdmitted(wrapped().subarray(0, 32), admitted())),
+    ).toMatchObject({ refusal: "admitted_slice_mismatch" });
   });
 
   it.each([16, 24])(
@@ -2060,14 +2082,18 @@ describe("FAT64 dispatch slice validation", () => {
     bytes.writeUInt32BE(2, 4);
     bytes.copy(bytes, 40, 8, 40);
     expect(() => decodeAdmitted(bytes, admitted())).toThrow(
-      "Admitted FAT slice is declared more than once",
+      "Mach-O slices 0 and 1 overlap.",
     );
   });
 
   it("refuses a universal image without the admitted slice", () => {
-    expect(() =>
-      decodeAppleDispatchMetadata(wrapped(), 100, provenance),
-    ).toThrow("Universal Mach-O metadata needs the admitted slice");
+    expect(
+      refusalOf(() => decodeAppleDispatchMetadata(wrapped(), 100, provenance)),
+    ).toEqual({
+      target_path: provenance.path,
+      refusal: "admitted_slice_mismatch",
+      reason: "Universal Mach-O metadata needs the admitted slice",
+    });
   });
 
   it("decodes the admitted capability variant rather than re-selecting", () => {
@@ -2120,9 +2146,12 @@ describe("FAT64 dispatch slice validation", () => {
   });
 
   it("rejects an admitted slice of another architecture", () => {
-    expect(() => decodeAdmitted(wrapped(), admitted(), "x86_64")).toThrow(
-      "Admitted FAT slice does not match the requested architecture",
-    );
+    expect(
+      refusalOf(() => decodeAdmitted(wrapped(), admitted(), "x86_64")),
+    ).toMatchObject({
+      refusal: "admitted_slice_mismatch",
+      reason: "Admitted FAT slice does not match the requested architecture",
+    });
   });
 });
 
@@ -2161,20 +2190,15 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     },
   );
 
-  it.each([6, 16])(
-    "states the header byte order when its architecture table is truncated at %i bytes",
-    (length) => {
-      expect(() =>
-        decodeAppleDispatchMetadata(
-          wrapped(false).subarray(0, length),
-          100,
-          provenance,
-        ),
-      ).toThrow(
-        "Malformed FAT architecture table (FAT header byte order: little-endian)",
-      );
-    },
-  );
+  it("refuses a truncated byte-swapped FAT header", () => {
+    expect(() =>
+      decodeAppleDispatchMetadata(
+        wrapped(false).subarray(0, 6),
+        100,
+        provenance,
+      ),
+    ).toThrow("FAT header is truncated");
+  });
 
   it("reads the selected thin slice's CPU identity in its own byte order", () => {
     const bytes = wrapped(false);
@@ -2194,7 +2218,7 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     bytes.writeUInt32LE(12, 260);
     bytes.writeUInt32LE(0, 264);
     expect(() => decodeAdmitted(bytes, admitted(), "arm")).toThrow(
-      "Unsupported 32-bit Mach-O metadata for requested CPU type arm",
+      "Unsupported 32-bit Mach-O metadata",
     );
   });
 
@@ -2203,9 +2227,7 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     bytes.writeBigUInt64LE(0x100000000n, 16);
     expect(() =>
       decodeAdmitted(bytes, { offset: 0x100000000, size: admitted().size }),
-    ).toThrow(
-      "FAT architecture 0 slice range extends beyond the file (FAT header byte order: little-endian)",
-    );
+    ).toThrow("FAT architecture 0 slice range extends beyond the file");
   });
 });
 

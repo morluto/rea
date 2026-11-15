@@ -109,8 +109,8 @@ describe("managed comparison selected nominal membership", () => {
     ).toBe(true);
   });
 
-  it.each(["current", "historical"])(
-    "does not recover missing %s selected identity from display names",
+  it.each(["complete", "incomplete"])(
+    "does not recover missing selected identity from display names with %s nesting",
     (kind) => {
       const source = inspect(
         distinctSelectedNestedOwners().left,
@@ -122,7 +122,7 @@ describe("managed comparison selected nominal membership", () => {
         ...type,
         name_sha256: null,
       }));
-      if (kind === "historical") unknown.nesting_read = null;
+      if (kind === "incomplete") unknown.nesting_read = false;
       const comparison = compareManagedMembers(source, {
         ...source,
         result: unknown,
@@ -350,14 +350,14 @@ describe("managed comparison method row coverage", () => {
       }),
     };
     expect(compareManagedMembers(full, selected).summary.removed).toBe(0);
-    const historical = {
+    const unscoped = {
       ...full,
       result: managedMemberInspectionSchema.parse({
         ...full.result,
-        method_rows: undefined,
+        method_rows: null,
       }),
     };
-    expect(compareManagedMembers(historical, middle).summary.removed).toBe(0);
+    expect(compareManagedMembers(unscoped, middle).summary.removed).toBe(0);
   });
 });
 
@@ -513,7 +513,7 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and historical edges", () => {
+  it("retains unknown identity for cyclic scope, TypeSpec and unresolved edges", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
@@ -531,20 +531,18 @@ describe("managed edge identity resolution", () => {
       "unknown",
     );
     const source = observeEdgeTarget();
-    const historical = {
+    const unresolved = {
       ...source,
       result: managedMemberInspectionSchema.parse({
         ...source.result,
-        call_edges: source.result.call_edges.map(
-          ({
-            il_offset: _offset,
-            target_identity_sha256: _identity,
-            ...edge
-          }) => edge,
-        ),
+        call_edges: source.result.call_edges.map((edge) => ({
+          ...edge,
+          il_offset: null,
+          target_identity_sha256: null,
+        })),
       }),
     };
-    expect(compareManagedMembers(source, historical).methods[0]?.status).toBe(
+    expect(compareManagedMembers(source, unresolved).methods[0]?.status).toBe(
       "unknown",
     );
   });
@@ -1122,7 +1120,7 @@ describe("managed LocalVarSig comparison", () => {
     },
   );
 
-  it("preserves historical locals uncertainty across artifacts and byte identity within one artifact", () => {
+  it("preserves absent locals uncertainty across artifacts and byte identity within one artifact", () => {
     const left = observe(
       Buffer.from([0x07, 0x01, 0x08]),
       "/fixture/locals-current.dll",
@@ -1131,25 +1129,23 @@ describe("managed LocalVarSig comparison", () => {
       Buffer.from([0x07, 0x01, 0x0a]),
       "/fixture/locals-old.dll",
     );
-    const historical = (side: typeof left) => ({
+    const absent = (side: typeof left) => ({
       ...side,
       result: managedMemberInspectionSchema.parse({
         ...side.result,
         methods: side.result.methods.map((method) => ({
           ...method,
-          body: { ...method.body, local_var_signature: undefined },
+          body: { ...method.body, local_var_signature: null },
         })),
       }),
     });
     expect(
-      compareManagedMembers(left, historical(currentRight)).methods[0],
+      compareManagedMembers(left, absent(currentRight)).methods[0],
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
     });
-    expect(
-      compareManagedMembers(left, historical(left)).methods[0],
-    ).toMatchObject({
+    expect(compareManagedMembers(left, absent(left)).methods[0]).toMatchObject({
       status: "unchanged",
       dimensions: [],
     });
@@ -3039,7 +3035,7 @@ describe("managed member comparison of resolved signatures", () => {
     ).toEqual([]);
   });
 
-  it("compares raw signatures against Evidence recorded before resolution", () => {
+  it("compares raw signatures against Evidence without resolution attestation", () => {
     // Both signatures name Program, TypeDef row 1, in the same build.
     const build = () =>
       buildManagedPeFixture({
@@ -3057,15 +3053,13 @@ describe("managed member comparison of resolved signatures", () => {
     const withoutResolution = <Member extends { signature: object }>(
       members: readonly Member[],
     ) =>
-      members.map((member) => {
-        const { resolved_sha256: _omitted, ...recorded } = member.signature as {
-          resolved_sha256: unknown;
-        };
-        return { ...member, signature: recorded };
-      });
+      members.map((member) => ({
+        ...member,
+        signature: { ...member.signature, resolved_sha256: null },
+      }));
     const recorded = managedMemberInspectionSchema.parse({
       ...left.result,
-      signature_resolution: undefined,
+      signature_resolution: null,
       methods: withoutResolution(left.result.methods),
       fields: withoutResolution(left.result.fields),
       member_refs: withoutResolution(left.result.member_refs),

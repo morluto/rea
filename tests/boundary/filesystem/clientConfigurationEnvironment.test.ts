@@ -329,9 +329,10 @@ it.skipIf(process.platform !== "win32").each([
     );
     if (!result.ok) throw result.error;
     expect(result.value.timeoutInputs?.analysisProvider).toBe(expected);
-    expect(snapshotEnvironment(result.value.values).REA_ANALYSIS_PROVIDER).toBe(
-      expected,
-    );
+    expect(
+      snapshotEnvironment(result.value.values, process.platform)
+        .REA_ANALYSIS_PROVIDER,
+    ).toBe(expected);
     expect(Object.keys(result.value.values)).toHaveLength(1);
     const child = spawnSync(
       process.execPath,

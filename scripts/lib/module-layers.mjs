@@ -29,6 +29,7 @@ export const UNIT_LAYERS = Object.freeze(
       "compression",
       "config",
       "filesystem",
+      "platform",
       "process",
       "windows",
       "generatedPackageMetadata.ts",

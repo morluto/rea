@@ -18,8 +18,9 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -135,9 +136,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&

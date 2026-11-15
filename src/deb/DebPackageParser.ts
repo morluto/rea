@@ -399,7 +399,7 @@ const parseTar = (
   const paxUndecodable = new Set<string>();
   while (offset + TAR_BLOCK <= bytes.length) {
     const header = bytes.subarray(offset, offset + TAR_BLOCK);
-    if (isZeroBlock(header)) break;
+    if (isZeroBlock(header)) return { entries, files, undecodableNames };
     const stored = parseOctal(ascii(header.subarray(148, 156)));
     const computed = tarChecksum(header);
     if (stored === null || stored !== computed)
@@ -547,6 +547,18 @@ const parseTar = (
     paxUndecodable.clear();
     offset = dataStart + pad512(size);
   }
+  // Without an end-of-archive block the stream must stop exactly on a block
+  // boundary; a partial header or missing member padding means it was cut off.
+  if (offset !== bytes.length)
+    return {
+      entries,
+      files,
+      undecodableNames,
+      error: new DebPackageFormatFailure(
+        "truncated",
+        `${memberName} ends inside a tar block at offset ${String(Math.min(offset, bytes.length))}.`,
+      ),
+    };
   return { entries, files, undecodableNames };
 };
 

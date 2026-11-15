@@ -86,7 +86,7 @@ MCP usa schemi di input compatti per impostazione predefinita. Per tutte le indi
 
 La configurazione registra direttamente il runtime scelto e lo script di avvio di REA. Se usi un package runner, conserva la sua voce nella cache e il runtime; scarica il pacchetto da una directory attendibile fuori dal progetto di destinazione. Consulta la guida di installazione.
 
-Gli schemi di output completi sono dichiarati per impostazione predefinita. Se il client limita `tools/list`, imposta `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` o `off` nella registrazione MCP. La validazione del server e i risultati strutturati restano completi. Consulta «Output schemas» nella guida ai contratti MCP.
+Gli schemi di output sono omessi da `tools/list` per impostazione predefinita: nessuna API di modelli li legge e REA valida ogni risultato da sé. Imposta `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` nella registrazione MCP per dichiarare ogni schema di output entro 4096 byte, oppure `full` per gli schemi di output completi (per i client MCP che validano i risultati). In ogni caso la validazione del server e i risultati strutturati restano completi. Consulta «Output schemas» nella guida ai contratti MCP.
 
 ### Chiedi al tuo agente
 

@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { gzipSync } from "node:zlib";
 
 import { inspectDebPackageInputSchema } from "../domain/deb/debPackage.js";
 import { projectDebPackageView } from "../domain/analysisView/debPackageView.js";
@@ -9,6 +10,7 @@ import {
 import {
   debPackageFixture,
   notArBytes,
+  tarMember,
   truncatedAfterDebianBinaryBytes,
   truncatedArMemberBytes,
   xzStub,
@@ -738,4 +740,21 @@ it("keeps a GNU ar string table as a counted member", () => {
     DebPackageCapacityFailure,
   );
   expect(error.resource).toBe("max_ar_members");
+});
+
+it.for([
+  ["a partial next header", 100],
+  ["missing member padding", -200],
+] as const)("refuses a control tar cut off with %s", ([, cut]) => {
+  const first = tarMember({ name: "./control", content: "Package: hello\n" });
+  const second = tarMember({ name: "./md5sums", content: "x".repeat(300) });
+  const tar =
+    cut > 0
+      ? Buffer.concat([first, second.subarray(0, cut)])
+      : Buffer.concat([first, second.subarray(0, second.length + cut)]);
+  const error = expectFailure(
+    () => parse(debPackageFixture({ controlMemberBytes: gzipSync(tar) })),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("truncated");
 });

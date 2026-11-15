@@ -92,6 +92,7 @@ describe("retained headless IDA connection in a long-lived host", () => {
       args: [supervisor],
       env: {},
       mode: "headless" as const,
+      protocol: "modern" as const,
       timeoutMs: 5000,
       workspaceRoot,
     };

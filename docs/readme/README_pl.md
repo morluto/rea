@@ -86,7 +86,7 @@ MCP domyślnie używa zwartych schematów wejściowych. Pełne opisy pól i zagn
 
 Konfiguracja zapisuje bezpośrednio wybrane środowisko uruchomieniowe i skrypt wejściowy REA. Przy użyciu narzędzia uruchamiającego pakiety zachowaj jego wpis w pamięci podręcznej i środowisko; pobierz pakiet z zaufanego katalogu poza projektem docelowym. Zobacz instrukcję instalacji.
 
-Pełne schematy wyjściowe są udostępniane domyślnie. Jeśli klient ogranicza `tools/list`, ustaw `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` lub `off` w rejestracji MCP. Walidacja serwera i wyniki strukturalne pozostają pełne. Zobacz „Output schemas” w przewodniku po kontraktach MCP.
+Schematy wyjściowe są domyślnie pomijane w `tools/list`: żadne API modelu ich nie czyta, a REA samo waliduje każdy wynik. Ustaw `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` w rejestracji MCP, aby udostępniać każdy schemat wyjściowy w limicie 4096 bajtów, lub `full`, aby udostępniać pełne schematy wyjściowe (dla klientów MCP, które walidują wyniki). W każdym ustawieniu walidacja serwera i wyniki strukturalne pozostają pełne. Zobacz „Output schemas” w przewodniku po kontraktach MCP.
 
 ### Zapytaj agenta
 

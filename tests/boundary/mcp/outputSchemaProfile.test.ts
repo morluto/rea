@@ -1,13 +1,19 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
-import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpOutputSchemaProfile.js";
+import {
+  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  resolveMcpOutputSchemaProfile,
+} from "../../../src/config/mcpOutputSchemaProfile.js";
+import { createServer as createProductionServer } from "../../../src/server/createServer.js";
+import { silentLogger } from "../../../src/logger.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../../../src/contracts/compactInputSchema.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
@@ -369,4 +375,41 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
     await client.close();
     await server.close();
   }
+});
+
+it("omits output schemas by default and still delivers validated structured results", async () => {
+  expect(resolveMcpOutputSchemaProfile(undefined)).toBe("off");
+  const session = createTestBinarySession(() => {
+    throw new Error("No deep provider may start for a catalog listing");
+  });
+  // An environment without the setting selects the product default.
+  const server = createProductionServer(
+    { kind: "session", session },
+    { environment: { HOME: process.env.HOME }, logger: silentLogger },
+  );
+  const client = new Client({ name: "default-output-profile", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const { tools } = await client.listTools();
+  expect(tools).toHaveLength(TOOL_CONTRACTS.length);
+  expect(
+    tools.filter(({ outputSchema }) => outputSchema !== undefined),
+  ).toEqual([]);
+  // The SDK client accepts structured content from a tool without a listed
+  // output schema; REA validated it against the canonical contract.
+  const result = await client.callTool({
+    name: "list_unknowns",
+    arguments: {},
+  });
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toEqual({
+    result: { items: [], total: 0, offset: 0, next_offset: null },
+  });
 });
