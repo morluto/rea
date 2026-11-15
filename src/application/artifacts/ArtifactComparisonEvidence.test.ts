@@ -8,8 +8,10 @@ import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisV
 import {
   createEvidence,
   parseEvidence,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
+  type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
 import {
   EvidenceIntegrityError,
@@ -181,13 +183,19 @@ const hashesUnknown =
 type SummaryEra = "pre-ce1f4b1bb" | "pre-b395190e4" | "current";
 
 /** Recommit an inventory whose two independent unknowns exercise both migrations. */
-const unknownInventory = () => {
+const unknownInventory = (target: Partial<EvidenceSubjectTarget> = {}) => {
   const original = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inventory = artifactInventoryResultSchema.parse(
     original.normalized_result,
   );
   inventory.coverage.status = "unknown";
   inventory.occurrences[0]!.hash_status = "unavailable";
+  if (target.format === "esp-flash-image") {
+    inventory.manifest.root_format = target.format;
+    for (const occurrence of inventory.occurrences)
+      if (occurrence.logical_path === ".")
+        occurrence.artifact_format = target.format;
+  }
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
     occurrences: inventory.occurrences,
@@ -204,6 +212,7 @@ const unknownInventory = () => {
       path: "historical-inventory",
       sha256: inventory.manifest.root_sha256,
       format: "file",
+      ...target,
     },
     original.provider,
     {
@@ -463,3 +472,30 @@ it.each<SummaryEra>(["current"])(
     expect(parseEvidence(summary).evidence_id).toBe(before.summaryId);
   },
 );
+
+it("authenticates an alias summary of a selected flash image against its retained inventory", async () => {
+  const parent = unknownInventory({
+    format: "esp-flash-image",
+    selection: {
+      kind: "esp-flash",
+      flash_offset: 0x1_0000,
+      partition_table_offset: 0x8000,
+    },
+  });
+  const { name: _name, ...target } = evidenceSubjectTarget(parent.subject)!;
+  const alias = rebindEvidenceToTargetPath(parent, {
+    ...target,
+    path: "/selected/alias.bin",
+  });
+  expect(alias.subject?.local_path).toBe("/selected/alias.bin");
+  const summary = await inspectAnalysisView({
+    source: { kind: "inline", evidence: alias },
+    view: { kind: "summary" },
+  });
+  if (!summary.ok) throw summary.error;
+  // The owner rebinds its retained parent to the alias with the selection, so
+  // the reprojected summary names the same path and Evidence ID.
+  expect(
+    resolveArtifactComparisonEvidence(summary.value, () => parent),
+  ).toEqual({ ok: true, value: parent });
+});

@@ -25,6 +25,8 @@ import {
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import {
   createEvidence,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
   evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
@@ -242,13 +244,7 @@ const projectResolvedAnalysisView = (
     subject: presentation.subject,
     limitations: parent.limitations,
     parameters: parent.parameters,
-    artifact:
-      presentation.subject === null
-        ? null
-        : {
-            path: presentation.subject.local_path,
-            sha256: presentation.subject.digest.sha256,
-          },
+    artifact: viewArtifact(presentation),
   });
   if (!projected.ok) return projected;
   const identity = validateAnalysisViewSubject(
@@ -448,4 +444,15 @@ const createAnalysisViewEvidence = (
     },
     { immutable: true },
   );
+};
+
+/** The artifact a view names: the presented file target and its display path. */
+const viewArtifact = (
+  evidence: Evidence,
+): { readonly path: string; readonly sha256: string } | null => {
+  const target = evidenceFileTarget(evidence);
+  const display = evidenceSubjectDisplay(evidence);
+  return target === undefined || display === undefined
+    ? null
+    : { path: display.local_path, sha256: target.sha256 };
 };

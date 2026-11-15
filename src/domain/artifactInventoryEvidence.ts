@@ -22,7 +22,7 @@ import {
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
-import type { Evidence } from "./evidence.js";
+import { evidenceFileTarget, type Evidence } from "./evidence.js";
 import { z } from "zod";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, safeParseEvidence } from "./evidenceValidation.js";
@@ -299,10 +299,14 @@ const parseInventoryEvidencePage = (
 const subjectMatchesInventoryRoot = (
   subject: Evidence["subject"],
   manifest: ArtifactInventoryResult["manifest"],
-): boolean =>
-  subject !== null &&
-  subject.digest.sha256 === manifest.root_sha256 &&
-  subject.format === manifest.root_format;
+): boolean => {
+  const target = evidenceFileTarget({ subject });
+  return (
+    target !== undefined &&
+    target.sha256 === manifest.root_sha256 &&
+    target.format === manifest.root_format
+  );
+};
 
 /** Both inventory carriers require the same authenticated root identity. */
 export const validateArtifactInventorySubject = (

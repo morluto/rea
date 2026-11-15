@@ -14,6 +14,7 @@ import {
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
+  evidenceFileTarget,
   type Evidence,
 } from "../../domain/evidence.js";
 import {
@@ -63,12 +64,7 @@ const parseInspection = (
   if (
     !wasmArtifactMatchesSubject(
       result.artifact,
-      evidence.subject === null
-        ? null
-        : {
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-          },
+      evidenceFileTarget(evidence),
     ) ||
     evidence.parameters.path !== result.artifact.path
   )

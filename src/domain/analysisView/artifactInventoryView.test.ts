@@ -14,6 +14,7 @@ import {
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
 const freshInventory = (version: "current" | "historical" = "current") => {
@@ -91,7 +92,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   subject:
     carrier.subject === null
       ? null
-      : { ...carrier.subject, format: "zip", architecture: null },
+      : changedEvidenceSubject(carrier.subject, {
+          format: "zip",
+          architecture: null,
+        }),
   normalizedResult,
   sealedResult: true,
   limitations: [],
@@ -333,7 +337,9 @@ it("binds reused facts to the current Evidence ID and validates its subject on e
     page(
       {
         ...next,
-        subject: { ...subject, digest: { sha256: "f".repeat(64) } },
+        subject: changedEvidenceSubject(subject, {
+          digest: { sha256: "f".repeat(64) },
+        }),
       },
       { kind: "inventory", collection: "nodes" },
     ),
