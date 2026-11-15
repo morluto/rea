@@ -217,7 +217,7 @@ export const projectErlangBeamView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(chunks.length, chunks.length),
+      coverage: completeWithinViewCoverage(chunks.length),
     });
   const rows = parsed.value[view.collection];
   if (rows === null)

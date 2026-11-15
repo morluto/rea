@@ -68,14 +68,17 @@ export const parseFunctionEvidence = (
   const parsed = readEvidence(input, side);
   if (!parsed.ok) return parsed;
   const evidence = parsed.value;
-  const invalidSelection = (message: string, expected?: JsonValue) =>
+  const invalidSelection = (
+    message: string,
+    facts?: { readonly expected: JsonValue; readonly observed: JsonValue },
+  ) =>
     err(
       new AnalysisInputError(selection.operation, { userMessage: message }, [
         {
           path: selection.path,
           reason: "invalid_value",
           message,
-          ...(expected === undefined ? {} : { expected }),
+          ...facts,
         },
       ]),
     );
@@ -93,8 +96,14 @@ export const parseFunctionEvidence = (
     return invalidSelection(
       `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${subject} has operation ${evidence.operation} and predicate ${evidence.predicate_type}.`,
       {
-        operation: "analyze_function",
-        predicate_type: ANALYSIS_EVIDENCE_PREDICATE,
+        expected: {
+          operation: "analyze_function",
+          predicate_type: ANALYSIS_EVIDENCE_PREDICATE,
+        },
+        observed: {
+          operation: evidence.operation,
+          predicate_type: evidence.predicate_type,
+        },
       },
     );
   }

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -5,7 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
@@ -38,7 +39,7 @@ const expectAvailableToolInventory = async (
     throw new Error("The compiled catalog omitted binary_session");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    { toolDefinition: binarySession },
+    { toolDefinition: withCanonicalOutputSchema(binarySession) },
   );
   expect(status.isError).not.toBe(true);
   const inventory = z
@@ -56,7 +57,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(FULL_CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(DEFAULT_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );
@@ -228,7 +229,7 @@ describe("production stdio runtime", () => {
         throw new Error("The compiled catalog omitted close_binary");
       const closed = await client.callTool(
         { name: "close_binary", arguments: {} },
-        { toolDefinition: closeBinary },
+        { toolDefinition: withCanonicalOutputSchema(closeBinary) },
       );
       expect(closed.isError).not.toBe(true);
     } finally {

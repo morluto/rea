@@ -7,14 +7,11 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
-  mkdtemp,
   mkdir,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -33,6 +30,7 @@ import {
   completeVerifierRun,
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.platform === "win32")
   throw new Error(
@@ -40,7 +38,12 @@ if (process.platform === "win32")
   );
 const run = createVerifierRun(),
   exec = promisify(execFile);
-const root = await mkdtemp(join(tmpdir(), "rea-ghidra-checkpoints-"));
+// Ghidra children use the root as HOME and TMPDIR; a plain root admits them on every host.
+const workspace = await VerifierFixture.open({
+  prefix: "rea-ghidra-checkpoints-",
+  private: false,
+});
+const root = workspace.path;
 const runtime = join(root, "runtime"),
   checkpointDirectory = join(root, "checkpoints");
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -474,7 +477,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   }
   if (cleanupVerified) {
     try {
-      await rm(root, { recursive: true, force: true });
+      await workspace.release();
     } catch (cause) {
       report.cleanup_error = String(cause);
       report.retained_workspace = root;

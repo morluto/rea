@@ -10,6 +10,7 @@ import {
 } from "yaml";
 import type { Node } from "yaml";
 
+import { isRecord } from "../domain/isRecord.js";
 import { copyYamlAliasSource } from "./YamlConfigurationAliases.js";
 
 /**
@@ -42,9 +43,6 @@ const parseGgcodeDocument = (text: string): Document => {
   return document;
 };
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 // Reads resolve YAML aliases through toJS(), so an anchored `name: *anchor`
 // entry addresses the server the reader sees; the editors must match the
 // same resolved value or setup would append a duplicate and uninstall would
@@ -62,7 +60,7 @@ const sequenceEntries = (
 ): Record<string, unknown> => {
   const entries = new Map<string, unknown>();
   for (const item of items) {
-    if (!isPlainObject(item))
+    if (!isRecord(item))
       throw new TypeError(`${description} entries must be named mappings`);
     const { name, ...entry } = item;
     // ggcode loads an unnamed entry, but no registration can address it by
@@ -88,7 +86,7 @@ const mappingEntries = (
 ): Record<string, unknown> => {
   const entries = new Map<string, unknown>();
   for (const [name, entry] of Object.entries(value)) {
-    if (!isPlainObject(entry))
+    if (!isRecord(entry))
       throw new TypeError(`${description} entries must be mappings`);
     const { name: innerName, ...rest } = entry;
     void innerName;
@@ -102,7 +100,7 @@ const serverEntries = (
   description: string,
 ): Record<string, unknown> => {
   if (Array.isArray(value)) return sequenceEntries(value, description);
-  if (isPlainObject(value)) return mappingEntries(value, description);
+  if (isRecord(value)) return mappingEntries(value, description);
   throw new TypeError(
     `${description} must be a sequence of named server mappings`,
   );
@@ -124,7 +122,7 @@ export const parseGgcodeConfigurationYaml = (
   const value: unknown = document.toJS();
   if (Array.isArray(value))
     return { mcp_servers: sequenceEntries(value, "The configuration root") };
-  if (isPlainObject(value)) {
+  if (isRecord(value)) {
     if (layout === "standalone")
       throw new TypeError(
         "The configuration root must be a sequence of named server mappings; a mapping root is only valid as the legacy ggcode.yaml layout",
@@ -246,7 +244,7 @@ export const editGgcodeConfigurationYaml = (
   } else {
     const node = document.createNode({
       name: serverKey,
-      ...(isPlainObject(entry) ? entry : {}),
+      ...(isRecord(entry) ? entry : {}),
     });
     if (index < 0) {
       root.items.push(node);
@@ -271,10 +269,10 @@ export const stringifyGgcodeConfigurationYaml = (
   document: Record<string, unknown>,
 ): string => {
   const servers = document.mcp_servers;
-  const entries = isPlainObject(servers)
+  const entries = isRecord(servers)
     ? Object.entries(servers).map(([name, entry]) => ({
         name,
-        ...(isPlainObject(entry) ? entry : {}),
+        ...(isRecord(entry) ? entry : {}),
       }))
     : [];
   return new Document(entries).toString({ lineWidth: 0 });

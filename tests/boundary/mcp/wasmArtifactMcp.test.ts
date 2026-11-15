@@ -106,7 +106,7 @@ it.each(["bin", "hop"])(
     const harness = await createApplicationMcpHarness({
       schemaValidator: schemaValidation,
       session,
-      serverOptions: { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" } },
+      serverOptions: { environment: {} },
     });
     onTestFinished(harness.close);
     const { client } = harness;
@@ -553,8 +553,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Missing WASM view schemas");
+  if (advertised === undefined) throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
   for (const [view, expected] of [
@@ -615,7 +614,7 @@ it("rejects inconsistent decoded-WAT digests in portable Evidence without a prov
   const value = wasmArtifactFixture();
   const harness = await createApplicationMcpHarness({
     schemaValidator: schemaValidation,
-    serverOptions: { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" } },
+    serverOptions: { environment: {} },
   });
   onTestFinished(harness.close);
   const inconsistent = createEvidence(
@@ -658,7 +657,7 @@ it("checks WASM semantic identity while preserving rebound display paths", async
   const value = wasmArtifactFixture();
   const harness = await createApplicationMcpHarness({
     schemaValidator: schemaValidation,
-    serverOptions: { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" } },
+    serverOptions: { environment: {} },
   });
   onTestFinished(harness.close);
   const views = [

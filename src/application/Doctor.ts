@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -7,7 +8,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -266,11 +267,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(
@@ -703,8 +700,8 @@ export const systemDoctorHost = (
     options.signal === undefined
       ? controller.signal
       : AbortSignal.any([options.signal, controller.signal]);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const environment = options.environment ?? process.env;
   const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),

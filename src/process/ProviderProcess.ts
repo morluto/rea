@@ -1,4 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import type { AnalysisCleanupReleaseClaim } from "../domain/analysisErrorBase.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
@@ -464,6 +466,7 @@ export class ProviderProcessSupervisor {
   #exitObservation: ProviderProcessExitObservation | undefined;
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #stopRequested = false;
+  readonly #release = new AnalysisCleanupRelease();
   #disposed = false;
   #maxAggregateDiagnosticBytes: number | undefined;
   readonly #maxStreamDiagnosticBytes:
@@ -793,6 +796,14 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /**
+   * Confirmed once a stop proves this process ended; errors reporting the
+   * process read it instead of being told.
+   */
+  get cleanupRelease(): AnalysisCleanupReleaseClaim {
+    return this.#release;
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
@@ -801,6 +812,7 @@ export class ProviderProcessSupervisor {
       this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
+      else if (result.status !== "not-owned") this.#release.confirm();
       return result;
     });
     return this.#stopPromise;

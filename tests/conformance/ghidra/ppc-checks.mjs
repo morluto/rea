@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 // The lane binds this language; Ghidra's ELF loader alone selects e500.
@@ -52,7 +53,7 @@ export function parsePowerPcReadelf(text) {
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
 export async function inspectPowerPcReadelf(path) {
-  const command = process.env.REA_PPC_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.ppcReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

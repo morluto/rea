@@ -1,3 +1,7 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -41,8 +45,6 @@ const createSelectionClient = () => {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
       // Exact advertised constraints require the complete schema profile.
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });
@@ -143,7 +145,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(schema);
+    }).compile(canonicalInputSchema("analyze_javascript_application"));
     expect(validate({ input_path: root, source_paths: ["main.mjs"] })).toBe(
       true,
     );
@@ -158,14 +160,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
       },
     });
     expect(selected.isError, JSON.stringify(selected.content)).not.toBe(true);
-    if (definition?.outputSchema === undefined)
+    if (definition === undefined)
       throw new Error("Missing advertised application output contract");
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     expect(
       validateOutput(selected.structuredContent),
       JSON.stringify(validateOutput.errors),

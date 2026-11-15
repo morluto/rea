@@ -102,7 +102,7 @@ it("rejects region bytes that disagree with stable whole-file hashes", async () 
   try {
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
       reason: "integrity",
-      message: "iNES reconstruction differs from the source",
+      integrityCheck: "reconstruction",
     });
     expect(changed).toBe(true);
     expect((await readFile(path)).equals(bytes)).toBe(true);

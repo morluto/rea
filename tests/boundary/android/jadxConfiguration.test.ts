@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -38,6 +39,7 @@ const inspectJadxAvailability = (
   signal?: AbortSignal,
 ) =>
   inspectAvailability(environment, {
+    host: HOST_PLATFORM,
     resourceOwner: inspectionOwner(),
     signal,
   });
@@ -51,6 +53,7 @@ const resolveConfiguration = async (
   const configuration = await resolveJadxConfigurationInputs(
     environment,
     operation,
+    HOST_PLATFORM,
   );
   await validateJadxConfiguration(configuration, environment, operation, {
     resourceOwner: inspectionOwner(),

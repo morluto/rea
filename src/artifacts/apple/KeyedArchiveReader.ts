@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -301,9 +303,10 @@ export const inspectStandaloneKeyedArchive = (input: {
       input.signal,
     );
     if (snapshot.sha256 !== input.targetSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Active archive digest changed: expected ${input.targetSha256}, observed ${snapshot.sha256}`,
+      throw targetDigestChangedFailure(
+        "archive",
+        input.targetSha256,
+        snapshot.sha256,
       );
     return decodeSelectedArchive(snapshot.bytes, {
       targetSha256: input.targetSha256,
@@ -478,7 +481,7 @@ const decodeSelectedArchive = (
           cause,
           remediationAction: keyedArchiveKindRemediation(
             cause.fileKind,
-            input.platform ?? process.platform,
+            input.platform ?? HOST_PLATFORM.platform,
           ),
         },
       );

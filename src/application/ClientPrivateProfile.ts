@@ -1,4 +1,3 @@
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -41,7 +40,7 @@ export type PrivateProfilePermissions =
  */
 export const privateProfileModesCurrent = async (
   configPath: string,
-  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  platform: NodeJS.Platform,
 ): Promise<boolean> => {
   if (platform === "win32") return true;
   // Setup and `rea mcp add` publish a linked profile at its canonical path,
@@ -136,9 +135,11 @@ export const securePrivateDirectory = async (
   return changed;
 };
 
-/** Mode requests cannot establish Windows ACL privacy on this host. */
-export const privateProfilePermissions = (): PrivateProfilePermissions =>
-  HOST_PLATFORM.platform === "win32"
+/** Mode requests cannot establish Windows ACL privacy on `platform`. */
+export const privateProfilePermissions = (
+  platform: NodeJS.Platform,
+): PrivateProfilePermissions =>
+  platform === "win32"
     ? {
         kind: "requested_windows_modes",
         requestedDirectoryMode: PRIVATE_PROFILE_MODES.directory,

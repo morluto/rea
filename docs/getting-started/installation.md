@@ -98,7 +98,7 @@ approve replacing it. A different existing installation path is foreign to the
 current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
-such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
+such as `REA_MCP_OUTPUT_SCHEMA_PROFILE`,
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
@@ -352,7 +352,7 @@ remove it with `claude mcp remove --scope local rea` from the same directory.
 `rea update` doesn't refresh it either, so it continues using the selected installation.
 To move it to a newer release, first back up the project entry in
 `~/.claude.json` and record its environment and other metadata. In particular,
-preserve caller-selected overrides such as `REA_MCP_INPUT_SCHEMA_PROFILE` and
+preserve caller-selected overrides such as `REA_MCP_OUTPUT_SCHEMA_PROFILE` and
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`. Run `claude mcp remove --scope local rea` from the
 same directory, then recreate it with the platform-appropriate command above
 and the new version. Reapply every recorded environment value with Claude

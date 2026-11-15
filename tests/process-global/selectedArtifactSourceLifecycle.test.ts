@@ -332,10 +332,10 @@ it.each([false, true])(
       const failure = await binding;
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected a selected-path identity failure");
-      expect(failure.reason).toBe("integrity");
-      expect(failure.message).toBe(
-        `Selected carrier source identity changed: ${fixture.path}`,
-      );
+      expect(failure).toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
       expect(failure.cancellation).toBeUndefined();
       await source.close();
       expect(handle.fd).toBe(-1);

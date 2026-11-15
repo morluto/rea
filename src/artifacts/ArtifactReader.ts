@@ -107,6 +107,22 @@ export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
     : { sourceIdentity: { ...entry.sourceIdentity } }),
 });
 
+/**
+ * Require that an opened entry is one this reader produced, unchanged. Throws
+ * the `integrity` failure naming `foreign-entry` when the reader has no such
+ * entry, or `entry-metadata` when the supplied facts differ from it.
+ */
+export function assertProducedEntry<Produced extends ArtifactEntry>(
+  entry: ArtifactEntry,
+  produced: Produced | undefined,
+  message: string,
+): asserts produced is Produced {
+  if (produced !== undefined && sameArtifactEntry(entry, produced)) return;
+  throw new ArtifactReaderFailure("integrity", message, {
+    integrityCheck: produced === undefined ? "foreign-entry" : "entry-metadata",
+  });
+}
+
 /** Compare every portable and adapter-owned fact supplied with an entry. */
 export const sameArtifactEntry = (
   entry: ArtifactEntry,

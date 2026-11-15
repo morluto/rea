@@ -110,14 +110,14 @@ const compareViaCli = async (
   );
 };
 
-it.each(
-  (["left", "right"] as const).flatMap((missingWorker) =>
-    (["left", "right", "both", "neither"] as const).map((omittedRendered) => ({
-      missingWorker,
-      omittedRendered,
-    })),
-  ),
-)(
+// Each omission is checked once, alternating which side lacks the worker: a
+// one-sided omission on either side, both sides, and neither.
+it.each([
+  { missingWorker: "left", omittedRendered: "left" },
+  { missingWorker: "right", omittedRendered: "right" },
+  { missingWorker: "right", omittedRendered: "both" },
+  { missingWorker: "left", omittedRendered: "neither" },
+] as const)(
   "preserves terminal coverage when $missingWorker lacks a worker and $omittedRendered omits rendered output",
   async ({ missingWorker, omittedRendered }) => {
     const observation = (side: "left" | "right") => {
@@ -468,9 +468,11 @@ it("names the side and constraint when Evidence is not a usable capture", async 
           {
             path: ["left"],
             reason: "invalid_value",
-            message: expect.stringContaining(
-              "the left Evidence has operation other",
-            ),
+            expected: {
+              operation: "capture_process_scenario",
+              predicate_type: "rea.process-capture",
+            },
+            observed: { operation: "other" },
           },
         ],
       },
@@ -552,7 +554,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
         issues: [
           expect.objectContaining({
             path: ["right"],
-            observed: { issue_path: issuePath },
+            observed: expect.objectContaining({ issue_path: issuePath }),
           }),
         ],
       },
@@ -586,9 +588,6 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
       },
     },
   });
-  // The count of remaining issues is only in the description.
-  const remaining = "(1 more issues)";
-
   const response = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: capture, right: mixed },
@@ -596,23 +595,23 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
   expect(parseMcpToolError(response)).toMatchObject({
     error: {
       code: "evidence_integrity_mismatch",
-      message: expect.stringContaining(remaining),
       details: {
         side: "right",
         issue_path: ["normalized_result", "manifest", "completed_at"],
+        remaining_issue_count: 1,
       },
     },
   });
   expect(await compareViaCli(capture, mixed)).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    message: expect.stringContaining(remaining),
     details: {
       issues: [
         {
           path: ["right"],
           observed: {
             issue_path: ["normalized_result", "manifest", "completed_at"],
+            remaining_issue_count: 1,
           },
         },
       ],

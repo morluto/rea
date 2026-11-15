@@ -42,7 +42,7 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:python`             | LLDB and mitmproxy producer contracts plus analysis-efficiency checks; no real debugger or proxy required               |
 | `npm run test:watch`              | Dirty source tests in watch mode, without build                                                                         |
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
-| `npm run check:fast`              | Cached typecheck and lint                                                                                               |
+| `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
@@ -111,9 +111,9 @@ API dependency, and independent fixture compiler oracles keep their existing
 TypeScript versions.
 
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
-The build also records `dist/mcp-catalog.json` (compact inputs) and
-`dist/mcp-catalog-full.json` from the canonical SDK registrations and binds
-each to the runtime with its own SHA-256 digest. These are
+The build also records `dist/mcp-catalog.json` (compact inputs) from the
+canonical SDK registrations and binds it to the runtime with its SHA-256
+digest. These are
 runtime artifacts, separate from the test catalog below. Default target-free
 MCP startup serves its schemas without constructing analysis validators;
 the first tool or guided-workflow request materializes the canonical runtime
@@ -294,12 +294,10 @@ profile. Meta-schema validity does not establish client acceptance or useful
 rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
 advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
-lists every input, output and catalog profile combination and compares the
-violation counts with `advertisedDialectBaseline.ts`, which may only shrink,
-except when a runtime analysis setting adds its `update_analysis_settings`
-branch, or a fix restores a contract declaration the presentation had lost and
-the PR names it; the packaged catalog check applies the same rules to the
-default profiles.
+lists every output and catalog profile combination and requires zero dialect
+violations; there is no baseline, so a construct outside the dialect fails the
+test by name. The packaged catalog check applies the same rule to the default
+profiles.
 Advertised patterns, input and output, are enforced at zero:
 `portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
 presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
@@ -312,6 +310,56 @@ example `^[\S]$`); `PortablePatternProjection` documents this accepted
 limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
+
+The grammar rules are not evidence that an engine accepts a pattern.
+`npm run verify:advertised-schemas` lists tools from the built package's stdio
+entry in every input, output and catalog profile, then compiles each distinct
+advertised regular expression (`pattern` values and `patternProperties` keys)
+with the engines clients run: V8 (plain, `u`, `v`), Go `regexp` (RE2), C++
+RE2, Python `re`, and Rust `regex` and `fancy-regex` through the Rust
+`jsonschema` crate. A refusal names the engine, its error, and each tool,
+schema path and profile that advertises the pattern. Go is the host
+toolchain, run with `GOTOOLCHAIN=local` so it is never downloaded. The other
+engines are pinned, hash-checked wheels listed in
+`scripts/verify/advertised-schemas/requirements.txt`; nothing installs them on
+a developer machine. To check them locally, install that file into a virtual
+environment with `pip install --require-hashes -r` and set
+`REA_SCHEMA_ENGINES_PYTHON` to its interpreter. A missing engine is reported
+as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
+into a failure. CI's build job sets it after uploading the build, using the
+runner's Go and a virtual environment cached by the requirements file's
+digest, so every code change runs every engine. The pre-push hook does not
+run the check, because it needs a current build. `--package-root=DIR` lists
+an installed package instead of the checkout's build; the release guide uses
+it to [check the qualified archive](releasing.md#check-the-packed-catalog-with-client-engines).
+
+The same run compares the listings with
+`scripts/verify/advertised-schemas/summary.json`, which records each advertised
+pattern with the tool schemas that carry it and a digest of every tool's
+schema per input or output profile. A difference fails the check and prints
+lines such as `119 tool schemas gained pattern /…/`, so a change that reaches
+many tools at once is visible in review. Regenerate it with
+`npm run verify:advertised-schemas -- --update-summary` and commit it with the
+schema change. Absolute local paths advertise the host's pattern, so the
+summary records the POSIX advertisement and Windows hosts skip the
+comparison.
+
+The same run builds a validator for every distinct advertised input and output
+schema with the Rust `jsonschema` crate's defaults, which check the declared
+draft's meta-schema and formats and compile every subschema, as a Rust client
+using that crate does. `--complete` adds Python `jsonschema`'s
+`check_schema`, which `jsonschema.validate` runs before validating a
+structured result in Python clients; it takes several seconds, so CI runs it
+only in full qualification. Ajv
+strict mode is not part of the check: it rejects authoring constructs such as
+unknown formats that no supported client has been seen to refuse, and Ajv's
+default meta-schema validation already runs in the package verifier. Clients
+whose validators cannot run here keep their documented rejections as rules in
+`advertisedDialect.ts`, each citing its report: the keyword allowlist and type
+rules encode Gemini's function-declaration subset, and the root-shape rule the
+Anthropic and OpenAI function-calling root. OpenAI strict mode (`strict: true`)
+is not covered: it requires every property to be required, which REA's
+optional inputs do not meet, and REA does not claim strict-mode support.
 
 The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
 coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
@@ -710,12 +758,14 @@ to reach their original memory, depth, cycle or representation boundary; retain
 those stronger assertions.
 
 When a matrix already holds a named tool definition from live `tools/list`,
-pass that definition through the SDK's `toolDefinition` call option. This keeps
-the selected output-schema validation without eagerly compiling unrelated
-catalog schemas. Re-read definitions if the server advertises a changed list.
+pass that definition through the SDK's `toolDefinition` call option, with the
+canonical output schema attached (`tools/list` omits output schemas by default).
+This keeps output-schema validation without eagerly compiling unrelated catalog
+schemas. Re-read definitions if the server advertises a changed list.
 
-For exact nested input constraints, select the full profile explicitly or use
-the full-SDK conformance suite that owns the field. Compact workflow tests
+For exact nested input constraints, assert the canonical input schema
+(`advertisedInputJsonSchema`) or use the full-SDK conformance suite that owns
+the field. Compact workflow tests
 should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.

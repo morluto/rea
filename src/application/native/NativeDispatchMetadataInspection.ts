@@ -44,8 +44,12 @@ export const inspectNativeDispatch = async (
       ? {}
       : {
           objc_class_import_addresses: [...objcClassImportAddresses],
-          objc_class_import_addresses_complete:
-            objcClassImportAddressesComplete ?? true,
+          ...(objcClassImportAddressesComplete === undefined
+            ? {}
+            : {
+                objc_class_import_addresses_complete:
+                  objcClassImportAddressesComplete,
+              }),
         }),
   };
   const binaryMetadata = await analysis.execute(

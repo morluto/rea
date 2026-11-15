@@ -1,4 +1,5 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
@@ -24,6 +25,7 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
@@ -128,6 +130,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -140,6 +143,9 @@ const clientFor = (
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.bridgeMaxReplyBytes === undefined
+      ? {}
+      : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
     ...(options.onDiagnostic === undefined
       ? {}
       : { onDiagnostic: options.onDiagnostic }),
@@ -2759,3 +2765,60 @@ it.each(["search_procedures", "search_strings"] as const)(
     ).toBe(4);
   },
 );
+
+describe("GhidraClient reply ceiling", () => {
+  it("shuts the bridge down under the session's ceilings after its seed is refused", async () => {
+    // Cleanup must not depend on the current settings: a seed refused after
+    // startup would otherwise refuse the shutdown request before writing it.
+    let seedRefused = false;
+    const replyCeiling: BridgeMaxReplyBytes = {
+      get maximumBytes(): number {
+        if (seedRefused)
+          throw new ConfigurationError("invalid bridge.max_reply_bytes seed");
+        return 1024 * 1024;
+      },
+      source: "runtime",
+    };
+    const logs: string[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write: (line) => {
+          logs.push(line);
+        },
+      },
+    );
+    const client = clientFor(new FixtureLauncher(), {
+      bridgeMaxReplyBytes: replyCeiling,
+      logger,
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    seedRefused = true;
+
+    await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+    expect(logs.join("")).not.toContain(
+      "Ghidra bridge shutdown was not confirmed",
+    );
+  });
+
+  it("refuses a reply above bridge.max_reply_bytes with a typed limit", async () => {
+    const client = clientFor(new FixtureLauncher("oversized_result"), {
+      bridgeMaxReplyBytes: { maximumBytes: 1024 * 1024, source: "setting" },
+    });
+
+    const result = await client.callTool("list_strings", { document: null });
+
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "protocol",
+      cause: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "transport",
+        limit: {
+          setting: "bridge.max_reply_bytes",
+          effective_value: 1024 * 1024,
+          source: "setting",
+        },
+      },
+    });
+  });
+});

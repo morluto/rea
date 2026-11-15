@@ -1,23 +1,18 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-core.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
-it("verifies the profiles selected for the packaged server", async () => {
-  const environment = {
-    REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-    REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
-  };
+it("verifies the output profile selected for the packaged server", async () => {
   const harness = await createApplicationMcpHarness({
-    serverOptions: { environment },
+    serverOptions: {
+      environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
+    },
   });
   try {
-    const names = await verifyCompleteToolCatalog(
-      harness.client,
-      undefined,
-      environment,
-    );
+    const names = await verifyCompleteToolCatalog(harness.client);
     expect(names).toContain("binary_session");
   } finally {
     await harness.close();
@@ -46,7 +41,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
         name: "binary_session",
         arguments: {},
       },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     const forwarded: unknown[][] = [];
     const client = {

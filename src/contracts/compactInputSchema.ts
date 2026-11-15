@@ -10,7 +10,7 @@ import {
   stripAnnotations,
 } from "./compactJsonSchema.js";
 
-// The compact input profile: every advertised input schema is self-contained
+// The compact input presentation: every advertised input schema is self-contained
 // (clients such as Kimi expand references before sending tools to Moonshot),
 // inside the per-tool byte budget, and in the portable advertised dialect.
 // Canonical server-side validation remains unchanged.
@@ -112,9 +112,8 @@ const compacted = new WeakMap<object, Map<number, CompactedInputSchema>>();
 /** The advertised input for the selected presentation, with its guidance. */
 export const presentAdvertisedInput = (
   schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation | undefined,
+  compactPresentation: CompactInputSchemaPresentation,
 ): Pick<CompactedInputSchema, "schema" | "guidance"> => {
-  if (compactPresentation === undefined) return { schema, guidance: [] };
   const { budgetBytes } = compactPresentation;
   let byBudget = compacted.get(schema);
   if (byBudget === undefined) compacted.set(schema, (byBudget = new Map()));
@@ -130,7 +129,7 @@ export const presentAdvertisedInput = (
 /** Return the JSON schema clients receive for the selected input presentation. */
 export const presentAdvertisedInputSchema = (
   schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation | undefined,
+  compactPresentation: CompactInputSchemaPresentation,
 ): Record<string, unknown> =>
   presentAdvertisedInput(schema, compactPresentation).schema;
 

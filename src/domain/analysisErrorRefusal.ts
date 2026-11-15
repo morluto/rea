@@ -22,6 +22,7 @@ export const analysisErrorRefusal = (
       };
     if (
       error.limit !== undefined &&
+      !("control_kind" in error.limit) &&
       !(
         "measuredExhaustion" in error.recovery &&
         error.recovery.measuredExhaustion === true

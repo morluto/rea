@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -64,8 +65,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly analyzeInterfaceBuilder?: typeof analyzeInterfaceBuilderBundle;
+  /** The host whose assetutil runs; tests select macOS on another host. */
+  readonly platform?: NodeJS.Platform;
 }) => {
-  if (process.platform !== "darwin" && input.runAssetUtil === undefined)
+  if (
+    (input.platform ?? HOST_PLATFORM.platform) !== "darwin" &&
+    input.runAssetUtil === undefined
+  )
     throw new ArtifactReaderFailure(
       "unavailable",
       "Apple asset catalog inspection requires macOS assetutil",
@@ -331,6 +337,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   let output: string;
   try {
@@ -347,6 +354,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   const capturedOutput: AnalysisCapturedOutput = {
     stdout: output,
