@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { z } from "zod";
 import {
   AnalysisOutputError,
@@ -289,7 +290,15 @@ export const parseLipoCapture = (
           maximum_retained_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
           required_retained_bytes: parsed.error.requiredBytes,
         },
-        { cause: parsed.error, retryable: false, capturedOutput },
+        {
+          cause: parsed.error,
+          capturedOutput,
+          ...fixedAllowanceOptions(
+            "The lipo field retention allowance",
+            "capture",
+            { limit: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES, unit: "bytes" },
+          ),
+        },
       ),
     );
   return err(

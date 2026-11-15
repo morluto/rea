@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -18,6 +18,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
+import { waitFor } from "../../support/testWait.js";
 
 // Only installation discovery and the Java bridge are simulated. The bridge
 // fixture answers with the production address_to_file_offset codes; requests
@@ -193,7 +194,7 @@ it("reports file-backed, uninitialized and unmapped addresses through MCP withou
     });
     expect(mcp.launcher.processes).toHaveLength(1);
     // The malformed spelling never reached the bridge.
-    await vi.waitFor(() => expect(mcp.bridgeCalls()).toHaveLength(4));
+    await waitFor(() => expect(mcp.bridgeCalls()).toHaveLength(4));
   } finally {
     await mcp.close();
   }
@@ -255,7 +256,7 @@ it("maps the last byte of a file-backed block and refuses the first address past
           diagnostics: { remote_code: remoteCode },
         },
       });
-    await vi.waitFor(() => expect(mcp.bridgeCalls()).toHaveLength(5));
+    await waitFor(() => expect(mcp.bridgeCalls()).toHaveLength(5));
   } finally {
     await mcp.close();
   }

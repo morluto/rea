@@ -7,7 +7,10 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import {
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -39,7 +42,6 @@ import type {
   BinarySessionPort,
   BinaryOpenResult,
   OpenSelectionReceipt,
-  SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {

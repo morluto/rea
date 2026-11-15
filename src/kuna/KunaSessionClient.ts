@@ -31,6 +31,10 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
@@ -108,10 +112,8 @@ import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
 import {
   ambiguousKunaNameMessage,
-  KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION,
   KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
   KUNA_PROCEDURE_MISSING_NAME_REMEDIATION,
-  KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
   KUNA_XREF_MISSING_NAME_REMEDIATION,
   missingKunaXrefNameMessage,
 } from "./KunaSelectorGuidance.js";
@@ -219,7 +221,7 @@ const waitFor = async <T>(
 ): Promise<Result<T, AnalysisError>> => {
   const result = await waitForAbortable(work, signal);
   return result === ABORTED
-    ? err(new AnalysisCancelledError(operation, { cause: signal?.reason }))
+    ? err(cancelledBy(operation, carriedReason(signal?.reason)))
     : result;
 };
 
@@ -232,9 +234,6 @@ const isUnavailableProject = (cause: unknown): boolean =>
     cause.code === "ESTALE");
 
 /** Read through a call so a check before an await does not narrow later ones. */
-const cancelled = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
-
 const message = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -509,12 +508,8 @@ export class KunaSessionClient implements AnalysisClient {
     // under #admitSpan, which shares its queue with that descriptor's close.
     const pendingDescriptors = await this.#pendingDescriptorCleanup(operation);
     if (pendingDescriptors !== undefined) return err(pendingDescriptors);
-    if (cancelled(options.signal))
-      return err(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal?.reason,
-        }),
-      );
+    if (isAborted(options.signal))
+      return err(cancelledBy(operation, options.signal));
     if (operation !== "health" && !isKunaOperation(operation))
       return err(
         kunaUnavailable(
@@ -601,12 +596,8 @@ export class KunaSessionClient implements AnalysisClient {
       );
       if (!answer.ok)
         return err(kunaQueryFailureForCaller(answer.error, operation));
-      if (cancelled(options.signal))
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal?.reason,
-          }),
-        );
+      if (isAborted(options.signal))
+        return err(cancelledBy(operation, options.signal));
       return ok(
         this.#execution(
           kunaLimitations(operation, this.#deadline, this.#heapRequest),
@@ -615,12 +606,15 @@ export class KunaSessionClient implements AnalysisClient {
         ),
       );
     } catch (cause: unknown) {
-      if (cancelled(options.signal)) {
+      if (isAborted(options.signal)) {
         const cancellation = regularFileCancellation(cause);
         return err(
-          new AnalysisCancelledError(operation, {
-            cause: cancellation === undefined ? cause : cancellation.reason,
-          }),
+          cancelledBy(
+            operation,
+            carriedReason(
+              cancellation === undefined ? cause : cancellation.reason,
+            ),
+          ),
         );
       }
       return err(failure(operation, cause));
@@ -635,7 +629,7 @@ export class KunaSessionClient implements AnalysisClient {
     if (this.#closed) return ok(null);
     if (!this.#closing) {
       this.#closing = true;
-      this.#session.abort();
+      this.#session.abort(OwnerCancellation.ownerClosed);
     }
     // Cancellation starts process shutdown; its completion proves whether it
     // is safe to remove private copies and exposes any retained cleanup owner.
@@ -1344,15 +1338,15 @@ export class KunaSessionClient implements AnalysisClient {
             selector,
             matches.map(({ address }) => address),
           );
-    const remediationAction =
-      field === "address"
+    // An ambiguous name is a typed selector refusal; its recovery is derived.
+    const remediationAction = ambiguous
+      ? undefined
+      : field === "address"
         ? missing
           ? KUNA_XREF_MISSING_NAME_REMEDIATION
-          : KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION
+          : "Select one of the reported addresses and call xrefs again."
         : procedureLookupFailure
-          ? missing
-            ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
-            : KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION
+          ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
           : matches.length === 0
             ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
             : undefined;
@@ -1364,6 +1358,14 @@ export class KunaSessionClient implements AnalysisClient {
           ...(remediationAction === undefined
             ? {}
             : { remediationAction, conformsToInputContract: true }),
+          ...(ambiguous
+            ? {
+                ambiguousSelector: {
+                  field: [field],
+                  candidates: matches.map(({ address }) => address),
+                },
+              }
+            : {}),
         },
         procedureLookupFailure
           ? [
@@ -1545,10 +1547,8 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
   ): Promise<SingleFunctionOutcome> {
-    if (cancelled(signal))
-      return Promise.resolve(
-        err(new AnalysisCancelledError(operation, { cause: signal?.reason })),
-      );
+    if (isAborted(signal))
+      return Promise.resolve(err(cancelledBy(operation, signal)));
     const kept = this.#singleFunctionTexts.get(address);
     if (kept !== undefined) {
       this.#singleFunctionTexts.delete(address);
@@ -1592,11 +1592,7 @@ export class KunaSessionClient implements AnalysisClient {
         if (!waiting) return;
         leave();
         if (shared.waiters > 0) {
-          resolve(
-            err(
-              new AnalysisCancelledError(operation, { cause: signal?.reason }),
-            ),
-          );
+          resolve(err(cancelledBy(operation, carriedReason(signal?.reason))));
           return;
         }
         // A run whose waiters all left winds down; a new request starts afresh.
@@ -1648,15 +1644,10 @@ export class KunaSessionClient implements AnalysisClient {
       ? await this.#runSlots.acquire(signal)
       : await this.#admitSingleFunction(signal);
     if (admitted === EXPORT_READY) return admitted;
-    if (admitted === undefined)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (admitted === undefined) return err(cancelledBy(operation, signal));
     if (signal.aborted) {
       admitted();
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+      return err(cancelledBy(operation, signal));
     }
     let deadline: KunaDeadline;
     try {
@@ -1978,9 +1969,7 @@ export class KunaSessionClient implements AnalysisClient {
     }
     const waited = await attempt.wait(signal);
     if (waited.status === "cancelled")
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+      return err(cancelledBy(operation, carriedReason(waited.reason)));
     if (!waited.value.ok) {
       // A fresh caller can arrive while the previous final waiter joins stop.
       // Retry only proven cancellation, never an authored physical failure.
@@ -1993,10 +1982,7 @@ export class KunaSessionClient implements AnalysisClient {
         return this.#ensureInstallation(operation, signal);
       return err(kunaQueryFailureForCaller(waited.value.error, operation));
     }
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     return waited.value;
   }
 
@@ -2249,20 +2235,12 @@ export class KunaSessionClient implements AnalysisClient {
     return this.#enqueueSpan(async () => {
       const cancelledBefore = callerAborted();
       if (cancelledBefore !== undefined)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: cancelledBefore.reason,
-          }),
-        );
+        return err(cancelledBy(operation, cancelledBefore));
       const pending = await this.#pendingDescriptorCleanup(operation);
       if (pending !== undefined) return err(pending);
       const cancelledAfter = callerAborted();
       if (cancelledAfter !== undefined)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: cancelledAfter.reason,
-          }),
-        );
+        return err(cancelledBy(operation, cancelledAfter));
       return ok(await open());
     });
   }
@@ -2425,11 +2403,7 @@ export class KunaSessionClient implements AnalysisClient {
     const exported = await this.#exportInventory;
     if (exported !== undefined) return ok(exported);
     if (this.#session.signal.aborted)
-      return err(
-        new AnalysisCancelledError("list_procedures", {
-          cause: this.#session.signal.reason,
-        }),
-      );
+      return err(cancelledBy("list_procedures", this.#session.signal));
     let deadline: KunaDeadline;
     try {
       deadline = kunaFunctionDeadline(installation.configuration);

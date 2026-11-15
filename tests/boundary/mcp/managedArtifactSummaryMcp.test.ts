@@ -11,7 +11,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   managedArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { managedArtifactInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";

@@ -193,7 +193,7 @@ cliTest(
         before.dom = { total_nodes: 0, nodes: [] };
         after.dom = { total_nodes: 0, nodes: [] };
       }
-      const result = await cli.sharedCliRun!({
+      const result = await cli.run({
         arguments: [
           "compare-web-captures",
           JSON.stringify({ inspection: before }),

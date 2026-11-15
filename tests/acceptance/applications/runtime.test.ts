@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
@@ -14,6 +14,11 @@ import {
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -102,7 +107,10 @@ const callCurrentDocument = async (
   transport.stderr?.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
   });
-  const client = new Client({ name: "runtime-smoke", version: "1.0.0" });
+  const client = new Client(
+    { name: "runtime-smoke", version: "1.0.0" },
+    { jsonSchemaValidator: schemaValidation },
+  );
 
   let result: Awaited<ReturnType<Client["callTool"]>>;
   try {
@@ -194,7 +202,10 @@ describe("production stdio runtime", () => {
     transport.stderr?.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
-    const client = new Client({ name: "catalog-runtime", version: "1.0.0" });
+    const client = new Client(
+      { name: "catalog-runtime", version: "1.0.0" },
+      { jsonSchemaValidator: schemaValidation },
+    );
 
     try {
       await client.connect(transport);

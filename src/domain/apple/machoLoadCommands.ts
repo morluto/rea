@@ -1,3 +1,4 @@
+import { LC } from "./machoLoadCommandCodes.js";
 import { err, ok, type Result } from "../result.js";
 import {
   machoLoadCommandAlignment,
@@ -12,8 +13,6 @@ export interface MachoLoadCommandTableHeader {
   readonly commandCount: number;
   readonly commandBytes: number;
 }
-
-const LC_SYMTAB = 0x2;
 
 /** Byte offset of `mach_header.flags`, shared by the 32- and 64-bit headers. */
 export const MACHO_HEADER_FLAGS_OFFSET = 24;
@@ -255,7 +254,7 @@ export const readMachoSymtabCommand = (
   readonly strsize: number;
 } | null => {
   const fields = decodeMachoFixedWordFields(
-    LC_SYMTAB,
+    LC.SYMTAB,
     body.subarray(8),
     littleEndian,
   );

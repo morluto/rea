@@ -1615,6 +1615,8 @@ describe("native DMG checksum-free images", () => {
           ),
         ],
       },
+      // The mounted directory declares its own complete traversal.
+      { status: "complete", limitations: [] },
     ]);
     expect(
       reader

@@ -27,7 +27,7 @@ import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());

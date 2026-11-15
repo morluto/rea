@@ -25,6 +25,10 @@ import {
   mcpTextValue,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import {
+  closeVerifierResources,
+  releaseAfter,
+} from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
@@ -623,35 +627,26 @@ try {
 } catch (cause) {
   failures.push(cause);
 }
+// The MCP server child uses both roots until it exits, so they are released
+// only after the client and transport close. After that the residue check and
+// the two directories are independent owners; attempt each and keep failures.
 try {
-  await client.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  await transport.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  assert.ok(
-    !(await readdir(childTempRoot)).some((name) =>
-      name.startsWith("rea-wabt-"),
-    ),
-    "Provider workspace leaked",
-  );
-} catch (cause) {
-  failures.push(cause);
-}
-// Each directory is an independent owner. Attempt every cleanup even if a
-// residue assertion or another owner's close fails, retaining every error.
-try {
-  await root.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  await rm(childTempRoot, { recursive: true, force: true });
+  await releaseAfter(
+    [() => client.close(), () => transport.close()],
+    () =>
+      closeVerifierResources([
+        async () =>
+          assert.ok(
+            !(await readdir(childTempRoot)).some((name) =>
+              name.startsWith("rea-wabt-"),
+            ),
+            "Provider workspace leaked",
+          ),
+        () => root.close(),
+        () => rm(childTempRoot, { recursive: true, force: true }),
+      ]),
+    `${root.path} and ${childTempRoot}`,
+  )();
 } catch (cause) {
   failures.push(cause);
 }

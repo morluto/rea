@@ -70,7 +70,6 @@ cliTest.skipIf(process.platform === "win32")(
     const setup = await processes.run(npm.command, npm.arguments, {
       cwd: trusted,
       env: environment,
-      timeoutMs: 30_000,
     });
     expect(setup.exitCode, setup.stderr).toBe(0);
     const configPath = join(home, ".omp", "agent", "mcp.json");
@@ -160,7 +159,7 @@ cliTest.skipIf(process.platform === "win32")(
       const missing = await processes.run(
         registration.command,
         registration.args,
-        { cwd: project, env: clientEnvironment, timeoutMs: 10_000 },
+        { cwd: project, env: clientEnvironment },
       );
       expect(missing.exitCode).not.toBe(0);
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
@@ -192,7 +191,6 @@ cliTest.skipIf(process.platform === "win32")(
           USERPROFILE: home,
           PATH: [bin, process.env.PATH ?? ""].join(delimiter),
         },
-        timeoutMs: 20_000,
       },
     );
     expect(result.exitCode, result.stderr).toBe(0);
@@ -211,7 +209,7 @@ cliTest.skipIf(process.platform === "win32")(
     const start = await processes.run(
       settings["amp.mcpServers"].rea.command,
       [alias, "--version"],
-      { cwd: home, timeoutMs: 10_000 },
+      { cwd: home },
     );
     expect(start.exitCode, start.stderr).toBe(0);
     expect(start.stdout).toContain(PRODUCT_IDENTITY.packageVersion);

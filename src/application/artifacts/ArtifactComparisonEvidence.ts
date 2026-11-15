@@ -9,7 +9,7 @@ import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewServic
 import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
 import { artifactComparisonInputSchema } from "../../contracts/artifactComparisonContracts.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   compareArtifacts,
   type ArtifactComparisonResult,

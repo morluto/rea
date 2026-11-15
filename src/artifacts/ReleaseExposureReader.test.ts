@@ -1,3 +1,4 @@
+import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { deflateRawSync, deflateSync } from "node:zlib";
@@ -413,7 +414,7 @@ describe("ReleaseExposureReader", () => {
   it("carries the inventoried digest of each native image", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-digest-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app"), elf);
     const sha256 = createHash("sha256").update(elf).digest("hex");
     expect((await inspect(root)).native_images).toEqual([
@@ -427,10 +428,7 @@ describe("ReleaseExposureReader", () => {
   it("registers native images larger than the text budget and parses PE debug records", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-native-");
     const elf = Buffer.alloc(300 * 1024);
-    elf[0] = 0x7f;
-    elf[1] = 0x45;
-    elf[2] = 0x4c;
-    elf[3] = 0x46;
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app.elf"), elf);
     const pe = Buffer.concat([
       windowsNativeArtifactFixture().bytes,
@@ -723,10 +721,7 @@ describe("ReleaseExposureReader limits", () => {
     const root = await createTestTempDirectory("rea-release-exposure-natives-");
     for (let index = 0; index < 5; index += 1) {
       const elf = Buffer.alloc(64);
-      elf[0] = 0x7f;
-      elf[1] = 0x45;
-      elf[2] = 0x4c;
-      elf[3] = 0x46;
+      writeMinimalElfHeader(elf);
       await writeFile(join(root, `lib${String(index)}.so`), elf);
     }
     const scanned = await inspect(root);
@@ -1315,7 +1310,7 @@ describe("ReleaseExposureReader sibling map identity", () => {
   it("does not report a native image beside a selected file as a linker map", async () => {
     const root = await createTestTempDirectory("rea-release-sibling-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "release.map"), elf);
     await writeFile(join(root, "app"), "plain file");
     const scanned = await inspect(join(root, "app"));
@@ -1734,7 +1729,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps coverage complete past a packaged image with no package", async () => {
     const root = await createTestTempDirectory("rea-release-plain-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "addon.node", bytes: elf }]),
@@ -1747,7 +1742,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps a packaged image past the byte allowance unknown", async () => {
     const root = await createTestTempDirectory("rea-release-large-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([
@@ -1766,6 +1761,153 @@ describe("ReleaseExposureReader nested packages in a host", () => {
       expect(result.value.coverage).toBe("unknown");
       expect(result.value.omitted).toContainEqual(
         expect.objectContaining({ subject: "embedded package probes" }),
+      );
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
+describe("ReleaseExposureReader packaged probe allowance", () => {
+  const withPostInventoryArchive = async <T>(
+    archive: string,
+    wrap: (reader: ArtifactReader) => ArtifactReader,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    let inventoried = false;
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      inventoried = true;
+      return inventory;
+    };
+    createdReaders.wrap = (reader, path) =>
+      path === archive && inventoried ? wrap(reader) : reader;
+    try {
+      return await run();
+    } finally {
+      inventoryRead.impl = undefined;
+      createdReaders.wrap = undefined;
+    }
+  };
+
+  it("keeps probing after a zero-byte unread packaged image", async () => {
+    const root = await createTestTempDirectory("rea-release-unread-probe-");
+    const broken = Buffer.alloc(8192);
+    writeMinimalElfHeader(broken);
+    const archive = join(root, "app.asar");
+    await writeFile(
+      archive,
+      asarArchive([
+        { name: "01-broken.node", bytes: broken },
+        { name: "02-embedded", bytes: nodeSeaElf() },
+      ]),
+    );
+    let brokenOpens = 0;
+    const scanned = await withPostInventoryArchive(
+      archive,
+      (reader) => {
+        const open = reader.open.bind(reader);
+        reader.open = (entry, signal) => {
+          if (!entry.path.endsWith("01-broken.node")) {
+            return open(entry, signal);
+          }
+          brokenOpens += 1;
+          return brokenOpens === 1
+            ? open(entry, signal)
+            : Promise.reject(new Error("member read failed"));
+        };
+        return reader;
+      },
+      () => inspect(root),
+    );
+    expect(brokenOpens).toBe(2);
+    expect(scanned.coverage).toBe("unknown");
+    expect(scanned.limitations).toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*01-broken\.node for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*02-embedded for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations.join("\n")).toContain("was not expanded");
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "embedded package probes", count: 1 }),
+    );
+  });
+
+  it("charges partial unread bytes to the packaged allowance", async () => {
+    const root = await createTestTempDirectory("rea-release-partial-probe-");
+    const elf = (size: number): Buffer => {
+      const bytes = Buffer.alloc(size);
+      writeMinimalElfHeader(bytes);
+      return bytes;
+    };
+    const archive = join(root, "app.asar");
+    await writeFile(
+      archive,
+      asarArchive([
+        { name: "01-first.node", bytes: elf(8192) },
+        { name: "02-second.node", bytes: elf(5000) },
+      ]),
+    );
+    let firstOpens = 0;
+    let secondOpens = 0;
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const open = source.open.bind(source);
+          source.open = (entry, signal) => {
+            if (entry.path.endsWith("01-first.node")) {
+              firstOpens += 1;
+              if (firstOpens > 1) {
+                return Promise.resolve(
+                  Readable.from(
+                    (function* (): Generator<Buffer> {
+                      yield Buffer.alloc(4096);
+                      throw new Error("damaged image");
+                    })(),
+                  ),
+                );
+              }
+            }
+            if (entry.path.endsWith("02-second.node")) secondOpens += 1;
+            return open(entry, signal);
+          };
+          return source;
+        },
+        () =>
+          reader.inspect(
+            { path: root, max_file_bytes: 8192 },
+            undefined,
+            () => undefined,
+          ),
+      );
+      if (!result.ok) throw result.error;
+      expect(firstOpens).toBe(2);
+      expect(secondOpens).toBe(2);
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*01-first\.node for an embedded package\.$/u,
+        ),
+      );
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*02-second\.node for an embedded package\.$/u,
+        ),
+      );
+      expect(result.value.omitted).toContainEqual(
+        expect.objectContaining({
+          subject: "embedded package probes",
+          count: 2,
+        }),
       );
     } finally {
       await reader.close();
@@ -2671,9 +2813,9 @@ describe("ReleaseExposureReader unexpanded packages", () => {
 describe("ReleaseExposureReader native members named as maps", () => {
   it("keeps a selected or listed native image named release.map out of map routing", async () => {
     const root = await createTestTempDirectory("rea-release-map-selected-");
-    const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
-    elf.write("not a map\n", 16);
+    const elf = Buffer.alloc(80);
+    writeMinimalElfHeader(elf);
+    elf.write("not a map\n", 64);
     const file = join(root, "release.map");
     await writeFile(file, elf);
     for (const scanned of [await inspect(file), await inspect(root)]) {
@@ -2861,7 +3003,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
 
   it("omits a packaged native image from the language readers visibly", async () => {
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     const root = await bundled([{ path: "libnative.so", bytes: elf }]);
     const scanned = await inspect(root);
     expect(scanned.omitted).toContainEqual(
@@ -2878,7 +3020,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
   it("leaves member coverage unknown when a packaged native image cannot be read", async () => {
     const root = await createTestTempDirectory("rea-release-unread-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "native.node", bytes: elf }]),
@@ -3105,7 +3247,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
       selected: "lib.so",
       write: async (root: string) => {
         const elf = Buffer.alloc(64);
-        elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+        writeMinimalElfHeader(elf);
         await writeFile(join(root, "lib.so"), elf);
       },
     },

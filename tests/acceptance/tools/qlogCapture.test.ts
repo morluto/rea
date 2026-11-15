@@ -8,7 +8,7 @@ import {
   CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
-import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,

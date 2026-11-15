@@ -1,17 +1,13 @@
-import { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type {
   ObserveWebExecutionInput,
   WebExecution,
   WebExecutionObservation,
 } from "../../domain/webExecution.js";
 import { CdpExecutionCollection } from "./CdpExecutionCollection.js";
-import { preciseCoverageSchema } from "./CdpRuntimeProtocol.js";
+import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import { normalizePreciseCoverage } from "./CdpPreciseCoverage.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 
@@ -24,18 +20,22 @@ export const captureWebExecution = async (
   const collection = new CdpExecutionCollection(sources);
   const { window, requests } = collection;
   try {
-    for (const domain of ["Page", "Runtime", "Debugger", "Network", "Profiler"])
+    for (const domain of [
+      "Page",
+      "Runtime",
+      "Debugger",
+      "Network",
+      "Profiler",
+    ] as const)
       await session.enable(domain);
     await session.assertDocument();
     sources.check();
     session.preciseCoverageMayBeActive = true;
-    const started = z.object({ timestamp: z.number().min(0) }).parse(
-      await session.command("Profiler.startPreciseCoverage", {
-        callCount: true,
-        detailed: true,
-        allowTriggeredUpdates: false,
-      }),
-    );
+    const started = await session.command("Profiler.startPreciseCoverage", {
+      callCount: true,
+      detailed: true,
+      allowTriggeredUpdates: false,
+    });
     sources.check();
     window.check();
     if (window.reason !== undefined)
@@ -69,29 +69,20 @@ export const captureWebExecution = async (
       });
     sources.check();
     requests.check();
-    let raw: unknown;
+    let sampled: CdpCommandResult<"Profiler.takePreciseCoverage"> | undefined;
     if (reason === "window_elapsed") {
       await session.assertDocument();
-      raw = await session.command("Profiler.takePreciseCoverage");
+      sampled = await session.command("Profiler.takePreciseCoverage");
     }
     collection.freezeMetadata();
     await stopPreciseCoverage(session, reason);
     session.preciseCoverageMayBeActive = false;
     const requestItems = requests.result();
-    const parsed =
-      raw === undefined ? undefined : preciseCoverageSchema.safeParse(raw);
-    if (parsed !== undefined && !parsed.success)
-      throw new AnalysisOutputError(
-        session.operation,
-        `Malformed precise coverage: ${parsed.error.message}`,
-      );
     const mainScripts = [...sources.scripts.keys()].filter((id) =>
       sources.belongsToDocument(id),
     );
     const reportedIds = new Set(
-      parsed?.success === true
-        ? parsed.data.result.map((script) => script.scriptId)
-        : [],
+      sampled?.result.map((script) => script.scriptId) ?? [],
     );
     const ids = [
       ...mainScripts,
@@ -107,9 +98,9 @@ export const captureWebExecution = async (
       sources.belongsToDocument(id),
     );
     const sample =
-      parsed?.success === true
-        ? normalizePreciseCoverage(parsed.data, sources, retained)
-        : undefined;
+      sampled === undefined
+        ? undefined
+        : normalizePreciseCoverage(sampled, sources, retained);
     await session.options.progress?.report({
       phase: "browser_execution",
       completed: 2,

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it as test, onTestFinished } from "vitest";
 
 import { inspectJadxProvider as inspectProvider } from "../../../src/android/JadxDoctor.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
@@ -131,6 +132,9 @@ it("publishes no registration environment when REA_JADX_MCP_JAR is unset", async
       },
     ],
   });
+  // The recovery names where to obtain the exact audited JAR.
+  expect(inspection.checks[0]?.remediation).toContain(JADX_RELEASE.url);
+  expect(inspection.checks[0]?.remediation).toContain(JADX_RELEASE.sha256);
 });
 
 it("reports a relative REA_JADX_MCP_JAR as a rejected selection, not an unset one", async () => {

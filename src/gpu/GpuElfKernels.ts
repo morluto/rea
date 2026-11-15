@@ -172,7 +172,7 @@ const indexCudaMetadata = async (
         if (record.format !== 4 || record.attribute !== 0x2f) continue;
         if (record.data.length !== 8)
           rejectGpu("CUDA register count record has an unsupported extent");
-        const r = new BinaryReader(record.data, directory.little),
+        const r = new BinaryReader(record.data, directory.little, "elf"),
           key = `${row.link}:${r.u32(0)}`;
         const values = registerFacts.get(key) ?? new Map<number, GpuLocation>();
         const value = r.u32(4);
@@ -311,9 +311,11 @@ const cudaKernels = async (
             );
           extendedIndices = await sectionBytes(source, extended, index.budget);
         }
-        sectionIndex = new BinaryReader(extendedIndices, directory.little).u32(
-          (offset / width) * 4,
-        );
+        sectionIndex = new BinaryReader(
+          extendedIndices,
+          directory.little,
+          "elf",
+        ).u32((offset / width) * 4);
       }
       const text = directory.sections[sectionIndex];
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
@@ -460,7 +462,7 @@ export const readAmdElfMetadata = async (
         );
       retainedBytes += sectionSize;
       const bytes = await sectionBytes(source, section),
-        r = new BinaryReader(bytes, directory.little);
+        r = new BinaryReader(bytes, directory.little, "elf");
       for (let p = 0; p < bytes.length;) {
         if (bytes.length - p < 12) rejectGpu("Truncated ELF note header");
         const namesize = r.u32(p),

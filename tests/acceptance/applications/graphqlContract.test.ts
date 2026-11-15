@@ -11,7 +11,7 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { graphqlContractSchema } from "../../../src/domain/apiContract/graphqlContract.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const fixture = new URL(
   "../../fixtures/graphql/swapi.graphql.txt",
@@ -35,7 +35,7 @@ const checkCliPublication = async (
   },
 ) => {
   const { root, parent, selected } = context;
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   const args = [
     "inspect-api-contract",
     "./SDL 雪.graphql",
@@ -271,7 +271,7 @@ cliTest(
         },
       }),
     );
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const offline = await run({
       arguments: ["inspect-analysis-view", queryPath, "--json"],
     });
@@ -339,7 +339,7 @@ cliTest(
         source_coverage: { status: "partial", operations: "unavailable" },
       },
     });
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const cliResult = await run({
       arguments: [
         "inspect-api-contract",
@@ -392,7 +392,7 @@ cliTest(
       items: [{ code: "schema-parse-refused", source: { role: "schema" } }],
     });
     await writeFile(path, text);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: [
         "inspect-api-contract",

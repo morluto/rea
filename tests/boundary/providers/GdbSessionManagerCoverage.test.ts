@@ -695,9 +695,9 @@ it("rejects GDB commands queued before closeAll when their turn arrives", async 
   await expect(queued).resolves.toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisInputError",
+      _tag: "AnalysisCapabilityUnavailableError",
       operation: "gdb_console",
-      issues: [{ path: ["session_id"], reason: "invalid_value" }],
+      reason: expect.stringContaining("REA is shutting down"),
     },
   });
   await closing;
@@ -732,9 +732,9 @@ it("rejects GDB commands queued behind a session close", async () => {
   await expect(queued).resolves.toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisInputError",
+      _tag: "AnalysisCapabilityUnavailableError",
       operation: "gdb_console",
-      issues: [{ path: ["session_id"], reason: "invalid_value" }],
+      reason: expect.stringContaining("close_gdb_session started releasing"),
     },
   });
   expect(commands.some((command) => command.includes('"run"'))).toBe(false);
@@ -785,9 +785,9 @@ it.each(["close", "retryCleanupFailures"] as const)(
     const unavailable = {
       ok: false,
       error: {
-        _tag: "AnalysisInputError",
+        _tag: "AnalysisCapabilityUnavailableError",
         operation: "gdb_console",
-        issues: [{ path: ["session_id"], reason: "invalid_value" }],
+        reason: expect.stringContaining("close_gdb_session started releasing"),
       },
     };
     // Finish the barrier before assertions so a regression cannot strand teardown.
@@ -1874,7 +1874,10 @@ it.each([
     const command = await manager.execute(sessionId, "show version");
     expect(command).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "gdb_console",
+      },
     });
     expect(commands).not.toContain('-interpreter-exec console "show version"');
     expect(fake.children[0]?.exitCode).toBeNull();
@@ -2301,7 +2304,11 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
   const rejected = await queued;
 
   expect(rejected.ok).toBe(false);
-  if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisInputError");
+  if (!rejected.ok)
+    expect(rejected.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining("timed out"),
+    });
 });
 
 it("retains a multi-run console command through its completion query before dispatching a follower", async () => {
@@ -2469,7 +2476,7 @@ it("retains unknown completion and partial Evidence when the completion query fa
     await manager.execute(started.value.session_id, "show version"),
   ).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisInputError" },
+    error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
 });
 
@@ -2600,7 +2607,7 @@ it.each([false, true])(
     if (follower !== undefined)
       expect(await follower).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisInputError" },
+        error: { _tag: "AnalysisCapabilityUnavailableError" },
       });
     expect(commands.some((command) => command.includes("show version"))).toBe(
       false,
@@ -3353,6 +3360,38 @@ it("retains caller cancellation and cleanup authority after active-command stop 
   expect(stopCalls).toBe(2);
 });
 
+it("keeps a cancelled startup a cancellation when a cleanup retry reports it again", async () => {
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const fake = createFakeSpawner(undefined, {
+    deferPrompt: true,
+    afterPrompt: () => controller.abort(reason),
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "stop unconfirmed",
+    }),
+  });
+
+  const started = await manager.start(controller.signal);
+  expect(started).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cleanupIncomplete: true },
+  });
+
+  const retried = await manager.retryCleanupFailures();
+  expect(retried).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "start_gdb_session",
+      cause: reason,
+      cleanup: { reason: "stop unconfirmed" },
+    },
+  });
+});
+
 it.each(["tagged", "unexpected"] as const)(
   "retains %s stop failures while closing and resolves them after retry",
   async (failureKind) => {
@@ -3995,6 +4034,8 @@ it.each(["incomplete", "rejected"] as const)(
           fake.children[0]?.exit(0, null);
           return { status: "stopped" };
         }
+        // That simulated verification stands for later stops of the session.
+        if (stopCalls > 3) return { status: "already_exited" };
         return stopOwnedDebuggerProcess(session, name);
       },
     });
@@ -4044,15 +4085,25 @@ it.each(["incomplete", "rejected"] as const)(
     );
     expect(subsequent).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining("GDB stdin write failed"),
+      },
     });
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(stopCalls).toBe(2);
     if (!failed.ok) expect(failed.error.cleanupIncomplete).toBe(true);
     expect((await manager.retryCleanupFailures()).ok).toBe(true);
     expect(stopCalls).toBe(3);
-    expect(manager.status(started.value.session_id)).toBeUndefined();
     if (!failed.ok) expect(failed.error.cleanupIncomplete).toBe(false);
+    // The caller still holds the published ID, so the diagnosis outlives
+    // cleanup until close_gdb_session releases it.
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      state: "closed",
+      closed_reason: expect.stringContaining("GDB stdin write failed"),
+    });
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
 

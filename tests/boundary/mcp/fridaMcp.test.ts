@@ -10,7 +10,7 @@ import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaP
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";

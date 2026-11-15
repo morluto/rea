@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isXmlElement, resolvePointer } from "./viewPointer.js";
+import { appendAll } from "../appendAll.js";
 
 /** A file's views at its two ends. */
 interface Ends {
@@ -60,7 +61,7 @@ export const isMemberCount = (
     for (let node = pending.pop(); node !== undefined; node = pending.pop())
       if (isXmlElement(node) && node !== own) {
         tally.set(node.name, (tally.get(node.name) ?? 0) + 1);
-        if (deep) pending.push(...node.children);
+        if (deep) appendAll(pending, node.children);
       }
     return tally;
   };

@@ -18,6 +18,16 @@ export const androidNativeDeclarationSchema = z.strictObject({
   method_index: count,
 });
 
+/** Split requirements the bridge reads from the root manifest, or why they are unknown. */
+export const androidManifestSplitsSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("observed"),
+    required_split_types: z.array(z.string().min(1)),
+    split_required: z.boolean(),
+  }),
+  z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) }),
+]);
+
 /** Scope is standard root classes*.dex members, never runtime-loaded code. */
 export const androidNativeDeclarationsSchema = z.strictObject({
   scope: z.literal("apk-root-dex-declarations"),
@@ -30,6 +40,8 @@ export const androidNativeDeclarationsSchema = z.strictObject({
     examined_methods: count,
   }),
   unknowns: z.array(z.string()),
+  /** Root manifest split requirements; required splits can carry native libraries. */
+  manifest_splits: androidManifestSplitsSchema,
 });
 
 export type AndroidNativeDeclarations = z.infer<

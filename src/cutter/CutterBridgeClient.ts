@@ -13,12 +13,13 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { isUtf8 } from "node:buffer";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   randomUUID,
@@ -50,10 +51,10 @@ import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
-  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   parseBridgeMaxRequestBytes,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -178,10 +179,7 @@ const assertBridgeActive = (
   signal: AbortSignal | undefined,
   operation: "cutter_command" | "list_cutter_sessions",
 ): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
 };
 
 const mapDiscovery = async <Input, Output>(
@@ -421,9 +419,10 @@ export class CutterBridgeClient {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;
           if (cause instanceof CutterBridgeRequestFailure) {
             if (cause.cancellation !== undefined)
-              throw new AnalysisCancelledError("list_cutter_sessions", {
-                cause: cause.cancellation.reason,
-              });
+              throw cancelledBy(
+                "list_cutter_sessions",
+                carriedReason(cause.cancellation.reason),
+              );
             if (cause.limit !== undefined)
               throw reattributedResourceConstraint(
                 "list_cutter_sessions",
@@ -543,9 +542,10 @@ export class CutterBridgeClient {
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       const response = parsed.data;
+      // Completion is a declaration, never inferred from `ok` alone: a reply
+      // that omits `execution_state` leaves the command's completion unknown.
       const executionState: CutterBridgeExecutionState = response.ok
-        ? response.execution_state === undefined ||
-          response.execution_state === "complete"
+        ? response.execution_state === "complete"
           ? "complete"
           : response.execution_state === "not_started"
             ? "not_started"
@@ -604,9 +604,10 @@ export class CutterBridgeClient {
       // A transport failure escaping here precedes command admission.
       if (!(cause instanceof CutterBridgeRequestFailure)) throw cause;
       if (cause.cancellation !== undefined)
-        throw new AnalysisCancelledError("cutter_command", {
-          cause: cause.cancellation.reason,
-        });
+        throw cancelledBy(
+          "cutter_command",
+          carriedReason(cause.cancellation.reason),
+        );
       throw new AnalysisCapabilityUnavailableError(
         "cutter",
         "cutter_command",
@@ -1013,9 +1014,10 @@ export class CutterBridgeClient {
       const onAbort = (): void => {
         settle({
           ok: false,
-          cause: new AnalysisCancelledError("list_cutter_sessions", {
-            cause: signal?.reason,
-          }),
+          cause: cancelledBy(
+            "list_cutter_sessions",
+            carriedReason(signal?.reason),
+          ),
         });
       };
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -1241,9 +1243,7 @@ const discoveryFailure = (
       outcome?.kind === "failed"
         ? discoveryFailure(outcome.cause, operation)
         : cancellation !== undefined
-          ? new AnalysisCancelledError(operation, {
-              cause: cancellation.reason,
-            })
+          ? cancelledBy(operation, carriedReason(cancellation.reason))
           : undefined;
     if (primary === undefined && outcome?.kind !== "failed") return cleanup;
     const original =
@@ -1257,8 +1257,9 @@ const discoveryFailure = (
     ).bindCleanupDependencies([cleanup]);
   }
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   return cause;
 };

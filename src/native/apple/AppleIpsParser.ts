@@ -8,7 +8,8 @@ import {
   type AppleIpsThread,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
-import { AppleIpsFormatFailure } from "./AppleIps.errors.js";
+import { APPLE_IPS_FORMAT } from "./AppleIps.errors.js";
+import { malformedInput, unsupportedInput } from "../../domain/parseFailure.js";
 import { classify } from "./AppleIpsClassification.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
@@ -204,7 +205,7 @@ const imagesOf = (
 ): AppleIpsImage[] =>
   rows.map((row, index) => {
     const path = `body.usedImages[${String(index)}]`;
-    const members = read.row(row, path);
+    const { members, unlisted } = read.row(row, path);
     const source = read.text(members.source, `${path}.source`);
     const recordedUuid = read.text(members.uuid, `${path}.uuid`);
     const uuid = canonicalUuid(recordedUuid);
@@ -227,6 +228,7 @@ const imagesOf = (
       uuid_unknown: uuid.unknown || arch === null || arch === "",
       name: read.text(members.name, `${path}.name`),
       path: read.text(members.path, `${path}.path`),
+      unlisted_keys: [...unlisted],
     };
   });
 
@@ -256,12 +258,15 @@ const threadsOf = (
 ): AppleIpsThread[] =>
   rows.map((row, threadIndex) => {
     const path = `body.threads[${String(threadIndex)}]`;
-    const members = read.row(row, path);
+    const { members, unlisted } = read.row(row, path);
     const frames = (
       read.array(members.frames, `${path}.frames`, false) ?? []
     ).map((frame, frameIndex): AppleIpsFrame => {
       const framePath = `${path}.frames[${String(frameIndex)}]`;
-      const frameMembers = read.row(frame, framePath);
+      const { members: frameMembers, unlisted: frameUnlisted } = read.row(
+        frame,
+        framePath,
+      );
       const imageIndex = read.index(
         frameMembers.imageIndex,
         `${framePath}.imageIndex`,
@@ -291,6 +296,7 @@ const threadsOf = (
           frameMembers.symbolLocation,
           `${framePath}.symbolLocation`,
         ),
+        unlisted_keys: [...frameUnlisted],
       };
     });
     return {
@@ -301,6 +307,7 @@ const threadsOf = (
       queue: read.text(members.queue, `${path}.queue`),
       frames,
       ...threadStateOf(members.threadState, `${path}.threadState`, read),
+      unlisted_keys: [...unlisted],
     };
   });
 
@@ -310,20 +317,20 @@ const crashText = (bytes: Buffer): { metadata: string; body: string } => {
   try {
     text = utf8.decode(bytes);
   } catch {
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS crash reports are UTF-8 JSON text; the selected bytes are not valid UTF-8",
     );
   }
   if (text.includes("\u0000"))
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS crash reports are UTF-8 JSON text and cannot contain NUL",
     );
   const newline = text.search(/\r\n|\n|\r/u);
   if (newline <= 0)
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS crash report must start with a metadata JSON object on the first line",
     );
   const lineEnd = text.startsWith("\r\n", newline) ? newline + 2 : newline + 1;
@@ -333,20 +340,17 @@ const crashText = (bytes: Buffer): { metadata: string; body: string } => {
 const metadataOf = (text: string, read: FieldReader): AppleIps["metadata"] => {
   const json = consumeJson(text, "IPS metadata", IPS_METADATA_SHAPE);
   if (json.kind !== "object")
-    throw new AppleIpsFormatFailure(
-      "malformed",
-      "IPS metadata is not a JSON object",
-    );
+    throw malformedInput(APPLE_IPS_FORMAT, "IPS metadata is not a JSON object");
   const { members } = json;
   const bugType = members.bug_type;
   if (bugType?.kind !== "string" || bugType.value.length === 0)
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS metadata bug_type is missing or not a string",
     );
   if (bugType.value !== "309")
-    throw new AppleIpsFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      APPLE_IPS_FORMAT,
       `IPS bug_type ${JSON.stringify(bugType.value)} is not a crash report (309); this operation does not decode other DiagnosticReports types`,
     );
   return {
@@ -397,8 +401,8 @@ export const parseAppleIps = (
   const text = crashText(bytes);
   const metadata = metadataOf(text.metadata, read);
   if (text.body.length === 0)
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS crash report body is missing after metadata line",
     );
   const bodyJson = consumeJson(
@@ -407,8 +411,8 @@ export const parseAppleIps = (
     ipsBodyShape(input),
   );
   if (bodyJson.kind !== "object")
-    throw new AppleIpsFormatFailure(
-      "malformed",
+    throw malformedInput(
+      APPLE_IPS_FORMAT,
       "IPS crash body is not a JSON object",
     );
   const body = bodyJson.members;

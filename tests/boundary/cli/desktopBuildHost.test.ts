@@ -91,7 +91,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         "--json",
       ],
       environment,
-      timeoutMs: 45_000,
     });
     const report = z
       .object({ scope_checks: z.array(checkSchema) })
@@ -152,7 +151,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         "--json",
       ],
       environment,
-      timeoutMs: 45_000,
     });
     const report = z
       .object({ scope_checks: z.array(checkSchema) })
@@ -183,7 +181,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         ...environment,
         REA_DOCKER_COMMAND: join(environment.HOME, "..", "bin", "docker"),
       },
-      timeoutMs: 45_000,
     });
 
     expect(result.exitCode, result.stderr).toBe(1);
@@ -242,7 +239,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         "--json",
       ],
       environment,
-      timeoutMs: 45_000,
     });
 
     const plan = z

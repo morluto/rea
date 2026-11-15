@@ -15,7 +15,7 @@ import {
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,

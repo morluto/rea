@@ -1,5 +1,6 @@
 import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -49,7 +50,7 @@ describe("ZIP signature detection", () => {
     const apk = join(root, "renamed.apk");
     const program = join(root, "program.apk");
     await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-    await writeFile(program, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    await writeFile(program, minimalElfImage());
     expect(
       (await classifyAndHashRoot(apk, false, await lstat(apk))).format,
     ).toBe("apk");

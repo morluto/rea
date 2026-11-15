@@ -16,6 +16,7 @@ import {
   AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
 } from "../../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,
@@ -137,6 +138,11 @@ class TraceArchiveRead {
           input_bytes: source.initial.size,
           max_archive_bytes: PLAYWRIGHT_TRACE_LIMITS.archiveBytes,
         },
+        fixedAllowanceOptions(
+          `The Playwright trace archive input allowance of ${String(PLAYWRIGHT_TRACE_LIMITS.archiveBytes)} bytes`,
+          "input",
+          { limit: PLAYWRIGHT_TRACE_LIMITS.archiveBytes, unit: "bytes" },
+        ),
       );
     const hash = await hashStableRootArtifactHandle(
       this.path,
