@@ -7,7 +7,7 @@ import {
   INLINE_ALTERNATIVE_BYTES,
   shareOutputDefinitions,
 } from "./outputSchemaDefinitions.js";
-import { toolContract } from "./toolContracts.js";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
 import { isRecord } from "../domain/isRecord.js";
 
@@ -213,9 +213,12 @@ describe("shareOutputDefinitions", () => {
 // Its results are validated against this schema in analysisDetail.test.ts and
 // BrowserScenarioViews.test.ts.
 it("advertises the analysis view output without large inline alternatives", () => {
-  const schema = advertisedOutputJsonSchema(
-    toolContract("inspect_analysis_view"),
+  const contract = ANALYSIS_VIEW_TOOL_CONTRACTS.find(
+    ({ name }) => name === "inspect_analysis_view",
   );
+  if (contract === undefined)
+    throw new Error("Missing inspect_analysis_view contract");
+  const schema = advertisedOutputJsonSchema(contract);
   expect(Math.max(...inlineAlternatives(schema))).toBeLessThanOrEqual(
     INLINE_ALTERNATIVE_BYTES,
   );
