@@ -368,8 +368,8 @@ try {
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
-    assert.equal(snapshot.target.architecture, "riscv");
-    assert.equal(snapshot.target.sha256, fixture.sha256);
+    assert.equal(snapshot.target.identity.architecture, "riscv");
+    assert.equal(snapshot.target.identity.sha256, fixture.sha256);
     assertProfile(snapshot.binding.analysis_profile);
     for (const record of snapshot.evidence_bundle.records)
       assertEvidence(parseEvidence(record));
