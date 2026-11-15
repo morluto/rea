@@ -70,19 +70,35 @@ it("reports the cause that bounds the compiler prefix it publishes", async () =>
 
   // The invariant over every allowance: a report publishing the whole collected list is bounded
   // by the reader's own limit and says so, while one that dropped a hash is bounded by this
-  // allowance and says that instead. The published text is also the text the sizing counted.
-  for (let budget = 2400; budget <= 7000; budget += 25) {
+  // allowance and says that instead. The published text is also the text the sizing counted, so
+  // no allowance is refused for a report that could have been shorter.
+  for (let budget = 2300; budget <= 7100; budget += 25) {
     const report = await at(budget);
     expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThanOrEqual(
       budget,
     );
-    if (report.rustc_commit?.hashes.length === 64) {
+    if (report.rustc_commit === null) continue;
+    if (report.rustc_commit.hashes.length === 64) {
       expect(report.rustc_commit.coverage?.reason).toBe("max_rustc_hashes");
       continue;
     }
+    expect(report.rustc_commit.coverage?.reason).toBe("report_bytes");
     expect(report.limitations.join("\n")).not.toMatch(
       /reached max_rustc_hashes=\d+|Increase max_rustc_hashes on the next|retained hashes are a prefix/u,
     );
+  }
+  // The reader's coverage spells two bytes longer than this allowance's, so a budget just under
+  // the whole report must still yield a shortened report rather than a refusal. Every budget in
+  // the neighbourhood is tried, because which few bytes are short depends on that spelling.
+  for (let budget = 6700; budget <= 6900; budget++) {
+    const report = await at(budget);
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThanOrEqual(
+      budget,
+    );
+    if (report.rustc_commit === null) continue;
+    if (report.rustc_commit.hashes.length === 64)
+      expect(report.rustc_commit.coverage?.reason).toBe("max_rustc_hashes");
+    else expect(report.rustc_commit.coverage?.reason).toBe("report_bytes");
   }
 });
 
