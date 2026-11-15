@@ -92,16 +92,14 @@ Programul de configurare acceptă Claude Code, Codex, Cursor, Gemini CLI, Grok B
 [instalarea și configurarea](../getting-started/installation.md) pentru configurarea motoarelor
 de analiză și înregistrarea manuală a serverului MCP.
 
-MCP folosește implicit scheme de intrare compacte, pentru a reduce spațiul ocupat
-în context. Setează `REA_MCP_INPUT_SCHEMA_PROFILE=full` în înregistrarea MCP când
-ai nevoie de îndrumările complete pentru câmpurile expuse și de detaliile
-validării structurilor imbricate. Ambele profiluri păstrează toate uneltele și
-validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
+MCP anunță scheme de intrare compacte, pentru a reduce spațiul ocupat în
+context; îndrumările omise de o schemă compactă urmează descrierea uneltei.
+Toate uneltele și validarea canonică a serverului rămân neschimbate. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
 Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
 
-Schemele de ieșire sunt omise implicit din `tools/list`: niciun API de model nu le citește, iar REA validează singur fiecare rezultat. Setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` în înregistrarea MCP pentru a anunța fiecare schemă de ieșire în limita a 4096 de octeți, sau `full` pentru scheme de ieșire complete (pentru clienții MCP care validează rezultatele). În toate setările, validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+Schemele de ieșire sunt omise implicit din `tools/list`: niciun API de model nu le citește, iar REA validează singur fiecare rezultat. Setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` în înregistrarea MCP pentru a anunța fiecare schemă de ieșire în limita a 4096 de octeți. În toate setările, validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
 
 ### Cere-i agentului
 

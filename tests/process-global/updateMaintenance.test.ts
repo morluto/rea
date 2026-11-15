@@ -66,7 +66,9 @@ const plan = (
   );
 
 const writeClient = async (id: string, content: string): Promise<string> => {
-  const client = supportedClients(home).find(({ name }) => name === id);
+  const client = supportedClients(home, HOST_PLATFORM.platform).find(
+    ({ name }) => name === id,
+  );
   if (client === undefined) throw new Error(`Unknown test client ${id}`);
   await mkdir(dirname(client.configPath), { recursive: true });
   await writeFile(client.configPath, content);

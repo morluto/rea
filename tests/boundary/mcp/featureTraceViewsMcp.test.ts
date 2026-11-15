@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -68,10 +69,7 @@ contextBridge.exposeInMainWorld("api",{${CHANNELS.map(
   return root;
 };
 
-const connect = async (
-  profile: "full" | "compact",
-  maximumResponseBytes?: number,
-) => {
+const connect = async (profile: "compact", maximumResponseBytes?: number) => {
   const application = await analyzeJavaScriptApplication({
     input_path: await writeApplication(),
   });
@@ -117,7 +115,7 @@ const bytes = (value: unknown): number =>
 
 type Harness = Awaited<ReturnType<typeof connect>>;
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "returns selected feature-trace facts and retains the complete trace (%s)",
   async (profile) => {
     const harness = await connect(profile);
@@ -169,7 +167,9 @@ it.each(["full", "compact"] as const)(
       ({ name }) => name === "trace_application_feature",
     )!;
     expect(ajv.validateSchema(traceTool.inputSchema)).toBe(true);
-    const outputSchema: Record<string, unknown> = traceTool.outputSchema!;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      traceTool.name,
+    );
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const request = {
       kind: "feature-trace",
@@ -341,7 +341,7 @@ const assertRetainedTracePages = async (
 };
 
 it("keeps a no-match trace's discovery and empty collections explicit", async () => {
-  const { inputs, call } = await connect("full");
+  const { inputs, call } = await connect("compact");
   const missing = {
     ...inputs,
     seed: { kind: "string", value: "absent-literal", match: "exact" },
@@ -408,7 +408,7 @@ it("refuses a selected view before tracing when the server retains no Evidence",
 
 it("recovers an oversized completed trace through its retained paths page", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, call, reply } = await connect("full", budget);
+  const { session, inputs, call, reply } = await connect("compact", budget);
   const failed = await reply("trace_application_feature", inputs);
   const error = parseMcpToolError(failed).error;
   expect(error.code).toBe("resource_constraint");
@@ -460,7 +460,7 @@ it("recovers an oversized completed trace through its retained paths page", asyn
 
 it("names the retained trace and a smaller page when a selected page is oversized", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, reply } = await connect("full", budget);
+  const { session, inputs, reply } = await connect("compact", budget);
   const selection = {
     kind: "feature-trace",
     collection: "nodes",

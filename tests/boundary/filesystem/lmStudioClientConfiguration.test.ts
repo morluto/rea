@@ -31,7 +31,7 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
-const expectedRegistration = (profile?: "full" | "compact") => ({
+const expectedRegistration = (profile?: "compact") => ({
   command: command[0],
   args: command.slice(1),
   ...(profile === undefined
@@ -161,7 +161,7 @@ describe("LM Studio registration lifecycle", () => {
     });
   });
 
-  it("keeps an explicit full profile and reports an omitted profile aligned", async () => {
+  it("keeps an explicit compact profile and reports an omitted profile aligned", async () => {
     const { home, client } = await installedHome("default");
     await writeFile(
       client.configPath,
@@ -175,14 +175,14 @@ describe("LM Studio registration lifecycle", () => {
       (
         await configureClientConfiguration(
           client,
-          { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
           command,
         )
       ).status,
     ).toBe("configured");
     expect(
       JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
-    ).toEqual(expectedRegistration("full"));
+    ).toEqual(expectedRegistration("compact"));
     expect(await configureClientConfiguration(client, {}, command)).toEqual({
       status: "unchanged",
     });

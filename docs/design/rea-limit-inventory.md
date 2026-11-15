@@ -236,10 +236,11 @@ control-reply budget stays separate from
 
 ## Static check
 
-`npm run lint` runs `scripts/verify/rea-numeric-limits.mjs` after
-dependencies are installed. `scripts/verify/architecture-guards.mjs` runs the
-same check when `typescript6` is already installed; the pre-install CI step
-cannot. The check scans `src` excluding tests,
+`npm run lint` owns this check: it runs
+`scripts/verify/rea-numeric-limits.mjs` after dependencies are installed, so
+`npm run check:fast`, the pre-push hook and CI's static checks all include it.
+`scripts/verify/architecture-guards.mjs` does not run it. The check scans `src`
+excluding tests,
 keeps names that are numeric limits, and requires each name to be an
 `environment` on an analysis setting or a registry entry with a reason.
 The registry accepts only `restart-only`. A limit checked on each call has to

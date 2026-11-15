@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
@@ -26,7 +27,6 @@ const createTransport = () =>
     env: {
       PATH: process.env.PATH ?? "",
       REA_LOG_LEVEL: "silent",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       ...(process.platform === "win32"
         ? {
             SystemRoot: process.env.SystemRoot ?? "",
@@ -55,9 +55,11 @@ cliTest(
         (tool) => tool.name === "inspect_managed_members",
       );
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      if (definition?.outputSchema === undefined)
+      if (definition === undefined)
         throw new Error("Managed member schema is absent");
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({

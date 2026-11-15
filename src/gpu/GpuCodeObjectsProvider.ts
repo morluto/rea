@@ -276,7 +276,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected GPU path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -285,6 +285,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "GPU source changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const leaves = inventory.objects.filter(
       (row) =>

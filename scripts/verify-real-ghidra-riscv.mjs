@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -35,6 +35,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -60,6 +61,8 @@ assert.equal(installation.providerVersion, "12.1.4");
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("riscv");
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-riscv-proof-",
   // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
@@ -87,7 +90,7 @@ for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(env),
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
@@ -129,14 +132,17 @@ try {
   const validators = new Map();
   for (const tool of catalog.tools) {
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name}: invalid output schema`,
     );
     const existing =
-      typeof tool.outputSchema.$id === "string"
-        ? ajv.getSchema(tool.outputSchema.$id)
+      typeof canonicalOutputSchema(tool.name).$id === "string"
+        ? ajv.getSchema(canonicalOutputSchema(tool.name).$id)
         : undefined;
-    validators.set(tool.name, existing ?? ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      existing ?? ajv.compile(canonicalOutputSchema(tool.name)),
+    );
   }
 
   const typedSoft = await buildRiscvFixture(workspace, 32, "soft");
