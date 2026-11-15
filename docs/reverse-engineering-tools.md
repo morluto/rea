@@ -269,6 +269,13 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
+The plugin publishes the SHA-256 of its own file on its session descriptor.
+Discovery reports each session's `bridge_source`: `packaged` when it matches
+REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
+`unknown` when the plugin predates this field. `cutter_command` refuses a
+`modified` session before sending anything and names the packaged plugin to
+copy into Cutter's `plugins/python` directory. An `unknown` session still runs.
+
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
 The client checks the final encoded request against
