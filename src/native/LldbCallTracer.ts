@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
@@ -1219,9 +1220,7 @@ const readTracerOutput = async (
   if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value.value,
-    );
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
   } catch (cause: unknown) {
     return err(cause);
   }

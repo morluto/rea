@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   legacyMachoPlatform,
   type MachoVersionMinPlatform,
@@ -80,9 +81,7 @@ const bytesText = (input: Uint8Array, fixed: boolean) => {
   const bytes = end < 0 ? input : input.subarray(0, end);
   try {
     return {
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text: decodeStrictUtf8(bytes, "preserve"),
       bytesHex: null,
     };
   } catch {
