@@ -17,9 +17,10 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
-import { hostReadFailure } from "./HostFileRead.js";
+import {
+  ArtifactFileCleanupFailure,
+  withArtifactFileHandle,
+} from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 const execFileAsync = promisify(execFile);
@@ -75,15 +76,13 @@ const readHead = async (
   path: string,
   resources?: ArtifactResourceScope,
 ): Promise<string> =>
-  withOwnedFileHandle(
+  // The artifact file owner binds one cleanup lease to both the retained owner
+  // and the failure it reports, so a later successful retry resolves both.
+  withArtifactFileHandle(
     path,
-    new OwnedFileHandle(await open(path, "r")),
-    resources === undefined
-      ? {}
-      : {
-          retainFailedClose: (handle) =>
-            resources.retain({ kind: "file-handle", resource: path, handle }),
-        },
+    await open(path, "r"),
+    resources,
+    undefined,
     async (file) => {
       const { buffer, bytesRead } = await file.read(
         Buffer.alloc(512),
@@ -117,8 +116,7 @@ export const agentEnvInterpreter = async (
     program = await realpath(command);
     head = await readHead(program, resources);
   } catch (cause: unknown) {
-    const failure = hostReadFailure(cause);
-    if (failure !== cause) throw failure;
+    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
     throw unavailable(
       operation,
       `REA_AGENT_ENV_COMMAND ${command} cannot be read.`,

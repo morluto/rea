@@ -31,6 +31,11 @@ it("retains a failed runner descriptor close for retry by the caller", async () 
     expect(resources.cleanupResources).toContain(path);
     await resources.retryCleanup();
     expect(resources.cleanupResources).toEqual([]);
+    // The reported failure shares the retained lease, so the retry resolves it.
+    expect(
+      failure instanceof ArtifactFileCleanupFailure &&
+        failure.cleanupLease.released,
+    ).toBe(true);
     close.mockRejectedValueOnce(new Error("close denied without scope"));
     let unscoped: unknown;
     try {
