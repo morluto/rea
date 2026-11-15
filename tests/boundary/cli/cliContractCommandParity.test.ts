@@ -108,6 +108,12 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
+  // The named option may supply a selector in place of the positional, and
+  // a selector names one object, so it is never empty.
+  if (parameter.selectorOption !== undefined) {
+    if (value === undefined) return true;
+    if (value === "") return false;
+  }
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -193,9 +199,12 @@ const argvValues = (
       .filter((parameter) => parameter.positional)
       .map(({ key }) => key),
   );
+  // A required selector is supplied positionally.
   const required = description.parameters.filter(
     (parameter) =>
-      !admits(registeredField(description, parameter), undefined) &&
+      (parameter.selectorOption === undefined
+        ? !admits(registeredField(description, parameter), undefined)
+        : parameter.selectorOption.required) &&
       !Object.hasOwn(options, parameter.key),
   );
   const filled = Object.fromEntries(
@@ -282,6 +291,13 @@ const MIGRATED_COMMANDS = [
   "resolve-native-call-targets",
   "trace-native-ui-action",
   "inspect-native-dispatch-metadata",
+  "procedure-references",
+  "inspect-native-api",
+  "inspect",
+  "xrefs",
+  "trace",
+  "function",
+  "instructions",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -324,6 +340,9 @@ describe("CLI commands projected from tool contracts", () => {
             .map(({ key }) => key),
           ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
+          ...description.parameters.flatMap(({ selectorOption }) =>
+            selectorOption === undefined ? [] : [selectorOption.key],
+          ),
         ].toSorted(),
       );
     },
@@ -1180,5 +1199,93 @@ describe("JSON-document delivery options", () => {
       expect(flagged.admitDelivery(values).ok, JSON.stringify(values)).toBe(
         false,
       );
+  });
+});
+
+const selecting = each.flatMap(([command, description]) =>
+  description.parameters.flatMap((parameter) =>
+    parameter.selectorOption === undefined
+      ? []
+      : [[command, description, parameter, parameter.selectorOption] as const],
+  ),
+);
+
+describe("Positional selectors with a named option", () => {
+  it.each(selecting)(
+    "%s takes its selector positionally or by its named option",
+    (_command, description, parameter, option) => {
+      const command = registered.get(description.command)!;
+      const named = (command.options as z.ZodObject).shape[option.key];
+      expect(admits(named as z.ZodType, undefined)).toBe(true);
+      expect(admits(named as z.ZodType, "-dash")).toBe(true);
+      // A required selector is refused when neither spelling is given,
+      // including where only the CLI requires it.
+      expect(option.required).toBe(
+        option.required ||
+          !admits(description.fields[parameter.field]!, undefined),
+      );
+      const { required } = option;
+      const admit = (values: Record<string, unknown>) =>
+        description.admit({
+          [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...values,
+        });
+      const selected = (values: Record<string, unknown>) => {
+        const result = admit(values);
+        return result.ok ? result.value.input[parameter.field] : result.error;
+      };
+      expect(selected({ [parameter.key]: "main" })).toBe("main");
+      expect(selected({ [option.valueKey]: "-main" })).toBe("-main");
+      expect(selected({ [parameter.key]: "m", [option.valueKey]: "m" })).toBe(
+        "m",
+      );
+      const issues = (values: Record<string, unknown>) => {
+        const result = admit(values);
+        return result.ok ? [] : result.error.issues;
+      };
+      expect(issues({ [parameter.key]: "a", [option.valueKey]: "b" })).toEqual([
+        expect.objectContaining({
+          path: [option.key],
+          reason: "invalid_value",
+        }),
+      ]);
+      if (required)
+        expect(issues({})).toEqual([
+          expect.objectContaining({
+            path: [option.key],
+            reason: "missing_argument",
+          }),
+        ]);
+      if (option.kind === "native")
+        // The named spelling is kept when both name one native address.
+        expect(
+          selected({ [parameter.key]: "0x1a", [option.valueKey]: "0x1A" }),
+        ).toBe("0x1A");
+    },
+  );
+
+  it("refuses a selector option on a field that is not a positional text selector", () => {
+    const describeSelector = (
+      positionals: readonly ("text" | "count")[],
+      field: "text" | "count",
+    ) =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.object({ text: z.string(), count: z.number() }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals,
+          selectorOptions: { [field]: { name: "named", description: "Named" } },
+        },
+      );
+    expect(() => describeSelector([], "text")).toThrow(
+      "probe.text is not a positional selector",
+    );
+    expect(() => describeSelector(["count"], "count")).toThrow(
+      "probe.count is not a text selector",
+    );
   });
 });
