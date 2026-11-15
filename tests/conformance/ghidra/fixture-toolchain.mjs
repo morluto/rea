@@ -1,8 +1,9 @@
-import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 import { devNull } from "node:os";
-import { promisify } from "node:util";
+import { join } from "node:path";
 
-const execute = promisify(execFile);
+import { importVerifierSource } from "../../../scripts/lib/verifier-source-loader.mjs";
 
 /**
  * The host commands the cross-architecture Ghidra fixtures build and inspect
@@ -23,6 +24,7 @@ export const FIXTURE_TOOLS = Object.freeze({
   riscvObjdump: { variable: "REA_RISCV_OBJDUMP", fallback: "llvm-objdump" },
   // The PSPSDK build runs these by name; no variable selects them.
   make: { fallback: "make" },
+  pspConfig: { fallback: "psp-config" },
   pspCompiler: { fallback: "psp-gcc" },
   pspReadelf: { fallback: "psp-readelf" },
   pspObjdump: { fallback: "psp-objdump" },
@@ -33,12 +35,24 @@ export const fixtureCommand = (tool) =>
   (tool.variable === undefined ? undefined : process.env[tool.variable]) ??
   tool.fallback;
 
-/** A command that must run `--version`, and whose output may need a name. */
-const runs = (tool, banner) => ({
+const firstLine = (text) =>
+  String(text ?? "")
+    .split("\n")
+    .find((line) => line.trim() !== "")
+    ?.trim();
+
+/**
+ * A command that must answer `arguments` (default `--version`), with output
+ * matching `banner` when the fixture reads a particular tool's output.
+ */
+const runs = (tool, banner, args = ["--version"]) => ({
   tool,
   need: banner === undefined ? "run" : `report ${String(banner)}`,
-  arguments: ["--version"],
-  banner,
+  arguments: args,
+  accepts: (stdout) =>
+    banner === undefined || banner.test(stdout)
+      ? undefined
+      : `${args.join(" ")} reported ${JSON.stringify(firstLine(stdout) ?? "")}`,
 });
 
 /**
@@ -60,10 +74,31 @@ const targets = (tool, target, { lld = false } = {}) => [
       "-o",
       devNull,
     ],
+    accepts: () => undefined,
   },
 ];
 
+/** The PSPSDK root whose build rules the fixture Makefile includes. */
+const pspsdk = {
+  tool: FIXTURE_TOOLS.pspConfig,
+  need: "report a PSPSDK path with lib/build.mak",
+  arguments: ["--pspsdk-path"],
+  accepts: async (stdout) => {
+    const path = firstLine(stdout);
+    if (path === undefined) return "--pspsdk-path reported nothing";
+    try {
+      await access(join(path, "lib", "build.mak"));
+      return undefined;
+    } catch {
+      return `--pspsdk-path reported ${JSON.stringify(path)}, which has no lib/build.mak`;
+    }
+  },
+};
+
 const gnuReadelf = /^GNU readelf\b/u;
+// The RISC-V fixture parses LLVM's attribute layout and disassembles one
+// symbol with --disassemble-symbols, which GNU binutils do not provide.
+const llvm = /\bLLVM\b/u;
 const tools = FIXTURE_TOOLS;
 
 /** What each lane's fixtures and independent readers run. */
@@ -75,6 +110,7 @@ export const LANE_TOOLCHAINS = Object.freeze({
   ],
   psp: [
     runs(tools.make),
+    pspsdk,
     runs(tools.pspCompiler),
     runs(tools.pspReadelf),
     runs(tools.pspObjdump),
@@ -85,8 +121,10 @@ export const LANE_TOOLCHAINS = Object.freeze({
     runs(tools.mipsReadelf, gnuReadelf),
   ],
   "mips-shared": [
-    runs(tools.mipsAssembler, /GNU assembler/u),
-    runs(tools.mipsLinker, /GNU ld/u),
+    // GNU tools name their configured target; a host-native assembler or
+    // linker answers --version but cannot build MIPS16 code.
+    runs(tools.mipsAssembler, /GNU assembler[\s\S]*target of .mips/u),
+    runs(tools.mipsLinker, /GNU ld[\s\S]*\belf32\w*mip/u, ["-V"]),
     runs(tools.mipsReadelf),
   ],
   ppc: [
@@ -101,33 +139,51 @@ export const LANE_TOOLCHAINS = Object.freeze({
     ...targets(tools.riscvClang, "riscv32-unknown-elf"),
     ...targets(tools.riscvClang, "riscv64-unknown-elf"),
     runs(tools.riscvLinker),
-    runs(tools.riscvReadelf),
-    runs(tools.riscvObjdump),
+    runs(tools.riscvReadelf, llvm),
+    runs(tools.riscvObjdump, llvm),
   ],
 });
 
-const firstLine = (text) =>
-  String(text ?? "")
-    .split("\n")
-    .find((line) => line.trim() !== "")
-    ?.trim();
+let ownedCommand;
+/** Probes run through the shared owned-command runner, which owns their process group. */
+const runOwnedCommand = async () => {
+  ownedCommand ??= importVerifierSource(
+    new URL("../../../src/process/OwnedCommand.ts", import.meta.url).href,
+    import.meta.url,
+  );
+  return (await ownedCommand).runOwnedCommand;
+};
 
 /** Why `requirement` is unmet on this host, or undefined when it is met. */
 const unmet = async (requirement) => {
-  const command = fixtureCommand(requirement.tool);
+  const run = await runOwnedCommand();
+  let stdout;
   try {
-    const { stdout } = await execute(command, requirement.arguments, {
-      env: { ...process.env, LC_ALL: "C" },
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-    if (requirement.banner === undefined || requirement.banner.test(stdout))
-      return undefined;
-    return `--version reported ${JSON.stringify(firstLine(stdout) ?? "")}`;
+    const snapshot = await run(
+      {
+        command: fixtureCommand(requirement.tool),
+        arguments: requirement.arguments,
+        runId: randomUUID(),
+        expectedCommand: null,
+        env: { ...process.env, LC_ALL: "C" },
+      },
+      { timeoutMs: 10_000, diagnosticBytes: 1024 * 1024 },
+    );
+    stdout = snapshot.stdout.text;
   } catch (cause) {
-    if (cause?.code === "ENOENT") return "command not found";
-    return firstLine(cause?.stderr) ?? firstLine(cause?.message) ?? "failed";
+    // A probe whose process group could not be confirmed stopped is not a
+    // missing tool; that failure stays the caller's to report.
+    if (cause?.cleanupFailure != null) throw cause;
+    if (cause?.code === "ENOENT" || cause?.processError?.code === "ENOENT")
+      return "command not found";
+    return (
+      firstLine(cause?.snapshot?.stderr?.text) ??
+      firstLine(cause?.snapshot?.stdout?.text) ??
+      firstLine(cause?.message) ??
+      "failed"
+    );
   }
+  return requirement.accepts(stdout);
 };
 
 /**
