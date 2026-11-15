@@ -24,8 +24,8 @@ import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
 import type { AppConfig } from "./types.js";
-import { hopperLauncherDiscovery } from "../application/HopperLauncherDiscovery.js";
-import { localMacHopperRenamedLauncherCandidates } from "../application/MacHopperPaths.js";
+import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.js";
+import { localMacHopperRenamedLauncherCandidates } from "../hopperPaths/MacHopperPaths.js";
 const executableAvailable = (path: string): boolean => {
   try {
     accessSync(path, constants.X_OK);

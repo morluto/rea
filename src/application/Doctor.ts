@@ -44,7 +44,7 @@ import {
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { installedCaskAppdir, probeHomebrew } from "./homebrew.js";
-import { readMacHopperRenamedLauncherCandidates } from "./MacHopperPaths.js";
+import { readMacHopperRenamedLauncherCandidates } from "../hopperPaths/MacHopperPaths.js";
 import {
   inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
