@@ -420,7 +420,6 @@
     "src/process/DarwinHelperCache.ts": 1,
     "src/process/DarwinProcessRunTokenReader.ts": 1,
     "src/process/OwnedDebuggerSessionRegistry.ts": 1,
-    "src/process/OwnedWorkerRuntime.ts": 4,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/server/environment/serveEnvironment.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 2
