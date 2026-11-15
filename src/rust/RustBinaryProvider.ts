@@ -1,3 +1,4 @@
+import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectSelectedArtifactFileFailure,
@@ -41,6 +42,7 @@ import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 
 import {
+  RUST_PRODUCER_DEFAULTS,
   resolveRustProducerLimits,
   rustProducerLimitsSchema,
   type RustProducerLimits,
@@ -187,7 +189,12 @@ const outputLimit = (path: string, maxOutputBytes: number) =>
     { maximum_output_bytes: maxOutputBytes },
     {
       retryable: false,
-      remediationAction: `Increase producer_limits.output_bytes above ${String(maxOutputBytes)} bytes on the next inspect_rust_binary call (CLI --producer-limits JSON); no restart is required. Input, dependency parser and transport limits remain independent. Repeating the unchanged request does not raise admission.`,
+      remediationAction: `Increase producer_limits.output_bytes above ${String(maxOutputBytes)} bytes on the next inspect_rust_binary call; no restart is required. Input, dependency parser and transport limits remain independent. Repeating the unchanged request does not raise admission.`,
+      limit: producerLimitControl(
+        "output_bytes",
+        maxOutputBytes,
+        RUST_PRODUCER_DEFAULTS.output_bytes,
+      ),
     },
   );
 
@@ -332,7 +339,12 @@ const failureForPrimary = (
         ...(cause.constraint.resource === "transport"
           ? {
               retryable: false,
-              remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+              remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+              limit: producerLimitControl(
+                "output_bytes",
+                limits.output_bytes,
+                RUST_PRODUCER_DEFAULTS.output_bytes,
+              ),
             }
           : fixedAllowanceOptions(
               "This Rust dependency parser allowance",
@@ -415,7 +427,12 @@ const artifactReaderFailure = (
       {
         cause,
         retryable: false,
-        remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call (CLI --producer-limits JSON); no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
+        remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call; no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
+        limit: producerLimitControl(
+          "input_bytes",
+          limits.input_bytes,
+          RUST_PRODUCER_DEFAULTS.input_bytes,
+        ),
       },
     );
   if (cause.reason === "path")
