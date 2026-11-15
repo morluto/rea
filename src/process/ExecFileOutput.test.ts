@@ -916,21 +916,45 @@ describe("execFileOutput cancellation provenance", () => {
     async (reason) => {
       const directory = await createTestTempDirectory("rea-exec-late-abort-");
       const exited = join(directory, "exited");
+      const release = join(directory, "release");
+      // The descendant inherits the pipes and holds them until released.
+      const descendant = [
+        'const fs = require("node:fs");',
+        `const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) clearInterval(poll); }, 10);`,
+        "setTimeout(() => clearInterval(poll), 30000).unref();",
+      ].join("\n");
+      // The launcher exits on its own, leaving the descendant running.
       const script = [
         'const { spawn } = require("node:child_process");',
         'const fs = require("node:fs");',
-        'spawn(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });',
-        'process.stdout.write("done");',
-        `process.on("exit", () => fs.writeFileSync(${JSON.stringify(exited)}, ""));`,
+        `spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: ["ignore", "inherit", "inherit"] }).unref();`,
+        'process.stdout.write("done", () => {',
+        `  fs.writeFileSync(${JSON.stringify(exited)}, "");`,
+        "  process.exit(0);",
+        "});",
       ].join("\n");
       const controller = new AbortController();
       const execution = execFileOutput(process.execPath, ["-e", script], {
         signal: controller.signal,
       });
-      expect(await waitForFile(exited)).toBe(true);
-      // The direct child has exited; its descendant still holds the pipes.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      controller.abort(reason);
+      const settled = execution.then(
+        () => "settled",
+        () => "settled",
+      );
+      try {
+        expect(await waitForFile(exited)).toBe(true);
+        // The direct child has exited; its descendant still holds the pipes,
+        // so the command has not completed when the caller aborts.
+        expect(
+          await Promise.race([
+            settled,
+            new Promise((resolve) => setTimeout(resolve, 100, "pending")),
+          ]),
+        ).toBe("pending");
+        controller.abort(reason);
+      } finally {
+        await writeFile(release, "");
+      }
       const result = await execution;
       expect(result.stdout).toBe("done");
     },
