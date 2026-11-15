@@ -59,7 +59,7 @@ type EvidenceOperation<Input> = (
  * declared Evidence inputs still unchecked); an application-admitted workflow
  * receives the raw request and validates it itself.
  */
-type EvidenceBinding<Input = unknown> =
+type EvidenceBinding<Input = unknown> = (
   | {
       readonly admission: "sdk";
       readonly run: EvidenceOperation<Input>;
@@ -71,7 +71,14 @@ type EvidenceBinding<Input = unknown> =
       readonly run: EvidenceOperation<unknown>;
       readonly summary?: never;
       readonly value?: never;
-    };
+    }
+) & {
+  /**
+   * The source a view's response-overflow recovery may name again, read from
+   * the raw request, when the operation projects a view of other Evidence.
+   */
+  readonly viewSource?: (input: unknown) => JsonValue | undefined;
+};
 
 type ValueOperation<Input> = (
   input: Input,
@@ -201,6 +208,7 @@ export const registerContractTools = (
               logger,
               recordEvidence,
               withAdmittedAnalysis,
+              binding.viewSource,
             )(contract)
           : createRetainedSummaryToolHandler(
               server,
