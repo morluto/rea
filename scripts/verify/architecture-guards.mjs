@@ -340,6 +340,19 @@ checkCounted(
   [],
 );
 
+// A resource allowance is charged and refunded through `Budget` in
+// src/domain/budget, which refuses malformed or oversized charges without
+// changing the remainder. Hand-written `remaining -=` / `retained +=`
+// arithmetic repeats that admission and drifts (charge-then-check, no
+// safe-integer check).
+checkCounted(
+  "hand-written budget arithmetic (use Budget from src/domain/budget)",
+  "budget-arithmetic",
+  files,
+  /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu,
+  ["src/domain/budget.ts"],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can
