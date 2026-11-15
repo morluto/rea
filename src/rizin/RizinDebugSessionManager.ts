@@ -446,19 +446,25 @@ export class RizinDebugSessionManager {
         cancellation === undefined
           ? undefined
           : cancelledBy(operation, carriedReason(cancellation.reason));
+      const describe = (failure: unknown): string => {
+        const physical = stableFileHashCause(failure);
+        return physical instanceof Error ? physical.message : String(physical);
+      };
       if (!(cause instanceof RegularFileCleanupFailure)) {
         if (cancelled !== undefined) return err(cancelled);
-        const failure = stableFileHashCause(cause);
         return ok({
           identity: unknownTarget("not-observed"),
-          unobservedReason:
-            failure instanceof Error ? failure.message : String(failure),
+          unobservedReason: describe(cause),
         });
       }
+      // The close failure fails the start; a read failure beside it stays
+      // in the error, since the retained lease only retries the close.
       const cleanup = new ProviderCleanupError(
         "rizin",
         [path],
-        {},
+        cause.outcome.kind === "failed" && cancelled === undefined
+          ? { launch_file_hash_failure: describe(cause.outcome.cause) }
+          : {},
         { operation, cause: cause.cleanupCause },
       );
       const error =

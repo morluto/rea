@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -709,7 +710,18 @@ it.skipIf(process.platform === "win32")(
     const missing = join(directory, "missing.bin");
     for (const path of [launchFile, missing]) {
       const injected = createInjectedProcess({
-        onWrite: (_text, control) => control.exit(),
+        // Rewriting the file after the hash must not rebind the session.
+        beforeSpawnReturns: () => {
+          if (path === launchFile) writeFileSync(launchFile, "after spawn");
+        },
+        onWrite: (text, control) => {
+          const marker = /!echo (.+)\n/u.exec(text)?.[1];
+          if (marker !== undefined)
+            setImmediate(() => {
+              control.output(Buffer.from([0]));
+              control.output(Buffer.from(`${marker}\0`));
+            });
+        },
       });
       const manager = createManager(
         { REA_RIZIN_COMMAND: "injected-rizin" },
@@ -720,8 +732,15 @@ it.skipIf(process.platform === "win32")(
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
+      const first = await manager.execute(started.value.session_id, "dr");
+      if (!first.ok) throw first.error;
+      await writeFile(launchFile, "between commands");
       const result = await manager.execute(started.value.session_id, "dr");
       if (!result.ok) throw result.error;
+      expect(
+        result.value.evidence.subject,
+        "later commands keep the subject bound at start",
+      ).toEqual(first.value.evidence.subject);
       expect(
         result.value.evidence.subject,
         "the subject is the minted session bound to its launch file, or an explicit unknown when the file could not be hashed",
