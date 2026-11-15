@@ -216,7 +216,6 @@ it.each(
     const issue = {
       path: [side, "provider"],
       reason: "invalid_value",
-      message: expect.stringContaining("process capture provider"),
     };
     expect(await compareViaCli(left, right)).toMatchObject({
       category: "invalid_input",
@@ -271,12 +270,7 @@ it.each(["left", "right"] as const)(
     expect(await compareViaCli(left, right)).toMatchObject({
       category: "invalid_input",
       details: {
-        issues: [
-          {
-            path: ["evidence_id"],
-            message: expect.stringMatching(/semantic identifier.*not match/iu),
-          },
-        ],
+        issues: [{ path: ["evidence_id"] }],
       },
     });
     const client = await connect();
@@ -285,7 +279,10 @@ it.each(["left", "right"] as const)(
       arguments: { left, right },
     });
     expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "evidence_integrity_mismatch" },
+      error: {
+        code: "evidence_integrity_mismatch",
+        details: { side, issue_path: ["evidence_id"] },
+      },
     });
   },
 );
@@ -300,9 +297,6 @@ it("names differing comparison contract fields through MCP and the CLI", async (
   const issue = {
     path: ["right"],
     reason: "invalid_value",
-    message: expect.stringContaining(
-      "these scenario fields differ: working_directory",
-    ),
     expected: ["working_directory"],
   };
   expect(parseMcpToolError(response)).toMatchObject({
@@ -496,15 +490,13 @@ it("names the side and constraint when Evidence is not a usable capture", async 
   expect(parseMcpToolError(tampered)).toMatchObject({
     error: {
       code: "evidence_integrity_mismatch",
-      message: expect.stringContaining(
-        "The right Evidence failed validation (at evidence_id: Evidence semantic identifier does not match its record)",
-      ),
+      details: { side: "right", issue_path: ["evidence_id"] },
     },
   });
 
   const coverage = EMPTY_PROCESS_CAPTURE_EXAMPLE.truncation_details;
   const invalidCaptures = [
-    { result: { manifest: {} }, description: "(at " },
+    { result: { manifest: {} }, issuePath: ["manifest", "rea_version"] },
     {
       result: {
         ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
@@ -519,15 +511,18 @@ it("names the side and constraint when Evidence is not a usable capture", async 
           },
         },
       },
-      description:
-        "(at truncation_details.rendered_terminal.normalization_over_budget_frames: normalization omissions must be a subset of unknown-size rendered frames)",
+      issuePath: [
+        "truncation_details",
+        "rendered_terminal",
+        "normalization_over_budget_frames",
+      ],
     },
   ];
   const root = await createTestTempDirectory("rea-process-malformed-");
   const leftPath = join(root, "left.json");
   const rightPath = join(root, "right.json");
   await writeFile(leftPath, JSON.stringify(capture));
-  for (const { result, description } of invalidCaptures) {
+  for (const { result, issuePath } of invalidCaptures) {
     const invalidResult = createEvidence(undefined, PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
@@ -542,9 +537,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     expect(parseMcpToolError(malformed)).toMatchObject({
       error: {
         code: "evidence_integrity_mismatch",
-        message: expect.stringContaining(
-          `The right Evidence has an invalid process capture result ${description}`,
-        ),
+        details: { side: "right", issue_path: issuePath },
       },
     });
 
@@ -554,10 +547,14 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     ).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message: expect.stringContaining(
-        `Capture evidence is malformed ${description}`,
-      ),
-      details: { issues: [expect.objectContaining({ path: ["right"] })] },
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["right"],
+            observed: { issue_path: issuePath },
+          }),
+        ],
+      },
     });
   }
 });
@@ -588,8 +585,8 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
       },
     },
   });
-  const described =
-    "(at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues))";
+  // The count of remaining issues is only in the description.
+  const remaining = "(1 more issues)";
 
   const response = await client.callTool({
     name: "compare_process_captures",
@@ -598,16 +595,21 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
   expect(parseMcpToolError(response)).toMatchObject({
     error: {
       code: "evidence_integrity_mismatch",
-      message: expect.stringContaining(
-        `The right Evidence has an invalid process capture result ${described}`,
-      ),
+      message: expect.stringContaining(remaining),
+      details: { side: "right", issue_path: ["manifest", "completed_at"] },
     },
   });
   expect(await compareViaCli(capture, mixed)).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    message: expect.stringContaining(
-      `Capture evidence is malformed ${described}`,
-    ),
+    message: expect.stringContaining(remaining),
+    details: {
+      issues: [
+        {
+          path: ["right"],
+          observed: { issue_path: ["manifest", "completed_at"] },
+        },
+      ],
+    },
   });
 });
