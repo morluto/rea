@@ -59,6 +59,23 @@ import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 
+/**
+ * The provider reads `process.platform`/`process.arch` for its Linux limiter
+ * admission, so these tests present a Linux x64 host. Returns an idempotent
+ * restore for the original descriptors.
+ */
+const presentLinuxX64Host = (): (() => void) => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const arch = Object.getOwnPropertyDescriptor(process, "arch");
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+  return () => {
+    if (platform !== undefined)
+      Object.defineProperty(process, "platform", platform);
+    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+  };
+};
+
 it.each(["pre-aborted", "admission", "close"] as const)(
   "preserves opaque caller reasons through service cancellation at %s",
   async (stage) => {
@@ -271,10 +288,7 @@ it.each([
 );
 
 it("keeps descriptor cleanup in close aggregates until the exact file lease releases", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+  const restoreHost = presentLinuxX64Host();
   const workspace = await mkdtemp(join(tmpdir(), "rea-evm-descriptor-retry-"));
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
@@ -319,9 +333,7 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
       // Preserve the assertion's original failure while releasing test files.
     }
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+    restoreHost();
   }
 });
 
@@ -1071,10 +1083,7 @@ it.each([
 ] as const)(
   "counts %s from the worker launch as cancellation: %s",
   async (_label, thrown, cancelled) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+    const restoreHost = presentLinuxX64Host();
     const workspace = await mkdtemp(join(tmpdir(), "rea-evm-abort-owner-"));
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -1083,9 +1092,7 @@ it.each([
     const provider = new EvmoleInterfaceProvider(
       { REA_EVM_PRLIMIT_COMMAND: process.execPath },
       async () => {
-        if (platform !== undefined)
-          Object.defineProperty(process, "platform", platform);
-        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+        restoreHost();
         controller.abort(callerReason);
         // An abort error raised while the caller's signal is also aborted.
         throw thrown === "reasonless"
@@ -1113,9 +1120,7 @@ it.each([
     } finally {
       await provider.close();
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+      restoreHost();
     }
   },
 );

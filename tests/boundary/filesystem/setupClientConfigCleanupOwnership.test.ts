@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   lstat as fsLstat,
@@ -912,22 +913,32 @@ const unscopedRegistrationReaders: readonly {
   {
     name: "inspections",
     read: (home, environment) =>
-      readClientRegistrationInspections(home, "/current/rea", { environment }),
+      readClientRegistrationInspections(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
+        environment,
+      }),
   },
   {
     name: "statuses",
     read: (home, environment) =>
-      readClientRegistrationStatuses(home, "/current/rea", { environment }),
+      readClientRegistrationStatuses(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
+        environment,
+      }),
   },
   {
     name: "maintenance scope",
     read: (home, environment) =>
-      existingMaintenanceScope(home, "/current/rea", environment),
+      existingMaintenanceScope(home, "/current/rea", environment, {
+        platform: HOST_PLATFORM.platform,
+      }),
   },
   {
     name: "maintenance plan",
     read: (home, environment, execute) =>
-      planIntegrationMaintenance(home, "/current/rea", environment, execute),
+      planIntegrationMaintenance(home, "/current/rea", environment, execute, {
+        platform: HOST_PLATFORM.platform,
+      }),
   },
 ];
 
@@ -1027,6 +1038,7 @@ it("keeps a supplied registration scope responsible for diagnostics and cleanup 
     expect(
       (
         await readClientRegistrationStatuses(home, "/current/rea", {
+          platform: HOST_PLATFORM.platform,
           environment: { HOME: home },
           resources,
         })
@@ -1086,7 +1098,7 @@ it("keeps a supplied maintenance scope responsible for a refresh-check read whos
       "/current/rea",
       environment,
       execute,
-      { resources },
+      { platform: HOST_PLATFORM.platform, resources },
     );
     expect(maintenance.status).toBe("unavailable");
     expect(closeAttempts.length).toBeGreaterThan(0);

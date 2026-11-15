@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
@@ -466,7 +467,7 @@ const errorMessage = (cause: unknown): string =>
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];

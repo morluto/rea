@@ -61,7 +61,7 @@ export interface ElectronIpcContext {
 export const createElectronIpcContext = (
   analysis: JavaScriptArtifactAnalysis,
   applicationOwner: (file: JavaScriptArtifactFile) => string | null,
-  coverageComplete = true,
+  coverageComplete: boolean,
 ): ElectronIpcContext => {
   const records = collectElectronIpcRecords(analysis);
   const owners = new Map(

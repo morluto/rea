@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -723,6 +724,7 @@ mcp_servers:
       expect(
         (
           await readClientRegistrationStatuses(home, "rea", {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "hermes"),

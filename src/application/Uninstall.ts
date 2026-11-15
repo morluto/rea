@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -188,7 +189,7 @@ const uninstallCleanupError = (cause: unknown): AnalysisError => {
  */
 export const runUninstall = async (
   purgeData: boolean,
-  host: UninstallHost = systemUninstallHost(),
+  host: UninstallHost,
 ): Promise<UninstallResult> => {
   let result: UninstallResult | undefined;
   let primaryFailure: unknown;
@@ -502,7 +503,7 @@ export const systemUninstallHost = (
   selectedHome: string | undefined = undefined,
   selectedFileSystem: UninstallFileSystem | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   systemPaths: ClientSystemPaths = {},
 ): UninstallHost => {
   const home =

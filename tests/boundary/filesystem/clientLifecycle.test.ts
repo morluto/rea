@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { constants as fsConstants } from "node:fs";
 import {
   chmod,
@@ -1574,6 +1575,7 @@ describe("Grok Bot registration", () => {
     expect(await readFile(configPath, "utf8")).toBe(original);
     expect(
       await readClientRegistrationStatuses(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       }),
     ).toEqual([
