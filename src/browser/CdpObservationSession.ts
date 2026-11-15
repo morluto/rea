@@ -18,7 +18,7 @@ import {
 } from "./CdpCaptureValues.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
-import { CdpDocumentTracker } from "./CdpTargetSession.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
@@ -75,15 +75,12 @@ export const observeCdpSession = async (
   const mainFrameId = initial.root.facts.frameId;
   if (mainFrameId === null)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const capture = new TimelineCapture(
-    allowedOrigins,
-    new CdpDocumentTracker({
-      frameId: mainFrameId,
-      loaderId: initial.root.facts.loaderId,
-      url: observedFrameUrl(initial.root.url),
-    }),
-    initialUrl,
-  );
+  const document = CdpTargetDocument.watch(context, {
+    frameId: mainFrameId,
+    loaderId: initial.root.facts.loaderId,
+    url: observedFrameUrl(initial.root.url),
+  });
+  const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
     capture.transportDisconnected(),
@@ -190,6 +187,7 @@ export const observeCdpSession = async (
   } finally {
     removeListener();
     removeDisconnectListener();
+    document.close();
   }
 };
 
@@ -216,17 +214,17 @@ class TimelineCapture {
 
   constructor(
     private readonly allowedOrigins: ReadonlySet<string>,
-    /** The selected root document; its frame scopes main-frame timeline rows. */
-    private readonly document: CdpDocumentTracker,
+    /** The target session's page generation; its root frame scopes main-frame rows. */
+    private readonly document: CdpTargetDocument,
     initialUrl: string,
   ) {
+    this.#mainFrameId = document.current.frameId;
     this.finalUrl =
       allowedSanitizedUrl(initialUrl, allowedOrigins)?.url ?? null;
   }
 
-  get #mainFrameId(): string {
-    return this.document.current.frameId;
-  }
+  /** The root frame in effect when the event being interpreted arrived. */
+  #mainFrameId: string;
 
   ingest(event: CdpTransportEvent): void {
     if (this.stopped) return;
@@ -244,6 +242,9 @@ class TimelineCapture {
       bufferedBeforeArm &&
       hasNoComparableProducerTimestamp(event.registered?.method);
     if (contextOnly) this.#hasUnknownEventTime = true;
+    // A buffered event is scoped by the root frame it arrived under, not by a
+    // root replacement received after it.
+    this.#mainFrameId = this.document.rootFrameBefore(event);
     const frame = cdpFrameEvent(event);
     if (frame?.facts.kind === "requested")
       return this.#navigationRequested(frame, contextOnly);
@@ -424,12 +425,6 @@ class TimelineCapture {
     const rawUrl = observedFrameUrl(observation);
     const destination = classifyCdpFrameUrl(observation, this.allowedOrigins);
     if (identity.isRootReplacement) {
-      if (identity.frameId !== null)
-        this.document.observe({
-          frameId: identity.frameId,
-          loaderId: facts.loaderId,
-          url: rawUrl,
-        });
       this.#pendingReload = false;
       if (contextOnly) {
         if (observation.kind !== "observed") this.invalidateFinalUrl();

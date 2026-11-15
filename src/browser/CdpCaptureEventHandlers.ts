@@ -8,11 +8,11 @@ import {
   type CdpExecutionContextIdentity,
   type CdpScriptParsedFacts,
 } from "./CdpScriptContextFacts.js";
-import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
+import type { CdpRootNavigation } from "./CdpTargetDocument.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import type { CdpEventPayload, CdpFrameEvent } from "./protocol/CdpEvents.js";
-import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
+import type { CdpEventPayload } from "./protocol/CdpEvents.js";
+import { reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   inferJsonShape,
   type JsonShapeCapacityFailure,
@@ -718,44 +718,27 @@ export const handleWebSocketCreated = (
   });
 };
 
-export const handleFrameNavigated = (
+/**
+ * Record what a root navigation means for capture: an unreadable root makes
+ * the capture's document unprovable, and a navigation away from the selected
+ * document must stay inside the approved origins. The target session's
+ * document owner has already compared the document.
+ */
+export const handleRootNavigation = (
   state: CdpCaptureEventsState,
-  { facts: frameFacts, url }: CdpFrameEvent,
+  navigation: CdpRootNavigation,
 ): void => {
-  const document = state.document;
-  if (document === undefined) return;
-  const identity = selectCdpFrameIdentity(frameFacts, document.current.frameId);
-  if (identity.identityIssue !== null || identity.parentIssue !== null) {
+  if (navigation.kind === "unreadable_child") {
     state.completeness.exclude("frames", "invalid_protocol_value");
-    if (
-      identity.selection === "unknown" &&
-      identity.parentRelation === "child" &&
-      identity.identityIssue !== null
-    )
-      return;
-    state.unknownRootIdentity = true;
     return;
   }
-  if (identity.selection === "other" && identity.parentRelation === "child")
-    return;
-  if (
-    identity.frameId === null ||
-    (identity.selection === "other" && !identity.isRootReplacement) ||
-    frameFacts.loaderIssue !== null
-  ) {
+  if (navigation.kind === "unidentified") {
     state.completeness.exclude("frames", "invalid_protocol_value");
     state.unknownRootIdentity = true;
     return;
   }
-  // `frameNavigated` re-fires for a document already reported; only the
-  // document owner decides whether this one differs from the selected one.
-  const comparison = document.observe({
-    frameId: identity.frameId,
-    loaderId: frameFacts.loaderId,
-    url: observedFrameUrl(url),
-  });
-  if (comparison === "same") return;
-  const rawUrl = reportedFrameUrl(url);
+  if (navigation.comparison === "same") return;
+  const rawUrl = reportedFrameUrl(navigation.frame.url);
   if (
     isHttpUrl(rawUrl) &&
     allowedSanitizedUrl(rawUrl, state.allowedOrigins) === undefined
