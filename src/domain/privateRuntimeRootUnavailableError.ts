@@ -1,4 +1,4 @@
-import { RuntimeControlUnavailableError } from "./RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "./runtimeControlUnavailableError.js";
 
 /** Expected failure when a runtime root's privacy boundary is unavailable. */
 export class PrivateRuntimeRootUnavailableError extends RuntimeControlUnavailableError {
