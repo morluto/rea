@@ -186,7 +186,6 @@
   },
   "parser-format-failure-class": {
     "src/browser/assets/WebArtifactReads.ts": 1,
-    "src/browser/history/CaptureFormatError.ts": 1,
     "src/domain/xmlDocument.ts": 1,
     "src/native/AppleMachoSelection.ts": 1,
     "src/native/MachoCommandNames.ts": 1,

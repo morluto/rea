@@ -49,7 +49,7 @@ const main = async (): Promise<void> => {
         cause instanceof CaptureFormatError
           ? {
               ok: false,
-              reason: cause.reason,
+              reason: cause.replyReason,
               message: cause.message,
               pointer: cause.pointer,
             }

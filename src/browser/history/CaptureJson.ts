@@ -21,11 +21,8 @@ const captureNodeAdmission = (maximumNodes: number | undefined) => {
     nodes++;
     if (maximumNodes !== undefined && nodes > maximumNodes)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "parser-nodes", maximum: maximumNodes },
         "JSON exceeds its parser node representation allowance.",
-        "",
-        undefined,
-        { kind: "parser-nodes", limit: maximumNodes, unit: "parser nodes" },
       );
   };
 };
@@ -40,7 +37,7 @@ const selectCaptureObjectProperty = (
     throw new TypeError("JSON visitor emitted a property outside an object.");
   if (frame.members.has(key))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} JSON contains duplicate object members.`,
     );
   frame.pendingKey = key;
@@ -71,15 +68,9 @@ export const parseCaptureJson = (
     admitNode();
     if (frames.length >= captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
-        undefined,
-        {
-          kind: "nesting-depth",
-          limit: captureBudgets().depth,
-          unit: "nesting levels",
-        },
       );
   };
   const append = (value: unknown): void => {
@@ -138,7 +129,10 @@ export const parseCaptureJson = (
           throw new TypeError("JSON visitor emitted an unsupported literal.");
       },
       onError: () => {
-        throw new CaptureFormatError("format", `${format} is malformed JSON.`);
+        throw new CaptureFormatError(
+          "malformed",
+          `${format} is malformed JSON.`,
+        );
       },
     },
     {
@@ -159,7 +153,7 @@ export const decodeCaptureText = (
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} is not valid UTF-8 JSON.`,
     );
   }

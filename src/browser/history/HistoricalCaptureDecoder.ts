@@ -5,11 +5,16 @@ import {
   decodeCaptureProtobuf,
   prepareCaptureProtobuf,
 } from "./protobuf/ProtobufCapture.js";
-import { CaptureFormatError } from "./CaptureFormatError.js";
+import {
+  CAPTURE_LIMITS,
+  CaptureFormatError,
+  captureLimitForReply,
+} from "./CaptureFormatError.js";
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
+  protobufCaptureFailure,
   withCaptureReaderCleanup,
 } from "./CaptureFailures.js";
 import {
@@ -245,19 +250,17 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
-        if (reply.reason === "input-limit")
+        const limit = captureLimitForReply(reply.reason);
+        if (limit !== undefined) {
+          const { parameter, expected } = CAPTURE_LIMITS[limit];
+          const budget = webNetworkCaptureBudgetFacts(input, parameter);
           throw new AnalysisInputError(
             OPERATION,
             {
-              diagnostics: {
-                budget: webNetworkCaptureBudgetFacts(
-                  input,
-                  "max_nesting_depth",
-                ),
-              },
+              diagnostics: { budget },
               remediationAction: webNetworkCaptureBudgetRecovery(
                 input,
-                "max_nesting_depth",
+                parameter,
               ),
             },
             [
@@ -265,35 +268,11 @@ export class HistoricalCaptureDecoder {
                 path: ["capture_path", reply.pointer],
                 reason: "out_of_range",
                 message: reply.message,
-                expected: {
-                  maximum_capture_nesting: captureBudgets().depth,
-                },
+                expected: { [expected]: budget.effective_value },
               },
             ],
           );
-        if (reply.reason === "expanded-limit")
-          throw new AnalysisInputError(
-            OPERATION,
-            {
-              diagnostics: {
-                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
-              },
-              remediationAction: webNetworkCaptureBudgetRecovery(
-                input,
-                "max_input_bytes",
-              ),
-            },
-            [
-              {
-                path: ["capture_path", reply.pointer],
-                reason: "out_of_range",
-                message: reply.message,
-                expected: {
-                  maximum_expanded_capture_bytes: captureBudgets().inputBytes,
-                },
-              },
-            ],
-          );
+        }
         if (reply.reason === "resource-limit")
           throw captureMemoryFailure(
             input,
@@ -388,37 +367,15 @@ export class HistoricalCaptureDecoder {
           );
         } catch (cause) {
           const error =
-            cause instanceof CaptureFormatError && cause.reason === "limit"
-              ? new AnalysisResourceConstraintError(
-                  OPERATION,
-                  "capacity",
-                  cause.message,
-                  {
-                    maximum_encoded_capture_bytes: captureBudgets().outputBytes,
-                  },
-                  {
-                    retryable: false,
-                    remediationAction: webNetworkCaptureBudgetRecovery(
-                      input,
-                      "max_reply_bytes",
-                    ),
-                  },
-                )
-              : cause instanceof CaptureFormatError
-                ? new AnalysisInputError(OPERATION, undefined, [
-                    {
-                      path: ["protobuf"],
-                      reason: "invalid_format",
-                      message: cause.message,
-                    },
-                  ])
-                : historicalCaptureFailure(
-                    input,
-                    cause,
-                    phase,
-                    options,
-                    reportedHeap,
-                  );
+            cause instanceof CaptureFormatError
+              ? protobufCaptureFailure(input, cause)
+              : historicalCaptureFailure(
+                  input,
+                  cause,
+                  phase,
+                  options,
+                  reportedHeap,
+                );
           if (safePartialSource) error.retainPartialObservation(result.value);
           throw error;
         }
