@@ -10,6 +10,7 @@ import type {
   WasmArtifactPort,
 } from "../application/wasm/WasmArtifactPort.js";
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
   readStableArtifact,
@@ -65,7 +66,7 @@ import {
   wabtReleaseLine,
 } from "./WabtRelease.js";
 import {
-  wabtFailure,
+  wabtFailureDialect,
   wabtConfigurationRecoveryAction,
   type WabtVersionProbe,
 } from "./WabtFailures.js";
@@ -131,7 +132,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         cause.cleanup === undefined
       )
         return err(this.#closedError());
-      return err(wabtFailure(cause, "artifact", input.path));
+      return err(
+        classifyProviderFailure(
+          cause,
+          wabtFailureDialect("artifact", input.path),
+        ),
+      );
     }
   }
 
@@ -702,20 +708,22 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(
+      const failure = classifyProviderFailure(
         cause,
-        phase,
-        phase === "artifact" ? artifactInput.path : input.path,
-        {
-          commandTimeoutMs,
-          ...(commandTimeoutSource === undefined
-            ? {}
-            : { commandTimeoutSource }),
-          limits,
-          inputField: artifactInput.field,
-          observedOutput: capturedOutput,
-          ...(versionProbe === undefined ? {} : { versionProbe }),
-        },
+        wabtFailureDialect(
+          phase,
+          phase === "artifact" ? artifactInput.path : input.path,
+          {
+            commandTimeoutMs,
+            ...(commandTimeoutSource === undefined
+              ? {}
+              : { commandTimeoutSource }),
+            limits,
+            inputField: artifactInput.field,
+            observedOutput: capturedOutput,
+            ...(versionProbe === undefined ? {} : { versionProbe }),
+          },
+        ),
       );
       if (failure.partialObservation === undefined) {
         const partial = acquiredEvidence();

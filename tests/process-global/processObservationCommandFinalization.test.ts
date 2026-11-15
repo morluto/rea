@@ -192,9 +192,10 @@ it.skipIf(process.platform === "win32")(
     await chmod(psPath, 0o755);
 
     process.env.PATH = `${directory}${originalPath === undefined ? "" : `:${originalPath}`}`;
+    // macOS runs /bin/ps; another ps platform keeps the fixture on PATH.
     Object.defineProperty(process, "platform", {
       ...platformDescriptor,
-      value: "darwin",
+      value: "freebsd",
     });
     restoreProcessGlobals = () => {
       if (originalPath === undefined) delete process.env.PATH;
@@ -220,15 +221,15 @@ it.skipIf(process.platform === "win32")(
 
 it
   .skipIf(process.platform === "win32")
-  .each(["darwin-list", "freebsd-environment"] as const)(
+  .each(["freebsd-list", "freebsd-environment"] as const)(
   "waits for the %s ownership command to exit after cancellation",
   async (kind) => {
     await expectOwnedCommandToFinishOnAbort(async (signal, directory) => {
-      const platform = kind === "darwin-list" ? "darwin" : "freebsd";
-      const host = createSystemProcessOwnershipHost(platform, {
+      // macOS runs /bin/ps; FreeBSD keeps the PATH fixture for both commands.
+      const host = createSystemProcessOwnershipHost("freebsd", {
         PATH: directory,
       });
-      return kind === "darwin-list"
+      return kind === "freebsd-list"
         ? host.listProcesses(signal)
         : host.environment(123, signal);
     });

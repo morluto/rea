@@ -18,6 +18,12 @@ import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
 
+/** Classify a raw failure the way the provider does, through WABT's dialect. */
+const wabtFailure = (
+  cause: unknown,
+  ...dialect: Parameters<typeof wabtFailureDialect>
+) => classifyProviderFailure(cause, wabtFailureDialect(...dialect));
+
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
 it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
   expect(WABT_ACCEPTED_RANGE).toBe(">=1.0.42 <1.1.0");
@@ -27,7 +33,8 @@ it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
   expect(admitWabtVersion("1.1.0").status).toBe("unsupported");
   expect(admitWabtVersion("2.0.0").status).toBe("unsupported");
 });
-import { wabtFailure } from "./WabtFailures.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
 const nodeHostEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
