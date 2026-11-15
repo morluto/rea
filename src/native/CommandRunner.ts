@@ -24,6 +24,7 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
@@ -446,12 +447,11 @@ export const resolveXcrunTool = async (
     const cancellation =
       signal?.aborted === true ? { reason: signal.reason } : undefined;
     const observedCancellation =
-      signal?.aborted === true &&
-      cause instanceof Error &&
-      cause.cause === signal.reason &&
-      ((cause instanceof ArtifactReaderFailure &&
-        cause.reason === "cancelled") ||
-        ("code" in cause && cause.code === "ABORT_ERR"));
+      isAbortOf(cause, signal) ||
+      (signal?.aborted === true &&
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled" &&
+        cause.cause === signal.reason);
     return err(
       new NativeCommandFailure(
         tool,

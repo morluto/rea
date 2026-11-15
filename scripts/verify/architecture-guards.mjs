@@ -166,6 +166,15 @@ check(
   ],
 );
 
+// A signal's own abort is the abort error carrying that signal's reason; a bare
+// ABORT_ERR code may come from another signal or a synthetic failure.
+check(
+  "ABORT_ERR code comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  files,
+  /(?:===|!==)\s*["']ABORT_ERR["']|["']ABORT_ERR["']\s*(?:===|!==)/u,
+  ["src/process/SignalAbort.ts"],
+);
+
 // Hopper's error types live with the Hopper adapter. Shared layers read the
 // provider-neutral facts every AnalysisError carries (ownPresentation,
 // providerWide, providerRequest) and never import a provider's error types.

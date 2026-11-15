@@ -389,7 +389,6 @@
   },
   "abort-error-name": {
     "src/evm/EvmoleInterfaceProvider.ts": 1,
-    "src/process/ExecFileOutput.ts": 1,
     "src/server/http/listenHttpServer.ts": 1
   }
 }
