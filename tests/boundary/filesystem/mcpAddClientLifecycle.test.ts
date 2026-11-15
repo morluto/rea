@@ -187,6 +187,28 @@ it.each([
       "settings",
     );
     expect(row.configPath).toBe(join(settings, "cline_mcp_settings.json"));
+    // VSCODE_PORTABLE names VS Code's own portable data, not this editor's.
+    expect(
+      supportedClients(home, "linux", {
+        VSCODE_PORTABLE: join(home, "portable"),
+      }).find(({ name }) => name === client)?.configPath,
+    ).toBe(row.configPath);
+    expect(
+      supportedClients(home, "linux", {
+        VSCODE_PORTABLE: join(home, "portable"),
+      }).find(({ name }) => name === "cline_vscode")?.configPath,
+    ).toBe(
+      join(
+        home,
+        "portable",
+        "user-data",
+        "User",
+        "globalStorage",
+        "saoudrizwan.claude-dev",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    );
     // Detected only where that editor's Cline extension has run.
     expect(
       (await detectClients(home, "linux", {})).map(({ name }) => name),

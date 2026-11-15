@@ -728,9 +728,11 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 
 `cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor`,
 `cline_windsurf`, `kiro`, `mastracode`, `zed` and `amp` require a release after
-6.9.0. Earlier releases could register them only through `rea mcp add`, and
-doctor, update and uninstall did not see those registrations. Current releases
-inspect, refresh and remove them like any other setup client.
+6.9.0. Earlier releases could register Cline in VS Code, Kiro, Mastra Code, Zed
+and Amp only through `rea mcp add`, and could not register Cline in VS Code
+Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
+not see those registrations. Current releases inspect, refresh and remove them
+like any other setup client.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
