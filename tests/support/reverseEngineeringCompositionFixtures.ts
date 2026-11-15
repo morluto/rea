@@ -65,3 +65,10 @@ export const ownedLaunchRefusal = (code: string, command = "provider"): Error =>
     syscall: `spawn ${command}`,
     path: command,
   });
+
+/** Repair guidance for a test-built command profile. */
+export const fixtureCommandRepair = {
+  provider: "fixture",
+  setting: "REA_FIXTURE_COMMAND",
+  remediationAction: "Configure the fixture command.",
+} as const;

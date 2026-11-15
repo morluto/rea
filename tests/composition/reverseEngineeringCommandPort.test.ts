@@ -10,7 +10,11 @@ import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.j
 import { ok } from "../../src/domain/result.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import type { runOwnedCommand } from "../../src/process/OwnedCommand.js";
-import { ownedOutput } from "../support/reverseEngineeringCompositionFixtures.js";
+import {
+  fixtureCommandRepair,
+  ownedLaunchRefusal,
+  ownedOutput,
+} from "../support/reverseEngineeringCompositionFixtures.js";
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));
@@ -26,6 +30,7 @@ it("uses provider profiles supplied through the application port", async () => {
         ok({
           executable: "injected-objdump",
           arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
           identity: {
             id: "test.objdump",
             name: "Injected objdump",
@@ -37,6 +42,7 @@ it("uses provider profiles supplied through the application port", async () => {
         ok({
           executable: "injected-rizin",
           arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Injected Rizin", version: null },
         }),
     },
@@ -76,6 +82,7 @@ it("does not reintroduce ambient variables absent from the captured provider env
         ok({
           executable: "captured-objdump",
           arguments: [path],
+          repair: fixtureCommandRepair,
           identity: {
             id: "test.objdump",
             name: "Captured objdump",
@@ -87,6 +94,7 @@ it("does not reintroduce ambient variables absent from the captured provider env
         ok({
           executable: "captured-rizin",
           arguments: [path],
+          repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Captured Rizin", version: null },
         }),
     },
@@ -118,6 +126,7 @@ it("projects missing and non-file objdump targets with actionable path reasons",
         ok({
           executable: "unused-objdump",
           arguments: [missing],
+          repair: fixtureCommandRepair,
           identity: {
             id: "test.objdump",
             name: "Test objdump",
@@ -128,6 +137,7 @@ it("projects missing and non-file objdump targets with actionable path reasons",
         ok({
           executable: "unused-rizin",
           arguments: [path],
+          repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
@@ -194,6 +204,7 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
         ok({
           executable: "unused-objdump",
           arguments: [path],
+          repair: fixtureCommandRepair,
           identity: {
             id: "test.objdump",
             name: "Test objdump",
@@ -204,6 +215,7 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
         ok({
           executable: "unused-rizin",
           arguments: [path],
+          repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
@@ -262,6 +274,7 @@ it.each([
           ok({
             executable: "unused-objdump",
             arguments: [path],
+            repair: fixtureCommandRepair,
             identity: {
               id: "test.objdump",
               name: "Test objdump",
@@ -272,6 +285,7 @@ it.each([
           ok({
             executable: "unused-rizin",
             arguments: [path],
+            repair: fixtureCommandRepair,
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
           }),
       },
@@ -377,3 +391,39 @@ it.each([
     expect(run).not.toHaveBeenCalled();
   },
 );
+
+it("reports a launch refusal with the repair the command port names", async () => {
+  const profile = {
+    executable: "fixture-command",
+    arguments: [],
+    repair: fixtureCommandRepair,
+    identity: { id: "test.fixture", name: "Fixture", version: null },
+  };
+  const service = new ReverseEngineeringService({
+    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+    runOwned: async (spawn) => {
+      throw ownedLaunchRefusal("ENOENT", spawn.command);
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    if (result.ok) throw new Error("Expected a launch refusal");
+    const projection = projectAnalysisError(result.error);
+    expect(projection.message).toContain(
+      'selected fixture executable "fixture-command"',
+    );
+    expect(projection.remediation.action).toBe(
+      fixtureCommandRepair.remediationAction,
+    );
+    expect(service.observedLaunchFailures()).toEqual({
+      inspect_with_objdump: {
+        reason: projection.message,
+        remediation: fixtureCommandRepair.remediationAction,
+      },
+    });
+  } finally {
+    await service.close();
+  }
+});
