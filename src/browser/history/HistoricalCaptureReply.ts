@@ -12,8 +12,9 @@ import {
   readStableArtifact,
 } from "../../artifacts/readStableArtifact.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
@@ -96,9 +97,9 @@ export const readHistoricalCaptureReply = async (
       { cause },
     );
     if (finalization?.reason === "cancelled") {
-      const cancellation = new AnalysisCancelledError(
+      const cancellation = cancelledBy(
         "inspect_web_network_capture",
-        { cause: artifactFileCancellationCause(finalization) },
+        carriedReason(artifactFileCancellationCause(finalization)),
       );
       error.retainSecondaryFailure(cancellation, {
         reply_finalization_error: projectAnalysisError(cancellation),

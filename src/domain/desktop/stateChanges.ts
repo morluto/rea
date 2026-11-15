@@ -4,6 +4,7 @@ import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import { memberLookup } from "./viewPointer.js";
 import { zipEntryAt, zipLeavesOut } from "./zipView.js";
+import { isRecord } from "../isRecord.js";
 
 const MAX_LISTED = 100;
 
@@ -19,11 +20,6 @@ export interface DesktopStateDifference {
   /** False when either view was truncated, so absences may be outside the sample. */
   readonly complete: boolean;
 }
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
 const MAX_LISTED_POINTER = 4096;

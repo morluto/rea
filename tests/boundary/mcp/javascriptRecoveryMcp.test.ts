@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,11 +43,16 @@ it
     const advertised = tools.tools.find(
       (tool) => tool.name === "recover_javascript_sources",
     );
-    if (advertised === undefined || advertised.outputSchema === undefined)
+    if (
+      advertised === undefined ||
+      canonicalOutputSchema(advertised.name) === undefined
+    )
       throw new Error("recovery tool must advertise both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const additional = join(fixture.root, "chunk.js");

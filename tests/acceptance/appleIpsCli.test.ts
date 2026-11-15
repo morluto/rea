@@ -29,7 +29,6 @@ cliTest(
         "--json",
       ],
       environment: { NODE_OPTIONS: "--max-old-space-size=256" },
-      timeoutMs: 30000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_apple_ips").outputSchema.parse(

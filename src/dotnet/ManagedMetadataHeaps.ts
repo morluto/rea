@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { createHash } from "node:crypto";
 import { err, ok, type Result } from "../domain/result.js";
@@ -159,10 +160,7 @@ export const readMetadataString = (
     );
   managedDecodeBudget(layout).reserveString(end - start, start);
   try {
-    const value = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes.subarray(start, end));
+    const value = decodeStrictUtf8(bytes.subarray(start, end), "preserve");
     managedDecodeBudget(layout).cacheString(index, value, end - start);
     return value;
   } catch (cause: unknown) {

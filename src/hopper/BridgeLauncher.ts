@@ -53,8 +53,8 @@ import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  type BridgeMaxRequestBytes,
-} from "../config/bridgeMaxRequestBytes.js";
+} from "../domain/analysisResourceLimits.js";
+import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";

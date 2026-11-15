@@ -36,3 +36,15 @@ export async function withVerifierCleanup(operation, cleanupTasks) {
   await closeVerifierResources(cleanupTasks);
   return value;
 }
+
+/**
+ * The leaf reasons of a verifier failure. `withVerifierCleanup` and the
+ * fixtures it releases nest `AggregateError`s (verification failure, cleanup
+ * failure, retained root), so a reporter that unwraps one level shows only
+ * "Verifier cleanup failed" instead of why.
+ */
+export function verifierFailureReasons(cause) {
+  if (cause instanceof AggregateError)
+    return cause.errors.flatMap(verifierFailureReasons);
+  return [cause instanceof Error ? cause.message : String(cause)];
+}

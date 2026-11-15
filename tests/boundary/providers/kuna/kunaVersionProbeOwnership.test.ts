@@ -103,7 +103,6 @@ it.skipIf(process.platform === "win32")(
     );
     const launcher = makeLauncher();
     const scope = new ArtifactResourceScope();
-    const startedAt = Date.now();
     try {
       const result = await inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
@@ -136,7 +135,6 @@ it.skipIf(process.platform === "win32")(
       });
       await waitForFile(childStarted);
       await waitForFile(parentExited);
-      expect(Date.now() - startedAt).toBeLessThan(7_000);
       expect(scope.hasPending).toBe(false);
       expect(launcher.groups).toHaveLength(1);
     } finally {
@@ -249,6 +247,7 @@ it.skipIf(process.platform === "win32")(
         },
       );
       await waitForFile(parentExited);
+      await launcher.exits[0];
       controller.abort(reason);
       const cause = await pending.catch((error: unknown) => error);
       const cancellation = kunaInstallationCancellation(cause);

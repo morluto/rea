@@ -14,12 +14,12 @@ import {
 import type { Evidence } from "../evidence.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   analysisViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
   type AnalysisViewResult,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import {

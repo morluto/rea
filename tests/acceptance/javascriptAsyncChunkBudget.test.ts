@@ -30,7 +30,6 @@ cliTest(
         "30000",
         "--json",
       ],
-      timeoutMs: 55_000,
     });
     // Analysis retains the interrupted file rather than failing the command.
     expect(response.exitCode, `${response.stdout}\n${response.stderr}`).toBe(0);

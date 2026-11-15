@@ -12,6 +12,7 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -234,7 +235,7 @@ const inflateGzipMember = async (
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
@@ -528,8 +529,8 @@ const parseBannerText = (
   let compiler: string | null = null;
   if (rest.startsWith(" (")) {
     const close = rest.indexOf(")");
-    if (close > 2) {
-      builder = rest.slice(2, close);
+    if (close >= 2) {
+      builder = rest.slice(2, close) || null;
       rest = rest.slice(close + 1);
     }
   }

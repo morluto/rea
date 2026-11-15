@@ -79,6 +79,7 @@ const runtimeMembers = (): ManagedMemberInspection => {
   );
   return {
     ...result,
+    signature_resolution: "type-names-v2",
     method_rows: { offset: 0, count: 1, total: 1 },
     methods: [
       {

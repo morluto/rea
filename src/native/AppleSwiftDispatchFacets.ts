@@ -1,3 +1,4 @@
+import { decodeLimit, parseFailureFromCause } from "../domain/parseFailure.js";
 import {
   createSwiftContextReader,
   type SwiftContextReader,
@@ -12,7 +13,7 @@ import {
   requiredSwiftRelativeTarget,
   swiftImportBinding as importBinding,
 } from "./AppleSwiftConformanceTypeReference.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 /** Resolved file-backed metadata location from the Mach-O layout. */
 export interface ResolvedMetadataLocation {
@@ -127,7 +128,7 @@ const readSwiftProtocolFacts = (input: {
   try {
     descriptorKind = read.u32(target) & 31;
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return { name: null, readable: false, reason };
   }
@@ -146,7 +147,7 @@ const readSwiftProtocolFacts = (input: {
       reason: context.reason,
     };
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return { name: null, readable: false, reason };
   }
@@ -167,7 +168,7 @@ const readWitnessConformanceHeader = (
       ? null
       : "Witness-table conformance header is unresolved or encoded";
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return reason;
   }
@@ -187,6 +188,16 @@ export interface SwiftDispatchReaders {
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const decoded = { status: "decoded" as const, reason: null };
+
+/**
+ * Conformance flags admitted for static witness table decoding:
+ * - Type-reference kind: bits 3..5 (0x38)
+ * - Retroactive conformance: bit 6 (0x40)
+ *
+ * Conditional requirements (bits 8..15), generic witness tables (bit 17),
+ * and resilient witness flags (bit 16) remain unadmitted.
+ */
+const SWIFT_STATIC_WITNESS_FLAGS_MASK = 0x78;
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
   bytes: Buffer;
@@ -253,7 +264,7 @@ export const createSwiftRelativeReader = (input: {
         try {
           pointer = read.resolvePointer(target);
         } catch (cause) {
-          const failure = expectedSwiftMetadataReadFailure(cause);
+          const failure = expectedAppleMetadataReadFailure(cause);
           if (failure === null) throw cause;
           return unknownIndirect(failure);
         }
@@ -289,7 +300,7 @@ export const createSwiftRelativeReader = (input: {
       }
       if (target !== null) fileOffset = read.offset(target);
     } catch (cause) {
-      reason = expectedSwiftMetadataReadFailure(cause);
+      reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
     }
     if (budget.admit())
@@ -392,7 +403,7 @@ export const decodeSwiftDispatchFacets = (input: {
           protocol !== null &&
           protocolFacts.readable &&
           typeReference.staticWitnessIdentity &&
-          (flags & ~0x38) === 0;
+          (flags & ~SWIFT_STATIC_WITNESS_FLAGS_MASK) === 0;
         staticWitness &&=
           typeReference.kind === 2 || typeReference.generic === false;
         let witnessReason: string | null = staticWitness
@@ -476,7 +487,11 @@ export const decodeSwiftDispatchFacets = (input: {
         const count = read.u32(protocol! + 16n);
         const signatureCount = read.u32(protocol! + 12n);
         if (count > 20_000 || signatureCount > 20_000)
-          throw new RangeError("Swift witness requirement count exceeds 20000");
+          throw decodeLimit(
+            "macho",
+            "Swift witness requirement count exceeds 20000",
+            { name: "swift_witness_requirements", maximum: 20_000 },
+          );
         for (let slot = 0; slot < count; slot++) {
           if (!budget.admit()) break;
           const entry = witness + BigInt((slot + 1) * 8);
@@ -547,12 +562,13 @@ export const decodeSwiftDispatchFacets = (input: {
                 ),
               );
           } catch (cause) {
-            if (!(cause instanceof RangeError)) throw cause;
+            const failure = parseFailureFromCause(cause);
+            if (failure === undefined) throw cause;
             issues.push(
               issue(
                 "swift_conformances_static_witness_slots",
                 "witness_slot_unresolved",
-                cause.message,
+                failure.message,
                 hex(entry),
               ),
             );
@@ -560,7 +576,7 @@ export const decodeSwiftDispatchFacets = (input: {
           }
         }
       } catch (cause) {
-        const message = expectedSwiftMetadataReadFailure(cause);
+        const message = expectedAppleMetadataReadFailure(cause);
         if (message === null) throw cause;
         issues.push(
           issue(
