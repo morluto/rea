@@ -3,7 +3,6 @@ import type { Evidence } from "../domain/evidence.js";
 import type { CliInstance } from "./types.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
-import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
 import {
@@ -61,7 +60,6 @@ export const registerStaticObservedEndpointsCommand = (
         },
       );
       return publishCliAnalysisEvidence(result, {
-        providerId: JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER.id,
         operation,
         signal,
         detail: delivery.detail,

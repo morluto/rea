@@ -52,9 +52,9 @@ export const analysisEvidenceDeliveryOptions = {
     ),
 };
 
-interface CliEvidenceDelivery {
+/** How one CLI invocation publishes its Evidence. */
+interface CliEvidencePublication {
   readonly view?: AnalysisViewRequest;
-  readonly providerId: string;
   readonly operation: string;
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
@@ -69,8 +69,16 @@ interface CliEvidenceDelivery {
   readonly sensitiveValues?: readonly string[];
 }
 
+/** A one-shot run whose provider cleanup the delivery finishes before publishing. */
+interface CliEvidenceDelivery extends CliEvidencePublication {
+  readonly providerId: string;
+}
+
 export const cliEvidenceDeliveryInputError = (
-  input: Pick<CliEvidenceDelivery, "detail" | "evidenceOutput" | "operation">,
+  input: Pick<
+    CliEvidencePublication,
+    "detail" | "evidenceOutput" | "operation"
+  >,
 ): AnalysisInputError | undefined =>
   input.detail === "summary" && input.evidenceOutput === undefined
     ? new AnalysisInputError(input.operation, undefined, [
@@ -170,7 +178,6 @@ export const deliverCliAnalysisEvidence = async (
     { redactFailure },
   );
   return publishCliAnalysisEvidence(complete, {
-    providerId,
     operation,
     signal,
     detail,
@@ -191,7 +198,7 @@ export const deliverCliAnalysisEvidence = async (
  */
 const withUndeliveredSourceClosure = (
   failure: JsonValue,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue => {
   if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
   const { details } = failure;
@@ -211,7 +218,7 @@ const withUndeliveredSourceClosure = (
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
   result: AnalysisResultWithSources<Evidence, JsonValue>,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   const { detail, evidenceOutput } = input;
   // A composed result can retain source records separately from its parent.
@@ -270,7 +277,7 @@ export const publishCliAnalysisEvidence = async (
 const publishDeliveredEvidence = async (
   complete: Evidence,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<
   Result<
     { readonly delivered: Evidence; readonly receipt: JsonValue },
@@ -337,7 +344,7 @@ const publishDeliveredEvidence = async (
 const bundleReceipt = <Bytes extends JsonValue>(
   path: string | undefined,
   bytes: Bytes,
-  input: Pick<CliEvidenceDelivery, "sensitiveValues">,
+  input: Pick<CliEvidencePublication, "sensitiveValues">,
 ): { readonly path?: string; readonly bytes: Bytes } => ({
   ...(path === undefined ||
   input.sensitiveValues?.some(
@@ -361,7 +368,7 @@ const bundleReceipt = <Bytes extends JsonValue>(
 const publishFailurePartialEvidence = async (
   failure: JsonValue,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   if (
     input.signal.aborted ||
@@ -421,7 +428,7 @@ const refusedPartialPublication = (
   failure: JsonObject,
   details: JsonObject,
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue => {
   const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
@@ -473,7 +480,7 @@ const refusedPartialPublication = (
 /** Either committed receipt form, as {path, bytes}. */
 const committedReceipt = (
   refusalDetails: JsonObject,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue | undefined => {
   if (refusalDetails.published === true && refusalDetails.bytes !== undefined)
     return bundleReceipt(
