@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, vi } from "vitest";
 import { z } from "zod";
 import { linkedMftFixture } from "../../fixtures/ntfsMftExtension.js";
-import * as stableArtifact from "../../../src/artifacts/readStableArtifact.js";
+import * as stableArtifact from "../../../src/resources/readStableArtifact.js";
 import * as mftDecoder from "../../../src/domain/windows/ntfsMft.js";
 
 import { createBinarySession } from "../../../src/composition/binary.js";
@@ -78,6 +78,11 @@ mcpTest(
     ]);
     expect(cli.exitCode, cli.stdout).toBe(0);
     const fromCli = parseEvidence(JSON.parse(cli.stdout));
+    // The journal is the inspected input; the MFT is its paired companion.
+    expect(fromCli).toMatchObject({
+      caller_input_path: journalPath,
+      caller_input_paths: { mft_path: mftPath },
+    });
     const expected = ntfsJournalResultSchema.parse(fromCli.normalized_result);
     expect(expected).toMatchObject({
       mft: { path: mftPath, bytes: 33792 },

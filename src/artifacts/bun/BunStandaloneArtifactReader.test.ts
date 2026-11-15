@@ -6,10 +6,10 @@ import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   bunModuleGraphPayload,

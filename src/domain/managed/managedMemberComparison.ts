@@ -4,7 +4,9 @@ import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedMetadataTokenSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -172,7 +174,7 @@ const comparisonSideSchema = z.strictObject({
   artifact_sha256: digestSchema,
   mvid: cliMetadataGuidSchema.nullable(),
   module_name: z.string().nullable(),
-  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  metadata_status: managedMetadataStatusSchema,
   methods_total: z.int().min(0),
   fields_total: z.int().min(0),
   resource_limits: z
@@ -219,8 +221,8 @@ export const managedMemberComparisonResultSchema = z.strictObject({
       .describe(
         "complete-within-inputs only when both observations are complete over the same selected scope and method rows; unknown when a side is unavailable or the selected scope agreement cannot be established.",
       ),
-    left_status: z.enum(["complete", "partial", "unavailable"]),
-    right_status: z.enum(["complete", "partial", "unavailable"]),
+    left_status: managedInspectionStateSchema,
+    right_status: managedInspectionStateSchema,
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(nonEmptyTextSchema),

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalBase64Schema } from "./stringPatterns.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 import {
   browserDeadlineIncrease,
   browserDeadlineRetry,
@@ -311,7 +312,7 @@ export const webNetworkCaptureDecoderSchema = z.strictObject({
 /** Source coverage is shared by every offline decoder. */
 export const protobufCaptureCoverageSchema = z
   .strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     selected_records: z.number().int().nonnegative(),
     inspected_records: z.number().int().nonnegative(),
   })

@@ -13,14 +13,14 @@ import {
   annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../ArtifactPaths.js";
+} from "../../resources/index.js";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,

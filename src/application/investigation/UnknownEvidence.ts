@@ -4,7 +4,7 @@ import type {
   RecordUnknownInput,
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 
 /** Provider identity for analyst-authored residual-unknown mutations. */
 const UNKNOWN_REGISTRY_PROVIDER: ProviderIdentity = {

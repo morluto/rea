@@ -16,12 +16,10 @@
     "src/application/desktop/DesktopCaptureFailure.ts": 1,
     "src/application/desktop/DesktopCaptureRefusals.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 2,
-    "src/application/managed/ManagedMemberComparisonService.ts": 1,
     "src/application/ntfs/NtfsJournalService.ts": 1,
     "src/application/process/ProcessCli.ts": 1,
     "src/artifacts/ArtifactOperationFailure.ts": 1,
     "src/artifacts/ReleaseExposureReader.ts": 1,
-    "src/artifacts/StableArtifactFailure.ts": 2,
     "src/browser/BrowserScenarioPartialObservation.ts": 1,
     "src/browser/CdpBrowserProvider.ts": 1,
     "src/browser/CdpElectronProvider.ts": 1,
@@ -62,6 +60,7 @@
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/providers/OwnedCommandCleanup.ts": 2,
     "src/providers/runOwned.ts": 1,
+    "src/resources/StableArtifactFailure.ts": 2,
     "src/rust/RustBinaryProvider.ts": 1
   }
 }

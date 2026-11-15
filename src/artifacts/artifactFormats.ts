@@ -13,7 +13,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";

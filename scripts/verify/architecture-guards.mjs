@@ -73,7 +73,7 @@ check(
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
-  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  "provider-owned inspection lifetime (use src/ports/ProviderInspectionScope)",
   files,
   /providers\/ProviderInspectionScope\.js/,
 );
@@ -347,6 +347,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; new
@@ -416,6 +427,17 @@ checkCounted(
   files,
   /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
   ["src/domain/boundedList.ts"],
+);
+
+// Display text cut with an appended ellipsis comes from ellipsisExcerpt in
+// src/domain/excerpt, which never splits a surrogate pair and marks the result
+// as excerpt text. A hand-written `${text.slice(0, n)}…` does neither.
+checkCounted(
+  "hand-written ellipsis excerpt (use ellipsisExcerpt from src/domain/excerpt)",
+  "ad-hoc-ellipsis",
+  files,
+  /\.slice\(\s*0\s*,[^)]*\)\)?\}(?:…|\.\.\.)/gu,
+  ["src/domain/excerpt.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
@@ -514,7 +536,7 @@ checkCounted(
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
-// kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
+// kind belong to BinaryReader (src/domain/binaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
 const PARSER_FOLDERS = [
   "src/android/",
@@ -564,11 +586,11 @@ const parserFiles = files.filter((file) =>
 // An unchecked Buffer or DataView read throws a bare RangeError past the end,
 // which a catch site cannot tell from a host stack or string limit.
 checkCounted(
-  "raw Buffer or DataView numeric read (use BinaryReader from src/native/metadata/BinaryContainer)",
+  "raw Buffer or DataView numeric read (use BinaryReader from src/domain/binaryContainer)",
   "raw-buffer-read",
   files,
   /\.(?:read(?:Big)?U?Int(?:8|16|32|64)?(?:LE|BE)?|readBigUint64(?:LE|BE)|readUint(?:8|16|32)(?:LE|BE)?|read(?:Float|Double)(?:LE|BE)|get(?:Big)?(?:Uint|Int)(?:8|16|32|64)|getFloat(?:32|64))\(/gu,
-  ["src/native/metadata/BinaryContainer.ts"],
+  ["src/domain/binaryContainer.ts"],
 );
 
 // An input fault is a ParseFailureError; a broken internal assumption is a
@@ -691,18 +713,25 @@ checkCounted(
 // takes it from there and passes the platform or architecture on as a
 // required parameter. An ambient read elsewhere mixes the host REA runs on
 // with the host a caller asked about, and cannot be selected by a test.
+// Named imports from node:process or node:os and os.platform()/os.arch() are
+// the same read under another spelling.
+const ambientHostRead = (property, osFunction) =>
+  new RegExp(
+    String.raw`\bprocess\.${property}\b|\bos\.${osFunction}\(\)|\bimport\s*(?:type\s*)?\{[^}]*\b(?:${property}|${osFunction})\b[^}]*\}\s*from\s*["'](?:node:)?(?:process|os)["']`,
+    "gu",
+  );
 checkCounted(
   "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
   "ambient-host-platform",
   files,
-  /\bprocess\.platform\b/gu,
+  ambientHostRead("platform", "platform"),
   ["src/platform/HostPlatform.ts"],
 );
 checkCounted(
   "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
   "ambient-host-architecture",
   files,
-  /\bprocess\.arch\b/gu,
+  ambientHostRead("arch", "arch"),
   ["src/platform/HostPlatform.ts"],
 );
 
@@ -784,10 +813,27 @@ const verifierScripts = await Promise.all(
       ),
     })),
 );
+// The Windows native lane tests PrivateRuntimeRoot itself: it calls
+// PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
+// violation and asserts the typed refusal. That call is the subject under
+// test, not a verifier root, so exactly one occurrence of that expression is
+// exempt; any other allocation in the file, including a second copy of it,
+// still counts.
+const verifierRootSubjectsUnderTest = new Map([
+  [
+    "scripts/verify-windows-native.mjs",
+    "PrivateRuntimeRoot.create({ parent: sharingParent.observation.path })",
+  ],
+]);
 checkCounted(
   "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
   "verifier-fixture-root",
-  verifierScripts,
+  verifierScripts.map((file) => {
+    const subject = verifierRootSubjectsUnderTest.get(file.path);
+    return subject === undefined
+      ? file
+      : { ...file, content: file.content.replace(subject, "") };
+  }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );

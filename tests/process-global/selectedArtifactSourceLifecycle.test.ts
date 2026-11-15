@@ -11,13 +11,14 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.js";
 import * as artifactHash from "../../src/artifacts/ArtifactHash.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../src/artifacts/ArtifactReader.js";
+} from "../../src/resources/ArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../src/artifacts/MachOSliceArtifactReader.js";
 import {
   CPU,
@@ -25,8 +26,6 @@ import {
   machoImage,
 } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import * as regularFile from "../../src/filesystem/RegularFile.js";
-import { createDeferred } from "../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { NativeFixtureRunner } from "../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -134,12 +133,10 @@ const expectDescriptorUnchanged = async (
 
 it("joins late Mach-O admission before releasing its descriptor and dispatches no lipo after closure", async () => {
   const fixture = await machoCarrier();
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const admission = phaseGate();
   control.onOpen = async (handle) => {
     vi.spyOn(handle, "close");
-    entered.resolve();
-    await release.promise;
+    await admission.hold();
   };
   const run = vi.spyOn(fixture.runner, "run");
   const reader = new MachOSliceArtifactReader(fixture.path, {}, fixture.runner);
@@ -148,7 +145,7 @@ it("joins late Mach-O admission before releasing its descriptor and dispatches n
     const operation = entries(reader);
     const reading = operation.catch((cause: unknown) => cause);
     operations.push(reading);
-    await awaitAcknowledgement(entered.promise, operation, "Mach-O admission");
+    await admission.reached(operation, "Mach-O admission");
     const handle = openedHandle();
     let closed = false;
     const closings = [reader.close(), reader.close()];
@@ -161,7 +158,7 @@ it("joins late Mach-O admission before releasing its descriptor and dispatches n
     expect(closed).toBe(false);
     expect(handle.fd).toBeGreaterThanOrEqual(0);
     expect(handle.close).not.toHaveBeenCalled();
-    release.resolve();
+    admission.release();
     expect(await reading).toMatchObject({ reason: "unavailable" });
     await closing;
     expect(handle.fd).toBe(-1);
@@ -174,7 +171,7 @@ it("joins late Mach-O admission before releasing its descriptor and dispatches n
     await reader.close();
     expect(handle.close).toHaveBeenCalledOnce();
   } finally {
-    release.resolve();
+    admission.release();
     await Promise.allSettled(operations);
     await reader.close();
   }
@@ -296,16 +293,14 @@ it.each([false, true])(
   "rejects selected pathname replacement after real hashing even with a late abort (%s)",
   async (abort) => {
     const fixture = await machoCarrier();
-    const completed = createDeferred<void>();
-    const release = createDeferred<void>();
+    const hashCompletion = phaseGate();
     const controller = new AbortController();
     const originalHash = artifactHash.hashReadable;
     vi.spyOn(artifactHash, "hashReadable").mockImplementation(
       async (...args) => {
         const hashed = await originalHash(...args);
         expect(hashed.sha256).toBe(fixture.sha256);
-        completed.resolve();
-        await release.promise;
+        await hashCompletion.hold();
         return hashed;
       },
     );
@@ -317,18 +312,14 @@ it.each([false, true])(
         controller.signal,
       );
       binding = operation.catch((cause: unknown) => cause);
-      await awaitAcknowledgement(
-        completed.promise,
-        operation,
-        "selected carrier hash",
-      );
+      await hashCompletion.reached(operation, "selected carrier hash");
       const handle = openedHandle();
       const initial = await handle.stat();
       await replaceSelectedDirectory(fixture);
       await expectDescriptorUnchanged(handle, initial);
       if (abort)
         controller.abort({ request: "cancel after completed carrier hash" });
-      release.resolve();
+      hashCompletion.release();
       const failure = await binding;
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected a selected-path identity failure");
@@ -340,7 +331,7 @@ it.each([false, true])(
       await source.close();
       expect(handle.fd).toBe(-1);
     } finally {
-      release.resolve();
+      hashCompletion.release();
       await binding;
       await source.close();
     }

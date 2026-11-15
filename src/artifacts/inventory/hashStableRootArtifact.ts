@@ -1,11 +1,14 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
@@ -19,7 +22,6 @@ import {
   hashReadable,
   type HashResult,
 } from "../ArtifactHash.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 
 /** Finalize the admitted root while preserving its completed identity and exact owner. */

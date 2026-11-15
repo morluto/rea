@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -76,7 +79,7 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     expect(ajv.validate(inputSchema, args)).toBe(true);
     const response = await client.callTool(
       { name, arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const parsed = toolContract(name).outputSchema.parse(
@@ -284,7 +287,7 @@ cliTest(
           selector: "#selected",
         },
       },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const cliResult = await cli.run({

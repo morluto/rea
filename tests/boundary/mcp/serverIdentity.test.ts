@@ -15,16 +15,13 @@ import {
   createCatalogDigestProfiles,
   createCatalogDigests,
   createCatalogIdentity,
+  CLI_COMMAND_NAMES,
 } from "../../../src/catalogIdentity.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  annotationsFromEffects,
-  toolSessionEffects,
-} from "../../../src/contracts/toolEffects.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
@@ -36,7 +33,7 @@ import { buildCapabilityInventory } from "../../../src/application/CapabilityInv
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -572,7 +569,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
-    const effects = toolSessionEffects(contract.name);
+    const effects = contract.sessionEffects;
     const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({

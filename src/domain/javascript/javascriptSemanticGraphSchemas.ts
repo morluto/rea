@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  coverageStatusSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
 
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 
@@ -313,7 +317,7 @@ const fingerprintComponentsSchema = z.strictObject({
 export const javaScriptSemanticFingerprintInputSchema = z.strictObject({
   function_node_id: semanticNodeIdSchema,
   algorithm: z.literal("rea.javascript-semantic-function"),
-  status: z.enum(["complete", "partial", "unavailable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   components: fingerprintComponentsSchema,
   limitations: z.array(nonEmptyTextSchema),
   evidence: applicationGraphEvidenceSchema,
@@ -329,14 +333,14 @@ export const javaScriptSemanticFingerprintSchema =
 
 const familyCoverageSchema = z.strictObject({
   family: z.enum(JAVASCRIPT_SEMANTIC_RELATION_FAMILIES),
-  status: z.enum(["complete", "partial", "unknown", "unsupported"]),
+  status: z.enum([...coverageStatusSchema.options, "unsupported"]),
   retained_relations: z.int().min(0),
   omitted_relations: z.int().min(0).nullable(),
   unknown_ids: z.array(semanticUnknownIdSchema),
 });
 
 const graphCoverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unknown", "unavailable"]),
+  status: z.enum([...coverageStatusSchema.options, "unavailable"]),
   truncated: z.boolean(),
   omitted_unknown_occurrences:
     javaScriptSemanticUnknownOmissionsSchema.exactOptional(),

@@ -12,8 +12,8 @@ import {
   imageFileMappings,
   isZeroFilledSpan,
   type BinaryContainer,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,

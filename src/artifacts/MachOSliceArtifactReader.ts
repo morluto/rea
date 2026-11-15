@@ -1,4 +1,15 @@
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  streamChunkToBuffer,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 
@@ -7,33 +18,25 @@ import {
   XcrunCommandRunner,
   type NativeCommandRunner,
 } from "../native/CommandRunner.js";
-import {
-  parseLipoOutputResult,
-  LipoFieldRetentionError,
-  type LipoArchitecture,
-} from "../native/parsers/lipo.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
   machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
-import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
+  readMachoImage,
+  type ReadAt,
+} from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import {
+  parseLipoOutputResult,
+  LipoFieldRetentionError,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {

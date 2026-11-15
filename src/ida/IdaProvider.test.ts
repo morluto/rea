@@ -397,9 +397,7 @@ it.each(["http", "stdio"] as const)(
 it("applies runtime regex budgets through a bound IDA client and recovers in the same session", async () => {
   const { root, target } = await createIdaTarget();
   const path = join(root, "registration.json");
-  let client:
-    | import("../application/AnalysisProvider.js").AnalysisClient
-    | undefined;
+  let client: import("../ports/AnalysisProvider.js").AnalysisClient | undefined;
   let provider: IdaProvider | undefined;
   try {
     await writeFile(

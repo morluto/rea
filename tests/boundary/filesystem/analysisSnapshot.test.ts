@@ -8,7 +8,7 @@ import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
@@ -286,7 +286,7 @@ describe("analysis snapshot member decoding", () => {
       reads.release();
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    await reads.firstRead;
+    await reads.reached(pending, "first file read");
     controller.abort(reason);
     reads.release();
     try {
