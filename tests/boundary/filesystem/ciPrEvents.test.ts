@@ -124,7 +124,7 @@ it("validates every squash subject a queued merge group lands", async () => {
     const request = workspace.path("gh-request");
     await writeFile(
       join(bin, "gh"),
-      '#!/bin/sh\nprintf "%s " "$@" > "$GH_REQUEST"\nprintf "%s" "$GH_COMPARISON"\n',
+      '#!/bin/sh\nprintf "%s " "$@" > "$GH_REQUEST"\ncat "$GH_COMPARISON_FILE"\n',
     );
     await chmod(join(bin, "gh"), 0o755);
     const base = "a".repeat(40);
@@ -142,8 +142,10 @@ it("validates every squash subject a queued merge group lands", async () => {
       })),
       ...overrides,
     });
-    const run = (value: unknown) =>
-      executeWorkflowFixture("bash", ["-c", command], {
+    const comparisonFile = workspace.path("gh-comparison.json");
+    const run = async (value: unknown) => {
+      await writeFile(comparisonFile, JSON.stringify(value));
+      return executeWorkflowFixture("bash", ["-c", command], {
         env: {
           ...process.env,
           PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -152,17 +154,27 @@ it("validates every squash subject a queued merge group lands", async () => {
           MERGE_GROUP_BASE_SHA: base,
           MERGE_GROUP_HEAD_SHA: head,
           GH_REQUEST: request,
-          GH_COMPARISON: JSON.stringify(value),
+          GH_COMPARISON_FILE: comparisonFile,
           // A merge group carries no PR title; it must not be consulted.
           PR_TITLE: "fix: ignored",
         },
       });
+    };
     await expect(
       run(comparison(["fix(ci): first (#1)", "feat!: second (#2)"])),
     ).resolves.toMatchObject({ stderr: "" });
     expect(await readFile(request, "utf8")).toBe(
       `api repos/owner/repository/compare/${base}...${head} `,
     );
+    // The comparison carries file patches; a large group must not exceed the
+    // per-string environment limit (128 KiB on Linux) or the argument limit.
+    await expect(
+      run(
+        comparison(["fix: large (#3)"], {
+          files: [{ filename: "large.txt", patch: "+x\n".repeat(1_000_000) }],
+        }),
+      ),
+    ).resolves.toMatchObject({ stderr: "" });
     await expect(
       run(comparison(["fix: first (#1)", "Second change (#2)"])),
     ).rejects.toMatchObject({

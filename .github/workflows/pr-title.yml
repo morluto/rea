@@ -31,11 +31,16 @@ jobs:
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          comparison=""
+          # The comparison includes file patches and can exceed the size of one
+          # environment string or argument, so it travels through a file.
+          comparison_file=""
           if [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
-            comparison="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}")"
+            comparison_file="$(mktemp)"
+            trap 'rm -f "${comparison_file}"' EXIT
+            gh api "repos/${GITHUB_REPOSITORY}/compare/${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}" > "${comparison_file}"
           fi
-          MERGE_GROUP_COMPARISON="${comparison}" node --input-type=module <<'EOF'
+          MERGE_GROUP_COMPARISON_FILE="${comparison_file}" node --input-type=module <<'EOF'
+          import { readFileSync } from "node:fs";
           const conventional = /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u;
           const event = process.env.GITHUB_EVENT_NAME;
           let titles;
@@ -44,7 +49,9 @@ jobs:
           } else if (event === "merge_group") {
             // Every queued squash commit between the group base and head lands on
             // main. An incomplete or unexpected comparison fails closed.
-            const comparison = JSON.parse(process.env.MERGE_GROUP_COMPARISON || "null");
+            const comparison = JSON.parse(
+              readFileSync(process.env.MERGE_GROUP_COMPARISON_FILE ?? "", "utf8") || "null",
+            );
             const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
             if (
               comparison?.status !== "ahead" ||
