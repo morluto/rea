@@ -267,9 +267,9 @@ export const wabtFailureDialect = (
           ...(outcome.output === undefined
             ? {}
             : {
-                captured_output: capturedOutput(outcome.kind)(
-                  outcome.output.snapshot,
-                ),
+                captured_output: {
+                  ...capturedOutput(outcome.kind)(outcome.output.snapshot),
+                },
               }),
         },
         { operation: OPERATION, cause: command },
