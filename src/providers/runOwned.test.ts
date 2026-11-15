@@ -10,6 +10,7 @@ import {
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -165,15 +166,15 @@ describe("runOwned precedence", () => {
   });
 });
 
-describe("runOwned completed-value projection and lease binding", () => {
-  const counted = async (): Promise<
-    Result<{ readonly count: number }, AnalysisError>
-  > => ok({ count: 3 });
-  const project = (completed: { readonly count: number }) => ({
-    kind: "retained-evidence" as const,
-    evidence_id: `counted-${String(completed.count)}`,
-  });
+const counted = async (): Promise<
+  Result<{ readonly count: number }, AnalysisError>
+> => ok({ count: 3 });
+const project = (completed: { readonly count: number }) => ({
+  kind: "retained-evidence" as const,
+  evidence_id: `counted-${String(completed.count)}`,
+});
 
+describe("runOwned completed-value projection and lease binding", () => {
   it("projects the completed value when publication fails", async () => {
     const finalized = await runOwned(counted, {
       ...options(new AbortController(), async () => undefined),
@@ -197,7 +198,108 @@ describe("runOwned completed-value projection and lease binding", () => {
     if (result.ok) throw new Error("expected cancellation");
     expect(result.error.partialObservation).toEqual(project({ count: 3 }));
   });
+});
 
+describe("runOwned completed-value records", () => {
+  it("keeps a completed value as cancellation diagnostics when it is not an observation", async () => {
+    const controller = new AbortController();
+    const { partial: _partial, ...base } = options(
+      controller,
+      closeThenAbort(controller),
+    );
+    const finalized = await runOwned(counted, {
+      ...base,
+      diagnostics: (completed, replacedBy) => ({
+        completed_count: completed.count,
+        replaced_by: replacedBy,
+      }),
+    });
+    expect(finalized.kind).toBe("cancelled");
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(result.error.diagnostics).toEqual({
+      completed_count: 3,
+      replaced_by: "cancellation",
+    });
+  });
+
+  it("keeps a completed value as diagnostics on a retained cleanup", async () => {
+    const { partial: _partial, ...base } = options(
+      new AbortController(),
+      async () => {
+        throw new ProviderCleanupError("fixture", ["/owned/root"], {
+          reason: "still owned",
+        });
+      },
+    );
+    const finalized = await runOwned(counted, {
+      ...base,
+      diagnostics: (completed, replacedBy) => ({
+        completed_count: completed.count,
+        replaced_by: replacedBy,
+      }),
+    });
+    expect(finalized.kind).toBe("completed-cleanup-retained");
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.diagnostics).toEqual({
+      reason: "still owned",
+      completed_count: 3,
+      replaced_by: "failure",
+    });
+  });
+
+  it("projects a cancellation and a retained cleanup separately", async () => {
+    const replacements: string[] = [];
+    const controller = new AbortController();
+    await runOwned(counted, {
+      ...options(controller, closeThenAbort(controller)),
+      partial: (completed, replacedBy) => {
+        replacements.push(replacedBy);
+        return project(completed);
+      },
+    });
+    await runOwned(counted, {
+      ...options(new AbortController(), async () => {
+        throw new Error("close failed");
+      }),
+      partial: (completed, replacedBy) => {
+        replacements.push(replacedBy);
+        return project(completed);
+      },
+    });
+    expect(replacements).toEqual(["cancellation", "failure"]);
+  });
+
+  it("binds an artifact reader close failure to the leases it reports", async () => {
+    let attempts = 0;
+    const lease = new AnalysisCleanupLease(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("close failed");
+    }, ["/reader/handle"]);
+    await lease.release().catch(() => undefined);
+    const finalized = await runOwned(counted, {
+      ...options(new AbortController(), async () => {
+        throw new ArtifactReaderFailure("io", "reader close failed", {
+          cleanup: { reason: "handle retained", resources: ["/reader/handle"] },
+          cleanupLeases: [lease],
+        });
+      }),
+      partial: project,
+    });
+    expect(finalized.kind).toBe("completed-cleanup-retained");
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+});
+
+describe("runOwned close-failure lease binding", () => {
   it("binds a typed close failure to the exact lease that later confirms release", async () => {
     const controller = new AbortController();
     let attempts = 0;
