@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import { invariantViolation } from "../internalInvariant.js";
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -30,7 +31,7 @@ export const decodeMarshalUtf8 = (
     maximumPrefixUnits !== Infinity &&
     (!Number.isSafeInteger(maximumPrefixUnits) || maximumPrefixUnits < 0)
   )
-    throw new RangeError(
+    throw invariantViolation(
       "Marshal prefix limit must be a nonnegative safe integer.",
     );
   const chunks: string[] = [];

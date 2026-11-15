@@ -29,7 +29,10 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
-import { InternalInvariantError } from "../domain/internalInvariant.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   asarHeaderAdmissionRecovery,
@@ -435,7 +438,7 @@ const consumeInventory = async (
   }
   if (failed) throw failure;
   if (result === undefined)
-    throw new Error("Release exposure scan produced no result.");
+    throw invariantViolation("Release exposure scan produced no result.");
   return result;
 };
 
