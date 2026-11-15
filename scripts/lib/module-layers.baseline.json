@@ -23,10 +23,9 @@
     "desktop -> browser": 1,
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
-    "gpu -> artifacts": 2,
+    "gpu -> artifacts": 1,
     "il2cpp -> ghidra": 1,
     "inspector -> browser": 2,
-    "model -> artifacts": 1,
     "native -> artifacts": 2
   },
   "entry": {
