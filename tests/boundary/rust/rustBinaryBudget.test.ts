@@ -18,11 +18,14 @@ it("reports a recoverable compiler prefix without refusing the dependency report
   expect(result.value.rustc_commit?.coverage).toMatchObject({
     reason: "max_rustc_hashes",
     effective_limit: 64,
+    limit: { parameter: "max_rustc_hashes", effective_value: 64 },
   });
   expect(result.value.auditable_metadata?.packages).toHaveLength(2);
   expect(result.value.limitations).toContainEqual(
-    expect.stringContaining("--max-rustc-hashes"),
+    expect.stringContaining("rustc_commit.coverage.limit"),
   );
+  // The producer names the contract field; the CLI renders its own option.
+  expect(result.value.limitations.join(" ")).not.toContain("--");
 });
 
 it("recovers the same complete Rust image after input and report budget changes", async () => {
