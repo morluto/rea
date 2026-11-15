@@ -24,6 +24,22 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 
+/**
+ * Which consistency check an `integrity` failure tripped, so consumers need
+ * not read the message: a member the reader did not produce, member metadata
+ * that differs from inventory, a container or unpacked file whose identity
+ * changed, short read coverage, bytes disagreeing with the declared size, or a
+ * read stream over a handle the reader does not own.
+ */
+export type ArtifactIntegrityCheck =
+  | "foreign-entry"
+  | "entry-metadata"
+  | "container-identity"
+  | "unpacked-entry-identity"
+  | "read-coverage"
+  | "declared-size"
+  | "reader-ownership";
+
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
   readonly userMessage?: string | undefined;
@@ -39,6 +55,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
+  /** For an `integrity` failure, the check that failed, when the reader names it. */
+  readonly integrityCheck?: ArtifactIntegrityCheck;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -243,6 +261,11 @@ export interface ArtifactReader {
 }
 
 /** Typed adapter failure translated at provider boundary. */
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;
@@ -255,6 +278,7 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
     readonly reason:
@@ -284,6 +308,7 @@ export class ArtifactReaderFailure extends Error {
     this.boundary = options?.boundary;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
+    this.integrityCheck = options?.integrityCheck;
   }
 
   /** Retain completed facts when a later artifact step fails. */
@@ -342,6 +367,9 @@ export class ArtifactReaderFailure extends Error {
         ...(primary.readerLimit === undefined
           ? {}
           : { readerLimit: primary.readerLimit }),
+        ...(primary.integrityCheck === undefined
+          ? {}
+          : { integrityCheck: primary.integrityCheck }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

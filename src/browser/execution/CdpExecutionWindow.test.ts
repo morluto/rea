@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { CdpExecutionWindow } from "./CdpExecutionWindow.js";
+import { receiveCdpEvent } from "../CdpConnection.js";
 
 it("settles an already lost transport without arming a timer that cannot resolve", async () => {
   const window = new CdpExecutionWindow({
@@ -71,10 +72,12 @@ it("keeps a root document transition distinct from a child frame event", async (
     options: {},
   });
   const rootResult = root.start(30_000);
-  root.ingest({
-    method: "Page.frameNavigated",
-    params: { frame: { id: "new-main", url: "https://example.test/" } },
-  });
+  root.ingest(
+    receiveCdpEvent({
+      method: "Page.frameNavigated",
+      params: { frame: { id: "new-main", url: "https://example.test/" } },
+    }),
+  );
   await expect(rootResult).resolves.toBe("document_changed");
 
   const child = new CdpExecutionWindow({
@@ -83,16 +86,18 @@ it("keeps a root document transition distinct from a child frame event", async (
     options: {},
   });
   const childResult = child.start(30_000);
-  child.ingest({
-    method: "Page.frameNavigated",
-    params: {
-      frame: {
-        id: "child-frame",
-        parentId: "selected-main",
-        url: "https://example.test/child",
+  child.ingest(
+    receiveCdpEvent({
+      method: "Page.frameNavigated",
+      params: {
+        frame: {
+          id: "child-frame",
+          parentId: "selected-main",
+          url: "https://example.test/child",
+        },
       },
-    },
-  });
+    }),
+  );
   expect(child.active).toBe(true);
   child.end("window_elapsed");
   await expect(childResult).resolves.toBe("window_elapsed");
@@ -105,12 +110,14 @@ it("surfaces malformed frame identity as a protocol failure without guessing a t
     options: {},
   });
   const result = window.start(30_000);
-  window.ingest({
-    method: "Page.frameNavigated",
-    params: {
-      frame: { id: "child-frame", parentId: 7, url: "https://example.test/" },
-    },
-  });
+  window.ingest(
+    receiveCdpEvent({
+      method: "Page.frameNavigated",
+      params: {
+        frame: { id: "child-frame", parentId: 7, url: "https://example.test/" },
+      },
+    }),
+  );
   await expect(result).rejects.toMatchObject({
     _tag: "BrowserObservationError",
     reason: "protocol_error",

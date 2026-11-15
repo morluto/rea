@@ -184,6 +184,32 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it("refuses a Rizin start made after closeAll began as owner-closed, keeping a caller's own abort reason", async () => {
+  const manager = new RizinDebugSessionManager(process.env, {
+    platform: "linux",
+    spawnProcess: () => {
+      throw new Error("a refused start must not spawn Rizin");
+    },
+  });
+  managers.push(manager);
+  await manager.closeAll();
+  const input = { path: "/tmp/fixture.bin", inferior_tty: "/dev/null" };
+  await expect(manager.start(input)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  caller.abort(reason);
+  await expect(manager.start(input, caller.signal)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+});
+
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(
     { REA_RIZIN_COMMAND: "/missing/rizin" },

@@ -377,6 +377,22 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
+// CDP event payloads are parsed once at the connection by the registered
+// schema in src/browser/protocol/CdpEvents.ts; a subscriber reads
+// `event.registered`, not the raw payload, so malformed members cannot be
+// reinterpreted, dropped or defaulted differently by each subscriber.
+checkCounted(
+  "raw CDP event payload read (register the event in src/browser/protocol/CdpEvents and read event.registered)",
+  "cdp-raw-event-params",
+  files.filter(
+    (file) =>
+      file.path.startsWith("src/browser/") ||
+      file.path.startsWith("src/inspector/"),
+  ),
+  /\bevent\.params\b/gu,
+  ["src/browser/CdpConnection.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
@@ -438,10 +454,17 @@ checkCounted(
 // An input fault is a ParseFailureError; a broken internal assumption is a
 // defect, not an input fault, and throws invariantViolation from
 // src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
   /throw new (?:Error|TypeError|RangeError)\(/gu,
   [],
 );
@@ -513,7 +536,7 @@ checkCounted(
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/providers/runOwned.ts"],
 );
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;

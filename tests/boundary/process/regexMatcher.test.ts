@@ -69,8 +69,8 @@ const probeWorkerHeap = (
 
 it("names the configurable regex deadline and the effective worker heap", () => {
   const heap = resolveLaunchRegexWorkerHeap(
-    readLaunchExecArgv(),
-    readLaunchNodeOptions(),
+    readLaunchExecArgv(process.platform),
+    readLaunchNodeOptions(process.platform),
   );
   expect(REGEX_MATCHING_LIMITATION).toMatch(
     /5000 ms matching deadline \(source default\)/iu,
@@ -259,7 +259,7 @@ it("lets a launch --max-old-space-size override the 128 MiB worker request", () 
 
 const assertUnrecoverableOffLinux = (): boolean => {
   if (process.platform === "linux") return false;
-  const launchExecArgv = readLaunchExecArgv();
+  const launchExecArgv = readLaunchExecArgv(process.platform);
   expect(launchExecArgv).toEqual({ kind: "unrecoverable" });
   expect(
     resolveLaunchRegexWorkerHeap(launchExecArgv, {

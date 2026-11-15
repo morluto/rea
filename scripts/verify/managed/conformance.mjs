@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
@@ -25,9 +22,16 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "../../lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-managed-conformance-",
+});
+const workspace = workspaceFixture.path;
 let completionReportInput;
 let finalReport;
 const {
@@ -42,7 +46,7 @@ const {
   defaultIlBody,
 });
 
-try {
+await withVerifierFixture(workspaceFixture, async () => {
   const modern = await fixture("modern-anycpu.exe", {
     references: ["System.Runtime"],
     resourceData: Buffer.from("source-owned managed resource"),
@@ -403,9 +407,7 @@ try {
       configured: false,
     },
   };
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});
 finalReport.completionReport = createManagedCompletionReport(
   completionReportInput,
   await completeVerifierRun(verifierRun),

@@ -328,7 +328,7 @@ export const systemUpdateHost = (
           const result = await commands.runProbe(command, environment);
           return result.ok ? result : err(result.error.detail);
         },
-        resources,
+        { resources },
       ),
     close: async () => {
       const results = await Promise.allSettled([

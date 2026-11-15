@@ -1,4 +1,5 @@
-import { cdpFrameEventFacts, type CdpFrameFacts } from "./CdpFrameIdentity.js";
+import type { CdpFrameFacts } from "./CdpFrameIdentity.js";
+import { cdpFrameEvent } from "./protocol/CdpEvents.js";
 import { createHash } from "node:crypto";
 
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -13,7 +14,7 @@ import {
   compositeKey,
 } from "../domain/unicodeCodePointOrder.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
-import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
+import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
@@ -27,7 +28,6 @@ import {
 } from "./CdpCaptureValues.js";
 import {
   classifyCdpFrameUrl,
-  observeCdpFrameUrl,
   type CdpFrameUrlObservation,
 } from "./CdpCaptureDocuments.js";
 import {
@@ -200,10 +200,12 @@ const ingestInitialFrameTree = (
 };
 
 const ingestFrameScopeEvent = (
-  event: CdpEvent,
+  event: CdpReceivedEvent,
   state: FrameScopeState,
 ): boolean => {
-  const facts = cdpFrameEventFacts(event);
+  const frame = cdpFrameEvent(event);
+  if (frame === undefined) return false;
+  const { facts, url } = frame;
   switch (facts.kind) {
     case "detached":
       if (facts.identityIssue !== null || facts.frameId === null) {
@@ -215,9 +217,9 @@ const ingestFrameScopeEvent = (
       state.resolvedTransientFrames.delete(facts.frameId);
       return true;
     case "navigated":
-      return handleFrameUpdate(facts, state, true);
+      return handleFrameUpdate(facts, state, true, url);
     case "within_document":
-      return handleFrameUpdate(facts, state, false);
+      return handleFrameUpdate(facts, state, false, url);
     default:
       return false;
   }
@@ -239,7 +241,7 @@ const handleFrameUpdate = (
   sourceFacts: CdpFrameFacts,
   state: FrameScopeState,
   documentCommitted: boolean,
-  observation: CdpFrameUrlObservation = observeCdpFrameUrl(sourceFacts.source),
+  observation: CdpFrameUrlObservation,
 ): boolean => {
   const frameId = sourceFacts.frameId;
   if (
@@ -426,7 +428,7 @@ const requiredDiscoveryFrame = (
 };
 
 interface WebMcpIngestOptions {
-  readonly event: CdpEvent;
+  readonly event: CdpReceivedEvent;
   readonly input: DiscoverWebMcpToolsInput;
   readonly frames: ReadonlyMap<
     string,

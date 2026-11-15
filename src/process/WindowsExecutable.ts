@@ -16,10 +16,15 @@ export type WindowsExecutableFailure =
     };
 
 /**
- * Resolve a default bare command against PATH/PATHEXT only, probing the
- * search owner's candidates (src/process/executableSearch) in order. Never return a bare
- * name on failure: handing it to Windows would restart implicit CWD lookup.
- * Callers own the lookup deadline and translation to their operation errors.
+ * Resolve a command the way Windows users name it: a bare name against
+ * PATH/PATHEXT only, and a path-qualified name (`C:\Python\python`,
+ * `.venv\Scripts\python`) at that location with the same PATHEXT suffixes,
+ * probing the search owner's candidates (src/process/executableSearch) in
+ * order. Owned launches pass an explicit application name to
+ * `CreateProcessW`, which never appends an extension itself. Never return a
+ * bare name on failure: handing it to Windows would restart implicit CWD
+ * lookup. Callers own the lookup deadline and translation to their operation
+ * errors.
  */
 export const findWindowsExecutable = async (
   executable: string,

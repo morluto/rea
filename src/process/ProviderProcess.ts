@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   processInspectionCleanupFailures,
@@ -307,7 +308,7 @@ export const spawnOwnedProviderProcess = async (
   assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
   assertProcessOwnershipInspectionActive(options.signal);
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
   let captureBaseline: ProcessOwnershipBaseline | undefined;
@@ -331,7 +332,7 @@ export const spawnOwnedProviderProcess = async (
     { REA_PROCESS_RUN_ID: options.runId },
     platform,
   );
-  if (platform === "win32" && process.platform === "win32") {
+  if (platform === "win32" && HOST_PLATFORM.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,

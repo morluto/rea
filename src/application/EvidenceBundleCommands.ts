@@ -10,8 +10,8 @@ import {
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   withEvidenceCallerInputPath,
@@ -230,8 +230,7 @@ export const publishEvidenceDelivery = async (input: {
   }
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: input.delivered,
         diagnostics: { evidence_bundle: { ...written.value } },
       }),

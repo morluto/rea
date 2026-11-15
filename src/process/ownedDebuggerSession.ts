@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -185,7 +186,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (process.platform !== "linux")
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );
@@ -346,7 +347,7 @@ export const stopOwnedDebuggerProcess = async (
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<OwnedDebuggerStopResult> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (session.exited) {
     if (detachAttempts.has(session))
       return {

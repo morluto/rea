@@ -8,6 +8,7 @@ import {
   type CdpCommandResult,
   type CdpProtocolMethod,
 } from "./protocol/CdpCommands.js";
+import type { CdpProtocolEvent } from "./protocol/CdpEvents.js";
 
 /**
  * A Playwright CDP session that sends only registered commands and admits each
@@ -19,9 +20,13 @@ export interface PlaywrightCdpSession {
     method: M,
     params?: CdpCommandParams<M>,
   ): Promise<CdpCommandResult<M>>;
-  /** Event payloads stay unknown; each subscriber parses its own events. */
-  on(event: string, listener: (params: unknown) => void): void;
-  off(event: string, listener: (params: unknown) => void): void;
+  /**
+   * Subscribe to one protocol event by its name in Playwright's protocol
+   * table. Payloads stay unknown until the event is registered in
+   * `protocol/CdpEvents.ts`; the subscriber parses them meanwhile.
+   */
+  on(event: CdpProtocolEvent, listener: (params: unknown) => void): void;
+  off(event: CdpProtocolEvent, listener: (params: unknown) => void): void;
   detach(): Promise<void>;
 }
 
@@ -37,11 +42,10 @@ const registeredSession = (
       operation,
     ),
   on: (event, listener) => {
-    // Playwright's event names are not exported apart from its overloads.
-    session.on(event as never, listener);
+    session.on(event, listener);
   },
   off: (event, listener) => {
-    session.off(event as never, listener);
+    session.off(event, listener);
   },
   detach: () => session.detach(),
 });

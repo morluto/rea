@@ -115,10 +115,12 @@ export interface WindowsPathSearchFailure {
 }
 
 /**
- * The files Windows' PATH/PATHEXT search tries for bare commands, in order:
- * for each PATH entry (relative ones resolve against `cwd`, or against this
- * process's directory, read only when such an entry is reached and skipped
- * once removed), each command with every PATHEXT extension,
+ * The files Windows' PATH/PATHEXT search tries for commands, in order: a
+ * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
+ * its own location, resolved against `cwd`, and never on PATH; then for each
+ * PATH entry (relative ones resolve against `cwd`, or against this process's
+ * directory, read only when such an entry is reached and skipped once
+ * removed), each bare command with every PATHEXT extension,
  * or as written when it already names an extension. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
@@ -147,16 +149,33 @@ export const windowsPathCandidates = (
   const runnable = (extension: string) =>
     search.allowBatch === true ||
     WINDOWS_IMAGE_EXTENSIONS.has(extension.toLowerCase());
-  const names = listed.flatMap((command) => {
+  const spelled = (command: string): string[] => {
     const explicit = win32.extname(command);
     if (explicit !== "") return runnable(explicit) ? [command] : [];
     return extensions
       .filter(runnable)
       .map((extension) => `${command}${extension}`);
-  });
+  };
+  const qualified = (command: string): boolean =>
+    /[\\/]/u.test(command) || win32.parse(command).root !== "";
+  const located = listed.filter(qualified).flatMap(spelled);
+  const names = listed
+    .filter((command) => !qualified(command))
+    .flatMap(spelled);
   const entries = windowsPathEntries(selected.PATH ?? "");
   return ok({
     *[Symbol.iterator]() {
+      for (const name of located) {
+        const workingDirectory = win32.isAbsolute(name)
+          ? name
+          : (search.cwd ?? currentDirectory());
+        if (workingDirectory === undefined) continue;
+        yield {
+          path: win32.resolve(workingDirectory, name),
+          relativeEntry: false,
+        };
+      }
+      if (names.length === 0) return;
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.

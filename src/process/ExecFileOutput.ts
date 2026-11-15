@@ -1,4 +1,5 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   execFile,
   spawn,
@@ -302,7 +303,7 @@ const startStoppableCommand = (
     killSignal: stopSignal,
     // POSIX detach starts a new session, so the command leads a process group
     // REA can stop as one family. Windows detach would only open a console.
-    detached: process.platform !== "win32",
+    detached: HOST_PLATFORM.platform !== "win32",
   });
   child.on("error", (error: Error) => {
     processError ??= error;
@@ -323,7 +324,7 @@ const startStoppableCommand = (
   const signalFamily = (signalName: NodeJS.Signals): void => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const pid = child.pid;
-    if (process.platform !== "win32" && pid !== undefined)
+    if (HOST_PLATFORM.platform !== "win32" && pid !== undefined)
       try {
         process.kill(-pid, signalName);
         signalled = true;

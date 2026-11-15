@@ -2191,14 +2191,14 @@ Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
 follow-up needs retained facts, include it in `discover_tools.names`; if the
 producer and follow-up are known together, load both in one batch. Producers
 that accept `view` can answer a selected first question without loading the
-cross-domain view contract. Complete output schemas and canonical result
-validation are preserved when each tool loads.
+cross-domain view contract. Each loaded tool keeps canonical result validation
+and the selected [output schema profile](#output-schemas).
 An explicit tool-family scope can remove any of those domain tools.
 `discover_tools` searches canonical names and descriptions using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
 and abbreviated descriptions with their configured input schemas, so the next
-call can use the returned arguments contract. Output schemas remain in
-`tools/list`. Search defaults to three results, allows up to
+call can use the returned arguments contract. Output schemas, when the
+selected profile lists them, remain in `tools/list`. Search defaults to three results, allows up to
 20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
 request order and reject unknown or excluded names before loading anything.
 Use fewer keywords when no result matches; search requires every word to match.
