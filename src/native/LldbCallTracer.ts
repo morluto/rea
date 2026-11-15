@@ -66,7 +66,7 @@ import {
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";
 import {
@@ -387,11 +387,11 @@ export class LldbCallTracer implements NativeCallTracer {
     const failure = await this.#retryPendingCleanup();
     if (resolverCleanup !== undefined && failure !== undefined)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           resolverCleanup,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([resolverCleanup, failure]),
+        ),
       );
     if (resolverCleanup !== undefined) return err(resolverCleanup);
     return failure === undefined ? ok(null) : err(failure);
