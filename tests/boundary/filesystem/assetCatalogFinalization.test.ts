@@ -103,7 +103,7 @@ it.skipIf(process.platform !== "darwin").each([
           category: "integrity_mismatch",
           details: {
             reason: "integrity",
-            detail: expect.stringContaining("Asset catalog changed"),
+            integrity_check: "member-identity",
           },
         });
       if (primary === "timeout")
