@@ -99,6 +99,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [MIPS ELF analysis through Ghidra](providers/ghidra-mips.md)
 - [PSP static ELF analysis through Ghidra](providers/ghidra-psp.md)
 - [RISC-V ELF analysis through Ghidra](providers/ghidra-riscv.md)
+- [Xtensa ELF analysis through Ghidra](providers/ghidra-xtensa.md)
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)
 - [IDA provider](providers/ida-provider.md)
