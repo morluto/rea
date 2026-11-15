@@ -14,4 +14,16 @@ export function compareCountedBaseline(
   readonly grown: CountedBaselineDifference[];
   readonly stale: CountedBaselineDifference[];
   readonly baseline: Record<string, number>;
+  /** True only when `shrink` lowered or removed a recorded count. */
+  readonly lowered: boolean;
 };
+
+/** Record a lowered baseline under `key`; true when the map changed. */
+export function recordLoweredBaseline(
+  baselines: Record<string, Record<string, number>>,
+  key: string,
+  compared: {
+    readonly baseline: Record<string, number>;
+    readonly lowered: boolean;
+  },
+): boolean;

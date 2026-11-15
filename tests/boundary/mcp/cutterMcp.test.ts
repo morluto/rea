@@ -148,7 +148,9 @@ const createMcpBridge = async (
                     execution_state: "not_started",
                     error: "session-poisoned-after-ui-timeout",
                   }
-                : {}),
+                : status
+                  ? {}
+                  : { execution_state: "complete" }),
               session_id: request.session_id,
               output: status ? undefined : "synthetic Cutter command output",
               current_file: "/fixtures/sample.bin",

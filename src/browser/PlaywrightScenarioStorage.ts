@@ -25,12 +25,6 @@ import {
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
 
-const breakpointResponse = z.object({ breakpointId: z.string() });
-const scriptIdentifierResponse = z.object({ identifier: z.string() });
-const storageKeyResponse = z.object({ storageKey: z.string() });
-const targetInfoResponse = z.object({
-  targetInfo: z.object({ targetId: z.string() }),
-});
 type StorageEventMethod =
   | "Runtime.executionContextCreated"
   | "Runtime.executionContextDestroyed"
@@ -73,9 +67,6 @@ const pausedEvent = z.object({
       location: z.object({ scriptId: z.string() }),
     }),
   ),
-});
-const evaluationResponse = z.object({
-  exceptionDetails: z.unknown().optional(),
 });
 const STORAGE_CLEANUP_TIMEOUT_MS = 1_000;
 
@@ -244,13 +235,15 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-    const rootInfo = targetInfoResponse.parse(
+    const rootInfo = admitCdpReply(
+      "Target.getTargetInfo",
       await withScenarioCommandDeadline(
         () => this.cdp.send("Target.getTargetInfo"),
         this.commandTimeoutMs,
         "command",
         "Target.getTargetInfo",
       ),
+      "capture_browser_scenario",
     );
     if (this.#closed) return;
     const root = this.createTarget(
@@ -363,19 +356,15 @@ export class PlaywrightScenarioStorage {
     if (this.#closed) return;
     await target.send("Debugger.enable");
     if (this.#closed) return;
-    breakpointResponse.parse(
-      await target.send("Debugger.setBreakpointByUrl", {
-        url: this.#sourceUrl,
-        lineNumber: 1,
-      }),
-    );
+    await target.send("Debugger.setBreakpointByUrl", {
+      url: this.#sourceUrl,
+      lineNumber: 1,
+    });
     if (this.#closed) return;
-    scriptIdentifierResponse.parse(
-      await target.send("Page.addScriptToEvaluateOnNewDocument", {
-        worldName: this.#sourceUrl,
-        source: `(() => {\n  void 0;\n})()\n//# sourceURL=${this.#sourceUrl}`,
-      }),
-    );
+    await target.send("Page.addScriptToEvaluateOnNewDocument", {
+      worldName: this.#sourceUrl,
+      source: `(() => {\n  void 0;\n})()\n//# sourceURL=${this.#sourceUrl}`,
+    });
     if (this.#closed) return;
     await target.send("Target.setAutoAttach", {
       autoAttach: true,
@@ -505,11 +494,11 @@ export class PlaywrightScenarioStorage {
     const seed = this.#seeds.get(origin);
     if (seed === undefined) return;
 
-    const storageKey = storageKeyResponse.parse(
-      await this.sendObserved(target, "Storage.getStorageKey", {
-        frameId,
-      }),
-    ).storageKey;
+    const { storageKey } = await this.sendObserved(
+      target,
+      "Storage.getStorageKey",
+      { frameId },
+    );
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
     const local =
       this.#initializedLocal.has(storageKey) || seed.local.length === 0
@@ -525,12 +514,14 @@ export class PlaywrightScenarioStorage {
       "<",
       "\\u003c",
     );
-    const response = evaluationResponse.parse(
-      await this.sendObserved(target, "Debugger.evaluateOnCallFrame", {
+    const response = await this.sendObserved(
+      target,
+      "Debugger.evaluateOnCallFrame",
+      {
         callFrameId: frame.callFrameId,
         expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); })()`,
         returnByValue: true,
-      }),
+      },
     );
     if (response.exceptionDetails !== undefined)
       throw new BrowserObservationError(

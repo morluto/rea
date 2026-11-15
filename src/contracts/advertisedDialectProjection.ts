@@ -259,14 +259,17 @@ class DialectProjection {
     for (const sentence of dependencyGuidance(source))
       this.note(path === "" ? sentence : `In ${label(path)}: ${sentence}`);
     if (isRecord(source.properties)) {
-      const properties: Schema = {};
-      for (const [name, child] of Object.entries(source.properties))
-        // A never-valid property is omitted; closed objects still refuse it.
-        if (child !== false)
-          properties[name] = this.project(
-            child,
-            path === "" ? name : `${path}.${name}`,
-          );
+      // `fromEntries` defines each name as an own property, so a property
+      // named `__proto__` stays a property rather than setting the prototype.
+      const properties: Schema = Object.fromEntries(
+        Object.entries(source.properties)
+          // A never-valid property is omitted; closed objects still refuse it.
+          .filter(([, child]) => child !== false)
+          .map(([name, child]) => [
+            name,
+            this.project(child, path === "" ? name : `${path}.${name}`),
+          ]),
+      );
       out.properties = properties;
       if (isStringList(source.required)) {
         const required = source.required.filter((name) =>
