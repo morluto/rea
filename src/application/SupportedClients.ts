@@ -67,6 +67,11 @@ export interface SetupClient {
    * the caller's home folder, which that folder mode must never reach.
    */
   readonly privateProfile?: { readonly home: string };
+  /**
+   * Layers before `configPath` belong to the system or an administrator: REA
+   * reads them for the effective registration but changes only `configPath`.
+   */
+  readonly readOnlyLowerLayers?: true;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -93,6 +98,7 @@ export interface SetupClient {
     | "zed"
     | "amp"
     | "fx"
+    | "goose"
     | "unsupported";
 }
 
@@ -159,6 +165,7 @@ interface ClientDefinitionBase {
   readonly sharedRegistration?: true;
   readonly registrationApplicability?: true;
   readonly privateProfile?: true;
+  readonly readOnlyLowerLayers?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -856,6 +863,65 @@ const fxLocation = ({
  */
 const junieHome = ({ home, env }: ClientPathContext): string =>
   env.JUNIE_HOME || join(home, ".junie");
+
+/**
+ * Goose's user configuration (`Paths::config_dir`): an absolute
+ * `GOOSE_PATH_ROOT` selects `<root>/config`; otherwise etcetera's app strategy,
+ * where only an absolute `XDG_CONFIG_HOME` counts.
+ */
+const gooseUserConfigPath = ({ home, platform, env }: ClientPathContext) => {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const root = env.GOOSE_PATH_ROOT;
+  if (root && pathApi.isAbsolute(root))
+    return pathApi.join(root, "config", "config.yaml");
+  return platform === "win32"
+    ? join(
+        windowsAppDataRoots(home, env).roaming,
+        "Block",
+        "goose",
+        "config",
+        "config.yaml",
+      )
+    : join(absoluteXdgConfigHome({ home, env }), "goose", "config.yaml");
+};
+
+/** `GOOSE_ADDITIONAL_CONFIG_FILES`, split as Rust's `env::split_paths`. */
+const gooseAdditionalConfigFiles = ({
+  platform,
+  env,
+}: Pick<ClientPathContext, "platform" | "env">): string[] =>
+  (env.GOOSE_ADDITIONAL_CONFIG_FILES ?? "")
+    .split(platform === "win32" ? ";" : ":")
+    .filter((path) => path.length > 0);
+
+/**
+ * Goose's layers in increasing precedence (`Config::default`): the system
+ * file, each `GOOSE_ADDITIONAL_CONFIG_FILES` entry, then the user file it
+ * writes. A relative additional entry follows Goose's working directory, which
+ * REA cannot know.
+ */
+const gooseLocation = (
+  context: ClientPathContext,
+): Result<ClientLocation, ClientPathFailure> => {
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const configPath = gooseUserConfigPath(context);
+  const additional = gooseAdditionalConfigFiles(context);
+  const relative = additional.find((path) => !pathApi.isAbsolute(path));
+  if (relative !== undefined)
+    return err({
+      path: relative,
+      message: `GOOSE_ADDITIONAL_CONFIG_FILES names the relative path ${relative}, which Goose resolves against its own working directory. Use absolute paths before configuring Goose.`,
+    });
+  return ok({ configPath, markerPath: configPath });
+};
+
+/** Goose's read-only lower layers, before the user file it writes. */
+const gooseConfigPaths = ({ platform, env }: ClientPathContext) => [
+  platform === "win32"
+    ? win32.join(env.PROGRAMDATA || "C:\\ProgramData", "goose", "config.yaml")
+    : "/etc/goose/config.yaml",
+  ...gooseAdditionalConfigFiles({ platform, env }),
+];
 
 /**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
@@ -1558,6 +1624,20 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   }),
   defineClient({
+    name: "goose",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["uri"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["stdio"] }],
+    },
+    displayName: "Goose",
+    location: gooseLocation,
+    configPaths: gooseConfigPaths,
+    readOnlyLowerLayers: true,
+    format: "goose",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1733,6 +1813,9 @@ export const supportedClients = (
           : { discoveryPaths: definition.discoveryPaths(context) }),
         ...(definition.privateProfile === true
           ? { privateProfile: { home } }
+          : {}),
+        ...(definition.readOnlyLowerLayers === true
+          ? { readOnlyLowerLayers: true }
           : {}),
         ...(definition.registrationApplicability === true
           ? { registrationApplicability: true }

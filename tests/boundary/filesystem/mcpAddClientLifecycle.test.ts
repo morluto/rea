@@ -14,7 +14,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
-import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import {
+  readClientRegistrationInspections,
+  readClientRegistrationStatuses,
+} from "../../../src/application/ClientRegistrationStatus.js";
 import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
@@ -51,6 +54,7 @@ it.each([
   { agent: "mcporter", client: "mcporter" },
   { agent: "fx", client: "fx" },
   { agent: "junie", client: "junie" },
+  { agent: "goose", client: "goose" },
 ])(
   "inspects, refreshes and removes the $agent registration that mcp add wrote as $client",
   async ({ agent, client }) => {
@@ -484,3 +488,64 @@ it("reports a Junie registration Junie would not load in doctor and setup", asyn
     inspectClientConfiguration(row, {}, command),
   ).resolves.toMatchObject({ status: "invalid" });
 });
+
+it.skipIf(platform === "win32")(
+  "reports Goose's effective registration across its read-only layers",
+  async () => {
+    const home = await createTestTempDirectory("rea-goose-layers-");
+    const additional = join(home, "team", "goose.yaml");
+    await mkdir(dirname(additional), { recursive: true });
+    const lower = "extensions:\n  rea:\n    enabled: false\n";
+    await writeFile(additional, lower);
+    const environment = { GOOSE_ADDITIONAL_CONFIG_FILES: additional };
+    const resources = new ArtifactResourceScope();
+    const selected = await resolveMcpRegistrationClients(
+      {
+        agents: ["goose"],
+        global: true,
+        cwd: home,
+        home,
+        platform,
+        environment,
+      },
+      resources,
+    );
+    if (!selected.ok) throw selected.error;
+    const row = supportedClients(home, platform, environment).find(
+      ({ name }) => name === "goose",
+    );
+    expect(row?.configPaths).toEqual([
+      "/etc/goose/config.yaml",
+      additional,
+      row?.configPath,
+    ]);
+    const [outcome] = await registerMcpClients(
+      selected.value,
+      { command: command[0] ?? "", args: command.slice(1) },
+      undefined,
+      resources,
+    );
+    expect(outcome).toMatchObject({
+      status: "completed",
+      result: { ok: true },
+    });
+    // The user file does not set `enabled`, so the lower layer's false holds.
+    const inspections = await readClientRegistrationInspections(
+      home,
+      command[1],
+      { platform, environment },
+    );
+    expect(
+      inspections.find(({ status }) => status.client === "goose"),
+    ).toMatchObject({ activation: "disabled", status: { state: "stale" } });
+    const uninstall = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, environment, platform),
+    );
+    expect(uninstall.items).toContainEqual(
+      expect.objectContaining({ name: "goose", status: "removed" }),
+    );
+    // Uninstall changes only the user file Goose writes.
+    expect(await readFile(additional, "utf8")).toBe(lower);
+  },
+);
