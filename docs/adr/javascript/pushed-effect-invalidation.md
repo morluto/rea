@@ -119,6 +119,44 @@ The slice stops and is reported, not merged, if it shows either of these:
 Merging `JavaScriptSymbolicBindings` (W10 step 4, audit C2) follows the last
 slice, because its one consumer should read values through the same log.
 
+## Rejected alternatives
+
+### Folding global-code effects into `isUnmodifiedGlobalReference`
+
+One prototype added the global-code check (`eval`, `Function`) to
+`isUnmodifiedGlobalReference`, so that every caller of that helper would
+refuse a global that opaque code may replace. It was measured at `3d9d35ab26`
+on the 14 corpus bundles:
+
+- Static findings and value statuses did not change. No status changed from
+  `unknown` to a definite value, and the `unknown` count stayed at 69,348.
+- The full semantic IR changed on the 4 bundles that contain `Function(`.
+  Callers of the helper dropped operation records without recording an
+  `unknown` in their place:
+  - handlebars: boundary operations fell from 9 to 3.
+  - isomorphic-git: boundary operations fell from 37 to 10 and timer
+    operations from 6 to 0. Of the promise operations, 26 were removed and
+    17 became unresolved awaited expressions.
+  - underscore: timer operations fell from 7 to 0 and boundary operations
+    from 3 to 0.
+  - vue: boundary operations fell from 36 to 2, timer operations from 9 to 0
+    and promise operations from 29 to 23.
+
+The only `Function(` site in handlebars is `Function("return this")()`, which
+cannot replace a global, so none of the handlebars removals is justified.
+The fold is rejected: it silently drops records instead of marking them
+unknown. A read that opaque code may change must stay in the IR and be
+reported as unknown, not omitted. Global-code reads go through the effect log
+query (decision 2) instead.
+
+### Exempting constant-source `Function` bodies
+
+Exempting constant `Function` bodies that cannot write, such as
+`return this`, would have removed the handlebars regressions. The rule is
+not adopted: it adds a new precision proof for one observed pattern and is
+not needed once readers ask the effect log. It can be proposed separately
+with its own measurement.
+
 ## Consequences
 
 - A new reader cannot forget an effect kind, because it asks one question
