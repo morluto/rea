@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { CAPABILITY_DECLARATIONS } from "../../src/composition/capabilityDeclarations.js";
 import {
@@ -8,7 +7,7 @@ import {
   PROVIDER_LIFECYCLE_GAPS,
 } from "../support/providerLifecycleCoverage.js";
 
-const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const repositoryRoot = new URL("../../", import.meta.url);
 
 const registeredProviderIds = () =>
   [
@@ -38,10 +37,13 @@ it("names an existing test file and literal test title for every covered stage",
   const source = (path: string) => {
     let pending = sources.get(path);
     if (pending === undefined) {
-      pending = readFile(
-        new URL(path, `file://${repositoryRoot}`),
-        "utf8",
-      ).catch(() => undefined);
+      pending = readFile(new URL(path, repositoryRoot), "utf8").catch(
+        (cause: unknown) => {
+          if ((cause as NodeJS.ErrnoException).code === "ENOENT")
+            return undefined;
+          throw cause;
+        },
+      );
       sources.set(path, pending);
     }
     return pending;

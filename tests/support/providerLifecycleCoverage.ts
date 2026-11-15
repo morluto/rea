@@ -133,6 +133,8 @@ const REVERSE_LAUNCH_ERRORS =
   "tests/composition/reverseProviderLaunchErrors.test.ts";
 const REVERSE_EDGE_CASES =
   "tests/composition/reverseEngineeringEdgeCases.test.ts";
+const SOURCE_MAP_DECODER_BOUNDARY =
+  "tests/boundary/javascript/sourceMapDecoder.test.ts";
 const CDP_BROWSER_SOCKET =
   "tests/boundary/browser/cdpBrowserProvider.browserSocket.test.ts";
 const CDP_CLEANUP_CANCELLATION =
@@ -1553,20 +1555,45 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
-  "rea-web-module-trace": inProcess(
-    covered(
-      test(
-        "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-        "verifies original bytes and tolerates relocation without inventing URL paths",
+  "rea-web-module-trace": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "retains the selected executable and actual startup diagnostic",
+        ),
       ),
-    ),
-    covered(
-      test(
-        "src/application/WebModuleTraceService.test.ts",
-        "does not start the native resolver after cancellation during artifact admission",
+      handshake: gap(
+        "No regression for a late or failed browser-engine connection after Chromium launches.",
       ),
-    ),
-  ),
+      operation: covered(
+        test(
+          "tests/boundary/filesystem/webModuleArtifacts.test.ts",
+          "verifies original bytes and tolerates relocation without inventing URL paths",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "does not acquire a browser after caller cancellation",
+        ),
+        test(
+          "src/application/WebModuleTraceService.test.ts",
+          "does not start the native resolver after cancellation during artifact admission",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "returns cleanup_incomplete when owned cleanup fails after an engine error",
+        ),
+      ),
+      retry: gap(
+        "The resolver retries retained browser cleanup before later work, but no regression names that retry.",
+      ),
+    },
+  },
   "rea-web-script-export": inProcess(
     covered(
       test(
@@ -1581,20 +1608,48 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
-  "rea-web-source-location": inProcess(
-    covered(
-      test(
-        "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-        "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+  "rea-web-source-location": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          SOURCE_MAP_DECODER_BOUNDARY,
+          "removes the private request when launching the codec fails",
+        ),
       ),
-    ),
-    covered(
-      test(
-        "src/application/WebSourceLocationService.test.ts",
-        "honors cancellation both before acquisition and across decoder completion",
+      handshake: notApplicable(
+        "The source-map codec child writes one reply per request; there is no handshake.",
       ),
-    ),
-  ),
+      operation: covered(
+        test(
+          "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
+          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+        ),
+      ),
+      cancel: covered(
+        test(
+          SOURCE_MAP_DECODER_BOUNDARY,
+          "cancels a real owned process and removes the runtime request",
+        ),
+        test(
+          "src/application/WebSourceLocationService.test.ts",
+          "honors cancellation both before acquisition and across decoder completion",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "src/javascript/sourceMaps/SourceMapDecoder.test.ts",
+          "settles every source-map cleanup failure when final close releases the exact runtime",
+        ),
+      ),
+      retry: covered(
+        test(
+          "src/javascript/sourceMaps/SourceMapDecoder.test.ts",
+          "retains physical failure and late cancellation through cleanup failure and retry",
+        ),
+      ),
+    },
+  },
   "rea-windows-shortcut": inProcess(
     covered(
       test(
@@ -1931,6 +1986,8 @@ export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "rea-pe-certificates:operation",
   "rea-v8-code-cache:cancel",
   "rea-v8-inspector:handshake",
+  "rea-web-module-trace:handshake",
+  "rea-web-module-trace:retry",
   "sigrok-recording:retry",
   "sqlite:launch",
   "tshark-capture:retry",
