@@ -757,6 +757,28 @@ it("does not clear an attached environment override it failed to acquire", async
   expect(fixture.browser.close).toHaveBeenCalledOnce();
 });
 
+it("restores an attached environment override whose success reply is malformed", async () => {
+  const fixture = attachedBrowserFixture({
+    send: async (method, parameters) => {
+      if (
+        method === "Emulation.setLocaleOverride" &&
+        (parameters as { locale?: string }).locale === "en-US"
+      )
+        return "applied";
+      return undefined;
+    },
+  });
+
+  await expect(fixture.open()).rejects.toMatchObject({
+    reason: "protocol_error",
+  });
+  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
+    "Emulation.setLocaleOverride",
+    { locale: "" },
+  );
+  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
+});
+
 it("waits for a cancelled environment mutation before restoring it", async () => {
   const localeStarted = deferred<void>();
   const localeResult = deferred<void>();
