@@ -179,6 +179,19 @@ describe("portable pattern projection", () => {
     });
   });
 
+  it("keeps a repeated class with non-ASCII members in one stack-safe class", () => {
+    const projected = projectPortablePattern("^[\\t\\x20-\\x7e\\x80-\\xff]*$");
+    expect(projected).toEqual({
+      kind: "wider",
+      pattern: "^[^\\x00-\\x08\\x0a-\\x1f\\x7f]*$",
+    });
+    if (projected.kind === "unexpressible") throw new Error("Expected a form");
+    const large = "A".repeat(8 * 1024 * 1024);
+    // V8 `v` mode overflows on any long class repetition, the source included.
+    for (const flags of ["", "u"])
+      expect(new RegExp(projected.pattern, flags).test(large)).toBe(true);
+  });
+
   it("omits the unsafe unbounded base64 padding projection", () => {
     expect(
       projectPortablePattern(INVALID_BASE64_PADDING_PATTERN.source),
@@ -401,6 +414,29 @@ it.each(PRESENTERS)(
     };
     const validate = new Ajv2020({ strict: false }).compile(present(schema));
     expect(validate({ props: "a", items: "b" })).toBe(true);
+  },
+);
+
+it.each(PRESENTERS)(
+  "keeps %s pointers valid into draft-07 reference siblings relaxation removes",
+  (_kind, present) => {
+    const schema = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      definitions: {
+        word: { $id: "https://example.test/word", type: "object" },
+      },
+      type: "object",
+      properties: {
+        a: {
+          $ref: "https://example.test/word",
+          properties: { kept: { type: "string" } },
+        },
+        b: { $ref: "#/properties/a/properties/kept" },
+        name: { type: "string", pattern: "^(?!con$)[a-z]+$" },
+      },
+    };
+    const validate = new Ajv({ strict: false }).compile(present(schema));
+    expect(validate({ a: {}, b: "x", name: "con" })).toBe(true);
   },
 );
 
