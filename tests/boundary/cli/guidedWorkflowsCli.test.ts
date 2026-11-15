@@ -146,3 +146,21 @@ it("refuses an --action that selects no input branch", async () => {
   expect(exitCode).not.toBe(0);
   expect(stdout).toContain("action");
 });
+
+it("names a refused argument by its CLI option before rendering", async () => {
+  const { exitCode, stdout } = await run([
+    "guided-workflows",
+    "--action",
+    "render",
+    "--workflow-id",
+    "investigate_feature",
+    "--arguments-json",
+    '{"feature":1}',
+  ]);
+  expect(exitCode).not.toBe(0);
+  expect(JSON.parse(stdout)).toMatchObject({
+    details: {
+      issues: [expect.objectContaining({ path: ["argumentsJson", "feature"] })],
+    },
+  });
+});
