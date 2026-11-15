@@ -95,12 +95,14 @@ cliTest(
       malformed,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
+    const integrityError = {
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
-    });
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-    });
+    };
+    expect(result.json).toMatchObject(integrityError);
+    expect(response.isError).toBe(true);
+    // Portable MCP presentation may admit this shape; authentication remains
+    // the shared reader's responsibility, with the same error as the CLI.
+    expect(parseMcpToolError(response).error).toMatchObject(integrityError);
   },
 );
