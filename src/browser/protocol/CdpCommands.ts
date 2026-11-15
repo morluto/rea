@@ -80,6 +80,15 @@ const preciseCoverageReply = z.object({
   ),
 });
 
+/** Browser identity read during browser-socket endpoint discovery. */
+const browserVersionReply = z.object({
+  protocolVersion: z.string().min(1),
+  product: z.string().min(1),
+  revision: z.string(),
+  userAgent: z.string(),
+  jsVersion: z.string(),
+});
+
 /**
  * An inventory whose entries the reading section admits one by one, so one
  * malformed entry is counted there as a gap instead of rejecting the reply.
@@ -101,7 +110,8 @@ const indexedDbVersion = z
 
 /**
  * One result schema per command REA sends. Each schema is the only reader of
- * that command's raw reply; consumers receive its parsed output.
+ * that command's raw reply; consumers receive its parsed output. Senders accept
+ * only these names, so a new command needs its schema here before it compiles.
  */
 const CDP_COMMAND_REPLIES = {
   "DOM.describeNode": z.object({
@@ -123,6 +133,7 @@ const CDP_COMMAND_REPLIES = {
   }),
   "DOMDebugger.getEventListeners": eventListenersReply,
   "Accessibility.getFullAXTree": z.object({ nodes: inventory }),
+  "Browser.getVersion": browserVersionReply,
   "CacheStorage.requestCacheNames": z.object({ caches: inventory }),
   "CacheStorage.requestCachedResponse": z.object({
     response: z.object({ body: z.string() }),
@@ -195,6 +206,11 @@ const CDP_COMMAND_REPLIES = {
   "Profiler.takePreciseCoverage": preciseCoverageReply,
   "Runtime.disable": acknowledgement,
   "Runtime.enable": acknowledgement,
+  // The caller reads `result.value`; a thrown evaluation has no usable value.
+  "Runtime.evaluate": z.object({
+    result: z.object({ type: z.string(), value: z.unknown().optional() }),
+    exceptionDetails: z.unknown().optional(),
+  }),
   "Runtime.releaseObjectGroup": acknowledgement,
   "Runtime.runIfWaitingForDebugger": acknowledgement,
   "Storage.getStorageKey": z.object({ storageKey: z.string() }),
@@ -207,6 +223,9 @@ const CDP_COMMAND_REPLIES = {
   "Target.getTargetInfo": z.object({
     targetInfo: z.object({ targetId: z.string() }),
   }),
+  // Each discovery or worker reader admits target rows one by one.
+  "Target.getTargets": z.object({ targetInfos: inventory }),
+  "Target.sendMessageToTarget": acknowledgement,
   "Target.setAutoAttach": acknowledgement,
   "WebMCP.disable": acknowledgement,
   "WebMCP.enable": acknowledgement,
@@ -232,25 +251,6 @@ export type CdpCommandParams<M extends CdpCommand> = NonNullable<
 export type CdpCommandResult<M extends CdpCommand> = z.output<
   (typeof CDP_COMMAND_REPLIES)[M]
 >;
-
-/**
- * Parameters a send accepts: the protocol's for a registered command, an
- * untyped record for a method that has no result schema yet.
- */
-export type CdpSendParams<M extends string> = M extends CdpCommand
-  ? CdpCommandParams<M>
-  : Readonly<Record<string, unknown>>;
-
-/**
- * A registered command resolves to its parsed result. Any other method is the
- * raw reply, which the untyped-command guard baseline counts.
- */
-export type CdpSendResult<M extends string> = M extends CdpCommand
-  ? CdpCommandResult<M>
-  : unknown;
-
-export const isCdpCommand = (method: string): method is CdpCommand =>
-  Object.hasOwn(CDP_COMMAND_REPLIES, method);
 
 /** A well-formed JSON-RPC reply whose result does not match the command's schema. */
 export interface CdpMalformedReplyFacts {
@@ -305,16 +305,15 @@ export const parseCdpCommandResult = <M extends CdpCommand>(
 
 /**
  * Admit one command reply at a transport boundary: `CdpConnection` and the
- * Playwright CDP sessions both call this. A registered command's reply is
- * parsed or rejected; any other reply is returned raw.
+ * Playwright CDP sessions both call this. Only registered commands can be
+ * sent, so every reply is parsed or rejected here.
  */
-export const admitCdpReply = <M extends string>(
+export const admitCdpReply = <M extends CdpCommand>(
   method: M,
   reply: unknown,
   operation: BrowserObservationOperation,
-): CdpSendResult<M> => {
-  if (!isCdpCommand(method)) return reply as CdpSendResult<M>;
+): CdpCommandResult<M> => {
   const parsed = parseCdpCommandResult(method, reply);
   if (!parsed.ok) throw new CdpMalformedReply(operation, parsed.error);
-  return parsed.value as CdpSendResult<M>;
+  return parsed.value;
 };
