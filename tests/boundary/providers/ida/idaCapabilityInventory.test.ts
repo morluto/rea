@@ -1,14 +1,11 @@
 import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
 import { expect, it } from "vitest";
-import type { CapabilityDescriptor } from "../../../../src/application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../../../src/ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../../src/application/binary/BinarySessionStatus.js";
 import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";
 import { IDA_OPERATIONS } from "../../../../src/ida/IdaProviderMetadata.js";
-import {
-  TOOL_EFFECTS,
-  toolSessionEffects,
-} from "../../../../src/contracts/toolEffects.js";
+import { TOOL_CONTRACTS } from "../../../../src/contracts/toolContracts.js";
 
 const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   processCaptureEnabled: true,
@@ -18,10 +15,15 @@ const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   v8InspectorObservationEnabled: true,
 };
 
+const contractNamed = (name: string) =>
+  TOOL_CONTRACTS.find((contract) => contract.name === name);
+
 it("audits every IDA operation's network transport without adding it to the session base", () => {
   for (const name of IDA_OPERATIONS) {
-    expect(TOOL_EFFECTS[name]?.accessesNetwork, name).toBe(true);
-    expect(toolSessionEffects(name).accessesNetwork, name).toBe(false);
+    expect(contractNamed(name)?.effects.accessesNetwork, name).toBe(true);
+    expect(contractNamed(name)?.sessionEffects.accessesNetwork, name).toBe(
+      false,
+    );
   }
 });
 
@@ -107,7 +109,7 @@ it.each([
       IDA_COMPATIBILITY_PROFILES[profileName],
       stdio,
     )) {
-      const audited = TOOL_EFFECTS[descriptor.operation];
+      const audited = contractNamed(descriptor.operation)?.effects;
       expect(audited, descriptor.operation).toBeDefined();
       if (descriptor.effects.mayAccessNetwork)
         expect(audited?.accessesNetwork, descriptor.operation).toBe(true);
@@ -174,7 +176,7 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
     enabledPolicy,
   );
   for (const name of ["find_xrefs_to_name", "get_navigation_context"]) {
-    expect(TOOL_EFFECTS[name], name).toMatchObject({
+    expect(contractNamed(name)?.effects, name).toMatchObject({
       accessesNetwork: false,
       launchesProcess: false,
       writesFilesystem: false,
@@ -210,16 +212,18 @@ it("advertises reachable IDA calls through native UI tracing", () => {
       mayShowUi: false,
     },
   };
-  expect(TOOL_EFFECTS.trace_native_ui_action).toMatchObject({
+  expect(contractNamed("trace_native_ui_action")?.effects).toMatchObject({
     accessesNetwork: true,
     launchesProcess: true,
     writesFilesystem: true,
   });
-  expect(toolSessionEffects("trace_native_ui_action")).toMatchObject({
-    accessesNetwork: false,
-    launchesProcess: false,
-    writesFilesystem: false,
-  });
+  expect(contractNamed("trace_native_ui_action")?.sessionEffects).toMatchObject(
+    {
+      accessesNetwork: false,
+      launchesProcess: false,
+      writesFilesystem: false,
+    },
+  );
   const status = (capabilities: readonly CapabilityDescriptor[]) => ({
     open: true,
     kind: "executable",
@@ -246,12 +250,14 @@ it("advertises reachable IDA calls through native UI tracing", () => {
 
 it("includes reachable IDA document and procedure effects in address-context discovery", () => {
   const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
-  expect(TOOL_EFFECTS.inspect_address_context).toMatchObject({
+  expect(contractNamed("inspect_address_context")?.effects).toMatchObject({
     accessesNetwork: true,
     launchesProcess: true,
     writesFilesystem: true,
   });
-  expect(toolSessionEffects("inspect_address_context")).toMatchObject({
+  expect(
+    contractNamed("inspect_address_context")?.sessionEffects,
+  ).toMatchObject({
     accessesNetwork: false,
     launchesProcess: false,
     writesFilesystem: false,

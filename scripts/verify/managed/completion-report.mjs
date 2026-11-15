@@ -1,4 +1,5 @@
 import { createEvidence } from "../../../dist/domain/evidence.js";
+import { unknownTarget } from "../../../dist/domain/targetIdentity.js";
 
 const COMPLETION_PROVIDER = {
   id: "rea-managed-conformance",
@@ -16,18 +17,24 @@ const completionClaim = ({
   const artifactSha256s = [
     ...new Set(targets.map(({ sha256: digest }) => digest)),
   ].sort();
-  const evidence = createEvidence(targets[0], COMPLETION_PROVIDER, {
-    predicateType: "rea.verification",
-    operation: "verify_managed_conformance",
-    parameters: {
-      scenario_id: scenarioId,
-      scenario_version: 1,
-      artifact_sha256s: artifactSha256s,
+  const evidence = createEvidence(
+    // A claim without an observed artifact (an unsupported optional
+    // scenario) names no file.
+    targets[0] ?? unknownTarget("not-observed"),
+    COMPLETION_PROVIDER,
+    {
+      predicateType: "rea.verification",
+      operation: "verify_managed_conformance",
+      parameters: {
+        scenario_id: scenarioId,
+        scenario_version: 1,
+        artifact_sha256s: artifactSha256s,
+      },
+      result: { status },
+      rawResult: null,
+      limitations,
     },
-    result: { status },
-    rawResult: null,
-    limitations,
-  });
+  );
   return {
     claim_id: claimId,
     scenario: { id: scenarioId, version: 1 },

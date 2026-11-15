@@ -6,7 +6,7 @@ import {
   type AnalysisClient,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -58,15 +58,18 @@ import {
 } from "./IdaWorkspace.js";
 import { parseIdaInput } from "./IdaInput.js";
 import { createEvidence } from "../domain/evidence.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   analysisClientFailureContext,
   analysisClientFailureForOperation,
 } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const legacyTools = [
   "get_metadata",
@@ -140,9 +143,7 @@ class IdaCleanupError extends ProviderAdapterError {
         failure_reason:
           cause instanceof AnalysisError
             ? (cause.diagnostics?.reason ?? cause.message)
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         workspace: path,
         ...(sessions === undefined
           ? {}
@@ -548,11 +549,11 @@ export class IdaSessionClient implements AnalysisClient {
           { operation, cause: read },
         );
         bindArtifactFileCleanup(read, cleanup);
-        return analysisErrorWithCleanupFailure(
+        return analysisErrorWithCleanupDependencies(
           primary ?? adapterFailure(read),
           cleanup,
           operation,
-        ).bindCleanupDependencies([cleanup]);
+        );
       },
       unclassified: adapterFailure,
     });

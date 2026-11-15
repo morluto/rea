@@ -1,8 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { ServerContext, ToolCallback } from "@modelcontextprotocol/server";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
@@ -24,7 +26,7 @@ it("preserves the exact reason when import is cancelled after reading the bundle
     throw new Error("Evidence import must not start a binary provider");
   });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "imported_observation",
@@ -86,14 +88,14 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
     throw new Error("Evidence import must not start a binary provider");
   });
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
   });
   const recorded = session.recordEvidence(existing);
   if (!recorded.ok) throw recorded.error;
-  const imported = createEvidence(undefined, provider, {
+  const imported = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "imported_observation",
     parameters: {},
     result: { retained: "雪😀" },
@@ -134,16 +136,13 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   expect(unknown.isError, JSON.stringify(unknown)).not.toBe(true);
   const before = session.exportEvidenceBundle();
 
-  let resolveDispatched: (() => void) | undefined;
-  const dispatched = new Promise<void>((resolve) => {
-    resolveDispatched = resolve;
-  });
+  const dispatch = phaseArrival();
   const send = clientTransport.send.bind(clientTransport);
   vi.spyOn(clientTransport, "send").mockImplementation(
     async (message, ...args) => {
       await send(message, ...args);
       if ("method" in message && message.method === "tools/call")
-        resolveDispatched?.();
+        dispatch.arrive();
     },
   );
   let resolveCompleted: (() => void) | undefined;
@@ -171,7 +170,7 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
       () => "completed",
       (error: unknown) => error,
     );
-  await dispatched;
+  await dispatch.reached(cancellation, "import_evidence_bundle dispatch");
   // The real SDK ping completes while the dispatched file reader awaits I/O.
   await client.ping();
   controller.abort(new Error("SDK import cancellation verification"));
@@ -214,12 +213,12 @@ it("retains a failed import close in the server scope through SDK error projecti
     throw new Error("Evidence import must not start a binary provider");
   });
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
   });
-  const imported = createEvidence(undefined, provider, {
+  const imported = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "imported_observation",
     parameters: {},
     result: { retained: "close failure" },
@@ -283,7 +282,7 @@ it("retries a transient import close failure before admitting the bundle", async
     throw new Error("Evidence import must not start a binary provider");
   });
   const imported = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "imported_observation",

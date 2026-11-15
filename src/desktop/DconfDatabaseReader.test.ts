@@ -4,8 +4,10 @@ import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { dumpDconfDatabase } from "./DconfDatabaseReader.js";
 
 const closeFault = vi.hoisted(() => ({

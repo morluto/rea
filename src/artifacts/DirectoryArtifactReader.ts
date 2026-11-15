@@ -17,25 +17,24 @@ import {
   type ArtifactReaderFailureOptions,
   type ArtifactTraversalOmission,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
+  AnalysisCleanupLease,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   withOwnedFileHandle,
   RegularFileCleanupFailure,
   RegularFileCancelled,
 } from "../filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -444,7 +443,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
             if (outcome.kind !== "failed") throw validationCause;
             throw new ArtifactReaderFailure(
               "io",
-              `Directory inspection failed: ${failureMessage(outcome.cause)}; final source identity could not be validated: ${failureMessage(validationCause)}`,
+              `Directory inspection failed: ${errorMessage(outcome.cause)}; final source identity could not be validated: ${errorMessage(validationCause)}`,
               {
                 cause: new AggregateError(
                   [outcome.cause, validationCause],
@@ -461,7 +460,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
           )
             throw new ArtifactReaderFailure(
               "integrity",
-              `Directory entry changed during inspection: ${entry.path}${outcome.kind === "failed" ? `; inspection failed: ${failureMessage(outcome.cause)}` : ""}`,
+              `Directory entry changed during inspection: ${entry.path}${outcome.kind === "failed" ? `; inspection failed: ${errorMessage(outcome.cause)}` : ""}`,
               {
                 integrityCheck: "member-identity",
                 ...(outcome.kind === "failed" ? { cause: outcome.cause } : {}),
@@ -536,7 +535,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       }
     }
     if (failures.length > 0) {
-      const reason = failures.map(failureMessage).join("; ");
+      const reason = failures.map(errorMessage).join("; ");
       throw new ArtifactReaderFailure(
         "io",
         `Directory artifact cleanup failed: ${reason}`,
@@ -635,7 +634,7 @@ const directoryIoFailure = (
   if (cause instanceof ArtifactReaderFailure) return cause;
   const code = hostErrorCode(cause);
   const suffix = code === undefined ? "" : ` (${code})`;
-  const detail = failureMessage(cause);
+  const detail = errorMessage(cause);
   return new Failure(
     "io",
     `Could not ${operation} at ${path}${suffix}: ${detail}`,
@@ -673,9 +672,6 @@ const entryOpenFailure = (
       )
     : failure;
 };
-
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 type CapturedSourceIdentity = NonNullable<ArtifactEntry["sourceIdentity"]>;
 

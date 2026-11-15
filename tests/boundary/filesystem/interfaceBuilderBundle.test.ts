@@ -10,7 +10,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";

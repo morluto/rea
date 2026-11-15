@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import {
   acquireOwnedLease,

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCapture.fixture.js";
@@ -39,7 +40,7 @@ const captureEvidence = (
     EMPTY_PROCESS_CAPTURE_EXAMPLE,
   ),
 ) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
@@ -103,7 +104,7 @@ const compareViaCli = async (
   const tracePath = join(root, "trace.json");
   if (specification !== undefined)
     await writeFile(tracePath, JSON.stringify(specification));
-  return compareProcessEvidenceFiles(
+  return compareProcessCaptureFiles(
     leftPath,
     rightPath,
     specification === undefined ? undefined : tracePath,
@@ -305,8 +306,7 @@ it("names differing comparison contract fields through MCP and the CLI", async (
   const rightPath = join(root, "right.json");
   await writeFile(leftPath, JSON.stringify(left));
   await writeFile(rightPath, JSON.stringify(right));
-  expect(await compareProcessEvidenceFiles(leftPath, rightPath)).toMatchObject({
-    error: "Process command failed",
+  expect(await compareProcessCaptureFiles(leftPath, rightPath)).toMatchObject({
     code: "invalid_request",
     details: { operation: "compare_process_captures", issues: [issue] },
   });
@@ -377,20 +377,20 @@ it("retains a selected max_capture_age_ms requirement in comparison Evidence par
   );
 });
 
-it("reports CLI trace specification issues like the MCP trace_spec input", async () => {
+it("reports CLI trace specification issues under its traceSpec argument", async () => {
   const root = await createTestTempDirectory("rea-process-trace-spec-");
   const capturePath = join(root, "capture.json");
   const specPath = join(root, "spec.json");
   await writeFile(capturePath, JSON.stringify(captureEvidence("left")));
   await writeFile(specPath, JSON.stringify({ language: {} }));
   expect(
-    await compareProcessEvidenceFiles(capturePath, capturePath, specPath),
+    await compareProcessCaptureFiles(capturePath, capturePath, specPath),
   ).toMatchObject({
     code: "invalid_request",
     details: {
       operation: "compare_process_captures",
       issues: expect.arrayContaining([
-        expect.objectContaining({ path: ["trace_spec", "events"] }),
+        expect.objectContaining({ path: ["traceSpec", "events"] }),
       ]),
     },
   });
@@ -417,8 +417,9 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
       unordered_groups: [{ events: events.map(({ id }) => id) }],
     },
   };
+  // The CLI names the issue by its argument; MCP reports the same message.
   const issue = {
-    path: ["trace_spec", "language"],
+    path: ["traceSpec", "language"],
     message: "happens-before graph must be acyclic",
   };
   const capture = captureEvidence("left");
@@ -428,7 +429,7 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
   await writeFile(capturePath, JSON.stringify(capture));
   await writeFile(specPath, JSON.stringify(trace));
   expect(
-    await compareProcessEvidenceFiles(capturePath, capturePath, specPath),
+    await compareProcessCaptureFiles(capturePath, capturePath, specPath),
   ).toMatchObject({
     code: "invalid_request",
     details: { issues: [issue] },
@@ -451,11 +452,15 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
 it("names the side and constraint when Evidence is not a usable capture", async () => {
   const client = await connect();
   const capture = captureEvidence("right");
-  const unrelated = createEvidence(undefined, PROCESS_PROVIDER, {
-    operation: "other",
-    parameters: {},
-    result: {},
-  });
+  const unrelated = createEvidence(
+    unknownTarget("not-observed"),
+    PROCESS_PROVIDER,
+    {
+      operation: "other",
+      parameters: {},
+      result: {},
+    },
+  );
   const wrongKind = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: unrelated, right: capture },
@@ -526,12 +531,16 @@ it("names the side and constraint when Evidence is not a usable capture", async 
   const rightPath = join(root, "right.json");
   await writeFile(leftPath, JSON.stringify(capture));
   for (const { result, issuePath } of invalidCaptures) {
-    const invalidResult = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: result,
-    });
+    const invalidResult = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: result,
+      },
+    );
     expect(parseEvidence(invalidResult)).toEqual(invalidResult);
     const malformed = await client.callTool({
       name: "compare_process_captures",
@@ -545,20 +554,20 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     });
 
     await writeFile(rightPath, JSON.stringify(invalidResult));
-    expect(
-      await compareProcessEvidenceFiles(leftPath, rightPath),
-    ).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        issues: [
-          expect.objectContaining({
-            path: ["right"],
-            observed: expect.objectContaining({ issue_path: issuePath }),
-          }),
-        ],
+    expect(await compareProcessCaptureFiles(leftPath, rightPath)).toMatchObject(
+      {
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          issues: [
+            expect.objectContaining({
+              path: ["right"],
+              observed: expect.objectContaining({ issue_path: issuePath }),
+            }),
+          ],
+        },
       },
-    });
+    );
   }
 });
 
@@ -570,24 +579,28 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
     exit,
     ...rest
   } = FINALIZED_PROCESS_CAPTURE_EXAMPLE;
-  const mixed = createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.process-capture",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: {
-      ...rest,
-      manifest,
-      exit: {
-        ...exit,
-        finalization: {
-          ...exit.finalization,
-          signals: [
-            { ...exit.finalization.signals[0], reason: "not allowed here" },
-          ],
+  const mixed = createEvidence(
+    unknownTarget("not-observed"),
+    PROCESS_PROVIDER,
+    {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: {
+        ...rest,
+        manifest,
+        exit: {
+          ...exit,
+          finalization: {
+            ...exit.finalization,
+            signals: [
+              { ...exit.finalization.signals[0], reason: "not allowed here" },
+            ],
+          },
         },
       },
     },
-  });
+  );
   const response = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: capture, right: mixed },

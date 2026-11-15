@@ -10,7 +10,7 @@ const compiledRoot = resolve(
   "../dist",
 );
 const { createCatalogDigestProfiles } = await import(
-  pathToFileURL(join(compiledRoot, "catalogIdentity.js")).href
+  pathToFileURL(join(compiledRoot, "contracts/catalog/catalogIdentity.js")).href
 );
 // Retain only hashes, with every shared record frozen. Schemas remain owned by
 // the compiled contracts and are converted once for both identities.
@@ -21,7 +21,7 @@ const profiles = Object.entries(createCatalogDigestProfiles())
   )
   .join(",");
 await writeFile(
-  join(compiledRoot, "recordedCatalogDigests.js"),
+  join(compiledRoot, "contracts/catalog/recordedCatalogDigests.js"),
   `/** Recorded from compiled catalog profiles by scripts/record-catalog-digests.mjs; do not edit. */\nexport const RECORDED_CATALOG_DIGEST_PROFILES = Object.freeze({${profiles}});\n`,
   "utf8",
 );

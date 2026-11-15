@@ -3,9 +3,11 @@ import { dirname } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { withArtifactFileHandle } from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import {
+  withArtifactFileHandle,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../../src/resources/index.js";
 import { inspectDesktopApplicationState } from "../../../src/application/desktop/DesktopApplicationState.js";
 import {
   HOME,

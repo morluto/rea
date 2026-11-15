@@ -10,8 +10,8 @@ import {
 import {
   assertArtifactReadActive,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { programCandidates } from "./ProgramLookup.js";
 

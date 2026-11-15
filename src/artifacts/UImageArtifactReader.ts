@@ -8,17 +8,17 @@ import type {
   UImageEntryMetadata,
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";

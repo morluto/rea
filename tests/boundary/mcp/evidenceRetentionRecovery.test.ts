@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
@@ -207,7 +208,7 @@ it("keeps an oversized unretained observation failure bounded and the connection
 it("bounds fallback when the retention error itself has oversized diagnostics", async () => {
   const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "address_name", parameters: {}, result: "entry" },
     { immutable: true },

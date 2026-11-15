@@ -5,7 +5,7 @@ import {
   createGlobalPathReader,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
 import { JavaScriptSemanticWorkMeter } from "./javascriptSemanticWorkAllowance.js";
 import {
   isIntrinsicTypedArrayConstruction,
@@ -15,7 +15,7 @@ import {
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
-  semanticOriginalGlobalProcessAt,
+  semanticEffectMayReachOriginalGlobalProcess,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOriginCandidate,
@@ -511,7 +511,7 @@ const accessorEffectOperands = (
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-  referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
+  mayObserve: JavaScriptBindingIndex["mayObserve"],
 ): Generator<void, void> {
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
@@ -761,7 +761,7 @@ export function* collectSemanticMemberMutationsSteps(
       path[1] === "process" &&
       path.length > 2 &&
       node !== undefined &&
-      semanticOriginalGlobalProcessAt(node, state)
+      semanticEffectMayReachOriginalGlobalProcess(node, state)
     )
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
@@ -1068,7 +1068,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         continue;
       }
-      const globalProcess = semanticGlobalProcessPathOrigin(expression, state);
+      const globalProcess = semanticGlobalProcessPathOrigin(
+        expression,
+        state,
+        "effect",
+      );
       if (globalProcess !== undefined) {
         recordRequiredEffect(
           globalProcess.specifier,
@@ -1097,7 +1101,11 @@ export function* collectSemanticMemberMutationsSteps(
               recordedEffectCount += 1;
               clearSemanticValueCaches(state);
             }
-          const processOrigin = semanticGlobalProcessOrigin(expression, state);
+          const processOrigin = semanticGlobalProcessOrigin(
+            expression,
+            state,
+            "effect",
+          );
           if (processOrigin !== undefined)
             recordRequiredEffect(
               processOrigin.specifier,
@@ -2060,11 +2068,7 @@ export function* collectSemanticMemberMutationsSteps(
     let receiverIndex = 0;
     for (const node of deferredMapReceivers) {
       if (receiverIndex++ % 64 === 0) yield;
-      if (
-        isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
-        true
-      )
-        continue;
+      if (isIntrinsicMapLookup(node, state, { mayObserve }) === true) continue;
       deferredMapReceivers.delete(node);
       markReceiver(node.callee, node);
     }

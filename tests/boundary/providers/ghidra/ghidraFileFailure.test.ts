@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -7,12 +8,12 @@ import {
   ArtifactFileCleanupFailure,
   mapArtifactFileFailure,
   withArtifactRegularFile,
-} from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../../src/resources/AnalysisCleanupLease.js";
 import { OwnedRegularFileOperationFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
@@ -72,7 +73,7 @@ const retainForeignFailure = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
   const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "foreign", name: "foreign", version: null },
     {
       operation: "inspect_artifact",
