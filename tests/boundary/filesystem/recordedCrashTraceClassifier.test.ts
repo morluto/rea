@@ -6,7 +6,7 @@ import { assertHistoricalPidAccess } from "../../../scripts/verify/recorded-cras
 const node = "/fixture/node";
 const nodeExec = 'execve("/fixture/node", ["node", "rea.mjs"], 0x7fff) = 0';
 const psExec =
-  'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
+  'execve("/usr/bin/ps", ["/usr/bin/ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
 const parent = (...events: readonly string[]) => ({
   pid: 1200,
   text: [nodeExec, ...events].join("\n"),
