@@ -118,7 +118,7 @@ it.runIf(supportedHost)(
       capturedOutput: { truncated: true },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
+          code: "resource_constraint",
         },
         cleanup_error: { code: "cleanup_incomplete" },
       },
@@ -213,11 +213,9 @@ it.runIf(supportedHost)(
       throw new Error("Expected command and root-removal failures");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { stdout: "retained diagnostic" },
       diagnostics: {
-        primary_error: {
-          code: "execution_failure",
-          details: { diagnostics: { stdout: "retained diagnostic" } },
-        },
+        primary_error: { code: "execution_failure" },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
