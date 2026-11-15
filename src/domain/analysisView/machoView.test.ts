@@ -44,63 +44,37 @@ it("binds every Mach-O facet to its rows, including empty pages", () => {
   }
 });
 
-it("keeps historical symbol defaults scoped to their selected Mach-O facet", () => {
-  const { runtime_name: _runtimeName, ...historical } = symbol("_malloc");
-  const projected = projectAnalysisView(
-    parent({
-      ...report,
-      imports: coverage([historical]),
-      exports: coverage([historical]),
-    }),
-    { kind: "macho", facet: "exports", offset: 0, limit: 64 },
-  );
-  if (!projected.ok || projected.value.kind !== "macho")
-    throw new Error("Expected Mach-O page");
-  expect(projected.value.item).toEqual([{ ...historical, runtime_name: null }]);
-  expect(projected.value.item[0]).not.toHaveProperty("raw_name");
-  expect(
-    analysisViewResultSchema.safeParse({
-      ...projected.value,
-      item: undefined,
-    }).success,
-  ).toBe(false);
-});
-
-it.each(["not-encrypted", "malformed"] as const)(
-  "projects historical encryption rows with %s status",
-  (status) => {
-    const current = inspectMachoSchema.parse(report);
-    const { malformed_kind: _unrecorded, ...recorded } =
-      current.encryption.items[0]!;
-    const historical = {
-      ...recorded,
-      status,
-      ...(status === "malformed"
-        ? { reason: "slice has 3 encryption load commands", range: null }
-        : {}),
-    };
-    const source = { ...current, encryption: coverage([historical]) };
-    expect(inspectMachoSchema.safeParse(source).success).toBe(false);
-    const projected = projectAnalysisView(parent(source), {
-      kind: "macho",
-      facet: "encryption",
-      offset: 0,
-      limit: 10,
-    });
-    if (!projected.ok || projected.value.kind !== "macho")
-      throw new Error("Expected a historical Mach-O encryption page");
-    expect(projected.value.item).toEqual([
-      {
-        ...historical,
-        malformed_kind: status === "malformed" ? "unrecorded" : null,
-      },
-    ]);
-    expect(analysisViewResultSchema.safeParse(projected.value).success).toBe(
-      true,
+it("refuses symbols and encryption rows missing fields every producer writes", () => {
+  const { runtime_name: _runtimeName, ...withoutRuntimeName } =
+    symbol("_malloc");
+  const current = inspectMachoSchema.parse(report);
+  const { malformed_kind: _malformedKind, ...withoutCause } =
+    current.encryption.items[0]!;
+  for (const [source, path] of [
+    [
+      { ...report, exports: coverage([withoutRuntimeName]) },
+      ["exports", "items", 0, "runtime_name"],
+    ],
+    [
+      { ...report, encryption: coverage([withoutCause]) },
+      ["encryption", "items", 0, "malformed_kind"],
+    ],
+    [{ ...report, encryption: undefined }, ["encryption"]],
+  ] as const) {
+    const parsed = inspectMachoSchema.safeParse(source);
+    expect(parsed.error?.issues.map((issue) => issue.path)).toContainEqual(
+      path,
     );
-    expect(historical).not.toHaveProperty("malformed_kind");
-  },
-);
+    expect(
+      projectAnalysisView(parent(source), {
+        kind: "macho",
+        facet: "encryption",
+        offset: 0,
+        limit: 10,
+      }).ok,
+    ).toBe(false);
+  }
+});
 
 const symbol = (name: string) => ({
   name,
@@ -109,6 +83,12 @@ const symbol = (name: string) => ({
   weak: null,
   reexport: null,
   source: "libSystem",
+});
+const importSymbol = (name: string) => ({
+  ...symbol(name),
+  raw_name: null,
+  name_status: "exact" as const,
+  addend: null,
 });
 const coverage = <T>(items: T[], exhaustive = true) => ({
   items,
@@ -148,7 +128,7 @@ const report = {
     },
   ]),
   imports: coverage(
-    ["_malloc", "_free", "_open"].map((name) => symbol(name)),
+    ["_malloc", "_free", "_open"].map((name) => importSymbol(name)),
     false,
   ),
   exports: coverage([symbol("__mh_execute_header")]),
@@ -317,7 +297,7 @@ it("retains binary names and exact numbers alongside partial command fields", ()
       true,
     );
   }
-  // Historical records do not contain the newly added exact-byte fields.
+  // Names that decode as UTF-8 carry no exact-byte fields.
   expect(inspectMachoSchema.safeParse(report).success).toBe(true);
   expect(report.segments.items[0]).not.toHaveProperty("name_bytes_hex");
 });
@@ -387,7 +367,7 @@ describe("Mach-O analysis views", () => {
     if (!first.ok) throw first.error;
     expect(first.value).toMatchObject({
       kind: "macho",
-      item: [symbol("_free")],
+      item: [importSymbol("_free")],
       source_total: null,
       source_exhaustive: false,
       coverage: { status: "page", examined: 1, total: 3, next_offset: 2 },
@@ -436,25 +416,6 @@ describe("Mach-O analysis views", () => {
 });
 
 describe("Mach-O view uncertainty", () => {
-  it("keeps encryption unknown for Evidence retained before it was reported", () => {
-    const { encryption: _omitted, ...legacy } = report;
-    const projected = projectAnalysisView(parent(legacy), { kind: "summary" });
-    if (!projected.ok) throw projected.error;
-    expect(projected.value).toMatchObject({
-      summary: {
-        collections: {
-          encryption: { returned: 0, total: null, exhaustive: false },
-        },
-      },
-      unknowns: [expect.stringContaining("exhaustive imports, encryption;")],
-    });
-    expect(projected.value.limitations).toContainEqual(
-      expect.stringMatching(
-        /inspect_macho Evidence.*predates encryption reporting.*slice encryption status is unknown/iu,
-      ),
-    );
-  });
-
   it("keeps a missing subject unknown instead of inventing identity", () => {
     const projected = projectAnalysisView(parent(report, null), {
       kind: "summary",
