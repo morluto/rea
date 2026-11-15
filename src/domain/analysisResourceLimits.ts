@@ -209,6 +209,25 @@ export const DEFAULT_KUNA_FUNCTION_TIMEOUT_MS = 120_000;
 export const DEFAULT_PWNTOOLS_MAX_INPUT_BYTES = 32 * 1024 * 1024;
 export const MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES = 1024 * 1024 * 1024;
 
+/**
+ * Packet-capture `tshark -T json` expansion budget: the conservative estimate
+ * of the object graph `JSON.parse` would build, checked before parsing. The
+ * estimate charges at most 130 bytes per UTF-16 code unit (2 for the code unit
+ * plus 128 for a structural character), and the producer text is one Node
+ * string, so no admissible output can be charged more than
+ * `130 * NODE_MAX_STRING_LENGTH` (69,793,215,440 bytes, 65.0 GiB). The default
+ * and maximum sit above that, so the budget refuses only when an operator
+ * lowers it. Representative `-e` field output is charged about 17-28 bytes
+ * per code unit.
+ */
+export const DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES = 128 * 1024 ** 3;
+export const MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES = 1024 * 1024;
+export const MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES =
+  DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES;
+/** Largest expansion estimate any producer text Node can hold can reach. */
+export const LARGEST_CAPTURE_PACKET_JSON_EXPANSION_ESTIMATE =
+  130 * NODE_MAX_STRING_LENGTH;
+
 /** Windows ChangeTime settle window, poll, and poll count. */
 export const DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS = 2_000;
 export const MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS = 60_000;

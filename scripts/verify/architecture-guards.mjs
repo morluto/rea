@@ -237,6 +237,16 @@ checkCounted(
   [],
 );
 
+// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// which owns malformed JSON, the packet array and each packet's layers.
+checkCounted(
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "tshark-json-envelope",
+  files,
+  /\b_source\s*\.\s*layers\b/gu,
+  ["src/pcap/TsharkJsonPackets.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
