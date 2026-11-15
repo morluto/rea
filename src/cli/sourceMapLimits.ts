@@ -17,10 +17,6 @@ export const localSourceMapLimitCliOptions = {
   sourceMapBytes: cliDecimalField(shape.map_bytes),
   sourceMapCodecHeapMib: cliDecimalField(shape.codec_heap_mib),
 };
-export const fetchedSourceMapLimitCliOptions = {
-  ...sharedOptions,
-  sourceMapFetchBytes: cliDecimalField(shape.fetch_bytes),
-};
 /** Keep omitted caller fields omitted in Evidence parameters. */
 export const sourceMapLimitsFromCli = (options: {
   sourceMapBytes?: number | undefined;
@@ -30,7 +26,6 @@ export const sourceMapLimitsFromCli = (options: {
   sourceMapDecodedRecords?: number | undefined;
   sourceMapSectionDepth?: number | undefined;
   sourceMapCodecHeapMib?: number | undefined;
-  sourceMapFetchBytes?: number | undefined;
 }): { source_map_limits?: SourceMapLimitSelection } => {
   const selected: SourceMapLimitSelection = {
     ...(options.sourceMapBytes === undefined
@@ -54,9 +49,6 @@ export const sourceMapLimitsFromCli = (options: {
     ...(options.sourceMapCodecHeapMib === undefined
       ? {}
       : { codec_heap_mib: options.sourceMapCodecHeapMib }),
-    ...(options.sourceMapFetchBytes === undefined
-      ? {}
-      : { fetch_bytes: options.sourceMapFetchBytes }),
   };
   return Object.keys(selected).length === 0
     ? {}
