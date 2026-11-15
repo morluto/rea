@@ -1,9 +1,13 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
 import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -21,6 +25,7 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
@@ -52,6 +57,7 @@ import {
   GhidraFixtureLauncher as FixtureLauncher,
   ghidraFixturePath as fixturePath,
 } from "./ghidraClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.4";
@@ -124,6 +130,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -136,6 +143,9 @@ const clientFor = (
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.bridgeMaxReplyBytes === undefined
+      ? {}
+      : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
     ...(options.onDiagnostic === undefined
       ? {}
       : { onDiagnostic: options.onDiagnostic }),
@@ -1383,7 +1393,7 @@ it.each([0, 1])(
         cancelled = result;
       });
       controllers[cancelledIndex]?.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { kind: "cancelled" },
@@ -1545,7 +1555,7 @@ it("applies one startup deadline and removes the private runtime", async () => {
   const pending = client.start();
   const child = await launcher.started;
   await vi.advanceTimersByTimeAsync(30);
-  const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+  const result = await waitFor(() => pending);
   vi.useRealTimers();
 
   expect(result).toMatchObject({
@@ -1610,7 +1620,7 @@ describe("GhidraClient established requests", () => {
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -1675,7 +1685,7 @@ describe("GhidraClient runtime removal failures", () => {
             { document: null, procedure: "fixture_main" },
             { signal: controller.signal },
           );
-          await vi.waitFor(() =>
+          await waitFor(() =>
             expect(launcher.requests).toContain("procedure_pseudo_code"),
           );
           const queued = client.callTool("procedure_info", {
@@ -1769,7 +1779,7 @@ describe("GhidraClient cleanup and diagnostics", () => {
       client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({ ok: true });
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(client.diagnostics()).toMatchObject({
         diagnostic_truncated: true,
       });
@@ -1993,6 +2003,31 @@ describe("GhidraClient process output drain before startup failure", () => {
       output_incomplete: true,
       stdout: { text: oomeOutput },
     });
+  });
+
+  it("drains output under a finalize budget after the startup deadline expires", async () => {
+    const { launcher, finishOutput } = preExitedProcessLauncher({
+      output: oomeOutput,
+      closeOutput: true,
+      // Output closes 700 ms after launch: after the 400 ms startup deadline
+      // whenever launch beat it, and inside the 1 s finalize budget.
+      outputDelayMs: 700,
+    });
+    onTestFinished(finishOutput);
+    const client = clientFor(launcher, { startupTimeoutMs: 400 });
+    const result = await client.start();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.diagnostics).toMatchObject({
+      exit_code: 73,
+      stdout: { text: oomeOutput },
+      failure_output: { complete: true, stdout: { text: oomeOutput } },
+    });
+    expect(result.error.diagnostics).not.toHaveProperty(
+      "output_incomplete",
+      true,
+    );
   });
 
   it("preserves an observed process exit when cancellation interrupts diagnostic drain", async () => {
@@ -2416,7 +2451,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -2498,7 +2533,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     const client = clientFor(launcher, { startupTimeoutMs: 10000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    await vi.waitFor(() => expect(observed).toHaveBeenCalled());
+    await waitFor(() => expect(observed).toHaveBeenCalled());
     controller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected startup cancellation");
@@ -2617,6 +2652,49 @@ it.each([null, "helper owner stopped"])(
   },
 );
 
+it.each([
+  { interruption: "timeout", kind: "timeout" },
+  { interruption: "owner close", kind: "process" },
+] as const)(
+  "reports the aborted startup deadline's $interruption over a producer cancellation with its own reason",
+  async ({ interruption, kind }) => {
+    const controller = new AbortController();
+    const cancellation = new AnalysisCancelledError("open_binary", {
+      cause: "helper owner stopped",
+    });
+    const client = clientFor(
+      {
+        launch: async (_session, options) => {
+          if (options?.signal === undefined)
+            throw new Error("Expected owned startup signal");
+          if (interruption === "owner close")
+            controller.abort(OwnerCancellation.startupOwnerClosed);
+          if (!options.signal.aborted)
+            await new Promise<void>((resolve) =>
+              options.signal?.addEventListener("abort", () => resolve(), {
+                once: true,
+              }),
+            );
+          return err(
+            new GhidraLaunchError("producer helper cancelled", {
+              primaryFailure: cancellation,
+            }),
+          );
+        },
+      },
+      { startupTimeoutMs: interruption === "timeout" ? 50 : 60_000 },
+    );
+    const result = await client.start(controller.signal);
+    expect(result).toMatchObject({ ok: false, error: { kind } });
+    if (result.ok) throw new Error("Expected startup failure");
+    if (kind === "process")
+      expect(result.error.message).toContain(
+        "Ghidra session closed during startup",
+      );
+    expect(result.error.cancellation?.reason).not.toBe("helper owner stopped");
+  },
+);
+
 it("preserves a producer failure while its result waits for the startup deadline", async () => {
   const physical = new GhidraLaunchError(
     "controlled physical failure before finalization",
@@ -2687,3 +2765,60 @@ it.each(["search_procedures", "search_strings"] as const)(
     ).toBe(4);
   },
 );
+
+describe("GhidraClient reply ceiling", () => {
+  it("shuts the bridge down under the session's ceilings after its seed is refused", async () => {
+    // Cleanup must not depend on the current settings: a seed refused after
+    // startup would otherwise refuse the shutdown request before writing it.
+    let seedRefused = false;
+    const replyCeiling: BridgeMaxReplyBytes = {
+      get maximumBytes(): number {
+        if (seedRefused)
+          throw new ConfigurationError("invalid bridge.max_reply_bytes seed");
+        return 1024 * 1024;
+      },
+      source: "runtime",
+    };
+    const logs: string[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write: (line) => {
+          logs.push(line);
+        },
+      },
+    );
+    const client = clientFor(new FixtureLauncher(), {
+      bridgeMaxReplyBytes: replyCeiling,
+      logger,
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    seedRefused = true;
+
+    await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+    expect(logs.join("")).not.toContain(
+      "Ghidra bridge shutdown was not confirmed",
+    );
+  });
+
+  it("refuses a reply above bridge.max_reply_bytes with a typed limit", async () => {
+    const client = clientFor(new FixtureLauncher("oversized_result"), {
+      bridgeMaxReplyBytes: { maximumBytes: 1024 * 1024, source: "setting" },
+    });
+
+    const result = await client.callTool("list_strings", { document: null });
+
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "protocol",
+      cause: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "transport",
+        limit: {
+          setting: "bridge.max_reply_bytes",
+          effective_value: 1024 * 1024,
+          source: "setting",
+        },
+      },
+    });
+  });
+});

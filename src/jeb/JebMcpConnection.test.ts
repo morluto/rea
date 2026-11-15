@@ -256,13 +256,15 @@ describe("decodeJebToolResult", () => {
     ).toEqual({ success: true, text: "int x(){}" });
   });
 
-  it("keeps non-JSON success text as an observed string", () => {
-    expect(
-      decodeJebToolResult({
-        content: [{ type: "text", text: "plain observation" }],
-      }),
-    ).toBe("plain observation");
-  });
+  it.each(["plain observation", '{"success":true,"text":"int x('])(
+    "rejects success text that is not the declared JSON envelope: %s",
+    (text) => {
+      expect(
+        () => decodeJebToolResult({ content: [{ type: "text", text }] }),
+        "malformed or truncated JSON is never decoded as an observed string",
+      ).toThrow(/JEB MCP returned malformed JSON text/u);
+    },
+  );
 
   it("rejects unparseable error text as a protocol failure with the engine text", () => {
     expect(() =>
@@ -493,9 +495,9 @@ it("selects structured JEB evidence ahead of text while admitting mixed content"
   ).toEqual({ observed: true });
   expect(
     decodeJebToolResult({
-      content: [image, { type: "text", text: "fallback" }],
+      content: [image, { type: "text", text: '{"fallback":true}' }],
     }),
-  ).toBe("fallback");
+  ).toEqual({ fallback: true });
   for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
     expect(() =>
       decodeJebToolResult({

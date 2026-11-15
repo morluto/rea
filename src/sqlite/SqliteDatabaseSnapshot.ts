@@ -79,7 +79,7 @@ const optionalSidecarStat = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite snapshot file set changed before sidecar inspection: ${databasePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       const remedy =
         "Use the application's supported consistent offline export or copy workflow to move the complete known database file set to a shorter path. Do not rename a live database or omit its WAL or journal.";
@@ -139,13 +139,14 @@ const duringAcquisition = async <T>(
       throw new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set changed during acquisition: ${path}`,
-        { cause },
+        { cause, integrityCheck: "container-identity" },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const changed = new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set exceeded its observed size during acquisition: ${path}`,
         {
+          integrityCheck: "container-identity",
           cause,
           ...(cause.partialObservation === undefined
             ? {}
@@ -196,6 +197,7 @@ const readObservedArtifact = (
             throw new ArtifactReaderFailure(
               "integrity",
               `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
+              { integrityCheck: "container-identity" },
             );
           return current;
         },
@@ -234,6 +236,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed before open: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       // TRUNCATE commits leave an empty file; PERSIST commits zero the complete
       // 28-byte fixed header. A new active journal may zero only its magic bytes.
@@ -256,6 +259,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed during inspection: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       if (
         before.size !== 0n &&
@@ -266,6 +270,9 @@ const verifyInactiveJournal = async (
           phase === "initial"
             ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
             : `Rollback journal became active or malformed during database acquisition: ${path}`,
+          phase === "initial"
+            ? undefined
+            : { integrityCheck: "container-identity" },
         );
     },
   );
@@ -426,6 +433,7 @@ export const captureSqliteDatabaseSnapshot = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite snapshot file set changed during acquisition: ${paths[index] ?? path}`,
+          { integrityCheck: "container-identity" },
         );
     assertArtifactReadActive(signal);
     return { snapshotPath, artifact, wal: walArtifact };

@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
@@ -13,6 +12,7 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 
 // dyld_info abbreviates a terminal .dylib suffix; padding is part of the name.
 const INSTALL_NAME_CASES = [
@@ -178,12 +178,15 @@ export async function verifyNativeProvenance(app, executable) {
 
 /** Compile independent inputs; their unusual loader paths are never executed. */
 async function verifyInstallNames() {
-  const root = await mkdtemp(join(tmpdir(), "rea-macho-install-names-"));
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-macho-install-names-",
+  });
+  const root = rootFixture.path;
   const observations = [];
   const commands = await createPackageVerifierCommands({
     workspace: {
       path: root,
-      close: () => rm(root, { recursive: true, force: true }),
+      close: () => rootFixture.release(),
     },
   });
   const exec = (command, args) =>

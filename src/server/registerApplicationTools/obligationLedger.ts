@@ -7,7 +7,7 @@ import { resolveReconstructionObligationLedgerRequest } from "../../application/
 import { ok } from "../../domain/result.js";
 import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -20,7 +20,7 @@ export const registerReconstructionObligationLedgerTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     async (input, context) =>
       runAdmittedToolOperation(
         server,

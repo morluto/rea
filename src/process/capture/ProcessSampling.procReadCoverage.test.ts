@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
   failures: new Map<string, string>(),
@@ -176,17 +176,8 @@ import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
 import type { ProcessSample } from "../../domain/process/processCapture.js";
 
-const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
-beforeAll(() => {
-  Object.defineProperty(process, "platform", {
-    configurable: true,
-    value: "linux",
-  });
-});
-afterAll(() => {
-  if (platformDescriptor !== undefined)
-    Object.defineProperty(process, "platform", platformDescriptor);
-});
+/** The sampled host; one Darwin case selects ps-only admission. */
+let platform: NodeJS.Platform = "linux";
 
 const processRows = [
   { pid: 100, parent: 1, start: 1100 },
@@ -261,6 +252,7 @@ const start = (runId = fixture.runId) => {
   const samples: ProcessSample[] = [];
   const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
+    platform,
     rootPid: 100,
     runId,
     started: 0,
@@ -630,10 +622,7 @@ it("does not attribute a root bearing a different run token", async () => {
 
 it("admits a stable Darwin PTY root when ps does not report a session ID", async () => {
   setUpFixture();
-  Object.defineProperty(process, "platform", {
-    configurable: true,
-    value: "darwin",
-  });
+  platform = "darwin";
   fixture.psOutput = "100 1 100 0 fixture-command\n";
   try {
     const { samples, stop } = start();
@@ -641,10 +630,7 @@ it("admits a stable Darwin PTY root when ps does not report a session ID", async
     await stop();
     expect(samples[0]).toMatchObject({ pid: 100, session_id: null });
   } finally {
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "linux",
-    });
+    platform = "linux";
   }
 });
 
@@ -691,10 +677,7 @@ it.each(["absent", "unavailable"] as const)(
   "classifies native token availability during Darwin sampler initialization: %s",
   async (availability) => {
     setUpFixture();
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "darwin",
-    });
+    platform = "darwin";
     fixture.runIdAvailability = availability;
     fixture.runIdFailure =
       availability === "absent"
@@ -717,10 +700,7 @@ it.each(["absent", "unavailable"] as const)(
         );
       }
     } finally {
-      Object.defineProperty(process, "platform", {
-        configurable: true,
-        value: "linux",
-      });
+      platform = "linux";
     }
   },
 );
@@ -735,6 +715,7 @@ it("adopts the failed run-token descriptor into the actual capture scope before 
     fixture.runIdReadResolve = resolve;
   });
   const stop = startProcessSampler({
+    platform,
     rootPid: 100,
     runId: fixture.runId,
     resourceScope,

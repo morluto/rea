@@ -99,7 +99,7 @@ export const projectCommandObservationView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: parameters.data,
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,

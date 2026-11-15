@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -141,14 +142,21 @@ async function runUnicodeSourceMapComparison(
   const advertised = (await harness.client.listTools()).tools.find(
     ({ name }) => name === "compare_source_to_bundle",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Comparison tool output schema is missing");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema = advertised.outputSchema as AnySchema;
+  const outputSchema = canonicalOutputSchema(advertised.name) as AnySchema;
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const validateOutput = ajv.compile(outputSchema);
   expect(validateOutput(reply.structuredContent)).toBe(true);
 }
+
+/** A project-ignored exclusion without the pattern that admission requires. */
+const exclusionWithoutPattern = {
+  path: "vendor/removed.ts",
+  entry_kind: "file",
+  reason: "project-ignored",
+} as const;
 
 async function runInlineWorkflowScenarios(
   harness: ApplicationMcpHarness,
@@ -246,13 +254,7 @@ async function runInlineWorkflowScenarios(
     ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
     root_sha256: undefined,
     inventory_state: "partial",
-    exclusions: [
-      {
-        path: "vendor/removed.ts",
-        reason: "project-ignored",
-        pattern: "vendor/",
-      },
-    ],
+    exclusions: [{ ...exclusionWithoutPattern, pattern: "vendor/" }],
   });
   const argumentsWithExclusion = {
     ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
@@ -270,7 +272,7 @@ async function runInlineWorkflowScenarios(
     ...argumentsWithExclusion,
     reference: {
       ...referenceWithExclusion,
-      exclusions: [{ path: "vendor/removed.ts", reason: "project-ignored" }],
+      exclusions: [exclusionWithoutPattern],
     },
   };
   expect(

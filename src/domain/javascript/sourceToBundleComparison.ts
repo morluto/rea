@@ -1,6 +1,7 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { absenceClaimable } from "../comparisonSemantics.js";
+import { joinCoverageStatus } from "../coverage.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -365,13 +366,16 @@ interface CoverageFactors {
   readonly input: SourceToBundleComparisonInput;
 }
 
+/** Unknown or unavailable input coverage keeps the comparison unknown. */
 const coverageStatus = (
   factors: CoverageFactors,
 ): SourceToBundleComparisonResult["coverage"]["status"] => {
-  return factors.input.reference.inventory_state === "complete" &&
-    factors.input.application.graph.coverage.status === "complete"
-    ? "complete-within-inputs"
-    : "partial";
+  const graph = factors.input.application.graph.coverage.status;
+  const status = joinCoverageStatus([
+    factors.input.reference.inventory_state,
+    graph === "unavailable" ? "unknown" : graph,
+  ]);
+  return status === "complete" ? "complete-within-inputs" : status;
 };
 
 const comparisonLimitations = (factors: CoverageFactors): string[] =>

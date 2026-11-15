@@ -82,11 +82,11 @@ Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui p
 
 Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../getting-started/installation.md#supported-agents). Lihat [instalasi dan penyiapan](../getting-started/installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
 
-MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
+MCP menggunakan skema input ringkas secara default. Petunjuk yang dihilangkan skema ringkas mengikuti deskripsi alat. Semua alat dan validasi server kanonis tidak berubah; lihat panduan kontrak MCP.
 
 Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
 
-Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte. Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
 
 ### Minta agen Anda
 
@@ -177,7 +177,7 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | JavaScript / Electron      | Modul, impor, source map, rute, IPC, dan hubungan add-on native                                       | Node.js dan npm; [analisis aplikasi](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
 | Situs web                  | Struktur halaman, skrip, pengamatan jaringan, dan tangkapan layar yang diminta                        | Peramban berbasis Chrome; [analisis peramban](../guides/web/browser-observation.md)                                                                           |
 | Rekaman jaringan tersimpan | Permintaan, respons, payload yang terekspos, dan lokasi sumber                                        | HAR / Fiddler Everywhere SAZ; mitmdump di Linux untuk rekaman native mitmproxy; [panduan rekaman](../guides/web/web-network-captures.md)                      |
-| Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil; [panduan pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil (diverifikasi di Linux); [panduan pcap](../guides/data/pcap-analysis.md)                                                 |
 | Assembly .NET              | Metadata, instruksi CIL, dependensi native yang dideklarasikan, dan perbandingan build                | Tidak ada (hanya analisis statis); [panduan kode terkelola](../guides/managed/managed-code-analysis.md)                                                       |
 | PyInstaller                | CArchive, PYZ, Python bytecode                                                                        | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
 | Deno compile binaries      | Virtual files, entry point, recorded options, npm snapshot length                                     | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |

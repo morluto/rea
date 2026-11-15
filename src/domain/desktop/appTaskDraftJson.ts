@@ -31,6 +31,7 @@ const locatePointer = (view: JsonValue | null, pointer: string) =>
 const resolvePointer = (view: JsonValue | null, pointer: string) =>
   resolveView(view, pointer, "json");
 import { selectorOf, spellCondition } from "./viewSelector.js";
+import { isRecord } from "../isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -181,11 +182,6 @@ export const ownNamesUnreadOtherwise = (
   });
   return kept;
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The array a member pointer sits in, when its parent is one in a view. The empty pointer is the view itself, as a file whose top level is an array. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {

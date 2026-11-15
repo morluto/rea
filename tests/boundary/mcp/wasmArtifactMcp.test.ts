@@ -10,7 +10,7 @@ import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";
@@ -24,6 +24,7 @@ import {
   wasmArtifactFixture,
   wasmArtifactExecution,
 } from "../../fixtures/wasm/artifact.js";
+import { waitFor } from "../../support/testWait.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -344,7 +345,7 @@ it.each([undefined, "summary"] as const)(
         candidate_paths: [],
       });
       await harness.client.ping();
-      await vi.waitFor(() => {
+      await waitFor(() => {
         // Failed summary delivery retains the complete producer, without a derived view.
         expect(session.exportEvidenceBundle().records).toEqual([partial]);
       });
@@ -552,8 +553,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Missing WASM view schemas");
+  if (advertised === undefined) throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
   for (const [view, expected] of [

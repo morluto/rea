@@ -11,7 +11,7 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -124,7 +124,6 @@ const simulatedNativeEvidence = (path, sha256) =>
     },
   );
 let temporary;
-let retainTemporary = false;
 let report;
 const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
   try {
@@ -141,8 +140,13 @@ const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
       { timeoutMs, diagnosticBytes: 16 * 1024 * 1024 },
     );
   } catch (cause) {
-    retainTemporary ||=
-      cause instanceof OwnedCommandFailure && cause.cleanupOwner !== undefined;
+    if (
+      cause instanceof OwnedCommandFailure &&
+      cause.cleanupOwner !== undefined
+    )
+      temporary.retain(
+        `Command cleanup is incomplete; retaining its private inputs at ${temporary.path}.`,
+      );
     throw cause;
   }
 };
@@ -314,7 +318,7 @@ await withVerifierCleanup(async () => {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await PrivateRuntimeRoot.create({
+    temporary = await VerifierFixture.open({
       prefix: "rea-native-handoff-verifier-",
     });
     const bundlePath = join(temporary.path, "bundle.json");
@@ -381,7 +385,7 @@ await withVerifierCleanup(async () => {
     );
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await PrivateRuntimeRoot.create({
+    temporary ??= await VerifierFixture.open({
       prefix: "rea-native-handoff-verifier-",
     });
     const input = join(temporary.path, "token-input.json");
@@ -461,15 +465,5 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
     assert.ok(safeIdentity, "Native identity/linkage oracle failed");
     assert.ok(safeApplicability, "File analysis applicability oracle failed");
   }
-}, [
-  () => client.close(),
-  () => transport.close(),
-  async () => {
-    if (retainTemporary)
-      throw new Error(
-        `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
-      );
-    await temporary?.close();
-  },
-]);
+}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
 console.log(serialize(report));

@@ -8,7 +8,6 @@ import {
   access,
   copyFile,
   mkdir,
-  mkdtemp,
   readFile,
   rename,
   readdir,
@@ -17,13 +16,16 @@ import {
   writeFile,
   open,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
 import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -48,7 +50,12 @@ const { PrivateRuntimeRootUnavailableError } = await import(
     join(packageRoot, "dist/process/PrivateRuntimeRootUnavailableError.js"),
   )
 );
-const workspace = await mkdtemp(join(tmpdir(), "rea-native-conformance-"));
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-native-conformance-",
+  private: false,
+});
+const workspace = fixture.path;
 // A pwsh caller can supply module paths incompatible with Windows PowerShell.
 // Each independent observer must discover its own module path.
 const windowsPowerShellEnvironment = Object.fromEntries(
@@ -215,7 +222,7 @@ const wait = async (child) => {
   throw new Error("Owned job did not settle within the fixture deadline.");
 };
 const report = { ok: false, artifact: "verified", controls: {}, processes: {} };
-await withVerifierCleanup(async () => {
+await withVerifierFixture(fixture, async () => {
   try {
     // Exercise the loader in a process whose image is not named node.exe. The
     // ordinary Windows lane otherwise cannot detect eager Node-API imports.
@@ -1036,7 +1043,7 @@ writeFileSync(${JSON.stringify(ownerPidFile)},String(child.pid));setInterval(()=
     );
     throw cause;
   }
-}, [() => rm(workspace, { recursive: true, force: true })]);
+});
 report.ok = true;
 if (process.argv[4] !== undefined)
   await writeFile(process.argv[4], `${JSON.stringify(report)}\n`);
