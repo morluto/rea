@@ -10,6 +10,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CLEANUP = fileURLToPath(
   new URL("../../bridge/agentenv/solve_cleanup.py", import.meta.url),
@@ -122,7 +123,7 @@ export class SolveSandboxRoot {
     } catch (error: unknown) {
       return {
         status: "incomplete",
-        reason: error instanceof Error ? error.message : String(error),
+        reason: errorMessage(error),
       };
     }
   }

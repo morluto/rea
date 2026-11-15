@@ -22,6 +22,7 @@ import {
   withArtifactFileHandle,
   type ArtifactResourceScope,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -178,7 +179,7 @@ export const removeSandbox = async (
       await execFileAsync(docker, ["rm", "-f", ...containers], options);
     return undefined;
   } catch (cause: unknown) {
-    return `Removing sandbox ${sandbox}'s containers failed: ${cause instanceof Error ? cause.message : String(cause)}. ${manual}`;
+    return `Removing sandbox ${sandbox}'s containers failed: ${errorMessage(cause)}. ${manual}`;
   }
 };
 

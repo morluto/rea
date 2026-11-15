@@ -20,6 +20,7 @@ import {
   type CutterDiscoveryOptions,
 } from "./CutterBridgeClient.js";
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -129,7 +130,7 @@ export class CutterBridgeService {
               "cutter",
               [],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             );

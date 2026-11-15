@@ -67,6 +67,7 @@ import {
   jadxBridgeIdentity,
   type JadxBridgeIdentity,
 } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const BRIDGE_SOURCE = fileURLToPath(JADX_BRIDGE_SOURCE_URL);
 type Outcome = Awaited<ReturnType<AndroidAnalysisPort["execute"]>>;
@@ -258,13 +259,9 @@ const cleanup = async (
       cleanupResources(resources),
       {
         reason: cleanupCauses
-          .map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          )
+          .map((failure) => errorMessage(failure))
           .join("; "),
-        cleanup_causes: cleanupCauses.map((failure) =>
-          failure instanceof Error ? failure.message : String(failure),
-        ),
+        cleanup_causes: cleanupCauses.map((failure) => errorMessage(failure)),
         provider_cleanup: cleanupCauses.map((failure) =>
           failure instanceof ProviderCleanupError
             ? (failure.diagnostics ?? null)
@@ -291,7 +288,7 @@ const cleanup = async (
       "jadx",
       cleanupResources(resources),
       {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
       { operation: resources.operation, cause },
     );

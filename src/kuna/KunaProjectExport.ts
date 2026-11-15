@@ -59,6 +59,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
@@ -153,9 +154,6 @@ export interface KunaExportRequest {
   readonly deadline: KunaDeadline;
 }
 
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
@@ -164,7 +162,7 @@ const isMissing = (cause: unknown): boolean =>
 const projectCacheFailure = (cause: unknown) =>
   new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
-    userMessage: `Kuna project cache failed: ${message(cause)}`,
+    userMessage: `Kuna project cache failed: ${errorMessage(cause)}`,
   });
 
 /** A project-cache read's own report, apart from its cleanup. */

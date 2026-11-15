@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { analysisParameterLimitSchema } from "./analysisSettingDefinitions.js";
+
 /** Opaque producer text and the command capture's explicit completion facts. */
 export const commandObservationSchema = z.strictObject({
   stdout: z.string(),
@@ -9,6 +11,11 @@ export const commandObservationSchema = z.strictObject({
   output_budget_bytes: z.int().positive().exactOptional(),
   output_budget_source: z.enum(["default", "request"]).exactOptional(),
   output_truncated: z.boolean(),
+  /**
+   * The request parameter whose budget stopped output collection, present
+   * only when the capture reached it.
+   */
+  output_limit: analysisParameterLimitSchema.exactOptional(),
   completion_status: z
     .enum(["complete", "rejected", "unknown"])
     .describe(

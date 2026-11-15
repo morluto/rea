@@ -289,7 +289,13 @@ it.runIf(!unsupportedHost).each([
         throw new Error("Excess diagnostics must not return partial success");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "resource_constraint",
-        details: { captured_output: { truncated: true } },
+        details: {
+          captured_output: { truncated: true },
+          limit: {
+            parameter: "producer_limits.diagnostic_bytes",
+            effective_value: budget ?? 1048576,
+          },
+        },
       });
     }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });

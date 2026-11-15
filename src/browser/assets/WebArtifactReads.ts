@@ -31,6 +31,7 @@ import {
   malformedInput,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** The selected artifact and input field owning a reader failure. */
 export interface WebArtifactReadContext {
@@ -258,7 +259,7 @@ const webArtifactPrimaryError = (
     diagnostics: {
       target_path: context.targetPath,
       field: context.field.join("."),
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };

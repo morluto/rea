@@ -28,6 +28,7 @@ import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -249,6 +250,6 @@ const adapterFailure = (cause: unknown, path: string): AnalysisError =>
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });

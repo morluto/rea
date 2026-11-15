@@ -7,6 +7,7 @@ import {
   unresolvedMaintenanceRemediation,
   type IntegrationMaintenance,
 } from "./UpdateMaintenance.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Global npm installation that owns the running package and its entry point. */
 export interface NpmInstallation {
@@ -168,7 +169,7 @@ export const runUpdate = async (
   try {
     cleanupFailure = await host.close?.();
   } catch (cause: unknown) {
-    cleanupFailure = `Update resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    cleanupFailure = `Update resource cleanup failed: ${errorMessage(cause)}`;
   }
   if (failed) {
     if (cleanupFailure !== undefined)

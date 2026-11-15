@@ -136,6 +136,7 @@ import { kunaUnavailable } from "./KunaUnavailable.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -238,10 +239,6 @@ const isUnavailableProject = (cause: unknown): boolean =>
     cause.code === "ENOTDIR" ||
     cause.code === "ESTALE");
 
-/** Read through a call so a check before an await does not narrow later ones. */
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** How one Kuna session operation reports a failure nothing typed it as. */
 const kunaSessionDialect = (operation: string): ProviderFailureDialect => ({
   providerId: KUNA_PROVIDER_ID,
@@ -249,7 +246,7 @@ const kunaSessionDialect = (operation: string): ProviderFailureDialect => ({
   unclassified: (cause) =>
     new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
       cause,
-      userMessage: `Kuna ${operation} failed: ${message(cause)}`,
+      userMessage: `Kuna ${operation} failed: ${errorMessage(cause)}`,
     }),
 });
 
@@ -2331,11 +2328,7 @@ export class KunaSessionClient implements AnalysisClient {
       KUNA_PROVIDER_ID,
       failures.map(({ path }) => path),
       {
-        reason: failures
-          .map(({ cause }) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: failures.map(({ cause }) => errorMessage(cause)).join("; "),
       },
       {
         operation,

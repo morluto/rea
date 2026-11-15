@@ -442,8 +442,31 @@ it("exposes CLI-equivalent Evidence results and session tools", async () => {
       observations: { source_maps: { status: "not_requested" } },
     },
   });
+  // A page observation names the page URL the inspection reported; a target
+  // list names no single document.
+  const page = {
+    kind: "url",
+    url: webPageInspectionSchema.parse(
+      normalizedResultOf(inspected.structuredContent),
+    ).target.url,
+    origin: browser.allowedOrigin,
+  };
+  expect(page.url).toBe(`${browser.allowedOrigin}/app?token=frame-secret`);
+  expect(subjectOf(listed.structuredContent)).toEqual({
+    identity: { kind: "unknown", reason: "not-observed" },
+    name: null,
+    local_path: null,
+  });
+  for (const result of [inspected, analyzed])
+    expect(subjectOf(result.structuredContent)).toEqual({
+      identity: page,
+      name: null,
+      local_path: null,
+    });
   await verifySessionAndComparisonTools(connected, browser, inspected);
 });
+
+const subjectOf = (content: unknown): unknown => parseEvidence(content).subject;
 
 const verifySessionAndComparisonTools = async (
   connected: Awaited<ReturnType<typeof connectBrowser>>,
@@ -550,6 +573,13 @@ const verifySessionAndComparisonTools = async (
     },
   });
   expect(JSON.stringify(malformedComparison.content)).toContain("types");
+  for (const result of [observedSession, webMcp])
+    expect(subjectOf(result.structuredContent)).toMatchObject({
+      identity: { kind: "url", origin: browser.allowedOrigin },
+    });
+  expect(subjectOf(compared.structuredContent)).toMatchObject({
+    identity: { kind: "unknown", reason: "not-observed" },
+  });
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
     arguments: { before: { inspection: capture } },
@@ -577,6 +607,9 @@ const verifyScreenshotTools = async (
     },
   });
   expect(screenshot.isError).not.toBe(true);
+  expect(subjectOf(screenshot.structuredContent)).toMatchObject({
+    identity: { kind: "url", origin: browser.allowedOrigin },
+  });
   const screenshotArtifact = artifactOf(screenshot.structuredContent);
   const visual = await client.callTool({
     name: "compare_web_screenshots",

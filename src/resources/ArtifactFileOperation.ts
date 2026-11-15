@@ -25,6 +25,7 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
 import { ParseFailureError, type LimitRef } from "../domain/parseFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Artifact projection plus the exact descriptor owner and physical operation outcome. */
 export class ArtifactFileCleanupFailure<
@@ -66,11 +67,9 @@ export class ArtifactFileCleanupFailure<
       fileCleanupFailure.operationFailure !== undefined &&
         fileCleanupFailure.outcome.kind === "failed" &&
         Object.is(primary, fileCleanupFailure.operationFailure.operationCause)
-        ? new ArtifactReaderFailure(
-            "io",
-            primary instanceof Error ? primary.message : String(primary),
-            { cause: primary },
-          )
+        ? new ArtifactReaderFailure("io", errorMessage(primary), {
+            cause: primary,
+          })
         : primary,
       ArtifactReaderFailure.cleanupObservation(
         fileCleanupFailure.cleanupCause,

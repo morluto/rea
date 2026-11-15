@@ -41,6 +41,7 @@ import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The exact producing range for one facet, including a failed C block. */
 export interface KunaProjectFileSpan {
@@ -241,10 +242,7 @@ const spanCloseFailure = (
   failure: RegularFileCleanupFailure<string>,
   ownership: KunaSpanOwnership,
 ): AnalysisError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   const completed = failure.outcome.kind === "completed";
   const marker = new ProviderCleanupError(
     KUNA_PROVIDER_ID,
@@ -277,10 +275,7 @@ const spanCloseFailure = (
       ? primaryCause
       : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: primaryCause,
-          userMessage:
-            primaryCause instanceof Error
-              ? primaryCause.message
-              : String(primaryCause),
+          userMessage: errorMessage(primaryCause),
         });
   return analysisErrorWithCleanupDependencies(primary, marker, operation);
 };

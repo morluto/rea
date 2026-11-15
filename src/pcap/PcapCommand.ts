@@ -46,6 +46,7 @@ import {
   attributePcapLimitedExit,
   PCAP_LIMITER_REMEDIATION,
 } from "./PcapNativeBound.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export type PcapCommandLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -281,7 +282,7 @@ export const runPcapCommand = async (options: {
       );
     const outcome = providerOutcomeOf(cause);
     if (outcome === undefined) {
-      const diagnostic = cause instanceof Error ? cause.message : String(cause);
+      const diagnostic = errorMessage(cause);
       const details = { cause, ...cleanupDetails };
       if (!commandAttempted) throw preparationFailure(diagnostic, details);
       // An errno the launcher raised without a spawn identity names no stage.

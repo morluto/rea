@@ -33,7 +33,6 @@ import {
   type MetadataTokenFact,
   metadataToken,
   readMetadataString,
-  sha256Bytes,
 } from "./managedMetadataHeaps.js";
 import { memberListTable } from "./managedMemberPointers.js";
 import type {
@@ -41,6 +40,7 @@ import type {
   TypeMemberListFacts,
 } from "./managedTypeMemberLists.js";
 import type { TypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
 /** A renderable TypeDef projection paired with its original source row. */
@@ -862,7 +862,7 @@ export const readLocalSignatureFacts = (
     if (cursor !== blob.length)
       malformedSignature("Trailing LocalVarSig data", cursor);
     return ok({
-      raw_sha256: sha256Bytes(blob),
+      raw_sha256: sha256Hex(blob),
       has_context_dependent_types: contextDependent,
     });
   } catch (cause: unknown) {
@@ -1177,7 +1177,7 @@ const projectSignature = (
 ): ManagedSignature => {
   return {
     raw_length: blob.length,
-    raw_sha256: rawSha256 ?? sha256Bytes(blob),
+    raw_sha256: rawSha256 ?? sha256Hex(blob),
     resolved_sha256:
       decoded.kind === "unknown" || decoded.parse_status === "malformed"
         ? null

@@ -35,13 +35,24 @@ cliTest(
           output,
           "--max-rustc-hashes",
           String(maxHashes),
+          "--full-output",
           "--json",
         ],
       });
       expect(delivered.exitCode, delivered.stderr).toBe(0);
+      const envelope = delivered.json as {
+        data: { summary: { normalized_result: unknown } };
+        meta: { cli_controls?: unknown };
+      };
+      // The summary wraps the view; the CLI still names the option for the
+      // control the complete Evidence records.
+      expect(envelope.meta.cli_controls).toEqual(
+        maxHashes === 64
+          ? { max_rustc_hashes: "--max-rustc-hashes" }
+          : undefined,
+      );
       const summary = analysisViewResultSchema.parse(
-        (delivered.json as { summary: { normalized_result: unknown } }).summary
-          .normalized_result,
+        envelope.data.summary.normalized_result,
       );
       if (
         summary.kind !== "summary" ||
@@ -57,6 +68,10 @@ cliTest(
                 status: "partial",
                 reason: "max_rustc_hashes",
                 effective_limit: 64,
+                limit: expect.objectContaining({
+                  parameter: "max_rustc_hashes",
+                  effective_value: 64,
+                }),
               },
             }
           : {}),

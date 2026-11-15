@@ -96,7 +96,7 @@ export async function verifyLegacyGhidraReferenceSnapshot(
           analysisProfile: legacyProfile,
           limitations: observed.limitations,
           locations: observed.locations,
-          subject: nativeTarget,
+          subject: evidence.subject,
         },
       }),
     ],
