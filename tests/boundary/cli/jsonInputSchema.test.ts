@@ -51,7 +51,12 @@ const inventoryDocumentSchema = frame(
 );
 
 /** Every positional JSON document and the schema its handler parses. */
-const documents = [
+const documents: readonly {
+  readonly command: string;
+  readonly schema: z.ZodType;
+  /** Fields the CLI resolves against the working directory before parsing. */
+  readonly callerPaths?: readonly (readonly string[])[];
+}[] = [
   {
     command: CLI_COMMANDS.traceApplicationFeature,
     schema: frame(traceApplicationFeatureRequestSchema),
@@ -71,6 +76,7 @@ const documents = [
   {
     command: CLI_COMMANDS.compareSourceToBundle,
     schema: frame(compareSourceToBundleRequestSchema.omit({ view: true })),
+    callerPaths: [["reference", "path"]],
   },
   {
     command: CLI_COMMANDS.compareJavaScriptExportShapes,
@@ -103,10 +109,16 @@ const documents = [
   {
     command: CLI_COMMANDS.inspectAnalysisView,
     schema: inspectAnalysisViewInputSchema,
+    callerPaths: [["source", "path"]],
   },
   {
     command: CLI_COMMANDS.captureElectronScenario,
     schema: electronActiveObservationInputSchema,
+    callerPaths: [
+      ["executable_path"],
+      ["application_path"],
+      ["application_root"],
+    ],
   },
   {
     command: CLI_COMMANDS.reconcileJavaScriptRuntime,
@@ -131,6 +143,10 @@ const documents = [
   {
     command: CLI_COMMANDS.compareArtifacts,
     schema: artifactComparisonInputSchema,
+    callerPaths: [
+      ["left", "path"],
+      ["right", "path"],
+    ],
   },
   {
     command: CLI_COMMANDS.compareWasmInterfaces,
@@ -210,18 +226,62 @@ const advertisedInput = (stdout: string): InputJsonSchema => {
   return inputJson as InputJsonSchema;
 };
 
+type JsonSchemaNode = Record<string, unknown>;
+
+/** Expect a caller path as the CLI admits it: any nonempty local spelling. */
+const admitRelativePath = (
+  schema: JsonSchemaNode,
+  path: readonly string[],
+): JsonSchemaNode => {
+  const [head, ...tail] = path;
+  if (head === undefined) {
+    const { allOf: _patterns, ...rest } = schema;
+    return { ...rest, pattern: "^[^\\x00]*$" };
+  }
+  const branches = (["anyOf", "oneOf"] as const).flatMap((keyword) =>
+    Array.isArray(schema[keyword])
+      ? [
+          [
+            keyword,
+            (schema[keyword] as JsonSchemaNode[]).map((branch) =>
+              admitRelativePath(branch, path),
+            ),
+          ] as const,
+        ]
+      : [],
+  );
+  const properties = schema.properties as
+    | Record<string, JsonSchemaNode>
+    | undefined;
+  return {
+    ...schema,
+    ...Object.fromEntries(branches),
+    ...(properties?.[head] === undefined
+      ? {}
+      : {
+          properties: {
+            ...properties,
+            [head]: admitRelativePath(properties[head], tail),
+          },
+        }),
+  };
+};
+
 it("advertises the parsed document for every JSON-input command", async () => {
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(jsonInputCommands(cli).sort()).toEqual(
     documents.map(({ command }) => command).sort(),
   );
-  for (const { command, schema } of documents) {
+  for (const { command, schema, callerPaths = [] } of documents) {
     const served = await serve([command, "--schema", "--json"]);
     expect(served.exitCode, served.stdout).toBe(0);
     const inputJson = advertisedInput(served.stdout);
     expect(inputJson.contentSchema, command).toBeDefined();
     expect(inputJson.contentSchema, command).toEqual(
-      jsonInputContentSchema(schema),
+      callerPaths.reduce(
+        admitRelativePath,
+        jsonInputContentSchema(schema) as JsonSchemaNode,
+      ),
     );
     expect(inputJson.contentSchema, command).not.toEqual({});
     expect(
