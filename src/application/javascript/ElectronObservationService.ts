@@ -7,9 +7,9 @@ import type {
   ListElectronTargetsInput,
 } from "../../domain/javascript/electronObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -33,11 +33,7 @@ export const listElectronTargets = async (
   const ready = requireProvider(provider, "list_electron_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("list_electron_targets", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("list_electron_targets", options.signal));
   const result = await ready.value.listTargets(input, options);
   if (!result.ok) return result;
   const json = jsonValueSchema.safeParse(result.value);
@@ -78,11 +74,7 @@ export const inspectElectronPage = async (
   const ready = requireProvider(provider, "inspect_electron_page");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_electron_page", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("inspect_electron_page", options.signal));
   const result = await ready.value.inspectPage(input, options);
   if (!result.ok) {
     const partial = jsonObjectSchema.safeParse(result.error.partialObservation);

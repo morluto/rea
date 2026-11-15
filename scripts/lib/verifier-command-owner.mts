@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import {
-  ArtifactResourceScope,
-  type ArtifactResourceOwner,
-} from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import {
   prepareOwnedCommand,
   runOwnedCommand,
@@ -61,6 +58,7 @@ export interface VerifierCommands {
     arguments_: readonly string[],
     options?: VerifierCommandOptions,
   ): Promise<VerifierCommandOutput>;
+  /** Retain a live resource until close, independently of ordinary command execution. */
   adopt(owner: VerifierCleanupOwner, resource: string): void;
   readonly cleanupResources: readonly string[];
   close(): Promise<void>;
@@ -152,13 +150,17 @@ const commandLimits = (options: VerifierCommandOptions) => {
   };
 };
 
+type AdoptedVerifierOwner = {
+  readonly kind: "lease";
+  readonly resource: string;
+  readonly lease: AnalysisCleanupLease;
+};
+
 class VerifierCommandOwner implements VerifierCommands {
   readonly #resources = new ArtifactResourceScope();
   readonly #controller = new AbortController();
-  readonly #adopted = new WeakMap<
-    VerifierCleanupOwner,
-    ArtifactResourceOwner
-  >();
+  readonly #adopted = new WeakMap<VerifierCleanupOwner, AdoptedVerifierOwner>();
+  readonly #liveAdopted = new Set<AdoptedVerifierOwner>();
   readonly #resourceOwner: RetainedResourceScope;
   #closed = false;
   #released = false;
@@ -170,13 +172,21 @@ class VerifierCommandOwner implements VerifierCommands {
     ) => Promise<SpawnedOwnedProviderProcess>,
   ) {
     this.#resourceOwner = {
-      retain: (owner, resource) => this.adopt(owner, resource),
+      retain: (owner, resource) =>
+        this.#resources.retain(this.#adoptedOwner(owner, resource)),
       run: (work) => this.#resources.run(work),
     };
   }
 
   get cleanupResources(): readonly string[] {
-    return this.#resources.cleanupResources;
+    return [
+      ...new Set([
+        ...this.#resources.cleanupResources,
+        ...[...this.#liveAdopted].flatMap(({ lease, resource }) =>
+          lease.released ? [] : (lease.cleanupResources ?? [resource]),
+        ),
+      ]),
+    ];
   }
 
   exec(
@@ -233,6 +243,15 @@ class VerifierCommandOwner implements VerifierCommands {
   }
 
   adopt(owner: VerifierCleanupOwner, resource: string): void {
+    const retained = this.#adoptedOwner(owner, resource);
+    if (this.#closed) this.#resources.retain(retained);
+    else this.#liveAdopted.add(retained);
+  }
+
+  #adoptedOwner(
+    owner: VerifierCleanupOwner,
+    resource: string,
+  ): AdoptedVerifierOwner {
     if (this.#released)
       throw new Error("Verifier command resource release has completed");
     let retained = this.#adopted.get(owner);
@@ -244,15 +263,18 @@ class VerifierCommandOwner implements VerifierCommands {
       };
       this.#adopted.set(owner, retained);
     }
-    // An admitted command can transfer a late preparation/cleanup capability
-    // while close is joining it. Acquisition must precede this scope's release.
-    this.#resources.retain(retained);
+    return retained;
   }
 
   close(): Promise<void> {
     this.#closed = true;
     this.#controller.abort(new Error("Verifier command owner closed"));
     if (this.#closing !== undefined) return this.#closing;
+    // Live adoption owns a lifetime, not a failed cleanup. Only closure moves
+    // these leases into the retry scope; command failures enter it immediately.
+    // Late transfers during admitted work still join that same close below.
+    for (const owner of this.#liveAdopted) this.#resources.retain(owner);
+    this.#liveAdopted.clear();
     let attempt: Promise<void>;
     attempt = this.#resources
       .close()

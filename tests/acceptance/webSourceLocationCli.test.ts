@@ -72,7 +72,6 @@ const expectCliSourceLocationSummary = async (
   const { bundlePath, evidenceId, sha256 } = expected;
   const missingSink = await cli.run({
     arguments: [...arguments_, "--detail", "summary"],
-    timeoutMs: 45000,
   });
   expect(missingSink.exitCode).toBe(1);
   expect(missingSink.json).toMatchObject({
@@ -87,7 +86,6 @@ const expectCliSourceLocationSummary = async (
       "--evidence_output",
       bundlePath,
     ],
-    timeoutMs: 45000,
   });
   expect(summary.exitCode, summary.stderr).toBe(0);
   expect(summary.stdout.length).toBeLessThan(30000);
@@ -174,8 +172,33 @@ const expectColumnOutOfRange = (
   });
 };
 
+/**
+ * The CLI renders native separators; MCP keeps the caller's spelling and still
+ * selects the same manifest root from a forward-slash Windows path (#1078).
+ */
+const expectForwardSlashManifestTrace = async (
+  client: Client,
+  input: { readonly manifest_path: string } & Record<string, unknown>,
+  cliJson: unknown,
+) => {
+  const forwardSlash = input.manifest_path.replaceAll("\\", "/");
+  const forward = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: { ...input, manifest_path: forwardSlash },
+  });
+  expect(forward.isError, JSON.stringify(forward)).not.toBe(true);
+  const { manifest: _manifest, ...cliRest } = (
+    cliJson as { normalized_result: Record<string, unknown> }
+  ).normalized_result;
+  expect(forward.structuredContent).toMatchObject({
+    normalized_result: { ...cliRest, manifest: { path: forwardSlash } },
+  });
+};
+
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");
     const fixture = webSourceLocationFixture(
@@ -189,7 +212,7 @@ cliTest(
     );
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    let manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    let manifest = join(root, "manifest.json");
     const map = join(root, "app.js.map");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     if (process.platform !== "win32") {
@@ -202,20 +225,22 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
-        manifest,
+        process.platform === "win32"
+          ? "manifest.json"
+          : "lexical/link/../manifest.json",
         "0",
-        map,
+        "app.js.map",
         fixture.sourceMap.url,
         "1",
         "0",
         "--json",
       ],
+      cwd: root,
       environment: {
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
         CLANG_MODULE_CACHE_PATH: map,
       },
-      timeoutMs: 45000,
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     expect(response.json).toMatchObject({
@@ -274,23 +299,20 @@ cliTest(
       }
     });
     await client.connect(transport);
-    const mcpResponse = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: {
-        manifest_path: manifest,
-        script_index: 0,
-        source_map: { path: map, url: fixture.sourceMap.url },
-        generated_position: { line: 1, column: 0 },
-      },
-    });
-    expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
-    expect(mcpResponse.structuredContent).toEqual(response.json);
-    await expectEqualPositionSummary(client, {
+    const input = {
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url: fixture.sourceMap.url },
       generated_position: { line: 1, column: 0 },
+    };
+    const mcpResponse = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: input,
     });
+    expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
+    expect(mcpResponse.structuredContent).toEqual(response.json);
+    await expectForwardSlashManifestTrace(client, input, response.json);
+    await expectEqualPositionSummary(client, input);
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
@@ -313,7 +335,6 @@ cliTest(
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 45000,
     });
     expect(invalid.exitCode).toBe(1);
     expectInvalidSourceLocation(
@@ -324,18 +345,17 @@ cliTest(
       fixture.sourceMap.text,
     );
   },
-  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
-  180_000,
 );
 
 cliTest(
   "applies the shared version constraint to nested indexed maps through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-indexed-map-version-");
     const fixture = webSourceLocationFixture();
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     const { call } = await connectLocalToolsMcp({
       REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
@@ -371,7 +391,6 @@ cliTest(
           REA_LOG_LEVEL: "silent",
           REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
         },
-        timeoutMs: 45_000,
       });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
@@ -438,17 +457,17 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "traces empty equal-offset sections while rejecting decreasing offsets and represented overlaps",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-indexed-map-");
     const fixture = webSourceLocationFixture();
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     const { call } = await connectLocalToolsMcp();
     const leaf: unknown = JSON.parse(fixture.sourceMap.text);
@@ -490,7 +509,6 @@ cliTest(
           "--json",
         ],
         environment: { REA_LOG_LEVEL: "silent" },
-        timeoutMs: 45_000,
       });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
@@ -538,11 +556,11 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "resolves empty-sourceRoot sources against the map URL through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-source-root-");
     // webpack 5 and tsc emit `"sourceRoot": ""` for map-relative sources.
@@ -557,7 +575,7 @@ cliTest(
     const fixture = webSourceLocationFixture(text);
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     const map = join(root, "app.js.map");
     await writeFile(map, text);
@@ -577,7 +595,6 @@ cliTest(
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
       },
-      timeoutMs: 45_000,
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -613,7 +630,6 @@ cliTest(
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(response.structuredContent).toEqual(result.json);
   },
-  180_000,
 );
 
 cliTest(
@@ -649,7 +665,6 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...args, "--source-map-bytes", "128"],
-      timeoutMs: 45000,
     });
     expect(refused.exitCode).toBe(1);
     expect((refused.json as { code?: unknown }).code).toBe("truncated");
@@ -665,7 +680,6 @@ cliTest(
         "--source-map-bytes",
         String(Buffer.byteLength(fixture.sourceMap.text)),
       ],
-      timeoutMs: 45000,
     });
     expect(recovered.exitCode, recovered.stderr).toBe(0);
     expect(recovered.json).toMatchObject({
@@ -690,6 +704,7 @@ cliTest(
 
 cliTest(
   "admits a complete map above 4 MiB by default while honoring a smaller caller budget",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-map-default-admission-");
     const fixture = webSourceLocationFixture(
@@ -720,7 +735,6 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...arguments_, "--source-map-bytes", "4194304"],
-      timeoutMs: 45000,
     });
     expect(refused.exitCode).toBe(1);
     expect(JSON.stringify(refused.json)).toContain(
@@ -728,7 +742,6 @@ cliTest(
     );
     const completed = await cli.run({
       arguments: arguments_,
-      timeoutMs: 45000,
     });
     expect(completed.exitCode, completed.stderr).toBe(0);
     const evidence = completed.json as {
@@ -840,5 +853,4 @@ cliTest(
       },
     });
   },
-  180_000,
 );

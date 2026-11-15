@@ -44,6 +44,7 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  hopperAppleEventsAuthorizationDenied,
 } from "./hopperErrors.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
@@ -58,7 +59,9 @@ import {
   type AnalysisErrorOptions,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
-import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
+import { invocationLimit } from "./analysisSettingDefinitions.js";
+import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
+import { analysisRefusalDetails } from "./analysisRefusal.js";
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -403,6 +406,7 @@ const projectError = (
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
+  const refusal = analysisErrorRefusal(primary);
   const unknownPublication =
     composed.workflowUnknownPublication ?? primary.workflowUnknownPublication;
   const details = {
@@ -424,9 +428,12 @@ const projectError = (
       : {
           limit:
             callerLifetime === "invocation"
-              ? { ...invocationSettingLimit(primary.limit) }
+              ? { ...invocationLimit(primary.limit) }
               : { ...primary.limit },
         }),
+    ...(refusal === undefined
+      ? {}
+      : { refusal: analysisRefusalDetails(refusal) }),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
@@ -522,7 +529,11 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      RETRYABLE_CODES.has(code) ||
+      (RETRYABLE_CODES.has(code) &&
+        !(
+          error instanceof HopperStartError &&
+          hopperAppleEventsAuthorizationDenied(error.launchRejection)
+        )) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
       (error._tag === "ProcessCaptureError" &&
@@ -608,6 +619,7 @@ const BROWSER_ERROR_CODES: Readonly<
   window_not_found: "unreadable_output",
   window_metadata_missing: "unreadable_output",
   process_ownership_unavailable: "unreadable_output",
+  application_already_running: "target_unavailable",
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
@@ -730,6 +742,9 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+      ...(error.requestSent === undefined
+        ? {}
+        : { request_sent: error.requestSent }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {
@@ -737,6 +752,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {
@@ -786,7 +804,20 @@ const requestErrorDetails = (
         ? {}
         : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
-  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
+  if (error instanceof EvidenceIntegrityError)
+    return {
+      reason: error.message,
+      ...(error.side === undefined ? {} : { side: error.side }),
+      ...(error.issuePath === undefined
+        ? {}
+        : { issue_path: [...error.issuePath] }),
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+      ...(error.remainingIssueCount === undefined
+        ? {}
+        : { remaining_issue_count: error.remainingIssueCount }),
+    };
   return undefined;
 };
 
@@ -794,7 +825,12 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return projectArtifactIntegrityDetails(error.artifactDetails);
+    return {
+      ...projectArtifactIntegrityDetails(error.artifactDetails),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
+    };
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -802,6 +838,9 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
@@ -834,6 +873,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detected_kind: error.detectedKind }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode }),
@@ -867,6 +909,9 @@ const providerErrorDetails = (
       provider_id: error.providerId,
       operation: error.operation,
       reason: error.reason,
+      ...(error.alternatives.length === 0
+        ? {}
+        : { alternatives: [...error.alternatives] }),
     };
   if (error instanceof ProviderSelectionError)
     return {
@@ -950,7 +995,11 @@ const providerErrorDetails = (
       ...(error.launchRejection === undefined
         ? {}
         : { launch_rejection: { ...error.launchRejection } }),
-      retry_action: error.ownerRunId === undefined ? "retry" : "unknown",
+      retry_action:
+        error.ownerRunId === undefined &&
+        !hopperAppleEventsAuthorizationDenied(error.launchRejection)
+          ? "retry"
+          : "unknown",
       ...(error.ownerRunId === undefined
         ? {}
         : { owner_run_id: error.ownerRunId }),

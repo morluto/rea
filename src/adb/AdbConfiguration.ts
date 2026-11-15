@@ -1,7 +1,8 @@
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute, win32 } from "node:path";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
@@ -19,7 +20,7 @@ import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { isUnresolvedPathErrorCode } from "../filesystem/RegularFile.js";
+import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -96,9 +97,7 @@ const resolveWindowsAdb = async (
     const failure = found.error;
     if (failure.kind === "interrupted") {
       if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError("inspect_adb_client", {
-          cause: signal?.reason,
-        });
+        throw cancelledBy("inspect_adb_client", carriedReason(signal?.reason));
       throw new AnalysisTimeoutError("inspect_adb_client", VERSION_TIMEOUT_MS, {
         diagnostics: { phase: "windows_path_lookup" },
       });
@@ -216,12 +215,13 @@ export const inspectAdbClient = async (
     if (cause instanceof AdbConfigurationFailure) throw cause;
     const failure = execFileOutputFailure(cause);
     if (cause instanceof ExecFileOutputCancelledError)
-      throw new AnalysisCancelledError("inspect_adb_client", {
-        cause: cause.cause,
-        ...(failure === undefined
+      throw cancelledBy(
+        "inspect_adb_client",
+        carriedReason(cause.cause),
+        failure === undefined
           ? {}
-          : { capturedOutput: execFileFailureCapturedOutput(failure) }),
-      });
+          : { capturedOutput: execFileFailureCapturedOutput(failure) },
+      );
     const diagnostics = {
       selected_binary: selection.binary,
       path_source: selection.pathSource,
@@ -267,8 +267,9 @@ export const inspectAdbClient = async (
         path_source: selection.pathSource,
         filesystem_error: code,
       };
+      const refusal = classifyLaunchFailureCode(code);
       // Nothing executable resolves at the selected path.
-      if (isUnresolvedPathErrorCode(code))
+      if (refusal?.kind === "missing")
         throw new AdbConfigurationFailure(
           "binary_missing",
           `The selected adb binary was not found: ${selection.binary}`,
@@ -288,7 +289,7 @@ export const inspectAdbClient = async (
         );
       throw new AdbConfigurationFailure(
         "binary_not_executable",
-        code === "EACCES" || code === "EPERM"
+        refusal?.code === "EACCES" || refusal?.code === "EPERM"
           ? `Execution of the selected adb binary was denied (${code}): ${selection.binary}`
           : `The selected adb binary could not be started (${code}): ${selection.binary}`,
         code === "EACCES"

@@ -3,7 +3,7 @@ import { samplingInspectionFailures } from "../../process/capture/ProcessSamplin
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   bindProcessInspectionCancellations,
   retainProcessInspectionCleanup,
@@ -230,10 +230,7 @@ const admit = async (
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
       running.windows,
     );
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted === true) throw cancelledBy(DESKTOP_OPERATION, signal);
   const prepared = await prepareOutputDirectory(request.output);
   if ("refusal" in prepared)
     throw outputRefusal(request.output, prepared.refusal);
@@ -423,8 +420,7 @@ const runCapture = async (
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
+    throw cancelledBy(DESKTOP_OPERATION, signal, {
       partialObservation: evidence,
     });
   return evidence;

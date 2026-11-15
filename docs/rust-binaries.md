@@ -161,15 +161,31 @@ packages or the compiler.
 
 ELF, PE, thin Mach-O and one selected slice of a universal Mach-O are the
 supported containers.
-A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
-or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
-and validates the selected slice's range, alignment and Mach-O header CPU
-against the table. The result keeps the universal file as `artifact` (its
-SHA-256 and size), adds `selected_slice` with the slice offset, length, raw CPU
-type/subtype and the FAT table digest, and reports the section and rustc-path offsets as a
-file offset inside that slice. Without `architecture`, or when the file has no
-such slice or several, the request fails on `architecture` and lists the slices
-present. `architecture` on any other image is rejected rather than ignored.
+A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, `arm64`
+or `arm64e`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
+rejects a table whose slices overlap, and validates the selected slice's range,
+alignment and Mach-O header CPU against the table. The result keeps the
+universal file as `artifact` (its SHA-256 and size), adds `selected_slice` with
+the slice offset, length, raw CPU type/subtype and the FAT table digest, and
+reports the section and rustc-path offsets as a file offset inside that slice.
+Without `architecture`, or when the file has no slice of that CPU family, the
+request fails on `architecture` and lists the slices present. A CPU family with
+one slice is selected by its family name, so `arm64` also reads a lone `arm64e`
+slice; `arm64e` reads only an `arm64e` slice. When several slices share the
+family, the value must name the slice's subtype, as `lipo -thin` does: `arm64`
+reads the `arm64` (or `arm64v8`) slice, `arm64e` the `arm64e` (or `arm64e.x1`)
+slice, and `x86_64` the canonical `x86_64` slice. Capability bits are ignored
+when subtypes are compared. REA does not choose a slice by preference. When no
+slice or several slices carry the named subtype, the request fails on
+`architecture` and names any other value that selects exactly one verified
+slice; `arm64e` beside `arm64e.x1`, for example, is refused. Other subtypes,
+such as `x86_64h` and the `x86` (i386) and 32-bit `arm` subtypes, have no value
+of their own; they are read only as the only slice of their family.
+`limitations` lists the same-family slices that were not read and the value, if
+any, that selects each. A slice whose Mach-O header does not match its FAT
+declaration, such as a different CPU subtype, is listed as unverified, and no
+value is offered for it. `architecture` on any other image is rejected rather
+than ignored.
 
 Package and dependency counts are checked against the minimum required JSON
 representation before graph allocation or schema cloning. Oversized graphs

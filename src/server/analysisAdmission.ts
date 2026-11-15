@@ -1,7 +1,7 @@
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 
@@ -32,9 +32,5 @@ export const withAdmittedAnalysis = (
         source.session.withAdmittedAnalysis(operationName, signal, operation)
     : async (operationName, signal, operation) =>
         signal?.aborted === true
-          ? err(
-              new AnalysisCancelledError(operationName, {
-                cause: signal.reason,
-              }),
-            )
+          ? err(cancelledBy(operationName, signal))
           : ok(await operation(source.analysis));

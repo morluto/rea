@@ -81,7 +81,7 @@ export const compareBrowserScenarios = (
     input.before_scenario,
     input.after_scenario,
   );
-  const incomparableReason = eventCoverageReason(
+  const incomparableReason = joinIncomparableReasons(
     familyIncomparableReason,
     networkContentCoverageReason(input.before_scenario, input.after_scenario),
     beforeEvents.coverageReason,
@@ -151,11 +151,14 @@ const alignScenarioSteps = (
   const afterDuplicates = duplicateStepIds(afterCapture.steps);
   const before = uniqueSteps(beforeCapture.steps, beforeDuplicates);
   const after = uniqueSteps(afterCapture.steps, afterDuplicates);
+  // A duplicated step_id keeps its ambiguous presence on that side: it stays
+  // ineligible for alignment, but its counterpart capture must not classify
+  // the id as absent when the duplicate side still retains it.
   const beforeOnly = [...before.keys()]
-    .filter((stepId) => !after.has(stepId))
+    .filter((stepId) => !after.has(stepId) && !afterDuplicates.has(stepId))
     .sort();
   const afterOnly = [...after.keys()]
-    .filter((stepId) => !before.has(stepId))
+    .filter((stepId) => !before.has(stepId) && !beforeDuplicates.has(stepId))
     .sort();
   const failures: BrowserScenarioAlignmentFailure[] = [
     ...duplicateFailures("before", beforeDuplicates),
@@ -496,20 +499,6 @@ const digestScenarioEvents = (
       network_transactions: parsed.network_transactions,
     },
     "Browser scenario",
-  );
-};
-
-const eventCoverageReason = (
-  familyReason: string | undefined,
-  networkContentReason: string | undefined,
-  beforeNetworkReason: string | undefined,
-  afterNetworkReason: string | undefined,
-): string | undefined => {
-  return joinIncomparableReasons(
-    familyReason,
-    networkContentReason,
-    beforeNetworkReason,
-    afterNetworkReason,
   );
 };
 

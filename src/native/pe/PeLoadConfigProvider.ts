@@ -1,5 +1,8 @@
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
-import { projectArtifactCloseFailure } from "../../artifacts/StableArtifactFailure.js";
+import {
+  projectArtifactCloseFailure,
+  imageFileSizeRemediation,
+} from "../../artifacts/StableArtifactFailure.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -20,7 +23,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
+  PE_LOAD_CONFIG_LIMITS,
   type PeLoadConfigLimit,
 } from "./PeLoadConfigParser.js";
 
@@ -74,11 +77,6 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   }
 }
 
-const fileSizeRemediation = (input: InspectPeLoadConfigInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 const limitRecovery = (
   limit: PeLoadConfigLimit | null,
   input: InspectPeLoadConfigInput,
@@ -104,9 +102,12 @@ const peLoadConfigFailure = (
     {
       operation: OPERATION,
       providerId: PE_LOAD_CONFIG_PROVIDER.id,
-      fileSizeRemediation: () => fileSizeRemediation(input),
-      limit: (failure) =>
-        failure instanceof PeLoadConfigLimitFailure ? failure.limit : null,
+      fileSizeRemediation: () =>
+        imageFileSizeRemediation(
+          input.max_file_bytes,
+          MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
+        ),
+      limits: PE_LOAD_CONFIG_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

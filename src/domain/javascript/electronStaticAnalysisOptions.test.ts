@@ -962,7 +962,7 @@ describe("Electron option evidence", () => {
     `);
 
     expect(analysis.parse_status).toBe("partial");
-    expect(analysis.analysis_coverage?.syntax).toEqual({
+    expect(analysis.analysis_coverage.syntax).toEqual({
       status: "complete",
       error_count: 0,
     });
@@ -1090,7 +1090,7 @@ describe("Electron empty option keys", () => {
 
       expect(analysis.parse_error_count).toBe(0);
       expect(analysis.parse_status).toBe("partial");
-      expect(analysis.analysis_coverage?.syntax).toEqual({
+      expect(analysis.analysis_coverage.syntax).toEqual({
         status: "complete",
         error_count: 0,
       });
@@ -1120,7 +1120,7 @@ describe("Electron empty option keys", () => {
 
       expect(analysis.parse_error_count).toBe(0);
       expect(analysis.parse_status).toBe("partial");
-      expect(analysis.analysis_coverage?.syntax).toEqual({
+      expect(analysis.analysis_coverage.syntax).toEqual({
         status: "complete",
         error_count: 0,
       });
@@ -1151,7 +1151,7 @@ describe("Electron empty option keys", () => {
 
       expect(analysis.parse_error_count).toBe(0);
       expect(analysis.parse_status).toBe("partial");
-      expect(analysis.analysis_coverage?.syntax).toEqual({
+      expect(analysis.analysis_coverage.syntax).toEqual({
         status: "complete",
         error_count: 0,
       });

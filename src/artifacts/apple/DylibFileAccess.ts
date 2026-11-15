@@ -18,6 +18,7 @@ import {
   mapArtifactFileFailure,
   withArtifactRegularFile,
 } from "../ArtifactFileOperation.js";
+import type { ArtifactIntegrityCheck } from "../../domain/artifactOperationError.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
@@ -80,7 +81,7 @@ export class DylibFileAccess {
       for await (const chunk of source) hash.update(chunk);
       const coverage = source.readCoverage();
       if (coverage.kind !== "complete" || coverage.bytes !== initial.size)
-        throw changed(path);
+        throw changed(path, undefined, "read-coverage");
       return hash.digest("hex");
     });
   }
@@ -164,9 +165,13 @@ const deniedDisplayPath = (root: string, path: string): string => {
   return inside === "" || outside ? path : inside;
 };
 
-const changed = (path: string, cause?: unknown): ArtifactReaderFailure =>
+const changed = (
+  path: string,
+  cause?: unknown,
+  integrityCheck: ArtifactIntegrityCheck = "member-identity",
+): ArtifactReaderFailure =>
   new ArtifactReaderFailure(
     "integrity",
     `${path} changed while its dyld load commands were traced`,
-    cause === undefined ? undefined : { cause },
+    cause === undefined ? { integrityCheck } : { cause, integrityCheck },
   );

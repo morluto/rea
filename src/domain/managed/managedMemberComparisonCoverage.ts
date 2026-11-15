@@ -1,9 +1,9 @@
+import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
@@ -18,22 +18,33 @@ export const buildComparisonCoverage = ({
   right,
   selectionAgreement,
 }: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
-  const leftStatus = sideCoverageStatus(left);
-  const rightStatus = sideCoverageStatus(right);
-  const unknownInput =
-    left.coverage.state !== "complete" ||
-    right.coverage.state !== "complete" ||
-    selectionAgreement !== "same" ||
-    !sameMethodRows(left, right);
+  // An unavailable side examined nothing, and an unknown selection agreement
+  // cannot tell whether both sides cover the same types: either makes the
+  // comparison unknown, even beside a known gap.
+  const joined = joinCoverageStatus([
+    sideCoverageKnowledge(left),
+    sideCoverageKnowledge(right),
+    selectionAgreement === "unknown"
+      ? "unknown"
+      : selectionAgreement === "different" || !sameMethodRows(left, right)
+        ? "partial"
+        : "complete",
+  ]);
   return {
-    status:
-      !unknownInput && leftStatus === "complete" && rightStatus === "complete"
-        ? "complete-within-inputs"
-        : "partial",
-    left_status: leftStatus,
-    right_status: rightStatus,
+    status: joined === "complete" ? "complete-within-inputs" : joined,
+    left_status: sideCoverageStatus(left),
+    right_status: sideCoverageStatus(right),
   };
 };
+
+const sideCoverageKnowledge = (
+  result: ManagedMemberInspection,
+): CoverageStatus =>
+  result.coverage.state === "unavailable"
+    ? "unknown"
+    : result.coverage.state === "complete"
+      ? "complete"
+      : "partial";
 
 /** Full MethodDef coverage is required before inferring cross-build absence. */
 export const hasCompleteMethodRows = (
@@ -240,11 +251,7 @@ export const comparisonLimitations = (
         signature.resolved_sha256 !== null &&
         signature.resolved_sha256 !== signature.raw_sha256,
     );
-  if (
-    hasSignatureResolution(left) &&
-    hasSignatureResolution(right) &&
-    (namesTypes(left) || namesTypes(right))
-  )
+  if (namesTypes(left) || namesTypes(right))
     limitations.push(
       "Signature type operands compare by namespace, name, and enclosing names only; defining assemblies and CLR type identity are not established by this comparison.",
     );
@@ -270,14 +277,6 @@ export const comparisonLimitations = (
   if (!hasCompleteMethodRows(left) || !hasCompleteMethodRows(right))
     limitations.push(
       "At least one observation lacks a complete MethodDef row inventory; paged or unrecorded method scope cannot establish cross-build method absence. Row intervals are reported in method_rows and describe build-local selections.",
-    );
-  if (!hasSignatureResolution(left) || !hasSignatureResolution(right))
-    limitations.push(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
-    );
-  if (left.nesting_read === null || right.nesting_read === null)
-    limitations.push(
-      "At least one managed member observation predates enclosing-name identity. The legacy bare-name comparison does not establish the enclosing owner of a nested type.",
     );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(

@@ -51,8 +51,6 @@ export const KERNEL_MODULE_MODINFO_ENTRY_REASONS = [
   "unterminated_modinfo_entry",
   "modinfo_missing_separator",
   "modinfo_empty_key",
-  // Accepted when decoding older Evidence; new observations separate omission from validity.
-  "modinfo_field_exceeds_limit",
 ] as const;
 
 export const KERNEL_MODULE_MODINFO_SECTION_REASONS = [

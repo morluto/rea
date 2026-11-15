@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -260,11 +261,11 @@ itWithCaptureCapability(
     const wire = (await mcp.listTools()).tools.find(
       ({ name }) => name === contract.name,
     );
-    if (wire?.outputSchema === undefined)
+    if (wire === undefined)
       throw new Error("Missing process capture output schema");
     expect(
       new Ajv2020({ strict: false, validateFormats: false }).validate(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
+        canonicalOutputSchema(wire.name),
         captured.structuredContent,
       ),
     ).toBe(true);

@@ -1,3 +1,7 @@
+import {
+  javaScriptMemberMutationAllowanceFromField,
+  type JavaScriptMemberMutationAllowance,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
@@ -47,7 +51,8 @@ export interface JavaScriptSourceWorkerAnalyzer {
     },
     packageType: JavaScriptPackageType,
     purpose: "analysis" | "preload-discovery",
-    precision?: JavaScriptSemanticPrecisionInput,
+    precision: JavaScriptSemanticPrecisionInput | undefined,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -194,6 +199,9 @@ const analyzeJob = async (
       request.package_type,
       request.purpose,
       request.semantic_precision,
+      javaScriptMemberMutationAllowanceFromField(
+        request.member_mutation_allowance,
+      ),
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =

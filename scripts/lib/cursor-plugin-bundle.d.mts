@@ -1,11 +1,3 @@
-export const CURSOR_PLUGIN_MANIFEST: ".cursor-plugin/plugin.json";
-export const CURSOR_PLUGIN_MCP: "mcp.json";
-export const AUTHORED_SKILL_DIRECTORY: ".agents/skills/reverse-engineer-anything";
-export const CURSOR_PLUGIN_SKILLS: ".cursor-plugin/skills";
-export const CURSOR_PLUGIN_SKILL: "reverse-engineer-anything";
-export const CURSOR_PLUGIN_LOGO: "assets/rea-plugin.png";
-export const CURSOR_PLUGIN_REPOSITORY: "https://github.com/morluto/rea";
-
 export interface CursorPluginBundleIssue {
   readonly field: string;
 }
@@ -55,11 +47,6 @@ export interface CursorPluginInspection {
   readonly packageVersion: string;
   readonly issues: readonly CursorPluginBundleIssue[];
 }
-
-export function cursorPluginSkillPaths(
-  directory: string,
-  prefix?: string,
-): Promise<readonly string[] | null>;
 
 export function cursorPluginBundleIssues(
   input: CursorPluginBundleInput,
