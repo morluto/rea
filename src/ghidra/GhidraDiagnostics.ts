@@ -4,6 +4,7 @@ import type {
   ProviderProcessOutputSince,
   ProviderProcessSnapshot,
 } from "../process/ProviderProcess.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 
@@ -132,9 +133,12 @@ export const ghidraFailureOutput = (
   complete: scoped.complete && !drainIncomplete,
   observed_oome: (scoped.markers ?? []).map((marker) => {
     const bytes = Buffer.byteLength(marker.line, "utf8");
+    // The supervisor's runtime owns which memory area the line names.
+    const { area } = runtimeExhaustion("jvm", marker.stream, marker);
     return {
       stream: marker.stream,
       offset: marker.offset,
+      ...(area === undefined ? {} : { area }),
       line: redactCapturedTransportCredential(
         {
           text: marker.line,
