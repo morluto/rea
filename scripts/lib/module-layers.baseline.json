@@ -24,7 +24,6 @@
     "artifacts -> javascript": 1,
     "artifacts -> native": 1,
     "browser -> artifacts": 6,
-    "browser -> javascript": 1,
     "captures -> pcap": 2,
     "desktop -> browser": 1,
     "desktop -> electron": 1,
