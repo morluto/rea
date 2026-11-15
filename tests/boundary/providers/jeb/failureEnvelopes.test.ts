@@ -205,6 +205,7 @@ const exhaustion: {
   payload: JsonValue;
   resource: string;
   area: string | null;
+  remediation: RegExp;
 }[] = [
   {
     name: "heap space in the nested error",
@@ -217,12 +218,35 @@ const exhaustion: {
     },
     resource: "memory",
     area: "heap",
+    remediation: /larger maximum heap \(-Xmx\)/u,
+  },
+  {
+    name: "metaspace in the nested error",
+    payload: {
+      success: false,
+      error: { message: "java.lang.OutOfMemoryError: Metaspace" },
+    },
+    resource: "memory",
+    area: "metaspace",
+    remediation: /-XX:MaxMetaspaceSize; a larger heap \(-Xmx\) does not/u,
+  },
+  {
+    name: "an oversized array in the outer message",
+    payload: {
+      success: false,
+      message:
+        "java.lang.OutOfMemoryError: Requested array size exceeds VM limit",
+    },
+    resource: "memory",
+    area: "array-size",
+    remediation: /does not lift this limit\. Select a smaller input/u,
   },
   {
     name: "an unnamed area in the outer message",
     payload: { success: false, message: "java.lang.OutOfMemoryError" },
     resource: "memory",
     area: null,
+    remediation: /Review the reported out-of-memory line/u,
   },
   {
     name: "native-thread exhaustion",
@@ -233,6 +257,7 @@ const exhaustion: {
     },
     resource: "capacity",
     area: "native-thread",
+    remediation: /could not create a native thread/u,
   },
 ];
 
@@ -242,9 +267,9 @@ it.each(
   ),
 )(
   "reports $encoding JVM exhaustion with $name as a resource constraint",
-  async ({ payload, resource, area, encoding }) => {
+  async ({ payload, resource, area, remediation, encoding }) => {
     const { projected, endpoint } = await refuseOpenProject(payload, encoding);
-    expect(projected.error.code).not.toBe("execution_failure");
+    expect(projected.error.code).toBe("resource_constraint");
     expect(projected.error.details).toMatchObject({
       resource,
       diagnostics: {
@@ -254,8 +279,6 @@ it.each(
         jvm_exhaustion_area: area,
       },
     });
-    expect(projected.error.remediation.action).toMatch(
-      area === "native-thread" ? /thread/u : /-Xmx/u,
-    );
+    expect(projected.error.remediation.action).toMatch(remediation);
   },
 );
