@@ -231,6 +231,21 @@ check(
   ],
 );
 
+// Native inventory results parse once against their named fact contract
+// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
+// advertised output schemas own their own protocol and catalog contracts.
+check(
+  "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
+  files,
+  /\bnativeInventoryRowsSchemas\b|z\.array\(\s*addressedValueSchema\b|\baddressedValueSchema\s*\.\s*(?:safeParse|parse|pick)\b/,
+  [
+    "src/domain/native/nativeInventory.ts",
+    "src/domain/native/nativeOperationFacts.ts",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/contracts/toolOutputSchemaGroups.ts",
+  ],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
