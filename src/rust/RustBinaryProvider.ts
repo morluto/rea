@@ -5,7 +5,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,

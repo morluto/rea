@@ -8,7 +8,7 @@ import {
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
 import { readStableArtifact } from "../../../resources/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import { completedStableArtifactObservation } from "../../../resources/StableArtifactObservation.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,

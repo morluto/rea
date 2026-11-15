@@ -2,7 +2,7 @@ import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,

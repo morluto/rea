@@ -19,7 +19,7 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import {
   primaryAnalysisError,
   type AnalysisError,

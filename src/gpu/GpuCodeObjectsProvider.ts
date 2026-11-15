@@ -1,4 +1,4 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";

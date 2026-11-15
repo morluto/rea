@@ -14,8 +14,8 @@ import {
   stableArtifactInputFailure,
   type RequestField,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
+} from "../resources/StableArtifactFailure.js";
+import { completedStableArtifactObservation } from "../resources/StableArtifactObservation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,

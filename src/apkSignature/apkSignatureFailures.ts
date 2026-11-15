@@ -3,7 +3,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -11,7 +11,7 @@ import {
   bindArtifactFileCleanup,
 } from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
+import { completedStableArtifactObservation } from "../resources/StableArtifactObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

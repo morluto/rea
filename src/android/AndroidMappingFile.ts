@@ -7,7 +7,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {

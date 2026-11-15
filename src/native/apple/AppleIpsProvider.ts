@@ -1,4 +1,4 @@
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { completedStableArtifactObservation } from "../../resources/StableArtifactObservation.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
@@ -19,7 +19,7 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {

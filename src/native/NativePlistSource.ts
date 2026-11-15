@@ -1,4 +1,4 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";

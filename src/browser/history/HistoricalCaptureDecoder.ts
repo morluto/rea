@@ -30,7 +30,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { completedStableArtifactObservation } from "../../resources/StableArtifactObservation.js";
 import type { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ArtifactResourceScope,

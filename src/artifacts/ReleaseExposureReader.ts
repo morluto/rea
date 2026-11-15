@@ -62,7 +62,7 @@ import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-} from "./StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

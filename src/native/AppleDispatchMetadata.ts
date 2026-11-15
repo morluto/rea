@@ -1,5 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import {
   malformedInput,
   parseFailureFromCause,

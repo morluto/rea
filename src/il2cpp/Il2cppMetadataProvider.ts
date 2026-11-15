@@ -18,7 +18,7 @@ import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,

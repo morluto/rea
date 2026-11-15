@@ -14,7 +14,7 @@ import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 import {
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../../../artifacts/StableArtifactFailure.js";
+} from "../../../resources/StableArtifactFailure.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {

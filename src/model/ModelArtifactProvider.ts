@@ -1,4 +1,4 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { ModelArtifactPort } from "../ports/model/ModelArtifactPort.js";

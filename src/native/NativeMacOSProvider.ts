@@ -1,4 +1,4 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import {

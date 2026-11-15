@@ -8,7 +8,7 @@ import { constants as bufferConstants } from "node:buffer";
 import {
   imageFileSizeRemediation,
   readerIntegrityFailure,
-} from "./StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";

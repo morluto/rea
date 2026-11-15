@@ -1,4 +1,4 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { readerIntegrityFailure } from "../resources/StableArtifactFailure.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,

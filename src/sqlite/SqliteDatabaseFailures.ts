@@ -3,7 +3,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
