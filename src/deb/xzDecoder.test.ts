@@ -57,3 +57,26 @@ it("refuses xz when the native binding cannot load", () => {
     error: { kind: "unavailable" },
   });
 });
+
+it("refuses an xz stream whose index cannot be read before decoding it", () => {
+  const compressed = Buffer.from(compressXz(Buffer.alloc(1024, 0x61)));
+  // Corrupt the footer's backward size so the index cannot be located.
+  compressed[compressed.length - 8] = 0xff;
+  compressed[compressed.length - 7] = 0xff;
+  let decodes = 0;
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: compressXz,
+      decompressSync: () => {
+        decodes += 1;
+        return Buffer.alloc(0);
+      },
+    },
+  });
+  expect(decodeXz(compressed, 1 << 20)).toEqual({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+  expect(decodes).toBe(0);
+});

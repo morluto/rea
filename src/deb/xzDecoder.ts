@@ -106,6 +106,12 @@ export const xzUncompressedSize = (bytes: Uint8Array): number | null => {
   return uncompressed;
 };
 
+const xzFooterPresent = (bytes: Uint8Array): boolean =>
+  bytes.length >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE &&
+  looksLikeXz(bytes) &&
+  bytes[bytes.length - 2] === 0x59 &&
+  bytes[bytes.length - 1] === 0x5a;
+
 const isTruncatedXzError = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);
   return /failed to fill whole buffer/iu.test(message);
@@ -117,8 +123,12 @@ export const decodeXz = (
 ): Result<Uint8Array, XzDecodeFailure> => {
   const binding = loadXzBinding();
   if (binding.status === "unavailable") return err({ kind: "unavailable" });
+  // The sync binding takes no output bound, so only a stream whose index
+  // declares its size within the limit reaches the decoder.
   const declared = xzUncompressedSize(bytes);
-  if (declared !== null && declared > limit) return err({ kind: "too_large" });
+  if (declared === null)
+    return err({ kind: xzFooterPresent(bytes) ? "malformed" : "truncated" });
+  if (declared > limit) return err({ kind: "too_large" });
   try {
     const expanded = binding.api.decompressSync(bytes);
     if (expanded.length > limit) return err({ kind: "too_large" });
