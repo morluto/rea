@@ -715,7 +715,9 @@ const mcporterLocation = ({
   for (const candidate of candidates) {
     const present = regularPathPresent(candidate);
     if (!present.ok) return present;
-    if (present.value) return ok({ configPath: candidate, markerPath: base });
+    // The loaded file's folder is the evidence, even when it is the legacy one.
+    if (present.value)
+      return ok({ configPath: candidate, markerPath: dirname(candidate) });
   }
   return ok({ configPath: join(base, "mcporter.json"), markerPath: base });
 };

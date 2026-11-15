@@ -695,6 +695,22 @@ it("detects MCPorter from the file MCPORTER_CONFIG selects in default registrati
   ).toBe(join(home, "elsewhere", "mcporter.json"));
 });
 
+it("detects MCPorter from an existing legacy file when XDG_CONFIG_HOME is absolute", async () => {
+  const { home, result } = await resolveWith(
+    "",
+    { XDG_CONFIG_HOME: "<home>/xdg" },
+    async (root) => {
+      await mkdir(join(root, ".cursor"), { recursive: true });
+      await mkdir(join(root, ".mcporter"), { recursive: true });
+      await writeFile(join(root, ".mcporter", "mcporter.json"), "{}\n");
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.find((client) => client.id === "mcporter")?.configPath,
+  ).toBe(join(home, ".mcporter", "mcporter.json"));
+});
+
 it("refuses a relative MCPORTER_CONFIG whose file depends on each command's directory", async () => {
   const { result } = await resolveWith("mcporter", {
     MCPORTER_CONFIG: "config/selected.json",
