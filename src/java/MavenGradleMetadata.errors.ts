@@ -1,13 +1,5 @@
-/** Distinguish corrupt POM/module bytes from layouts this reader does not admit. */
-export class MavenGradleMetadataFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "MavenGradleMetadataFormatFailure";
-  }
-}
+/** The ParseFailure format of a Maven POM or Gradle module metadata file. */
+export const MAVEN_GRADLE_METADATA_FORMAT = "maven-gradle-metadata";
 
 /** Fixed report allowances; each names the representation it bounds. */
 export type MavenGradleReportAllowance =

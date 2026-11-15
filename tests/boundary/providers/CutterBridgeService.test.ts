@@ -6,6 +6,7 @@ import {
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const cutterInput = {
   session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
@@ -72,7 +73,7 @@ it.each(["descriptor-first", "command-first"] as const)(
       },
     });
     if (order === "descriptor-first") {
-      descriptor.resolveCleanup();
+      releaseOwnedCleanup(descriptor);
       expect(retried.error.cleanupResources).toEqual([
         `cutter-session:${cutterInput.session_id}`,
       ]);
@@ -91,7 +92,7 @@ it.each(["descriptor-first", "command-first"] as const)(
       expect(dispatched.error.cleanupIncomplete).toBe(false);
       expect(retried.error.cleanupIncomplete).toBe(true);
       expect(retried.error.cleanupResources).toEqual(["descriptor-fixture"]);
-      descriptor.resolveCleanup();
+      releaseOwnedCleanup(descriptor);
     }
     expect(retried.error.cleanupIncomplete).toBe(false);
     expect(retried.error.cleanupResources).toEqual([]);
@@ -587,11 +588,11 @@ it.each(["descriptor-first", "command-first"])(
       throw new Error("Expected typed mixed cleanup");
     expect(mixed.cleanupIncomplete).toBe(true);
     expect(close).not.toHaveBeenCalled();
-    if (order === "descriptor-first") descriptorFailure.resolveCleanup();
+    if (order === "descriptor-first") releaseOwnedCleanup(descriptorFailure);
     else terminal = true;
     await expect(service.close()).rejects.toBeInstanceOf(AnalysisError);
     expect(mixed.cleanupIncomplete).toBe(true);
-    descriptorFailure.resolveCleanup();
+    releaseOwnedCleanup(descriptorFailure);
     terminal = true;
     await service.close();
     expect(dispatched.error.cleanupIncomplete).toBe(false);

@@ -11,6 +11,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   finalizedResult,
@@ -186,7 +187,7 @@ const run = async (
     primary,
     recoverCleanup: async () => {
       if (adopter.lease) await lease.release();
-      else typedCleanup.resolveCleanup();
+      else releaseOwnedCleanup(typedCleanup);
     },
   };
 };

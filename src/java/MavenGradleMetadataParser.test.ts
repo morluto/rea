@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,10 +12,7 @@ import {
   gradleModuleFixture,
   mavenPomFixture,
 } from "./MavenGradleMetadata.fixture.js";
-import {
-  MavenGradleMetadataFormatFailure,
-  MavenGradleMetadataReportFailure,
-} from "./MavenGradleMetadata.errors.js";
+import { MavenGradleMetadataReportFailure } from "./MavenGradleMetadata.errors.js";
 import { MavenGradleMetadataProvider } from "./MavenGradleMetadataProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
@@ -43,7 +41,7 @@ const expectFailure = (
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
     }),
-  ).toThrow(MavenGradleMetadataFormatFailure);
+  ).toThrow(ParseFailureError);
   try {
     parseMavenGradleMetadata(bytes, {
       path: "/artifacts/selected",
@@ -51,9 +49,9 @@ const expectFailure = (
       bytes: bytes.length,
     });
   } catch (cause) {
-    expect(cause).toBeInstanceOf(MavenGradleMetadataFormatFailure);
-    if (cause instanceof MavenGradleMetadataFormatFailure)
-      expect(cause.kind).toBe(kind);
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (cause instanceof ParseFailureError)
+      expect(cause.failure.kind).toBe(kind);
   }
 };
 
@@ -533,9 +531,9 @@ it("keeps malformed Gradle JSON source out of the failure message", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(MavenGradleMetadataFormatFailure);
-  expect(failure).toMatchObject({ kind: "malformed" });
-  const { message } = failure as MavenGradleMetadataFormatFailure;
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({ failure: { kind: "malformed" } });
+  const { message } = failure as ParseFailureError;
   expect(message).not.toContain("user:secret");
   expect(message).not.toContain("repo.example");
   expect(message).not.toContain('"url"');
@@ -664,12 +662,21 @@ it.for([
   "refuses %s rows past the report allowance before building them",
   ([, source]) => {
     const bytes = Buffer.from(source, "utf8");
-    expect(() =>
+    let failure: unknown;
+    try {
       parseMavenGradleMetadata(bytes, {
         path: "/artifacts/selected",
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
-      }),
-    ).toThrow(/65537 dependency and constraint rows, above the 65536-row/u);
+      });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(MavenGradleMetadataReportFailure);
+    expect(failure).toMatchObject({
+      allowance: "dependency_rows",
+      limit: 65_536,
+      required: 65_537,
+    });
   },
 );

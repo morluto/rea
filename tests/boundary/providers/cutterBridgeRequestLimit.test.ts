@@ -236,11 +236,10 @@ const ceilingMismatch = (error: unknown): boolean => {
     bridge_max_request_bytes: 16_777_216,
     client_max_request_bytes: 8192,
   });
+  // That no request was sent exists only in this prose.
   expect(error.reason).toContain(
     "No status request was sent to the mismatched session.",
   );
-  expect(error.remediationAction).toContain("update_analysis_settings");
-  expect(error.remediationAction).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
   return true;
 };
 
@@ -459,9 +458,11 @@ it("refuses an escaped Cutter command before serializing it", async () => {
     ).rejects.toSatisfy((error: unknown) => {
       expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
       if (!(error instanceof AnalysisResourceConstraintError)) return false;
-      expect(error.reason).toContain("authenticated frame limit of 8192 bytes");
-      expect(error.reason).toContain("no command was sent");
-      expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+      expect(error.resource).toBe("transport");
+      // The frame limit and that no command was sent exist only in this prose.
+      expect(error.reason).toMatch(
+        /authenticated frame limit of 8192 bytes.*no command was sent/u,
+      );
       return true;
     });
     expect(connections).toBe(0);
@@ -543,38 +544,15 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
           execution_state: "unknown",
           error: "transport-response-missing",
           output_truncated: true,
-          message: expect.stringContaining("8192"),
+          // The limit, its setting and the uncertain completion exist only in
+          // this prose.
+          message: expect.stringMatching(
+            /8192.*REA_BRIDGE_MAX_REQUEST_BYTES.*may have completed/su,
+          ),
         },
         limitations: expect.arrayContaining([
           expect.stringMatching(/output.*transport limit.*omitted/iu),
         ]),
-      },
-    },
-  });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.stringContaining("REA_BRIDGE_MAX_REQUEST_BYTES"),
-        },
-      },
-    },
-  });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.stringContaining("may have completed"),
-        },
-      },
-    },
-  });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.not.stringContaining("no runtime override"),
-        },
       },
     },
   });

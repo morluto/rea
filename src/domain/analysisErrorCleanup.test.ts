@@ -20,6 +20,7 @@ import {
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { createEvidence } from "./evidence.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it.each([false, true])(
   "keeps each owner's capture without text-based deduplication (matching: %s)",
@@ -85,9 +86,9 @@ it("keeps dependency-owned resources empty after the final owner releases", () =
   expect(new Set(composed.cleanupResources)).toEqual(
     new Set(["file-owner", "trace-owner"]),
   );
-  file.resolveCleanup();
+  releaseOwnedCleanup(file);
   expect(composed.cleanupResources).toEqual(["trace-owner"]);
-  trace.resolveCleanup();
+  releaseOwnedCleanup(trace);
   expect(composed.cleanupIncomplete).toBe(false);
   expect(composed.cleanupResources).toEqual([]);
   expect(new Set(composed.cleanup?.resources)).toEqual(
@@ -110,7 +111,7 @@ it("reads completion through nested compositions from the releasing owner only",
   // Cleanup state is not writable state of an error value.
   expect(Reflect.set(outer, "cleanupIncomplete", false)).toBe(false);
   expect(outer.cleanupIncomplete).toBe(true);
-  owner.resolveCleanup();
+  releaseOwnedCleanup(owner);
   expect(outer.cleanupIncomplete).toBe(false);
   expect(inner.cleanupIncomplete).toBe(false);
   // Completion is monotonic: a later binding cannot reopen it.
@@ -127,7 +128,7 @@ it("keeps completion when a dependency is bound after release without an interme
     ["owned-worker"],
     {},
   ).bindCleanupDependencies([owner]);
-  owner.resolveCleanup();
+  releaseOwnedCleanup(owner);
   outer.bindCleanupDependencies([
     new ProviderCleanupError("fixture", ["later"], {}),
   ]);
@@ -146,7 +147,7 @@ it("keeps primary diagnostics separate from historical cleanup diagnostics with 
     primary,
     cleanup,
   ).bindCleanupDependencies([primary, cleanup]);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   const projected = projectAnalysisError(composed);
   expect(projected.details?.diagnostics).toEqual(primary.diagnostics);
   expect(projected.details?.cleanup_history).toMatchObject({
@@ -231,7 +232,7 @@ it.each([
     execution_failure: original.code,
     resources: ["owned-input"],
   });
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   const projected = projectAnalysisError(composed);
   expect(projected).toMatchObject(original);
   expect(projected.details?.cleanup_history).toMatchObject({
@@ -282,11 +283,11 @@ it.each(["inner", "outer"] as const)(
         execution_failure: "invalid_request",
       },
     });
-    released.resolveCleanup();
+    releaseOwnedCleanup(released);
     expect(outer.cleanupIncomplete).toBe(true);
     expect(projectAnalysisError(outer).code).toBe("cleanup_incomplete");
     expect(projectAnalysisError(outer).category).toBe("invalid_input");
-    pending.resolveCleanup();
+    releaseOwnedCleanup(pending);
     expect(outer.cleanupIncomplete).toBe(false);
     expect(projectAnalysisError(outer)).toMatchObject(
       projectAnalysisError(primary),
@@ -355,7 +356,7 @@ it("does not infer cleanup success when a composition has no live owner binding"
   const primary = new AnalysisInputError("inspect");
   const cleanup = new ProviderCleanupError("fixture", ["input"], {});
   const composed = analysisErrorWithCleanupFailure(primary, cleanup);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
   expect(projectAnalysisError(composed).category).toBe("invalid_input");
   expect(composed.cleanupIncomplete).toBe(true);
@@ -397,7 +398,7 @@ it("keeps the physical failure primary when later cleanup observes cancellation"
     },
   });
   expect(composed.cleanupPrimary?.cause).toBe(physical);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(projectAnalysisError(composed)).toMatchObject(
     projectAnalysisError(primary),
   );
@@ -423,9 +424,9 @@ it("retains an observation attached to the composite after the primary failed", 
     },
   );
   composed.retainPartialObservation(observation);
-  composed.resolveCleanup();
+  releaseOwnedCleanup(composed);
   expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(projectAnalysisError(composed)).toMatchObject({
     code: "invalid_request",
     details: { partial_observation: observation },
@@ -470,10 +471,10 @@ it("retains an owner's finalization report independently of pending primary sema
   assertReport(finalized);
   assertReport(outer);
   expect(outer.cleanupIncomplete).toBe(true);
-  later.resolveCleanup();
+  releaseOwnedCleanup(later);
   assertReport(outer);
   expect(outer.cleanupIncomplete).toBe(true);
-  finalized.resolveCleanup();
+  releaseOwnedCleanup(finalized);
   assertReport(outer);
   expect(outer.cleanupIncomplete).toBe(false);
 });

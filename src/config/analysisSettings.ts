@@ -22,6 +22,7 @@ import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { capturePacketJsonExpansionBytesSchema } from "./capturePacketJsonExpansion.js";
 import { parseNativeMatchingAllowance } from "./nativeMatchingAllowance.js";
 import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
+import { bridgeMaxReplyBytesSchema } from "./bridgeMaxReplyBytes.js";
 import {
   debuggerCommandDeadlineMsSchema,
   debuggerMaxCommandOutputBytesSchema,
@@ -51,6 +52,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES:
       capturePacketJsonExpansionBytesSchema,
     REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema,
+    REA_BRIDGE_MAX_REPLY_BYTES: bridgeMaxReplyBytesSchema,
     REA_DEBUGGER_COMMAND_DEADLINE_MS: debuggerCommandDeadlineMsSchema,
     REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: debuggerMaxCommandOutputBytesSchema,
     REA_HOPPER_CALLER_SCAN_BUDGET_MS: providerStartupTimeoutSchema,

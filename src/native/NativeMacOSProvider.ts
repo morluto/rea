@@ -1,5 +1,10 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import {
+  invariantViolation,
+  InternalInvariantError,
+} from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -70,7 +75,6 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -271,7 +275,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   private get target(): BinaryTarget {
     if (this.activeTarget === undefined)
-      throw new Error("This provider client has no executable target");
+      throw invariantViolation("This provider client has no executable target");
     return this.activeTarget;
   }
 
@@ -1441,7 +1445,9 @@ class NativeMacOSClient implements AnalysisClient {
               );
               if (size !== null) {
                 if (selected === undefined)
-                  throw new TypeError("Selected Mach-O slice is unavailable");
+                  throw invariantViolation(
+                    "Selected Mach-O slice is unavailable",
+                  );
                 assertSelectedMachoSlice(source, selected, binary);
               }
               return binary;
@@ -1705,11 +1711,19 @@ const closeNativeFileScope = async (
   }
 };
 
+/**
+ * Project a producer failure. A broken internal assumption is a REA defect, not
+ * native output, so it is rethrown rather than reported as output parsing.
+ */
 const nativeOutputFailure = (
   operation: AnalysisOperation,
   cause: unknown,
-): AnalysisError =>
-  new AnalysisOutputError(operation, "Native output parsing failed", { cause });
+): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return new AnalysisOutputError(operation, "Native output parsing failed", {
+    cause,
+  });
+};
 
 const nativeMachoCompletedFailure = (
   value: unknown,
@@ -1786,12 +1800,7 @@ const nativeMachoSourcePrimary = (
   if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
     return new AnalysisOutputError(operation, cause.message, options);
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      operation,
-      path,
-      cause.message,
-      options,
-    );
+    return readerIntegrityFailure(operation, path, cause, options);
   return new ProviderAdapterError(IDENTITY.id, operation, {
     ...options,
     userMessage: "The selected Mach-O source could not be read safely.",

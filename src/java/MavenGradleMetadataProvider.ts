@@ -5,34 +5,25 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import {
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   projectArtifactCloseFailure,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES,
   type InspectMavenGradleMetadataInput,
 } from "../domain/java/mavenGradleMetadata.js";
 import { err, ok } from "../domain/result.js";
-import {
-  MavenGradleMetadataFormatFailure,
-  MavenGradleMetadataReportFailure,
-} from "./MavenGradleMetadata.errors.js";
+import { MavenGradleMetadataReportFailure } from "./MavenGradleMetadata.errors.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "./MavenGradleMetadataProviderIdentity.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
@@ -121,42 +112,14 @@ const mavenGradleMetadataFailurePrimary = (
         ),
       },
     );
-  if (cause instanceof MavenGradleMetadataFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -167,9 +130,7 @@ const mavenGradleMetadataFailurePrimary = (
         OPERATION,
         cause.boundary ?? "memory",
         cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-        },
+        { max_file_bytes: input.max_file_bytes },
         {
           cause,
           ...(remediationAction === undefined
@@ -179,33 +140,15 @@ const mavenGradleMetadataFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    const pathErrno = artifactSelectedPathErrno(cause);
-    if (pathErrno !== undefined)
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected Maven POM or Gradle module metadata could not be read (${pathErrno}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "Maven POM or Gradle module metadata",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure

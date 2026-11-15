@@ -1,3 +1,6 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../domain/isRecord.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import { parseXmlDocument, opensLikeXml } from "../domain/xmlDocument.js";
@@ -12,11 +15,9 @@ import {
 } from "../domain/java/mavenGradleMetadata.js";
 import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
-  MavenGradleMetadataFormatFailure,
+  MAVEN_GRADLE_METADATA_FORMAT,
   MavenGradleMetadataReportFailure,
 } from "./MavenGradleMetadata.errors.js";
-
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 const BASE_LIMITATIONS = [
   "This workflow reads a Maven POM or Gradle module-metadata document without running Maven or Gradle, resolving a dependency tree, or contacting a repository.",
@@ -94,9 +95,6 @@ const elementText = (element: Element | undefined): string | null => {
 
 const childText = (element: Element, local: string): string | null =>
   elementText(firstNamed(element, local));
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const textOf = (value: unknown): string | null =>
   typeof value === "string" ? nonempty(value) : null;
@@ -299,16 +297,19 @@ const parsePom = (
     lineEndings: "preserve",
   });
   if (!parsed.ok)
-    throw new MavenGradleMetadataFormatFailure(
-      parsed.error.kind,
-      parsed.error.kind === "unsupported"
-        ? "Maven POM declares a document type, which is unsupported."
-        : "Maven POM is not well-formed XML.",
-    );
+    throw parsed.error.kind === "unsupported"
+      ? unsupportedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          "Maven POM declares a document type, which is unsupported.",
+        )
+      : malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          "Maven POM is not well-formed XML.",
+        );
   const root = parsed.value.documentElement;
   if (!isMavenProjectRoot(root))
-    throw new MavenGradleMetadataFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Selected XML document is not a Maven project POM.",
     );
   const unresolved: MavenGradleUnresolved[] = [];
@@ -418,8 +419,8 @@ const parseGradleDependency = (
   unresolved: MavenGradleUnresolved[],
 ): MavenGradleDependency => {
   if (!isRecord(value))
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       `Gradle ${origin === "variant-dependencies" ? "dependency" : "dependency constraint"} ${String(index)} is not a JSON object.`,
     );
   const record = value;
@@ -467,8 +468,8 @@ const parseGradleDependency = (
 const gradleArray = (value: unknown, field: string): readonly unknown[] => {
   if (value === undefined) return [];
   if (Array.isArray(value)) return value;
-  throw new MavenGradleMetadataFormatFailure(
-    "malformed",
+  throw malformedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
     `Gradle module metadata ${field} is present but is not a JSON array.`,
   );
 };
@@ -479,8 +480,8 @@ const gradleObjects = (
 ): readonly Record<string, unknown>[] =>
   gradleArray(value, field).map((entry, index) => {
     if (isRecord(entry)) return entry;
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       `Gradle module metadata ${field}[${String(index)}] is not a JSON object.`,
     );
   });
@@ -494,14 +495,14 @@ const parseGradle = (
     parsed = JSON.parse(source) as unknown;
   } catch {
     // The engine's message quotes source text, which may hold URL credentials.
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Gradle module metadata is not well-formed JSON.",
     );
   }
   if (!isRecord(parsed))
-    throw new MavenGradleMetadataFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Gradle module metadata root must be a JSON object.",
     );
   const format_version = textOf(parsed.formatVersion);
@@ -511,8 +512,8 @@ const parseGradle = (
     format_version === null ||
     (component === null && !Array.isArray(variantsValue))
   )
-    throw new MavenGradleMetadataFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Selected JSON document is not Gradle module metadata (missing formatVersion and component or variants).",
     );
   const limitations: string[] = [
@@ -648,21 +649,22 @@ export const parseMavenGradleMetadata = (
   artifact: { path: string; sha256: string; bytes: number },
 ): MavenGradleMetadata => {
   if (bytes.length !== artifact.bytes)
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
   if (bytes.length === 0)
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Selected file is empty.",
     );
   let source: string;
   try {
-    source = UTF8.decode(bytes);
+    // ignoreBOM: true kept a leading U+FEFF; "preserve" is that same policy.
+    source = decodeStrictUtf8(bytes, "preserve");
   } catch {
-    throw new MavenGradleMetadataFormatFailure(
-      "malformed",
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
       "Selected file is not valid UTF-8.",
     );
   }
@@ -671,8 +673,8 @@ export const parseMavenGradleMetadata = (
     return parseGradle(source, artifact);
   if (opensLikeXml(trimmed) || trimmed.startsWith("<"))
     return parsePom(source, artifact);
-  throw new MavenGradleMetadataFormatFailure(
-    "unsupported",
+  throw unsupportedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
     "Selected file is not a Maven POM or Gradle module-metadata document.",
   );
 };

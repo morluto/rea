@@ -31,7 +31,7 @@ import {
   type ElectronBoundarySummary,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
@@ -424,11 +424,11 @@ export const reconstructJavaScriptArtifact = async (
           ? interruption
           : interruption === null
             ? cleanupFailure
-            : analysisErrorWithCleanupFailure(
+            : analysisErrorWithCleanupDependencies(
                 interruption,
                 cleanupFailure,
                 OPERATION,
-              ).bindCleanupDependencies([interruption, cleanupFailure]);
+              );
       if (failure !== null) {
         const { electron_summary: summary, ...application } = completed;
         const partial = await completeJavaScriptAnalysisSteps(

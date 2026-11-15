@@ -50,6 +50,8 @@ const hookSnapshotSchema = z.strictObject({
   observed_ipc: retention.observed_ipc,
   observed_runtime: retention.observed_runtime,
   hook_error: z.boolean(),
+  /** Null when the hook did not run, so the lock outcome is unknown. */
+  single_instance_lock_refused: z.boolean().nullable(),
 });
 
 type ElectronAction = ElectronActiveObservationInput["actions"][number];
@@ -382,6 +384,40 @@ const emitDeepLink = (
     { delivery: action.delivery, url: action.url },
   );
 
+/**
+ * Abort when the hook announces a refused single-instance lock. The hook
+ * stops the application path that requested the lock, so a window that path
+ * would have opened never appears; aborting lets pending actions stop. The
+ * hook snapshot's `single_instance_lock_refused` remains the reported fact.
+ */
+export const watchSingleInstanceLockRefusal = (
+  application: ElectronApplication,
+): AbortSignal => {
+  const refusal = new AbortController();
+  void application
+    .evaluate(() => {
+      const announced = Reflect.get(
+        globalThis,
+        "__reaElectronSingleInstanceLockRefusal",
+      );
+      return announced instanceof Promise ? announced : false;
+    })
+    .then(
+      (refused) => {
+        if (refused === true)
+          refusal.abort(
+            new BrowserObservationError(
+              OPERATION,
+              "application_already_running",
+            ),
+          );
+      },
+      // The pending read settles when the application closes; nothing to report.
+      () => undefined,
+    );
+  return refusal.signal;
+};
+
 /** Read the current Electron windows, metrics, and hook snapshot. */
 export const readApplicationState = async (
   application: ElectronApplication,
@@ -456,6 +492,7 @@ export const readApplicationState = async (
             observed_ipc: 0,
             observed_runtime: 0,
             hook_error: true,
+            single_instance_lock_refused: null,
           };
     })
     .then((value) => hookSnapshotSchema.parse(value));
