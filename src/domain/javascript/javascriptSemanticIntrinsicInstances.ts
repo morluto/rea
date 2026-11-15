@@ -5,6 +5,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { ambientPathMayHaveChanged } from "./javascriptSemanticEffectLog.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
@@ -31,12 +32,13 @@ const intrinsicPrototypeMemberMayHaveChanged = (
   member: string,
 ): boolean =>
   [constructor, "Object"].some((owner) =>
-    [member, "__proto__"].some((key) => {
-      const path = ["global", owner, "prototype", key];
-      return (
-        state.ambientWrites.covers(path) || state.ambientEscapes.covers(path)
-      );
-    }),
+    [member, "__proto__"].some((key) =>
+      ambientPathMayHaveChanged(
+        state,
+        ["global", owner, "prototype", key],
+        "contents",
+      ),
+    ),
   );
 
 /**

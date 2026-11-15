@@ -4,6 +4,7 @@ import {
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
 import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
+import { ambientPathMayHaveChanged } from "./javascriptSemanticEffectLog.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
@@ -886,7 +887,12 @@ const urlObjectRequestTarget = (
   if (
     ["URL", "Object"].some((owner) =>
       ["toString", "valueOf"].some((method) =>
-        bindings.ambientWrites.covers(["global", owner, "prototype", method]),
+        ambientPathMayHaveChanged(bindings, [
+          "global",
+          owner,
+          "prototype",
+          method,
+        ]),
       ),
     )
   )

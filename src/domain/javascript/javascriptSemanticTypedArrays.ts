@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { ambientPathMayHaveChanged } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 const typedArrayConstructors = [
@@ -27,7 +28,7 @@ export const isIntrinsicTypedArrayConstruction = (
   typedArrayConstructors.some(
     (name) =>
       isIntrinsicGlobalReference(node.callee, state, name, node) &&
-      !state.ambientEscapes.covers(["global", name]),
+      !ambientPathMayHaveChanged(state, ["global", name], "contents"),
   );
 
 /** A successful evaluation of these expressions produces a Number, not a key object. */
