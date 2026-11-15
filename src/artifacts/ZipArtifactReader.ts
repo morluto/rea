@@ -40,7 +40,7 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   accountZipMemberRegion,
   type ZipLocalRecord,

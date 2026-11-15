@@ -12,7 +12,7 @@ import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   assertArtifactReadActive,
   mapArtifactFileFailure,

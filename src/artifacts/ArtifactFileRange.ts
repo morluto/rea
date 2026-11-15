@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 
 /** Validate a physical extent before callers apply independent capacity limits. */

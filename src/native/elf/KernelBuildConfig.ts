@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,

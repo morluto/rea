@@ -28,7 +28,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";

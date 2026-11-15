@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { artifactSelectedPathErrno } from "./ArtifactFileOperation.js";
 
 /** Canonicalize only a path that native filesystem lookup actually accepts. */

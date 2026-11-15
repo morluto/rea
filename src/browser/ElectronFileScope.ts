@@ -15,7 +15,7 @@ import {
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
 import { asarNodeSchema } from "../artifacts/AsarNode.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   regularFileState,

@@ -1,7 +1,7 @@
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCapabilityUnavailableError,

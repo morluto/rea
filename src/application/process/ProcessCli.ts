@@ -44,7 +44,7 @@ import { readJsonFile, jsonFileReadCleanupLeases } from "../JsonFiles.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../../artifacts/ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";

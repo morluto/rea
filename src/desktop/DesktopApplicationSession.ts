@@ -2,7 +2,7 @@ import {
   SamplingReadBatchFailure,
   samplingInspectionFailures,
 } from "../process/capture/ProcessSamplingObservation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   assertProcessOwnershipInspectionActive,

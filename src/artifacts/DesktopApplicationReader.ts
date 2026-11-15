@@ -6,7 +6,7 @@ import {
   DirectoryArtifactTraversalLimit,
   type DirectoryArtifactEntry,
 } from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { artifactFileCompletion } from "./ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,

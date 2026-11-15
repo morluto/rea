@@ -7,7 +7,7 @@ import {
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";

@@ -41,7 +41,7 @@ import { ownedProcessPrerequisiteAvailability } from "../application/ownedProces
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,

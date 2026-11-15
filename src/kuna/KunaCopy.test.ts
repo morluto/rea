@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { copyAndHash, kunaCopyFailureFacts } from "./KunaCommand.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";

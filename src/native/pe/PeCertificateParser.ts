@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type {
   InspectPeCertificatesInput,
   PeCertificates,

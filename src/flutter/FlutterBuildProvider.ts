@@ -53,7 +53,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {

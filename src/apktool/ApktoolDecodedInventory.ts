@@ -2,7 +2,7 @@ import { ok, err, type Result } from "../domain/result.js";
 import type {
   ArtifactEntry,
   ArtifactTraversalOmission,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { DirectoryArtifactTraversalLimit } from "../artifacts/DirectoryArtifactReader.js";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { classifyAndroidStringsTable } from "../domain/apktool/apktoolResourceAnalysis.js";

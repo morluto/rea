@@ -3,7 +3,7 @@ import { posix } from "node:path";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { createReferenceSourcePathLookup } from "../domain/referenceSourcePathIdentity.js";
 import { err, ok } from "../domain/result.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { traverseDirectory } from "./ReferenceSourceReaderEntries.js";
 import type {

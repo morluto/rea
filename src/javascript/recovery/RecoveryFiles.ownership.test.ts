@@ -1,5 +1,5 @@
 import { renameSync, writeFileSync, type Dir } from "node:fs";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";

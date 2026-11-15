@@ -2,7 +2,7 @@ import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,

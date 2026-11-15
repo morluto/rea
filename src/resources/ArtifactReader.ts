@@ -12,7 +12,7 @@ import type {
 } from "../domain/artifactIntegrity.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import type { Readable } from "node:stream";
 import type {
   ArtifactCommand,

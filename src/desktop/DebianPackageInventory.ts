@@ -5,7 +5,7 @@ import { readdir } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   fromUbuntuNobleArchive,
   repositoryRefusal,

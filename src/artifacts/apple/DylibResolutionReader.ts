@@ -20,7 +20,7 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import {
   ArtifactReaderFailure,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";

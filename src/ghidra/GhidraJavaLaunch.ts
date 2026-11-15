@@ -3,7 +3,7 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { dirname } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   jvmEnvironmentArguments,
   prepareJdkJavaOptions,

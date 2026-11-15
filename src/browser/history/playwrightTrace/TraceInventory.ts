@@ -1,6 +1,6 @@
 import { digestCanonicalValue } from "../../../domain/canonicalDigest.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../resources/ArtifactReader.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,
   PLAYWRIGHT_TRACE_OPERATION,

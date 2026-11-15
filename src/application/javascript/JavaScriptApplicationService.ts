@@ -7,7 +7,7 @@ import {
 import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js";
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {

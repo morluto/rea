@@ -1,7 +1,7 @@
 import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,

@@ -25,7 +25,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import {
   admitAsarHeader,

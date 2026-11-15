@@ -5,7 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,

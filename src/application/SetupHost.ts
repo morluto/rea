@@ -6,7 +6,7 @@ import {
 import { access } from "node:fs/promises";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {

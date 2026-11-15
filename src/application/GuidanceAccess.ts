@@ -16,7 +16,7 @@ import {
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,

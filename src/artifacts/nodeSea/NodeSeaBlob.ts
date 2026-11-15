@@ -1,7 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,

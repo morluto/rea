@@ -19,7 +19,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,

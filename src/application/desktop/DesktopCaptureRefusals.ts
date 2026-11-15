@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,

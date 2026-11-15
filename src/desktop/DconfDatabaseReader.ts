@@ -8,7 +8,7 @@ import {
 } from "../process/ExecFileOutput.js";
 
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 
 const DCONF_TIMEOUT_MS = 30_000;
 const DCONF_MAX_BUFFER = 16 * 1024 * 1024;

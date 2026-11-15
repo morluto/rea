@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

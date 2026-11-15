@@ -28,7 +28,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

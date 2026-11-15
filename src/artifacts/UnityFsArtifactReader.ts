@@ -11,7 +11,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";

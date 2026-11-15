@@ -8,7 +8,7 @@ import { expect, it, vi } from "vitest";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
 import * as fileChunks from "../filesystem/readFileHandleChunks.js";

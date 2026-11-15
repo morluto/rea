@@ -15,7 +15,7 @@ import {
 import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,

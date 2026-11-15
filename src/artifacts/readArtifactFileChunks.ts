@@ -3,7 +3,7 @@ import {
   readFileHandleChunks,
   type FileHandleChunkOptions,
 } from "../filesystem/readFileHandleChunks.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 
 /** Produce artifact cancellation facts at the actual descriptor read boundary. */
 export const readArtifactFileChunks = (

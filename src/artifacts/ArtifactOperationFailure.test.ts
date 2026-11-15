@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";

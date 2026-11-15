@@ -17,7 +17,7 @@ import {
   type ArtifactReaderFailureOptions,
   type ArtifactTraversalOmission,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";

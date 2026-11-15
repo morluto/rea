@@ -1,5 +1,5 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   stableArtifactInputFailure,
   readerIntegrityFailure,

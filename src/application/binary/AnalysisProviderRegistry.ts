@@ -1,7 +1,7 @@
 import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { SharedStartupAttempt } from "../../process/SharedStartupAttempt.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

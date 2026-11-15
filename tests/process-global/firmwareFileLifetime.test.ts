@@ -123,7 +123,7 @@ import { publishFirmwareExtraction } from "../../src/firmware/FirmwarePublicatio
 import { normalizeUnblobReport } from "../../src/firmware/FirmwareReports.js";
 import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { FirmwareProvider } from "../../src/firmware/FirmwareProvider.js";
 import { firmwareFailureDialect } from "../../src/firmware/FirmwareFailures.js";
 import { classifyProviderFailure } from "../../src/providers/classifyProviderFailure.js";
