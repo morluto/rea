@@ -22,6 +22,12 @@ import {
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import type { JunieLocationSettings } from "./JunieClientSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  kiloDefaultLocation,
+  kiloGlobalLocation,
+  type KiloLocationContext,
+} from "./KiloClientLocation.js";
 import {
   type MsixPackageView,
   windowsAppDataRoots,
@@ -99,6 +105,7 @@ export interface SetupClient {
     | "amp"
     | "fx"
     | "goose"
+    | "kilo"
     | "unsupported";
 }
 
@@ -127,6 +134,16 @@ interface ClientPathContext {
  */
 export interface ClientSystemPaths {
   readonly gooseSystemConfig?: string;
+}
+
+/**
+ * A user-scope location decided by which configuration layers exist, which
+ * only an asynchronous probe can observe.
+ */
+interface ClientLayeredLocation {
+  readonly configPath: string;
+  /** Every file layer in load order, including `configPath`. */
+  readonly configPaths: readonly string[];
 }
 
 /** One resolved configuration location and its detection evidence. */
@@ -187,6 +204,14 @@ interface ClientDefinitionBase {
   readonly junieSettings?: (
     context: ClientPathContext,
   ) => JunieLocationSettings;
+  /**
+   * The write target and layers once present layers are observed.
+   * `resolveSupportedClients` applies it; the synchronous row keeps the
+   * default target and every candidate layer.
+   */
+  readonly layeredLocation?: (
+    context: ClientPathContext,
+  ) => Promise<Result<ClientLayeredLocation, ClientPathFailure>>;
 }
 
 const traeUserDirectory = ({
@@ -986,6 +1011,82 @@ type ClientDefinitionInput = Omit<ClientDefinitionBase, "registrationProfile"> &
   };
 
 /** Bind native identity once while retaining the original definition's literal name. */
+/**
+ * Kilo resolves its configured paths against its own working directory, which
+ * setup cannot know, so the table accepts only absolute ones.
+ */
+const kiloTableContext = (context: ClientPathContext): KiloLocationContext => ({
+  root: context,
+  path: (path) => {
+    if ((context.platform === "win32" ? win32 : posix).isAbsolute(path))
+      return path;
+    throw new KiloRelativePathError(path);
+  },
+});
+
+class KiloRelativePathError extends Error {
+  constructor(readonly path: string) {
+    super(
+      `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`,
+    );
+  }
+}
+
+const kiloPathFailure = (cause: unknown): ClientPathFailure => {
+  if (cause instanceof KiloRelativePathError)
+    return { path: cause.path, message: cause.message };
+  throw cause;
+};
+
+const kiloLocation = (
+  context: ClientPathContext,
+): Result<ClientLocation, ClientPathFailure> => {
+  try {
+    const { configPath, markerPath } = kiloDefaultLocation(
+      kiloTableContext(context),
+    );
+    return ok({ configPath, markerPath });
+  } catch (cause: unknown) {
+    return err(kiloPathFailure(cause));
+  }
+};
+
+const kiloLayeredLocation = async (
+  context: ClientPathContext,
+): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
+  const kilo = kiloTableContext(context);
+  try {
+    const { configPath, configPaths } = await kiloGlobalLocation(kilo);
+    return ok({ configPath, configPaths });
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError)
+      return err({
+        path: kiloDefaultLocation(kilo).markerPath,
+        message: cause.message,
+      });
+    return err(kiloPathFailure(cause));
+  }
+};
+
+/** Candidate layers when relative paths leave the location unresolved. */
+const kiloCandidatePaths = (context: ClientPathContext): readonly string[] => {
+  try {
+    return kiloDefaultLocation(kiloTableContext(context)).configPaths;
+  } catch (cause: unknown) {
+    kiloPathFailure(cause);
+    return [];
+  }
+};
+
+const kiloDiscoveryPaths = (context: ClientPathContext): readonly string[] => {
+  try {
+    return kiloDefaultLocation(kiloTableContext(context)).discoveryPaths;
+  } catch (cause: unknown) {
+    kiloPathFailure(cause);
+    return [];
+  }
+};
+
 const defineClient = <const Definition extends ClientDefinitionInput>(
   definition: Definition,
 ) => {
@@ -1686,6 +1787,20 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "goose",
   }),
   defineClient({
+    name: "kilo",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
+    },
+    displayName: "Kilo Code",
+    location: kiloLocation,
+    configPaths: kiloCandidatePaths,
+    discoveryPaths: kiloDiscoveryPaths,
+    layeredLocation: kiloLayeredLocation,
+    format: "kilo",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1909,6 +2024,38 @@ export const supportedClients = (
       };
     }
   });
+};
+
+/**
+ * The client table with each layered location resolved: the rows setup,
+ * doctor, update and uninstall act on.
+ */
+export const resolveSupportedClients = async (
+  home: string,
+  platform: NodeJS.Platform = process.platform,
+  env: ClientPathContext["env"] = process.env,
+  systemPaths: ClientSystemPaths = {},
+): Promise<readonly SetupClient[]> => {
+  const context = { home, platform, env, systemPaths };
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  const rows = supportedClients(home, platform, env, systemPaths);
+  return Promise.all(
+    rows.map(async (row) => {
+      const resolve = definitions.find(
+        ({ name }) => name === row.name,
+      )?.layeredLocation;
+      if (resolve === undefined || row.configPathError !== undefined)
+        return row;
+      const location = await resolve(context);
+      return location.ok
+        ? { ...row, ...location.value }
+        : {
+            ...row,
+            configPath: location.error.path,
+            configPathError: location.error.message,
+          };
+    }),
+  );
 };
 
 /** Resolved destinations and unresolved selections share one path-resolution owner. */

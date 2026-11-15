@@ -38,7 +38,6 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
-  | "kilo"
   | "copilot_cli_project";
 type ClientServersKey =
   | "mcp_servers"
