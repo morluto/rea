@@ -215,3 +215,47 @@ it("keeps a work timeout primary when close also outlasts the finalize budget", 
   expect(error.cleanupIncomplete).toBe(true);
   expect(primaryAnalysisError(error)).toBeInstanceOf(AnalysisTimeoutError);
 });
+
+it("treats a budget that elapsed before work started as a timeout, even for work that never yields", async () => {
+  let startedAborted: boolean | undefined;
+  const commits: unknown[] = [];
+  const finalized = await runOwned(
+    async (signal) => {
+      startedAborted = signal?.aborted;
+      return ok({ count: 3 });
+    },
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(0),
+      close: async () => undefined,
+      commit: async (value) => {
+        commits.push(value);
+      },
+      partial: project,
+    },
+  );
+  expect(startedAborted).toBe(true);
+  expect(commits).toEqual([]);
+  expect(failure(finalized)).toBeInstanceOf(AnalysisTimeoutError);
+});
+
+it("keeps a caller abort during cleanup a cancellation with the caller's reason after the budget elapsed", async () => {
+  const caller = new AbortController();
+  const callerReason = { caller: "stop" };
+  const finalized = await runOwned(untilAborted, {
+    providerId: "fixture",
+    operation,
+    signal: caller.signal,
+    deadline: Deadline.after(5, { finalizeMs: 1000 }),
+    close: async () => {
+      caller.abort(callerReason);
+    },
+    partial: project,
+  });
+  expect(finalized.kind).toBe("cancelled");
+  const error = failure(finalized);
+  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(error.cause).toBe(callerReason);
+  expect(error.partialObservation).toEqual(project({ count: 1 }));
+});

@@ -201,6 +201,9 @@ const boundWork = (
   if (deadline === undefined)
     return { signal, elapsed: () => false, stop: () => undefined };
   const budget = new AbortController();
+  // A budget that elapsed before work starts is already aborted, so the work
+  // never sees a live signal it cannot finish under.
+  if (deadline.expired()) budget.abort(OwnerCancellation.deadlineElapsed);
   const timer = setTimeout(
     () => budget.abort(OwnerCancellation.deadlineElapsed),
     deadline.remainingMs(),
@@ -210,7 +213,9 @@ const boundWork = (
       signal === undefined
         ? budget.signal
         : AbortSignal.any([signal, budget.signal]),
-    elapsed: () => budget.signal.aborted,
+    // Work that settles without yielding to the timer still overran the
+    // budget when the monotonic deadline has passed.
+    elapsed: () => budget.signal.aborted || deadline.expired(),
     stop: () => clearTimeout(timer),
   };
 };
@@ -404,7 +409,31 @@ export const runOwned = async <Value>(
     outcome.error.cleanupIncomplete
   )
     cleanup = { kind: "retained", failure: outcome.error };
-  if (workTimedOut && options.deadline !== undefined) {
+  // Whether this outcome is the work's own observation of the budget's abort.
+  const budgetCancellation = (error: AnalysisError): boolean => {
+    const primaryError = primaryAnalysisError(error);
+    return (
+      primaryError instanceof AnalysisCancelledError &&
+      primaryError.cause === OwnerCancellation.deadlineElapsed
+    );
+  };
+  if (workTimedOut && isAborted(signal)) {
+    // The caller aborted during cleanup: a caller abort stays a cancellation,
+    // and its reason replaces the budget's. A late completed value becomes
+    // that cancellation below, as any pre-commit cancellation does.
+    if (!outcome.ok && budgetCancellation(outcome.error))
+      outcome = {
+        ok: false,
+        error: cancelledBy(options.operation, signal, {
+          ...(outcome.error.partialObservation === undefined
+            ? {}
+            : { partialObservation: outcome.error.partialObservation }),
+          ...(outcome.error.diagnostics === undefined
+            ? {}
+            : { diagnostics: outcome.error.diagnostics }),
+        }),
+      };
+  } else if (workTimedOut && options.deadline !== undefined) {
     const timeout = (
       replaced: Partial<
         Pick<AnalysisError, "partialObservation" | "diagnostics">
@@ -431,10 +460,7 @@ export const runOwned = async <Value>(
             : { diagnostics: { ...outcome.diagnostics, ...kept.diagnostics } },
         ),
       };
-    } else if (
-      !outcome.ok &&
-      primaryAnalysisError(outcome.error) instanceof AnalysisCancelledError
-    )
+    } else if (!outcome.ok && budgetCancellation(outcome.error))
       // The work observed the budget's abort; that cancellation is the
       // timeout's cause, and any cleanup it retains composes below.
       outcome = {
