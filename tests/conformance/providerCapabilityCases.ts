@@ -129,6 +129,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   rizinDebugSessions: {
     cases: ["tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts"],
   },
+  rpmPackage: { cases: ["tests/acceptance/rpmPackageCli.test.ts"] },
   rustBinary: { cases: ["tests/acceptance/rustBinaryCli.test.ts"] },
   signalRecording: { cases: ["tests/boundary/mcp/signalRecordingMcp.test.ts"] },
   sqliteDatabase: { cases: ["tests/acceptance/sqliteDatabaseCli.test.ts"] },
