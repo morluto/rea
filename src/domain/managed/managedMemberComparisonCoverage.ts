@@ -275,10 +275,6 @@ export const comparisonLimitations = (
     limitations.push(
       "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
     );
-  if (left.nesting_read === null || right.nesting_read === null)
-    limitations.push(
-      "At least one managed member observation predates enclosing-name identity. The legacy bare-name comparison does not establish the enclosing owner of a nested type.",
-    );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(
       "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",

@@ -14,16 +14,14 @@ export const verifyCompleteToolCatalog = async (
     { requireMcpLifecycleResult, sortVerifierNames },
     { TOOL_CONTRACTS },
     dialect,
-    { ADVERTISED_INPUT_DIALECT_BASELINE, ADVERTISED_OUTPUT_DIALECT_BASELINE },
+    { ADVERTISED_INPUT_DIALECT_BASELINE },
     { mcpInputSchemaProfileSchema },
-    { mcpOutputSchemaProfileSchema },
   ] = await Promise.all([
     import("./mcp-verifier-results.mjs"),
     import("../../dist/contracts/toolContracts.js"),
     import("../../dist/contracts/advertisedDialect.js"),
     import("../../dist/contracts/advertisedDialectBaseline.js"),
     import("../../dist/config/mcpInputSchemaProfile.js"),
-    import("../../dist/config/mcpOutputSchemaProfile.js"),
   ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
@@ -54,9 +52,6 @@ export const verifyCompleteToolCatalog = async (
   const inputProfile = mcpInputSchemaProfileSchema.parse(
     environment.REA_MCP_INPUT_SCHEMA_PROFILE ?? "compact",
   );
-  const outputProfile = mcpOutputSchemaProfileSchema.parse(
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE ?? "full",
-  );
   const regressions = [
     ...dialect.advertisedDialectRegressions(
       dialect.countAdvertisedDialectViolations(
@@ -68,7 +63,7 @@ export const verifyCompleteToolCatalog = async (
       dialect.countAdvertisedDialectViolations(
         listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
       ),
-      ADVERTISED_OUTPUT_DIALECT_BASELINE[outputProfile],
+      {},
     ),
   ];
   if (regressions.length > 0)

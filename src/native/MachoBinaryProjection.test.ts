@@ -321,7 +321,7 @@ it("retains legacy command metadata and derives simulator platform from CPU", ()
         offset: 64,
         size: 16,
         rawSha256: null,
-        legacyBuild: { version: 0x000e0200, sdk: 0x000f0000 },
+        legacyBuild: { platform: 2, version: 0x000e0200, sdk: 0x000f0000 },
       },
     ],
   });

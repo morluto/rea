@@ -25,10 +25,7 @@ import {
   parsePointerFixupsSteps,
   type PointerFixups,
 } from "../native/AppleMachoFixups.js";
-import {
-  parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
-} from "../native/AppleMachoSelection.js";
+import { parseMachoLayout } from "../native/AppleMachoSelection.js";
 import {
   readElfPointerValuesSteps,
   ElfPointerRelocationFailure,
@@ -174,11 +171,6 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
         layout.baseAddress,
       );
     } catch (cause) {
-      if (cause instanceof UnsupportedMachoMetadataFormatError)
-        throw new Il2cppBinaryFormatFailure(
-          "unsupported-container",
-          cause.message,
-        );
       const failure = parseFailureFromCause(cause);
       if (failure !== undefined)
         throw new Il2cppBinaryFormatFailure(

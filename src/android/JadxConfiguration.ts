@@ -2,7 +2,10 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import {
   jadxOperationTimeoutGuidance,
   JADX_OPERATION_TIMEOUT_REMEDIATION,
@@ -679,6 +682,9 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+/** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
+const JAVA_INT_MAX = 2_147_483_647;
+
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] => {
@@ -698,7 +704,7 @@ const resolveJvmArguments = (
       );
     if (
       name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > 2_147_483_647
+      Number(value) > JAVA_INT_MAX
     )
       throw configurationFailure(
         "open_options_invalid",
@@ -722,7 +728,7 @@ const readOperationTimeout = (
   if (parsed.success) return parsed.data;
   throw configurationFailure(
     "open_options_invalid",
-    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${value}.`,
+    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; received ${value}.`,
     { setting: "REA_JADX_OPERATION_TIMEOUT_MS", value },
     "operation_timeout",
   );

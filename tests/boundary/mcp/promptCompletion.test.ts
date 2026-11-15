@@ -379,6 +379,34 @@ describe("guided prompt completion from complete inventories", () => {
     expect(values).toContain("0x00000000");
   });
 
+  it.each([
+    [
+      "valid symbol metadata and an undeclared provider field",
+      {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "analysis",
+      },
+      ["0x1000", "main"],
+    ],
+    ["malformed symbol metadata", { primary: "yes" }, []],
+  ] as const)(
+    "reads procedure rows with %s through the procedure inventory contract",
+    async (_case, symbol, expected) => {
+      const completion = createPromptCompletionSource({
+        execute: () =>
+          Promise.resolve(
+            observed([
+              { address: "0x1000", value: "main", symbol, provider_rank: 1 },
+            ]),
+          ),
+      });
+      expect(await completion.complete("procedure", "")).toEqual(expected);
+    },
+  );
+
   it("normalizes Unicode prefixes while preserving distinct exact identifiers", async () => {
     const completion = createPromptCompletionSource({
       execute(operation) {

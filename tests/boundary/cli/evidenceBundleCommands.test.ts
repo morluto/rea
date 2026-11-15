@@ -1,3 +1,4 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
@@ -487,7 +488,10 @@ cliTest(
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
     const record = PRE_66_NULL_COVERAGE_EVIDENCE;
+    // A current-format bundle carrying the earlier record reaches the
+    // record-level identity diagnosis; an unmarked one is refused earlier.
     const bundle = {
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       providers: [record.provider],
       environments: [],
