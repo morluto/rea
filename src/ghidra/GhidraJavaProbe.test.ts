@@ -44,6 +44,8 @@ const probe = (values: {
 describe("Ghidra Java prerequisite process facts", () => {
   it.each([
     ["ENOENT", "runtime_missing"],
+    // A non-directory path component also leaves nothing runnable to start.
+    ["ENOTDIR", "runtime_missing"],
     ["EACCES", "runtime_unavailable"],
     ["ETIMEDOUT", "runtime_unavailable"],
     ["ENOBUFS", "runtime_unavailable"],

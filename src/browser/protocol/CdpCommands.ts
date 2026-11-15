@@ -23,6 +23,23 @@ const acknowledgement = z.object({});
 
 const coverageOffset = z.int().min(0);
 const nodeId = z.int().min(1);
+const positive = z.number().positive();
+
+/** CSS clip geometry and device-pixel viewport for one screenshot. */
+const layoutMetricsReply = z.object({
+  visualViewport: z.object({
+    clientWidth: positive,
+    clientHeight: positive,
+    scale: positive,
+  }),
+  cssVisualViewport: z.object({
+    pageX: z.number(),
+    pageY: z.number(),
+    clientWidth: positive,
+    clientHeight: positive,
+    scale: positive,
+  }),
+});
 
 /** Native listener descriptors; live remote handles are not read. */
 const eventListenersReply = z.object({
@@ -77,6 +94,8 @@ const CDP_COMMAND_REPLIES = {
       isSVG: z.boolean().optional(),
     }),
   }),
+  "DOM.disable": acknowledgement,
+  "DOM.enable": acknowledgement,
   "DOM.getDocument": z.object({ root: z.object({ nodeId }) }),
   // Zero is the protocol's "no match".
   "DOM.querySelector": z.object({ nodeId: z.int().min(0) }),
@@ -84,6 +103,7 @@ const CDP_COMMAND_REPLIES = {
     object: z.object({ objectId: z.string().min(1) }),
   }),
   "DOMDebugger.getEventListeners": eventListenersReply,
+  "Debugger.disable": acknowledgement,
   "Debugger.enable": acknowledgement,
   "Debugger.evaluateOnCallFrame": z.object({
     result: z.looseObject({}),
@@ -98,12 +118,17 @@ const CDP_COMMAND_REPLIES = {
   "Emulation.setFocusEmulationEnabled": acknowledgement,
   "Emulation.setLocaleOverride": acknowledgement,
   "Emulation.setTimezoneOverride": acknowledgement,
+  "Network.disable": acknowledgement,
   "Network.enable": acknowledgement,
   "Page.addScriptToEvaluateOnNewDocument": z.object({
     identifier: z.string(),
   }),
+  "Page.disable": acknowledgement,
   "Page.enable": acknowledgement,
+  // `data` is base64 PNG; its canonical decoding stays with the screenshot owner.
+  "Page.captureScreenshot": z.object({ data: z.string() }),
   "Page.getFrameTree": cdpFrameTreeReplySchema,
+  "Page.getLayoutMetrics": layoutMetricsReply,
   "Page.getResourceTree": cdpResourceTreeReplySchema,
   "Page.removeScriptToEvaluateOnNewDocument": acknowledgement,
   "Page.setLifecycleEventsEnabled": acknowledgement,
@@ -112,9 +137,12 @@ const CDP_COMMAND_REPLIES = {
   "Performance.getMetrics": z.object({
     metrics: z.array(z.object({ name: z.string(), value: z.number() })),
   }),
+  "Profiler.disable": acknowledgement,
+  "Profiler.enable": acknowledgement,
   "Profiler.startPreciseCoverage": z.object({ timestamp: z.number().min(0) }),
   "Profiler.stopPreciseCoverage": acknowledgement,
   "Profiler.takePreciseCoverage": preciseCoverageReply,
+  "Runtime.disable": acknowledgement,
   "Runtime.enable": acknowledgement,
   "Runtime.releaseObjectGroup": acknowledgement,
   "Runtime.runIfWaitingForDebugger": acknowledgement,
@@ -125,9 +153,22 @@ const CDP_COMMAND_REPLIES = {
     targetInfo: z.object({ targetId: z.string() }),
   }),
   "Target.setAutoAttach": acknowledgement,
+  "WebMCP.disable": acknowledgement,
+  "WebMCP.enable": acknowledgement,
 } as const satisfies { readonly [M in CdpProtocolMethod]?: z.ZodType };
 
 export type CdpCommand = keyof typeof CDP_COMMAND_REPLIES;
+
+type DomainOf<C, Verb extends string> = C extends `${infer Domain}.${Verb}`
+  ? Domain
+  : never;
+
+/**
+ * A domain whose `${domain}.${verb}` command is registered. Code that builds a
+ * command name at run time takes its domain as this type, so an unregistered
+ * name fails to compile.
+ */
+export type CdpDomainWith<Verb extends string> = DomainOf<CdpCommand, Verb>;
 
 export type CdpCommandParams<M extends CdpCommand> = NonNullable<
   Parameters<typeof protocolSend<M>>[1]
