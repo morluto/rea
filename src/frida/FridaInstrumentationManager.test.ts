@@ -1,7 +1,8 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { phaseGate } from "../../tests/support/lifecycleHarness.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseGate,
+  type PhaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 
 import type {
   Device,
@@ -92,8 +93,8 @@ class FakeSession implements Session {
   nextLoadFailure: Error | undefined;
   nextUnloadFailureCount = 0;
   detachFailureCount = 0;
-  scriptLoadGate: Promise<void> | undefined;
-  onScriptLoadStarted: (() => void) | undefined;
+  /** Holds every later script load at the provider boundary. */
+  scriptLoad: PhaseGate | undefined;
   private detachedState = false;
   readonly pid = 512;
 
@@ -105,8 +106,7 @@ class FakeSession implements Session {
     const script = new FakeScript(
       this.nextPayload,
       async () => {
-        this.onScriptLoadStarted?.();
-        await this.scriptLoadGate;
+        await this.scriptLoad?.hold();
       },
       this.nextDescription,
       this.nextStack,
@@ -345,17 +345,9 @@ describe("FridaInstrumentationManager", () => {
 
   it("records a session already detached during process metadata lookup", async () => {
     const bindings = new FakeDeviceManager();
-    let lookupStarted!: () => void;
-    const lookupEntered = new Promise<void>((resolve) => {
-      lookupStarted = resolve;
-    });
-    let finishLookup!: () => void;
-    const lookupGate = new Promise<void>((resolve) => {
-      finishLookup = resolve;
-    });
+    const lookup = phaseGate();
     bindings.device.getProcessByPid = async () => {
-      lookupStarted();
-      await lookupGate;
+      await lookup.hold();
       return bindings.device.process;
     };
     const manager = new FridaInstrumentationManager({
@@ -366,9 +358,9 @@ describe("FridaInstrumentationManager", () => {
       deviceId: "local",
       pid: 512,
     });
-    await lookupEntered;
+    await lookup.reached(starting, "process metadata lookup");
     bindings.device.session.markDetached();
-    finishLookup();
+    lookup.release();
 
     const started = await starting;
     expect(started.ok).toBe(true);
@@ -1119,22 +1111,14 @@ it("reports truncation when that script loses its own message", async () => {
   expect(first.ok).toBe(true);
   if (!first.ok) return;
 
-  let finishSecondLoad: (() => void) | undefined;
-  let markSecondLoadStarted: (() => void) | undefined;
-  const secondLoadGate = new Promise<void>((resolve) => {
-    finishSecondLoad = resolve;
-  });
-  const secondLoadStarted = new Promise<void>((resolve) => {
-    markSecondLoadStarted = resolve;
-  });
+  const secondLoad = phaseGate();
   session.nextPayload = { tag: "B2" };
-  session.scriptLoadGate = secondLoadGate;
-  session.onScriptLoadStarted = () => markSecondLoadStarted?.();
+  session.scriptLoad = secondLoad;
   const secondLoading = manager.loadScript(started.value.sessionId, {
     sourceKind: "inline",
     source: "send({tag: 'B2'});",
   });
-  await secondLoadStarted;
+  await secondLoad.reached(secondLoading, "second script load");
   const secondScript = session.scripts[1];
   expect(secondScript).toBeDefined();
   if (secondScript === undefined) return;
@@ -1149,7 +1133,7 @@ it("reports truncation when that script loses its own message", async () => {
       null,
     );
 
-  finishSecondLoad?.();
+  secondLoad.release();
   const second = await secondLoading;
   expect(second.ok).toBe(true);
   if (second.ok) {
@@ -1209,17 +1193,9 @@ it("retains the newest contiguous messages across repeated budget evictions", as
 
 it("serializes a final remote release against a new same-endpoint session", async () => {
   const bindings = new FakeDeviceManager();
-  let enteredRemoval: (() => void) | undefined;
-  const removalEntered = new Promise<void>((resolve) => {
-    enteredRemoval = resolve;
-  });
-  let finishRemoval: (() => void) | undefined;
-  const removalGate = new Promise<void>((resolve) => {
-    finishRemoval = resolve;
-  });
+  const removal = phaseGate();
   bindings.removeRemoteDevice = async (address) => {
-    enteredRemoval?.();
-    await removalGate;
+    await removal.hold();
     bindings.removedRemote.push(address);
   };
   const manager = new FridaInstrumentationManager({
@@ -1235,7 +1211,7 @@ it("serializes a final remote release against a new same-endpoint session", asyn
   if (!first.ok) return;
 
   const closing = manager.closeSession(first.value.sessionId);
-  await removalEntered;
+  await removal.reached(closing, "final remote release");
   let secondStarted = false;
   const secondPromise = manager
     .startSession({ mode: "attach", remote, pid: 512 })
@@ -1245,7 +1221,7 @@ it("serializes a final remote release against a new same-endpoint session", asyn
     });
   await Promise.resolve();
   expect(secondStarted).toBe(false);
-  finishRemoval?.();
+  removal.release();
   expect((await closing).ok).toBe(true);
   const second = await secondPromise;
   expect(second.ok).toBe(true);
@@ -1747,16 +1723,8 @@ it.each([
 
 it("serializes script loading against concurrent close and unloads the loaded script", async () => {
   const bindings = new FakeDeviceManager();
-  let finishScriptLoad: (() => void) | undefined;
-  const scriptLoadGate = new Promise<void>((resolve) => {
-    finishScriptLoad = resolve;
-  });
-  let markScriptLoadStarted: (() => void) | undefined;
-  const scriptLoadStarted = new Promise<void>((resolve) => {
-    markScriptLoadStarted = resolve;
-  });
-  bindings.device.session.scriptLoadGate = scriptLoadGate;
-  bindings.device.session.onScriptLoadStarted = () => markScriptLoadStarted?.();
+  const scriptLoad = phaseGate();
+  bindings.device.session.scriptLoad = scriptLoad;
   const manager = new FridaInstrumentationManager({ deviceManager: bindings });
   const started = await manager.startSession({
     mode: "attach",
@@ -1770,7 +1738,7 @@ it("serializes script loading against concurrent close and unloads the loaded sc
     sourceKind: "inline",
     source: "send('loaded');",
   });
-  await scriptLoadStarted;
+  await scriptLoad.reached(loading, "script load");
   let closed = false;
   const closing = manager.closeSession(started.value.sessionId);
   void closing.then(() => {
@@ -1784,7 +1752,7 @@ it("serializes script loading against concurrent close and unloads the loaded sc
   await Promise.resolve();
   expect(closed).toBe(false);
   expect(secondClosed).toBe(false);
-  finishScriptLoad?.();
+  scriptLoad.release();
   expect((await loading).ok).toBe(true);
   expect((await closing).ok).toBe(true);
   expect((await secondClose).ok).toBe(true);
@@ -1857,11 +1825,9 @@ it.each([false, true])(
     onTestFinished(() => manager.closeAll());
     if (!started.ok) throw started.error;
     const session = bindings.device.session;
-    const entered = createDeferred<void>();
-    const held = createDeferred<void>();
-    onTestFinished(() => held.resolve());
-    session.onScriptLoadStarted = entered.resolve;
-    session.scriptLoadGate = held.promise;
+    const held = phaseGate();
+    onTestFinished(() => held.release());
+    session.scriptLoad = held;
     const nativeFailure = new Error("native load failed");
     if (rejectNative) session.nextLoadFailure = nativeFailure;
     const controller = new AbortController();
@@ -1871,11 +1837,7 @@ it.each([false, true])(
       { sourceKind: "inline", source: "send('marker')" },
       controller.signal,
     );
-    await awaitAcknowledgement(
-      entered.promise,
-      loading,
-      "provider lifecycle boundary",
-    );
+    await held.reached(loading, "provider lifecycle boundary");
     const script = session.scripts[0];
     if (script === undefined) throw new Error("Missing admitted script");
     const unload = script.unload.bind(script);
@@ -1888,7 +1850,7 @@ it.each([false, true])(
       await unload();
     };
     controller.abort(reason);
-    held.resolve();
+    held.release();
     const loaded = await loading;
     if (loaded.ok) throw new Error("Cancelled load succeeded");
     expect(loaded.error).toBeInstanceOf(FridaScriptLoadCancelledError);

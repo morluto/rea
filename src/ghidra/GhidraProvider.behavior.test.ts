@@ -3024,18 +3024,10 @@ it("shares one session snapshot across callers while isolating cancellation and 
   let calls = 0;
   let snapshotReads = 0;
   let snapshotSignal: AbortSignal | undefined;
-  let releaseSnapshot:
-    | ((value: Result<GhidraTargetSnapshot, GhidraSessionError>) => void)
-    | undefined;
-  let markSnapshotStarted: (() => void) | undefined;
-  const snapshotStarted = new Promise<void>((resolve) => {
-    markSnapshotStarted = resolve;
-  });
-  const snapshotResult = new Promise<
+  const snapshotRead = phaseGate<
+    void,
     Result<GhidraTargetSnapshot, GhidraSessionError>
-  >((resolve) => {
-    releaseSnapshot = resolve;
-  });
+  >();
   const factory: GhidraProviderClientFactory = () => ({
     start: () => Promise.resolve(ok(sessionInfo())),
     callTool: (operation) => {
@@ -3059,8 +3051,7 @@ it("shares one session snapshot across callers while isolating cancellation and 
     readTargetSnapshot: (_maximumBytes, signal) => {
       snapshotReads += 1;
       snapshotSignal = signal;
-      markSnapshotStarted?.();
-      return snapshotResult;
+      return snapshotRead.hold();
     },
     close: () => Promise.resolve(ok(null)),
   });
@@ -3086,7 +3077,7 @@ it("shares one session snapshot across callers while isolating cancellation and 
       signal: secondCaller.signal,
     },
   );
-  await snapshotStarted;
+  await snapshotRead.reached(first, "shared NativeAOT snapshot read");
   expect(snapshotReads).toBe(1);
   expect(snapshotSignal).toBeDefined();
   expect(snapshotSignal).not.toBe(firstCaller.signal);
@@ -3096,7 +3087,7 @@ it("shares one session snapshot across callers while isolating cancellation and 
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
-  releaseSnapshot?.(ok({ kind: "captured", bytes }));
+  snapshotRead.release(ok({ kind: "captured", bytes }));
   const secondResult = await second;
   expect(secondResult).toMatchObject({
     ok: true,
@@ -3186,18 +3177,10 @@ it.each(["captured", "cancelled-with-facts"] as const)(
     const bytes = nativeAotPeFixture();
     const observation = fixtureDosLoadImage().observation;
     let calls = 0;
-    let resolveSnapshot:
-      | ((value: Result<GhidraTargetSnapshot, GhidraSessionError>) => void)
-      | undefined;
-    let markSnapshotStarted: (() => void) | undefined;
-    const snapshotStarted = new Promise<void>((resolve) => {
-      markSnapshotStarted = resolve;
-    });
-    const snapshot = new Promise<
+    const snapshotRead = phaseGate<
+      void,
       Result<GhidraTargetSnapshot, GhidraSessionError>
-    >((resolve) => {
-      resolveSnapshot = resolve;
-    });
+    >();
     const factory: GhidraProviderClientFactory = () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => {
@@ -3211,10 +3194,7 @@ it.each(["captured", "cancelled-with-facts"] as const)(
           ),
         );
       },
-      readTargetSnapshot: () => {
-        markSnapshotStarted?.();
-        return snapshot;
-      },
+      readTargetSnapshot: () => snapshotRead.hold(),
       close: () => Promise.resolve(ok(null)),
     });
     const ghidra = provider(installationHost(), factory);
@@ -3224,7 +3204,10 @@ it.each(["captured", "cancelled-with-facts"] as const)(
       throw new Error("Expected admitted PE profile");
     const client = ghidra.createClient(target, profile.value.profile);
     const originalBase = client.execute("inspect_native_load_image", {});
-    await snapshotStarted;
+    await snapshotRead.reached(
+      originalBase,
+      "original NativeAOT snapshot read",
+    );
     const changedBase = await client.execute("inspect_native_load_image", {});
     expect(changedBase).toMatchObject({
       ok: false,
@@ -3236,7 +3219,7 @@ it.each(["captured", "cancelled-with-facts"] as const)(
         },
       },
     });
-    resolveSnapshot?.(
+    snapshotRead.release(
       outcome === "captured"
         ? ok({ kind: "captured", bytes })
         : err(
@@ -3367,14 +3350,14 @@ const nativeAotWaiterClient = async () => {
   const bytes = nativeAotPeFixture();
   const observations = fixtureDosLoadImage().observation;
   observations.image_base = "0x140000000";
-  const started = createDeferred<AbortSignal>();
+  const started = phaseArrival<AbortSignal>();
   const snapshot =
     createDeferred<Result<GhidraTargetSnapshot, GhidraSessionError>>();
   const close = vi.fn(async () => ok(null));
   const readSnapshot = vi.fn(
     (_maximum: number | undefined, signal: AbortSignal | undefined) => {
       if (signal === undefined) throw new Error("Missing owned read signal");
-      started.resolve(signal);
+      started.arrive(signal);
       return snapshot.promise;
     },
   );
@@ -3407,7 +3390,10 @@ const nativeAotWaiterClient = async () => {
 it("joins the in-flight NativeAOT producer before closing its owning client", async () => {
   const fixture = await nativeAotWaiterClient();
   const pending = fixture.client.execute("inspect_native_load_image", {});
-  const signal = await fixture.started.promise;
+  const signal = await fixture.started.reached(
+    pending,
+    "NativeAOT snapshot read",
+  );
   let closed = false;
   const closing = fixture.client.close().then((result) => {
     closed = true;
@@ -3436,7 +3422,10 @@ it("joins final NativeAOT waiter cancellation and retains exact producer cleanup
       settled = true;
       return result;
     });
-  const signal = await fixture.started.promise;
+  const signal = await fixture.started.reached(
+    pending,
+    "NativeAOT snapshot read",
+  );
   const cleanup = new ProviderCleanupError(
     "ghidra",
     ["controlled snapshot descriptor"],
@@ -3484,7 +3473,10 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       {},
       { signal: caller.signal },
     );
-    const signal = await fixture.started.promise;
+    const signal = await fixture.started.reached(
+      pending,
+      "NativeAOT snapshot read",
+    );
     caller.abort(reason);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(signal.aborted).toBe(true);
@@ -3518,7 +3510,7 @@ it.each(["caller", "owner"] as const)(
       {},
       { signal: caller.signal },
     );
-    await fixture.started.promise;
+    await fixture.started.reached(pending, "NativeAOT snapshot read");
     const cleanup = new ProviderCleanupError(
       "ghidra",
       ["controlled snapshot descriptor"],
@@ -3584,7 +3576,7 @@ it("lets a new NativeAOT caller join a draining attempt before retrying", async 
     {},
     { signal: caller.signal },
   );
-  await fixture.started.promise;
+  await fixture.started.reached(first, "NativeAOT snapshot read");
   caller.abort("first caller");
   await new Promise<void>((resolve) => setImmediate(resolve));
   const second = fixture.client.execute("inspect_native_load_image", {});
@@ -3604,7 +3596,7 @@ it("preserves a draining NativeAOT physical failure before later caller cancella
     {},
     { signal: firstCaller.signal },
   );
-  await fixture.started.promise;
+  await fixture.started.reached(first, "NativeAOT snapshot read");
   firstCaller.abort("first caller");
   await new Promise<void>((resolve) => setImmediate(resolve));
   const secondCaller = new AbortController();
@@ -3657,7 +3649,7 @@ it("retains drained NativeAOT capture facts with the later caller's exact abort 
     {},
     { signal: firstCaller.signal },
   );
-  await fixture.started.promise;
+  await fixture.started.reached(first, "NativeAOT snapshot read");
   firstCaller.abort("first caller");
   await new Promise<void>((resolve) => setImmediate(resolve));
   const secondCaller = new AbortController();
@@ -3686,7 +3678,7 @@ it("retains drained NativeAOT capture facts with the later caller's exact abort 
 it("attributes shared NativeAOT producer failure to each requesting operation", async () => {
   const fixture = await nativeAotWaiterClient();
   const image = fixture.client.execute("inspect_native_load_image", {});
-  await fixture.started.promise;
+  await fixture.started.reached(image, "NativeAOT snapshot read");
   const detail = fixture.client.execute("inspect_native_data_type", {
     address: "0x140002280",
   });
