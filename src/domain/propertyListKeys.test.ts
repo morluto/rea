@@ -78,7 +78,12 @@ it("preserves last-value-wins for prototype keys split across character-data nod
   );
   expect(parseXmlPropertyList(text)).toEqual({
     value: { ["__proto__"]: "omitted" },
-    duplicateKeys: { dictionaries: 1, replaced: 1, names: ["__proto__"] },
+    duplicateKeys: {
+      dictionaries: 1,
+      replaced: 1,
+      names: ["__proto__"],
+      namesOmitted: false,
+    },
   });
 });
 
@@ -114,7 +119,12 @@ it.each([
     .join("");
   expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
     value: { ab: 3 },
-    duplicateKeys: { dictionaries: 1, replaced: 2, names: ["ab"] },
+    duplicateKeys: {
+      dictionaries: 1,
+      replaced: 2,
+      names: ["ab"],
+      namesOmitted: false,
+    },
   });
 });
 
@@ -125,7 +135,12 @@ it("keeps empty keys and alias-looking source keys distinct", () => {
     "<key>ma<?ignored value?><![CDATA[in]]></key><integer>42</integer>";
   expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
     value: { "": 3, __rea_plist_key_0__: "literal", main: 42 },
-    duplicateKeys: { dictionaries: 1, replaced: 2, names: [""] },
+    duplicateKeys: {
+      dictionaries: 1,
+      replaced: 2,
+      names: [""],
+      namesOmitted: false,
+    },
   });
 });
 
@@ -171,7 +186,12 @@ it("preserves OpenStep __proto__ keys and duplicate assignment semantics", () =>
       kept: "__proto__",
       list: ["__proto__"],
     },
-    duplicateKeys: { dictionaries: 1, replaced: 3, names: ["__proto__"] },
+    duplicateKeys: {
+      dictionaries: 1,
+      replaced: 3,
+      names: ["__proto__"],
+      namesOmitted: false,
+    },
   });
   const nested = (result.value as { nested: object }).nested;
   expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
@@ -186,7 +206,12 @@ it("preserves OpenStep compound keys that coerce to __proto__", () => {
     ),
   ).toEqual({
     value: { ["__proto__"]: "b", "__pro,to__": "c", list: ["__proto__"] },
-    duplicateKeys: { dictionaries: 1, replaced: 1, names: ["__proto__"] },
+    duplicateKeys: {
+      dictionaries: 1,
+      replaced: 1,
+      names: ["__proto__"],
+      namesOmitted: false,
+    },
   });
 });
 

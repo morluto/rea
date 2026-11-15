@@ -12,6 +12,7 @@ import {
   UnsupportedBinaryPlistUidError,
 } from "../../artifacts/apple/PlistScalars.js";
 
+import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   parsePlistBinary,
   readPlistJson,
@@ -1031,5 +1032,26 @@ it("counts OpenStep dictionary keys declared more than once", () => {
   expect(
     parseXmlPropertyList("{ a = 1; a = 2; b = { c = 3; c = 4; c = 5; }; }")
       .duplicateKeys,
-  ).toEqual({ dictionaries: 2, replaced: 3, names: ["c", "a"] });
+  ).toEqual({
+    dictionaries: 2,
+    replaced: 3,
+    names: ["c", "a"],
+    namesOmitted: false,
+  });
+});
+
+it("lists each repeated key once, shortens long keys and marks omitted names", () => {
+  const long = "k".repeat(100);
+  const nine = Array.from({ length: 9 }, (_, index) => `n${String(index)}`);
+  const entries = [long, long, long, ...nine.flatMap((name) => [name, name])]
+    .map((key, index) => `"${key}" = ${String(index)};`)
+    .join(" ");
+  const parsed = parseXmlPropertyList(`{ ${entries} }`).duplicateKeys;
+  expect(parsed).toMatchObject({ replaced: 11, namesOmitted: true });
+  expect(plistDuplicateKeyLimitations(parsed)[0]).toContain(
+    `"${"k".repeat(64)}" (shortened from 100 characters), "n0"`,
+  );
+  // One key repeated three times names no further key.
+  const single = parseXmlPropertyList("{ a = 1; a = 2; a = 3; }").duplicateKeys;
+  expect(plistDuplicateKeyLimitations(single)[0]).toContain('("a").');
 });
