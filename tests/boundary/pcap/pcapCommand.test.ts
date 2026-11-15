@@ -513,3 +513,38 @@ it("does not attribute an errno without spawn identity to the selected tool", as
   if (!(failure instanceof AnalysisProtocolError)) throw failure;
   expect(failure.message).toContain("failing stage is unknown");
 });
+
+it.each([
+  ["win32", "C:\\Windows\\System32\\cmd.exe", true],
+  ["linux", "C:\\Tools\\tshark.cmd", false],
+] as const)(
+  "launches a batch tool through cmd.exe only for a Windows host (%s)",
+  async (platform, expectedCommand, verbatim) => {
+    const launches: {
+      readonly command: string;
+      readonly windowsVerbatimArguments: boolean | undefined;
+    }[] = [];
+    await runPcapCommand({
+      platform,
+      operation: "inspect_pcap_client",
+      command: "C:\\Tools\\tshark.cmd",
+      arguments: ["--version"],
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+      environment: { SYSTEMROOT: "C:\\Windows" },
+      signal: undefined,
+      launcher: async (spawn) => {
+        launches.push({
+          command: spawn.command,
+          windowsVerbatimArguments: spawn.windowsVerbatimArguments,
+        });
+        throw new Error("recorded launch");
+      },
+      retain: () => {
+        throw new Error("No provider resources were acquired");
+      },
+    }).catch(() => undefined);
+    expect(launches).toEqual([
+      { command: expectedCommand, windowsVerbatimArguments: verbatim },
+    ]);
+  },
+);
