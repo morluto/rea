@@ -231,11 +231,11 @@
       "output compact": "9bd80958780175fe"
     },
     "address_name": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "9e24f29540c4da8a"
     },
     "address_to_file_offset": {
-      "input compact": "c9d8a29b5ea9eaf2",
+      "input compact": "940657f284593726",
       "output compact": "9087cdd7aaaf031b"
     },
     "analyze_function": {
@@ -335,7 +335,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "comment": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "9e24f29540c4da8a"
     },
     "compare_application_versions": {
@@ -511,7 +511,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "goto_address": {
-      "input compact": "c9d8a29b5ea9eaf2",
+      "input compact": "940657f284593726",
       "output compact": "ffd2432283f65468"
     },
     "guided_workflows": {
@@ -531,7 +531,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "inline_comment": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "9e24f29540c4da8a"
     },
     "inspect_adb_client": {
@@ -903,7 +903,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "list_names": {
-      "input compact": "0ab7d5f507e24ad6",
+      "input compact": "d49ef0db75d3206f",
       "output compact": "2622a47474da6c03"
     },
     "list_procedures": {
@@ -915,7 +915,7 @@
       "output compact": "ef2ab2008a66fdd8"
     },
     "list_strings": {
-      "input compact": "0ab7d5f507e24ad6",
+      "input compact": "d49ef0db75d3206f",
       "output compact": "2622a47474da6c03"
     },
     "list_unknowns": {
@@ -939,7 +939,7 @@
       "output compact": "d368534f377ef13b"
     },
     "next_address": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "ffd2432283f65468"
     },
     "observe_javascript_runtime": {
@@ -975,35 +975,35 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "prev_address": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "ffd2432283f65468"
     },
     "procedure_address": {
-      "input compact": "fd653e0720583704",
+      "input compact": "69b78eac500c94b7",
       "output compact": "4f6bd8217751f707"
     },
     "procedure_assembly": {
-      "input compact": "7bbe36435a4e3ba8",
+      "input compact": "c93184eb12436c88",
       "output compact": "ffd2432283f65468"
     },
     "procedure_callees": {
-      "input compact": "fd653e0720583704",
+      "input compact": "69b78eac500c94b7",
       "output compact": "3558a96c0cb0a314"
     },
     "procedure_callers": {
-      "input compact": "fd653e0720583704",
+      "input compact": "69b78eac500c94b7",
       "output compact": "3558a96c0cb0a314"
     },
     "procedure_info": {
-      "input compact": "7bbe36435a4e3ba8",
+      "input compact": "c93184eb12436c88",
       "output compact": "9087cdd7aaaf031b"
     },
     "procedure_pseudo_code": {
-      "input compact": "6dc93a3e8a3e48e4",
+      "input compact": "5b0207420ce15a84",
       "output compact": "a6a19eed5331b2af"
     },
     "procedure_references": {
-      "input compact": "dabb0c95aeeef564",
+      "input compact": "3f5be054a5907bc6",
       "output compact": "9087cdd7aaaf031b"
     },
     "project_android_application_graph": {
@@ -1043,11 +1043,11 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "read_bytes": {
-      "input compact": "b271d6570e8bd906",
+      "input compact": "914f9d8e19bfa4e5",
       "output compact": "9087cdd7aaaf031b"
     },
     "read_function_instructions": {
-      "input compact": "7bbe36435a4e3ba8",
+      "input compact": "c93184eb12436c88",
       "output compact": "9087cdd7aaaf031b"
     },
     "read_guidance_section": {
@@ -1079,7 +1079,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "resolve_containing_procedure": {
-      "input compact": "1e9a46a46d409356",
+      "input compact": "1178f3ac840bf5c1",
       "output compact": "9087cdd7aaaf031b"
     },
     "resolve_native_call_targets": {
@@ -1103,7 +1103,7 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "search_bytes": {
-      "input compact": "05bc71d6612c74db",
+      "input compact": "7f0fd8e904b80147",
       "output compact": "9087cdd7aaaf031b"
     },
     "search_guidance": {
@@ -1119,7 +1119,7 @@
       "output compact": "2622a47474da6c03"
     },
     "set_address_name": {
-      "input compact": "b15641bedfef5010",
+      "input compact": "8428dd5f2b08637f",
       "output compact": "3c3f5b2578e1a632"
     },
     "set_addresses_names": {
@@ -1127,15 +1127,15 @@
       "output compact": "9087cdd7aaaf031b"
     },
     "set_bookmark": {
-      "input compact": "04b55352b608b7e7",
+      "input compact": "a24b2532fbf81d90",
       "output compact": "3c3f5b2578e1a632"
     },
     "set_comment": {
-      "input compact": "1989be9d5b720d84",
+      "input compact": "f10575c521d53534",
       "output compact": "3c3f5b2578e1a632"
     },
     "set_inline_comment": {
-      "input compact": "1989be9d5b720d84",
+      "input compact": "f10575c521d53534",
       "output compact": "3c3f5b2578e1a632"
     },
     "start_adb_activity": {
@@ -1223,7 +1223,7 @@
       "output compact": "433541d12d2cce0f"
     },
     "unset_bookmark": {
-      "input compact": "c9d8a29b5ea9eaf2",
+      "input compact": "940657f284593726",
       "output compact": "3c3f5b2578e1a632"
     },
     "update_analysis_settings": {
@@ -1247,7 +1247,7 @@
       "output compact": "9cda19dfa1310afa"
     },
     "xrefs": {
-      "input compact": "f1b0a54d8c702be5",
+      "input compact": "c3e7279c968e665b",
       "output compact": "49662c31e39ea6a1"
     }
   }
