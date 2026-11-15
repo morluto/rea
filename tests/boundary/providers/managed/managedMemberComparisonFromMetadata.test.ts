@@ -93,7 +93,9 @@ describe("managed comparison selected nominal membership", () => {
       ...source,
       result: partial,
     });
-    expect(comparison.coverage.status).toBe("partial");
+    // The partial side cannot establish its selected scope, so scope
+    // agreement and the comparison's coverage are unknown.
+    expect(comparison.coverage.status).toBe("unknown");
     expect(comparison.summary).toEqual({
       added: 0,
       removed: 0,
@@ -135,7 +137,7 @@ describe("managed comparison selected nominal membership", () => {
         unchanged: 0,
       });
       expect(comparison.matching.unmatched).toBe(4);
-      expect(comparison.coverage.status).toBe("partial");
+      expect(comparison.coverage.status).toBe("unknown");
     },
   );
 
@@ -255,7 +257,9 @@ describe("managed comparison selected scope agreement", () => {
         ...source,
         result: limited,
       });
-      expect(comparison.coverage.status).toBe("partial");
+      // Scope agreement that cannot be established makes the comparison
+      // unknown, not a known partial gap.
+      expect(comparison.coverage.status).toBe("unknown");
       expect(comparison.limitations).toContainEqual(
         expect.stringContaining(
           "Selected declaring-type scope agreement is unknown",
@@ -266,6 +270,27 @@ describe("managed comparison selected scope agreement", () => {
       );
     },
   );
+
+  it("reports a whole-assembly comparison unknown when one side examined no metadata", () => {
+    const source = inspect(buildManagedPeFixture(), "/fixture/whole.dll");
+    const unavailable = structuredClone(source.result);
+    unavailable.metadata.status = "malformed";
+    unavailable.coverage.state = "unavailable";
+    unavailable.types = [];
+    unavailable.methods = [];
+    unavailable.fields = [];
+    unavailable.method_rows = null;
+    const sides = [source, { ...source, result: unavailable }] as const;
+    // Both selections are whole-assembly, so only the unavailable side, not
+    // scope agreement, makes the result unknown; it wins beside the partial
+    // method-row inventory, and in either order.
+    for (const [left, right] of [sides, [sides[1], sides[0]]] as const)
+      expect(compareManagedMembers(left, right).coverage).toEqual({
+        status: "unknown",
+        left_status: left === source ? "complete" : "unavailable",
+        right_status: right === source ? "complete" : "unavailable",
+      });
+  });
 
   it("recognizes complete empty selected scopes despite different unmatched requests", () => {
     const bytes = buildManagedPeFixture();
