@@ -650,7 +650,7 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
       },
     });

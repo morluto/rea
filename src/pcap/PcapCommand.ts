@@ -294,9 +294,14 @@ export const runPcapCommand = async (options: {
     if (outcome === undefined) {
       const diagnostic = cause instanceof Error ? cause.message : String(cause);
       const details = { cause, ...cleanupDetails };
-      throw commandAttempted
-        ? pcapToolFailure(diagnostic, details)
-        : preparationFailure(diagnostic, details);
+      if (!commandAttempted) throw preparationFailure(diagnostic, details);
+      // An errno the launcher raised without a spawn identity names no stage.
+      if (cause instanceof Error && "code" in cause)
+        throw new AnalysisProtocolError(
+          `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
+          details,
+        );
+      throw pcapToolFailure(diagnostic, details);
     }
     throw classifyProviderOutcome(outcome, {
       operation,

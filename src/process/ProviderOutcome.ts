@@ -131,6 +131,14 @@ const ownedCommandOutcome = (failure: OwnedCommandFailure): ProviderOutcome => {
   };
 };
 
+const isSpawnFailure = (cause: Error): boolean => {
+  const syscall = Reflect.get(cause, "syscall");
+  return (
+    typeof syscall === "string" &&
+    (syscall === "spawn" || syscall.startsWith("spawn "))
+  );
+};
+
 /**
  * Read the outcome of an owned command from what `runOwnedCommand` threw.
  * Undefined when the value is neither a supervised command failure nor a
@@ -140,8 +148,11 @@ export function providerOutcomeOf(cause: OwnedCommandFailure): ProviderOutcome;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined {
   if (cause instanceof OwnedCommandFailure) return ownedCommandOutcome(cause);
+  // An errno from reading a file is not a launch refusal; Node names the
+  // spawn syscall (`spawn` or `spawn <path>`) on every start failure.
+  if (!(cause instanceof Error) || !isSpawnFailure(cause)) return undefined;
   const refusal = classifyLaunchFailure(cause);
-  if (refusal === undefined || !(cause instanceof Error)) return undefined;
+  if (refusal === undefined) return undefined;
   return {
     kind: "launch-refused",
     refusal,
