@@ -54,6 +54,7 @@ import {
 } from "./cliResultControls.js";
 import {
   cliResultControlsIn,
+  failurePartialObservation,
   projectCliAnalysisResult,
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
@@ -365,9 +366,12 @@ const projectCliResult = <Output>(
   if (outputSchema !== undefined && Object.keys(binding.flags).length > 0)
     recordCliResultControls(() =>
       // A wrapped delivery recorded its complete Evidence, which the
-      // contract's output schema describes.
+      // contract's output schema describes; so does a failure's partial
+      // Evidence of the same operation.
       cliResultControlsIn(
-        cliDeliveredEvidence() ?? output,
+        cliDeliveredEvidence() ??
+          failurePartialObservation(output, binding.operation) ??
+          output,
         outputSchema,
         binding,
       ),

@@ -184,6 +184,24 @@ const recordedControlValues = (
 };
 
 /**
+ * A failure's partial observation, when it is Evidence of the command's own
+ * operation. The command's output schema describes that Evidence, so its
+ * declared control positions are read as a success result's are. A retained
+ * reference, or Evidence of a source step or another operation, is not read.
+ */
+export const failurePartialObservation = (
+  output: unknown,
+  operation: string,
+): Record<string, JsonValue> | undefined => {
+  const failure = output as JsonValue;
+  if (!isObject(failure) || !isObject(failure.details)) return undefined;
+  const partial = failure.details.partial_observation;
+  return isObject(partial) && partial.operation === operation
+    ? partial
+    : undefined;
+};
+
+/**
  * Each per-call control a result records by contract field (a `limit` in a
  * partial result's unknowns, coverage or retained Evidence), with the option
  * that sets it on this command. Only positions the command's output schema
