@@ -286,7 +286,7 @@ describe("analysis snapshot member decoding", () => {
       reads.release();
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    await reads.firstRead;
+    await reads.reached(pending, "first file read");
     controller.abort(reason);
     reads.release();
     try {

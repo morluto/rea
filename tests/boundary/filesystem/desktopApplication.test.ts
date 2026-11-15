@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import {
   desktopApplicationSchema,
@@ -757,21 +757,13 @@ it("keeps a completed directory report and exact cleanup authority until retry c
 it("bounds simultaneous directory scans without cancelling the admitted caller", async () => {
   const root = await createTestTempDirectory("rea-desktop-capacity-");
   await put(root, "notes.txt", "observed");
-  let release!: () => void;
-  let entered!: () => void;
-  const barrier = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const desktopDirectoryScan = phaseGate();
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((path) => {
       const reader = new DirectoryArtifactReader(path);
       const entries = reader.entries.bind(reader);
       reader.entries = async function* (...args: Parameters<typeof entries>) {
-        entered();
-        await barrier;
+        await desktopDirectoryScan.hold();
         yield* entries(...args);
       };
       return reader;
@@ -779,7 +771,7 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
   );
   const first = service.inspect({ path: root });
   try {
-    await awaitAcknowledgement(started, first, "desktop directory scan");
+    await desktopDirectoryScan.reached(first, "desktop directory scan");
     const second = await service.inspect({ path: root });
     expect(second.ok).toBe(false);
     if (!second.ok)
@@ -788,14 +780,14 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
         resource: "capacity",
         retryable: true,
       });
-    release();
+    desktopDirectoryScan.release();
     const result = await first;
     if (!result.ok) throw result.error;
     expect(
       desktopApplicationSchema.parse(result.value.normalized_result).files,
     ).toHaveLength(1);
   } finally {
-    release();
+    desktopDirectoryScan.release();
     try {
       await first;
     } finally {
