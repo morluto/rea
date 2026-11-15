@@ -17,10 +17,11 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -51,7 +52,7 @@ const mappingInterruption = (
         cause,
         ...jadxOperationTimeoutGuidance(read.deadline.timeoutMs),
       })
-    : new AnalysisCancelledError(read.operation, { cause });
+    : cancelledBy(read.operation, carriedReason(cause));
 
 const invalidMapping = (
   read: MappingRead,

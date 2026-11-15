@@ -14,9 +14,11 @@ import { fileURLToPath } from "node:url";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -66,11 +68,7 @@ const waitForTurn = (
 ): Promise<void> =>
   new Promise((resolve, reject) => {
     const abort = () =>
-      reject(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal?.reason,
-        }),
-      );
+      reject(cancelledBy(request.operation, carriedReason(signal?.reason)));
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted === true) abort();
     void predecessor.then(() => {
@@ -327,11 +325,7 @@ export class JadxProvider implements AndroidAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Outcome> {
     if (this.#shutdown.signal.aborted)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: this.#shutdown.signal.reason,
-        }),
-      );
+      return err(cancelledBy(request.operation, this.#shutdown.signal));
     const signal =
       options?.signal === undefined
         ? this.#shutdown.signal
@@ -348,16 +342,11 @@ export class JadxProvider implements AndroidAnalysisPort {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : new AnalysisCancelledError(request.operation, { cause }),
+          : cancelledBy(request.operation, carriedReason(cause)),
       );
     }
     try {
-      if (signal.aborted)
-        return err(
-          new AnalysisCancelledError(request.operation, {
-            cause: signal.reason,
-          }),
-        );
+      if (signal.aborted) return err(cancelledBy(request.operation, signal));
       clearTimeout(this.#idle);
       const retired =
         this.#pendingCleanup === undefined
@@ -378,11 +367,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             : !cleanup.ok
               ? cleanup
               : signal.aborted
-                ? err(
-                    new AnalysisCancelledError(request.operation, {
-                      cause: signal.reason,
-                    }),
-                  )
+                ? err(cancelledBy(request.operation, signal))
                 : await this.#execute(target, request, { signal });
       // A refusal before session work, such as a bad mapping, keeps the session.
       if (
@@ -401,7 +386,7 @@ export class JadxProvider implements AndroidAnalysisPort {
 
   /** Cancel queued/active operations and join the owned engine and workspace cleanup. */
   close(): Promise<void> {
-    this.#shutdown.abort();
+    this.#shutdown.abort(OwnerCancellation.ownerClosed);
     clearTimeout(this.#idle);
     this.#closePromise ??= this.#tail
       .then(async () => {

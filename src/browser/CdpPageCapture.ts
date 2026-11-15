@@ -368,8 +368,10 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
           ),
         );
       } catch (cause: unknown) {
-        // A detached node can disappear between snapshot and description.
+        // A detached node can disappear between snapshot and description, and
+        // one malformed description leaves only that node's kind unknown.
         // Preserve partial metadata, but propagate transport/cancellation errors.
+        if (cause instanceof CdpMalformedReply) return undefined;
         if (!(cause instanceof CdpCommandRejection)) throw cause;
         if (cause.code === -32_601) descriptionUnavailable = true;
         else if (cause.code !== -32_000) throw cause;
