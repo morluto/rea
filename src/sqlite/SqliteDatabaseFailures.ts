@@ -3,7 +3,6 @@ import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.j
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   projectAnalysisError,
@@ -16,11 +15,9 @@ import {
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -38,6 +35,10 @@ import {
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 
 /** Preserve diagnostics independently of worker exit and private-root cleanup. */
 export const capturedSqliteOutput = (
@@ -86,154 +87,120 @@ const busyMember = (cause: Error, path: string): string => {
     : path;
 };
 
-/** Preserve artifact, caller, process, resource and output failure meanings. */
-export const sqliteDatabaseFailure = (
-  cause: unknown,
+const OPERATION = "inspect_sqlite_database";
+
+/**
+ * The SQLite dialect for the shared provider failure classifier: snapshot
+ * acquisition, the selected database file set, and the owned worker.
+ */
+export const sqliteDatabaseDialect = (
   path: string,
   phase: string,
   signal?: AbortSignal,
   workerTimeoutMs = DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
-): AnalysisError => {
-  const operation = "inspect_sqlite_database";
-  if (cause instanceof SqliteSnapshotAcquisitionFailure) {
-    const failure = sqliteDatabaseFailure(
-      cause.operationCause,
-      path,
-      phase,
-      signal,
-      workerTimeoutMs,
-    );
-    const diagnostics = {
-      snapshot_acquisition: {
-        consistency: "unverified",
-        members: cause.completedMembers.map((member) => ({ ...member })),
-      },
-    };
-    failure.retainPrimaryDiagnostics(diagnostics);
-    return failure;
-  }
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure) {
-    if (cause.cleanup !== undefined) {
-      const physicalRead =
-        cause instanceof ArtifactFileCleanupFailure
-          ? cause.fileCleanupFailure.outcome
-          : undefined;
-      let previous: AnalysisError | undefined;
-      if (physicalRead?.kind === "failed")
-        previous = sqliteDatabaseFailure(
-          physicalRead.cause,
-          path,
-          phase,
-          undefined,
-          workerTimeoutMs,
-        );
-      else if (cause.reason === "cancelled")
-        previous = new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
+): ProviderFailureDialect => {
+  const dialect: ProviderFailureDialect = {
+    providerId: SQLITE_PROVIDER_IDENTITY.id,
+    operation: OPERATION,
+    recognise: (cause) => {
+      if (cause instanceof SqliteSnapshotAcquisitionFailure)
+        return classifyProviderFailure(
+          cause.operationCause,
+          dialect,
+        ).retainPrimaryDiagnostics({
+          snapshot_acquisition: {
+            consistency: "unverified",
+            members: cause.completedMembers.map((member) => ({ ...member })),
+          },
         });
-      else if (physicalRead?.kind === "completed") previous = undefined;
-      else if (cause.cause !== undefined)
-        previous = sqliteDatabaseFailure(
-          cause.cause,
-          path,
-          phase,
-          undefined,
-          workerTimeoutMs,
+      if (cause instanceof ArtifactReaderFailure) {
+        if (cause.reason === "io" && cause.cause !== undefined)
+          return classifyProviderFailure(cause.cause, dialect);
+        if (cause.reason === "integrity")
+          return new AnalysisArtifactChangedError(
+            OPERATION,
+            path,
+            cause.message,
+            { cause },
+          );
+        // The shared owner reports the read's cancellation.
+        return cause.reason === "cancelled"
+          ? undefined
+          : stableArtifactInputFailure(cause, OPERATION);
+      }
+      if (cause instanceof Error && cause.name === "AbortError")
+        return new AnalysisCancelledError(OPERATION, {
+          cause:
+            signal?.aborted === true && cause.cause === signal.reason
+              ? signal.reason
+              : cause,
+        });
+      if (cause instanceof OwnedCommandFailure)
+        return ownedCommandFailure(cause, path, workerTimeoutMs);
+      // Windows reports a sharing violation as EBUSY: another process holds
+      // the file without read sharing. The unchanged request succeeds once
+      // that process releases it. Name the member of the file set that was
+      // busy (the database, its WAL or its journal) when the error says.
+      if (
+        phase === "artifact-read" &&
+        cause instanceof Error &&
+        "code" in cause &&
+        cause.code === "EBUSY"
+      )
+        return new AnalysisCapabilityUnavailableError(
+          SQLITE_PROVIDER_IDENTITY.id,
+          OPERATION,
+          `Selected database file set is in use by another process (EBUSY): ${busyMember(cause, path)}`,
+          {
+            cause,
+            retryable: true,
+            userMessage:
+              "The selected SQLite database is held open by another process without read sharing. Close that application or inspect a copy, then retry.",
+          },
         );
-
+      return undefined;
+    },
+    // A database file the read could not open names the selected file set.
+    ...(phase === "artifact-read"
+      ? { file: { path, description: "database file set" } }
+      : {}),
+    readCleanup: (read, primary) => {
+      // A plain read failure carries its physical cause beside the cleanup.
+      const previous =
+        primary ??
+        (read instanceof ArtifactFileCleanupFailure || read.cause === undefined
+          ? undefined
+          : classifyProviderFailure(read.cause, dialect));
       const error = createSqliteCleanupError(
-        cause.cleanup.resources,
+        read.cleanup.resources,
+        { reason: read.cleanup.reason },
         {
-          reason: cause.cleanup.reason,
-        },
-        {
-          cause,
+          cause: read,
           ...(previous === undefined ? {} : { cleanupPrimary: previous }),
         },
       );
-      bindArtifactFileCleanup(cause, error);
+      bindArtifactFileCleanup(read, error);
       return error;
-    }
-    if (cause.reason === "io" && cause.cause !== undefined)
-      return sqliteDatabaseFailure(
-        cause.cause,
-        path,
-        phase,
-        signal,
-        workerTimeoutMs,
-      );
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
-    return stableArtifactInputFailure(cause, operation);
-  }
-  if (cause instanceof Error && cause.name === "AbortError")
-    return new AnalysisCancelledError(operation, {
-      cause:
-        signal?.aborted === true && cause.cause === signal.reason
-          ? signal.reason
-          : cause,
-    });
-  if (cause instanceof OwnedCommandFailure) {
-    const projected = ownedCommandFailure(cause, path, workerTimeoutMs);
-    if (projected !== undefined) return projected;
-  }
-  if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, path, cause.code, {
-        cause,
-      });
-    // Windows reports a sharing violation as EBUSY: another process holds the file without read
-    // sharing. The unchanged request succeeds once that process releases it. Name the member of the
-    // file set that was busy (the database, its WAL or its journal) when the error identifies it.
-    if (cause.code === "EBUSY")
-      return new AnalysisCapabilityUnavailableError(
-        SQLITE_PROVIDER_IDENTITY.id,
-        operation,
-        `Selected database file set is in use by another process (EBUSY): ${busyMember(cause, path)}`,
-        {
-          cause,
-          retryable: true,
-          userMessage:
-            "The selected SQLite database is held open by another process without read sharing. Close that application or inspect a copy, then retry.",
-        },
-      );
-    if (
-      cause.code === "ENOENT" ||
-      cause.code === "ENOTDIR" ||
-      cause.code === "ELOOP" ||
-      cause.code === "ENAMETOOLONG"
-    )
-      return new AnalysisInputError(operation, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected database file set could not be read (${String(cause.code)}): ${path}`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(SQLITE_PROVIDER_IDENTITY.id, operation, {
-    cause,
-    diagnostics: {
-      phase,
-      path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
-        ? {
-            failure_kind: cause.reason,
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-            captured_output: { ...capturedSqliteOutput(cause.snapshot) },
-          }
-        : {}),
     },
-  });
+    unclassified: (cause) =>
+      new ProviderAdapterError(SQLITE_PROVIDER_IDENTITY.id, OPERATION, {
+        cause,
+        diagnostics: {
+          phase,
+          path,
+          reason: cause instanceof Error ? cause.message : String(cause),
+          ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+            ? {
+                failure_kind: cause.reason,
+                exit_code: cause.snapshot.exitCode ?? null,
+                signal: cause.snapshot.signal ?? null,
+                captured_output: { ...capturedSqliteOutput(cause.snapshot) },
+              }
+            : {}),
+        },
+      }),
+  };
+  return dialect;
 };
 
 const ownedCommandFailure = (
