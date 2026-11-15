@@ -72,8 +72,13 @@ const resolveReachable = (
     (entry) => entry.kind === "file" && entry.path === "package.json",
   );
   if (manifest === undefined) return new Set();
+  // An unpacked package.json lives in the companion directory, not at an
+  // in-archive offset: reading that offset would read unrelated packed bytes and
+  // falsely "prove" reachability. Leave reachability unverified when we cannot
+  // read the actual manifest from the archive.
   if (
     manifest.kind !== "file" ||
+    manifest.unpacked ||
     manifest.packedOffset === undefined ||
     manifest.size === null
   )
@@ -101,17 +106,18 @@ export const canonicalizeAsarBytes = async (
     bytes.length,
   );
   if (!extents.ok) throw extents.error;
-  // Bound the header this pass will decode, parse and duplicate-scan to REA's
-  // documented admission before allocating, exactly as the owning reader refuses
-  // a larger header. Without this, a header inflated up to the whole artifact is
-  // parsed before readAsarListing's limits apply, so a deeply nested or
-  // key-dense header could exhaust memory ahead of any bound.
+  // Bound the header this pass will decode, parse and duplicate-scan before
+  // allocating. This opt-in pass applies a fixed header budget it does not read
+  // from settings, so the message describes that fixed cutoff rather than
+  // promising a setting change that this path would ignore. Without the bound, a
+  // header inflated up to the whole artifact is parsed before readAsarListing's
+  // limits apply, so a deeply nested or key-dense header could exhaust memory.
   if (extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES)
     return classifyAsarInventory([], budget, {
       reachable: new Set(),
       listingTruncated: true,
       extraLimitations: [
-        `ASAR header is ${String(extents.value.headerBytes)} bytes, beyond asar.max_header_bytes (${String(DEFAULT_ASAR_MAX_HEADER_BYTES)}); the pass does not parse a header larger than its own read budget. Raise asar.max_header_bytes to canonicalize it.`,
+        `ASAR header is ${String(extents.value.headerBytes)} bytes, beyond this pass's fixed ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)}-byte header budget; the pass does not parse a larger header, so the header structure is unverified.`,
       ],
     });
   const header = parseHeader(bytes, extents.value.jsonBytes);

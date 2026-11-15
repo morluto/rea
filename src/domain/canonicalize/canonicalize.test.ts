@@ -219,6 +219,28 @@ describe("wasm-sections normalizer", () => {
   });
 });
 
+describe("wasm-sections defensive bounds", () => {
+  it("marks a custom section with an unreadable name unverified, not padding", () => {
+    // A custom section (id 0) whose name-length field declares 5 bytes but
+    // carries none: readCustomName fails, so it must be unverified, not padding.
+    const malformed = wasmModule([
+      wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+      wasmSection(0, Buffer.from([0x05])),
+    ]);
+    const facts = canonicalizeArtifactFacts(malformed, "wasm", budget());
+    const unverified = facts.collapsed.find(
+      (fact) => fact.classification === "unverified",
+    );
+    expect(unverified?.collection).toBe("wasm-custom-section");
+    expect(
+      facts.collapsed.some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
+    expect(facts.coverage.status).toBe("partial");
+  });
+});
+
 // --- JSON -----------------------------------------------------------------
 
 describe("json-structure normalizer", () => {

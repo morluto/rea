@@ -21,9 +21,10 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   CANONICALIZE_SAMPLE_UNITS,
@@ -149,9 +150,10 @@ const canonicalizeFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

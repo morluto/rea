@@ -13,6 +13,8 @@ import {
 } from "../normalizer.js";
 
 const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+/** WASM core version 1, little-endian. Matched as a fixed signature, not read. */
+const WASM_VERSION_1 = Buffer.from([0x01, 0x00, 0x00, 0x00]);
 /** Defensive ceiling so a malformed length field cannot spin the walk. */
 const MAX_SECTIONS = 1_000_000;
 /**
@@ -113,7 +115,7 @@ const isLinkRelevant = (parsed: CustomName): boolean =>
 const recognizes = (bytes: Buffer): boolean =>
   bytes.length >= 8 &&
   bytes.subarray(0, 4).equals(WASM_MAGIC) &&
-  bytes.readUInt32LE(4) === 1;
+  bytes.subarray(4, 8).equals(WASM_VERSION_1);
 
 const coreSectionFact = (
   id: number,
@@ -180,6 +182,23 @@ const paddingSectionFact = (
         : "Custom section; non-semantic to WASM execution.",
 });
 
+/** A custom section whose name-length field could not be read; left unverified. */
+const malformedSectionFact = (
+  payloadStart: number,
+  size: number,
+  region: Buffer,
+): CanonicalizeFact => ({
+  collection: "wasm-custom-section",
+  name: null,
+  classification: "unverified",
+  bytes: size,
+  location: { offset: payloadStart, bytes: size },
+  sha256: canonicalizeDigest(region),
+  sample: null,
+  detail:
+    "Custom section with an unreadable name-length field; its content is unverified.",
+});
+
 /** A bounded group accumulator: retained count, overflow count, bytes and digest. */
 interface CustomGroup {
   retained: number;
@@ -235,6 +254,7 @@ const canonicalize = (
   const padding = newGroup();
   const link = newGroup();
   let sectionsExamined = 0;
+  let unverifiedSections = 0;
   let truncated = false;
 
   if (!recognizes(bytes)) {
@@ -301,7 +321,17 @@ const canonicalize = (
     }
 
     const parsed = readCustomName(bytes, payloadStart, payloadEnd);
-    if (parsed !== null && isLinkRelevant(parsed)) {
+    if (parsed === null) {
+      // An unreadable name-length field is a malformed section, not padding:
+      // keep it unverified and report partial coverage rather than assert it is
+      // non-semantic to execution.
+      unverifiedSections += 1;
+      if (collapsed.length < budget.maxFacts)
+        collapsed.push(malformedSectionFact(payloadStart, size.value, region));
+      offset = payloadEnd;
+      continue;
+    }
+    if (isLinkRelevant(parsed)) {
       link.examined += 1;
       if (link.retained < budget.maxFacts) {
         link.retained += 1;
@@ -365,6 +395,11 @@ const canonicalize = (
     );
   }
 
+  if (unverifiedSections > 0)
+    limitations.push(
+      `${String(unverifiedSections)} custom sections had an unreadable name-length field and were left unverified.`,
+    );
+
   const omitted =
     coreSections.overflow > 0 || padding.overflow > 0 || link.overflow > 0;
   return {
@@ -374,7 +409,8 @@ const canonicalize = (
     collapsed,
     reductions,
     coverage: {
-      status: truncated || omitted ? "partial" : "complete",
+      status:
+        truncated || omitted || unverifiedSections > 0 ? "partial" : "complete",
       examined: sectionsExamined,
       total: truncated ? null : sectionsExamined,
       truncated,

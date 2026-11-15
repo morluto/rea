@@ -55,6 +55,7 @@ describe("canonicalizeAsarBytes header admission", () => {
     expect(facts.core).toHaveLength(0);
     expect(facts.coverage.status).toBe("partial");
     expect(facts.coverage.truncated).toBe(true);
-    expect(facts.limitations[0]).toMatch(/asar\.max_header_bytes/u);
+    expect(facts.limitations[0]).toMatch(/fixed .*header budget/iu);
+    expect(facts.limitations[0]).toMatch(/unverified/iu);
   });
 });
