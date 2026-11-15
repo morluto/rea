@@ -36,6 +36,41 @@ const scopeFlags = async () =>
       ),
     ).CI_FLAGS;
 
+it.each([
+  ["ci.yml", "pull_request"],
+  ["ci-full-pr.yml", "pull_request"],
+  ["pr-title.yml", "pull_request"],
+  ["pr-readiness.yml", "pull_request_target"],
+])(
+  "admits stacked PRs to %s without filtering required checks",
+  async (filename, event) => {
+    const { on } = z
+      .object({ on: z.record(z.string(), z.unknown()) })
+      .parse(
+        parse(
+          await readFile(
+            new URL(`../../../.github/workflows/${filename}`, import.meta.url),
+            "utf8",
+          ),
+        ),
+      );
+    expect(Object.hasOwn(on, event)).toBe(true);
+    const filters = z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .parse(on[event]);
+    // These filters apply to the target branch, so main/release-only admission
+    // silently omits all core checks on a base such as docs/advertised-schema-release-gate.
+    for (const filter of [
+      "branches",
+      "branches-ignore",
+      "paths",
+      "paths-ignore",
+    ])
+      expect(filters?.[filter], `${filename}: ${filter}`).toBeUndefined();
+  },
+);
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
