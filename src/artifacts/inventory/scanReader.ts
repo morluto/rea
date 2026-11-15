@@ -184,7 +184,7 @@ const containerContradiction = (
     throw new ArtifactReaderFailure(
       "integrity",
       "Artifact integrity metadata disagrees with content: .",
-      undefined,
+      { integrityCheck: "declared-digest" },
       artifactContainerIntegrityDetails(".", pair),
     );
   return pair;
@@ -421,7 +421,9 @@ const digestArtifactEntry = async (
   const reconstruction =
     currentReader === context.reader ? context.reconstruction : undefined;
   if (reconstruction !== undefined && entry.byteOffset !== reconstruction.bytes)
-    throw new ArtifactReaderFailure("integrity", "Noncontiguous iNES regions");
+    throw new ArtifactReaderFailure("integrity", "Noncontiguous iNES regions", {
+      integrityCheck: "reconstruction",
+    });
   const digest = await hashReadable(
     await currentReader.open(entry, context.signal),
     context.signal,
@@ -448,6 +450,7 @@ const digestArtifactEntry = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "The selected integrity digest was not computed",
+      { integrityCheck: "declared-digest" },
     );
   const mismatched = claim !== null && claim.digest !== observed;
   if (mismatched && claim !== null && observed !== undefined) {
@@ -455,7 +458,7 @@ const digestArtifactEntry = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-        undefined,
+        { integrityCheck: "declared-digest" },
         artifactIntegrityDetails(logicalPath, claim, observed, entry.unpacked),
       );
     context.pendingContradictions.push({

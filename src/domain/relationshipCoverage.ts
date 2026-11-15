@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { z } from "zod";
 
 import { fixedTupleSchema } from "./fixedTupleSchema.js";
@@ -5,7 +6,7 @@ import { fixedTupleSchema } from "./fixedTupleSchema.js";
 const diagnostics = z.array(z.string().min(1)).min(1).exactOptional();
 /** Discovery describes possible static calls beyond the returned provider graph. */
 export const relationshipDiscoveryDirectionSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unknown"]),
+  status: coverageStatusSchema,
   reason: z.string().min(1).exactOptional(),
 });
 export const relationshipDiscoverySchema = z.strictObject({

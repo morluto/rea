@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -21,6 +22,19 @@ export interface GhidraRequestOptions {
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
+  /**
+   * Ceilings admitted when the request entered the FIFO. The wire applies
+   * them only when this request is written, because the queue may drain it
+   * outside the caller's settings context. Omitted admits them at write time,
+   * for requests the caller writes directly.
+   */
+  readonly limits?: GhidraAdmittedLimits;
+}
+
+/** Bridge ceilings copied from the settings when one request was admitted. */
+export interface GhidraAdmittedLimits {
+  readonly requestLimit: BridgeMaxRequestBytes;
+  readonly replyLimit: BridgeMaxReplyBytes;
 }
 
 /** Safe lifecycle telemetry for one isolated Ghidra headless process. */
@@ -66,4 +80,6 @@ export interface GhidraClientOptions {
   }) => Promise<LinuxCgroupMemoryState | undefined>;
   /** Effective request ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling; defaults to the configured bridge ceiling. */
+  readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
 }

@@ -77,6 +77,7 @@ function registerRuntimeParameterContract(
       scripts: {
         items: [],
         observed_total: 0,
+        parse_failed_total: 0,
         excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
       },
       execution_contexts: [],
@@ -184,6 +185,7 @@ function registerRuntimeMetadataContract(): void {
         scripts: {
           items: [],
           observed_total: 0,
+          parse_failed_total: 0,
           excluded: {
             unsupported_location: 0,
             invalid_protocol_value: 0,

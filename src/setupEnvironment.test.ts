@@ -93,6 +93,7 @@ it("plans setup and uninstall against selected home and client overrides", async
       environment.HOME,
       undefined,
       environment,
+      doctor.platform,
     ).clients();
     expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
       join(environment.CODEX_HOME, "config.toml"),

@@ -350,7 +350,7 @@ describe("MachOSliceArtifactReader", () => {
       message: expect.stringMatching(
         /lipo.*readable architecture records.*no architectures/i,
       ),
-      cause: new TypeError("lipo output contained no architectures"),
+      cause: { failure: { kind: "malformed", format: "lipo-output" } },
     });
   });
 

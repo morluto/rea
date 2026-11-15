@@ -22,6 +22,7 @@ import {
   completedModuleResolverLauncher,
   webModuleResolverFixture,
 } from "../../fixtures/webModuleTrace.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
   const artifacts = webModuleArtifactsFixture();
@@ -138,12 +139,14 @@ it.each(["opaque", "resolved-typed"] as const)(
     const unowned =
       kind === "opaque"
         ? new Error("unattributed resolver close rejection")
-        : new ProviderCleanupError(
-            "fixture-resolver",
-            [],
-            { reason: "resolver rejected an already-resolved cleanup error" },
-            { operation: "trace_web_module_imports" },
-          ).resolveCleanup();
+        : releaseOwnedCleanup(
+            new ProviderCleanupError(
+              "fixture-resolver",
+              [],
+              { reason: "resolver rejected an already-resolved cleanup error" },
+              { operation: "trace_web_module_imports" },
+            ),
+          );
     const service = new WebModuleTraceService(
       {
         load: async () => ok(webModuleArtifactsFixture()),

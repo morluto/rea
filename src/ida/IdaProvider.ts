@@ -90,7 +90,10 @@ export class IdaProvider implements AnalysisProviderCandidate {
     private readonly connectionFactory: (
       config: IdaConfiguration,
       environment: Readonly<NodeJS.ProcessEnv>,
-    ) => IdaMcpConnection = createIdaMcpConnection,
+    ) => IdaMcpConnection = (config, environment) =>
+      createIdaMcpConnection(config, environment, {
+        platform: HOST_PLATFORM.platform,
+      }),
   ) {
     this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }

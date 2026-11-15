@@ -16,7 +16,7 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -729,21 +729,21 @@ const finishFirmwareWorkspace = async (
         completedFirmwareObservation(outcome.value),
       );
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           request.operation,
-        ).bindCleanupDependencies([cleanup]),
+        ),
       );
     }
     return err(
       outcome.ok
         ? cleanup
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             outcome.error,
             cleanup,
             request.operation,
-          ).bindCleanupDependencies([outcome.error, cleanup]),
+          ),
     );
   }
   return outcome;

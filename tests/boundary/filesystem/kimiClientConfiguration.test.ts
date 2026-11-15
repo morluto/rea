@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -71,9 +72,10 @@ describe("Kimi Code configuration paths and skills", () => {
   });
 
   it("uses the existing shared skill destination without a separate skill root", () => {
-    expect(clientSkillDirectories("/home/a", ["kimi"]).directories).toEqual([
-      { client: "shared", directory: "/home/a/.agents/skills" },
-    ]);
+    expect(
+      clientSkillDirectories("/home/a", ["kimi"], {}, HOST_PLATFORM.platform)
+        .directories,
+    ).toEqual([{ client: "shared", directory: "/home/a/.agents/skills" }]);
   });
 });
 
@@ -147,6 +149,7 @@ describe("Kimi Code registration lifecycle", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -209,6 +212,7 @@ describe("Kimi Code registration lifecycle", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -258,7 +262,7 @@ describe("Kimi Code input-schema profile selection", () => {
   });
 
   it("uses the caller's explicit compact profile", async () => {
-    const { client } = await kimiClient();
+    const { home, client } = await kimiClient();
     expect(
       (
         await configureClientConfiguration(
@@ -271,6 +275,14 @@ describe("Kimi Code input-schema profile selection", () => {
     expect(
       JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
     ).toEqual(expectedRegistration(command, "compact"));
+    expect(
+      (
+        await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        })
+      ).find(({ client: name }) => name === "kimi"),
+    ).toMatchObject({ state: "aligned", command });
   });
 
   it.each([["compact", "full"]] as const)(
@@ -324,6 +336,7 @@ describe("Kimi Code input-schema profile selection", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -457,6 +470,7 @@ describe("Kimi Code transport validation", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -476,6 +490,7 @@ describe("Kimi Code transport validation", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -500,6 +515,7 @@ describe("Kimi Code transport validation", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, undefined, {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "kimi"),
@@ -536,6 +552,7 @@ describe("Kimi Code timeout alignment", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -552,6 +569,7 @@ describe("Kimi Code timeout alignment", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),
@@ -575,6 +593,7 @@ describe("Kimi Code timeout alignment", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "kimi"),

@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -331,11 +331,7 @@ export const readEnvironmentExportFile = async (
         cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
       return err(
         primary instanceof AnalysisError
-          ? analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([primary, cleanup])
+          ? analysisErrorWithCleanupDependencies(primary, cleanup, operation)
           : cleanup,
       );
     }
