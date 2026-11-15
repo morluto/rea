@@ -8,7 +8,7 @@ import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import type { PromptContract } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
 import type { ToolContract } from "./contracts/toolContractTypes.js";
-import { CLI_COMMANDS, cliCommandFor } from "./cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "./contracts/cliCommandNames.js";
 import { compareUnicodeCodePoints } from "./domain/unicodeCodePointOrder.js";
 import {
   advertisedInputJsonSchema,

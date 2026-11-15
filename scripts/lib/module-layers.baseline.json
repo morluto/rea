@@ -11,7 +11,6 @@
     "artifacts -> application": 8,
     "browser -> application": 33,
     "captures -> application": 2,
-    "composition -> cliCommandNames.ts": 3,
     "config -> application": 2,
     "config -> native": 1,
     "desktop -> application": 5,

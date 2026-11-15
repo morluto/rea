@@ -4,7 +4,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
