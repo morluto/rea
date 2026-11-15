@@ -374,7 +374,6 @@
     "src/windows/WindowsNativeLoader.ts": 1
   },
   "hand-caught-configuration-error": {
-    "src/application/binary/BinarySession.ts": 3,
     "src/application/McpClientRegistration.ts": 1,
     "src/application/McpRegistrationCatalog.ts": 1,
     "src/application/McpRegistrationGit.ts": 1,
@@ -382,6 +381,7 @@
     "src/application/SupportedClients.ts": 1,
     "src/application/Uninstall.ts": 2,
     "src/application/WebScriptExportService.ts": 1,
+    "src/application/binary/BinarySession.ts": 3,
     "src/ghidra/GhidraProviderClient.ts": 1,
     "src/ida/IdaConfiguration.ts": 1
   },
@@ -409,12 +409,9 @@
     "scripts/verify-adb.mjs": 3,
     "scripts/verify-agentenv-environment.mjs": 1,
     "scripts/verify-binary-hardening.mjs": 1,
-    "scripts/verify-binary-layout.mjs": 1,
     "scripts/verify-browser-dom-destinations.mjs": 1,
     "scripts/verify-bun-standalone.mjs": 1,
-    "scripts/verify-deno-standalone.mjs": 1,
     "scripts/verify-elf-unwind-ranges.mjs": 1,
-    "scripts/verify-evm-interface.mjs": 1,
     "scripts/verify-flutter.mjs": 1,
     "scripts/verify-ghidra-bridge-sources.mjs": 1,
     "scripts/verify-ghidra-loader-relocation.mjs": 1,
@@ -429,7 +426,6 @@
     "scripts/verify-packaged-ghidra-windows.mjs": 1,
     "scripts/verify-packaged-wasm-artifact.mjs": 1,
     "scripts/verify-packet-capture.mjs": 1,
-    "scripts/verify-pcap.mjs": 1,
     "scripts/verify-pe-load-config.mjs": 1,
     "scripts/verify-published-package.mjs": 1,
     "scripts/verify-real-cutter.mjs": 1,
@@ -450,7 +446,6 @@
     "scripts/verify-test-discovery.mjs": 1,
     "scripts/verify-test-temp-hygiene.mjs": 1,
     "scripts/verify-wasm-interface-comparison.mjs": 1,
-    "scripts/verify-web-network-captures.mjs": 1,
     "scripts/verify-windows-native-inspection.mjs": 1,
     "scripts/verify-windows-native.mjs": 2,
     "scripts/verify-windows-package.mjs": 1
