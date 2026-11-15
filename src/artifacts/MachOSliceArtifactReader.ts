@@ -238,7 +238,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
               `lipo slice metadata disagrees with the Mach-O FAT table: ${reported.name} (cputype=${reported.cpu_type ?? "unknown"}, cpusubtype=${reported.cpu_subtype ?? "unknown"}, offset=${reported.file_offset ?? "unknown"}, size=${reported.size ?? "unknown"}, alignment=${reported.alignment ?? "unknown"})`,
             );
             // The row has no slice to carry its retained field evidence.
-            unmatchedRowLimitations.push(...reported.limitations);
+            unmatchedRowLimitations.push(...lipoRowEvidence(reported));
             continue;
           }
           const [observed] = unmatched.splice(match, 1);
@@ -275,7 +275,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           fileSize,
           // lipo's ranges are not used, but its retained field evidence for a
           // matched row still describes this slice.
-          reported?.limitations ?? [],
+          reported === undefined ? [] : lipoRowEvidence(reported),
         );
       }
       return;
@@ -318,18 +318,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
                 : "Slice range was derived from structural Mach-O facts because lipo omitted it.",
             ]
           : []),
-        ...(architecture.cpu_type !== null &&
-        architecture.cpu_type_code === null
-          ? [
-              `lipo CPU type is retained as unnormalized source text: ${architecture.cpu_type}`,
-            ]
-          : []),
-        ...(architecture.cpu_subtype !== null &&
-        architecture.cpu_subtype_code === null
-          ? [
-              `lipo CPU subtype is retained as unnormalized source text: ${architecture.cpu_subtype}${architecture.capabilities === null ? "" : `; capabilities ${architecture.capabilities}`}`,
-            ]
-          : []),
+        ...lipoCpuSourceLimitations(architecture),
       ]);
     }
   }
@@ -636,6 +625,30 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     return source;
   }
 }
+
+/** lipo CPU declarations REA retained as text because it could not normalize them. */
+const lipoCpuSourceLimitations = (architecture: LipoArchitecture): string[] => [
+  ...(architecture.cpu_type !== null && architecture.cpu_type_code === null
+    ? [
+        `lipo CPU type is retained as unnormalized source text: ${architecture.cpu_type}`,
+      ]
+    : []),
+  ...(architecture.cpu_subtype !== null &&
+  architecture.cpu_subtype_code === null
+    ? [
+        `lipo CPU subtype is retained as unnormalized source text: ${architecture.cpu_subtype}${architecture.capabilities === null ? "" : `; capabilities ${architecture.capabilities}`}`,
+      ]
+    : []),
+];
+
+/**
+ * Every source fact one lipo row carries beyond the ranges REA replaced:
+ * its uninterpretable fields and its unnormalized CPU declarations.
+ */
+const lipoRowEvidence = (architecture: LipoArchitecture): string[] => [
+  ...architecture.limitations,
+  ...lipoCpuSourceLimitations(architecture),
+];
 
 /** The most specific name a FAT slice's own CPU identity supports. */
 const structuralSliceName = (slice: MachoSlice): string =>

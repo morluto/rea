@@ -341,6 +341,24 @@ describe("artifact Mach-O slices under record-and-continue", () => {
     ]);
   });
 
+  it("keeps lipo's unnormalized CPU declarations on a matched slice", async () => {
+    const x86 = machoImage({ cpu: CPU.x86_64 });
+    const arm = machoImage({ cpu: CPU.arm64 });
+    const { entries } = await recordedEntries(
+      fatImage([
+        { cpu: CPU.x86_64, bytes: x86 },
+        { cpu: CPU.arm64, bytes: arm },
+      ]),
+      `architecture x86_64\n cputype 16777223\n cpusubtype CPU_SUBTYPE_MYSTERY\n offset 4096\n size ${String(x86.length)}\n align 2^12 (4096)\narchitecture arm64\n cputype 16777228\n cpusubtype 0\n offset 8193\n size ${String(arm.length)}\n align 2^12 (4096)\n`,
+    );
+    expect(entries[0]).toMatchObject({
+      path: "slices/x86_64",
+      limitations: [
+        "lipo CPU subtype is retained as unnormalized source text: CPU_SUBTYPE_MYSTERY",
+      ],
+    });
+  });
+
   it("reports unknown coverage when lipo's counts disagree and no FAT parse is available", async () => {
     // A big-endian 32-bit Mach-O header: REA's structural reader declines it.
     const powerpc = new Uint8Array(4096);
