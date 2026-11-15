@@ -1,18 +1,20 @@
-import ts from "typescript6";
-
 // Counts optional parsed facts defaulted to an observed value in comparison,
 // coverage and count code: a property read (`report.count`,
-// `side?.omitted`) followed by `?? 0`, `?? []` or `?? false`. Map
-// accumulators (`map.get(k) ?? []`) and indexed reads (`bytes[i] ?? 0`) are
-// calls and element reads, not property reads, so they are not counted.
+// `side?.omitted`) followed by `?? 0`, `?? []` or `?? false`, including the
+// last link of a chain (`left.count ?? right.count ?? 0`). Map accumulators
+// (`map.get(k) ?? []`) and indexed reads (`bytes[i] ?? 0`) end in a call or
+// element read, not a property read, so they are not counted.
 //
 // A default that is legitimate (a request default such as a pagination
 // offset, a library field that is optional by contract, or absence that is
 // modelled elsewhere) carries a comment on its line or the line before:
 // `// optional-fact-default: <why the default is not an observation>`.
-// The counter parses the source, so only executable expressions are counted
-// (not text in strings, regular expressions or comments), and exemption
-// markers are read only from comments.
+//
+// CI runs the architecture guards before installing dependencies, so this
+// guard tokenizes the source itself instead of loading a compiler. Strings,
+// template text, regular expressions and comments are separate tokens, so
+// only executable expressions are counted and exemption markers are read only
+// from comments.
 
 // The reason must say something; a bare marker does not exempt a default.
 const exemptionMarker = /optional-fact-default:\s*\S+(?:\s+\S+){2,}/u;
@@ -24,65 +26,216 @@ const comparisonOrCountFile =
 export const isComparisonOrCountFile = (path) =>
   comparisonOrCountFile.test(path);
 
-/** @param {ts.Expression} node */
-const isObservedDefault = (node) =>
-  (ts.isNumericLiteral(node) && node.text === "0") ||
-  (ts.isArrayLiteralExpression(node) && node.elements.length === 0) ||
-  node.kind === ts.SyntaxKind.FalseKeyword;
+const identifier = /[\p{ID_Start}$_#][\p{ID_Continue}$‌‍]*/uy;
+const number =
+  /(?:0[xXbBoO][\da-fA-F_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d+)?)n?/uy;
+const punctuator =
+  /\?\?=|\?\?|\?\.(?!\d)|\.\.\.|=>|[!=]==?|[<>]=?|&&=?|\|\|=?|\*\*=?|[-+*%&|^/]=|\+\+|--|[{}()[\];,.<>+\-*/%&|^!~?:=@]/uy;
+
+// After these keywords an expression starts, so `/` opens a regular expression.
+const expressionKeywords = new Set([
+  "await",
+  "case",
+  "delete",
+  "do",
+  "else",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "throw",
+  "typeof",
+  "void",
+  "yield",
+]);
+
+const regexAllowedAfter = (token) =>
+  token === undefined ||
+  (token.kind === "punct" && !/^[)\]}]$/u.test(token.text)) ||
+  (token.kind === "id" && expressionKeywords.has(token.text));
+
+/** End of a template's text from `at` (after a backtick or a substitution's `}`). */
+const templateEnd = (source, at, braces) => {
+  while (at < source.length) {
+    if (source[at] === "\\") at += 2;
+    else if (source[at] === "`") return at + 1;
+    else if (source[at] === "$" && source[at + 1] === "{") {
+      braces.push("template");
+      return at + 2;
+    } else at += 1;
+  }
+  return at;
+};
+
+/** End of a quoted string opened at `at`. */
+const quotedEnd = (source, at) => {
+  const quote = source[at];
+  at += 1;
+  while (at < source.length && source[at] !== quote && source[at] !== "\n")
+    at += source[at] === "\\" ? 2 : 1;
+  return at + 1;
+};
+
+/** End of a regular expression literal (with flags) opened at `at`. */
+const regexEnd = (source, at) => {
+  at += 1;
+  let inClass = false;
+  while (at < source.length && source[at] !== "\n") {
+    const char = source[at];
+    if (char === "\\") at += 1;
+    else if (char === "[") inClass = true;
+    else if (char === "]") inClass = false;
+    else if (char === "/" && !inClass) break;
+    at += 1;
+  }
+  identifier.lastIndex = at + 1;
+  return identifier.test(source) ? identifier.lastIndex : at + 1;
+};
+
+/** End of a comment opened at `at`, or undefined when none starts there. */
+const commentEnd = (source, at) => {
+  if (source[at] !== "/") return undefined;
+  if (source[at + 1] === "/") {
+    const end = source.indexOf("\n", at);
+    return end === -1 ? source.length : end;
+  }
+  if (source[at + 1] !== "*") return undefined;
+  const end = source.indexOf("*/", at + 2);
+  return end === -1 ? source.length : end + 2;
+};
+
+const wordPatterns = [
+  ["id", identifier],
+  ["number", number],
+  ["punct", punctuator],
+];
+
+/** An identifier, number or punctuator token at `at`. */
+const wordToken = (source, at) => {
+  for (const [tokenKind, pattern] of wordPatterns) {
+    pattern.lastIndex = at;
+    if (pattern.test(source))
+      return {
+        kind: tokenKind,
+        text: source.slice(at, pattern.lastIndex),
+        start: at,
+      };
+  }
+  return undefined;
+};
 
 /**
- * Lines on which a comment holding an exemption marker ends. Comments are
- * read from the trivia around each parsed token, so text inside a string or
- * regular expression is never taken for one.
+ * Splits TypeScript source into code tokens and comments. Template literals
+ * are tracked through nested `${…}` substitutions with a brace stack.
  */
-const exemptLines = (file) => {
-  const source = file.text;
-  const lines = new Set();
-  const seen = new Set();
-  const read = (ranges) => {
-    for (const range of ranges ?? []) {
-      if (seen.has(range.pos)) continue;
-      seen.add(range.pos);
-      if (exemptionMarker.test(source.slice(range.pos, range.end)))
-        lines.add(file.getLineAndCharacterOfPosition(range.end).line);
+const tokenize = (source) => {
+  /** @type {{ kind: string, text: string, start: number }[]} */
+  const tokens = [];
+  /** @type {{ text: string, end: number }[]} */
+  const comments = [];
+  const braces = [];
+  let at = 0;
+  while (at < source.length) {
+    const char = source[at];
+    const start = at;
+    const comment = commentEnd(source, at);
+    if (/\s/u.test(char)) at += 1;
+    else if (comment !== undefined) {
+      at = comment;
+      comments.push({ text: source.slice(start, at), end: at });
+    } else if (char === "'" || char === '"') {
+      at = quotedEnd(source, at);
+      tokens.push({ kind: "string", text: "", start });
+    } else if (char === "`" || (char === "}" && braces.at(-1) === "template")) {
+      if (char === "}") braces.pop();
+      at = templateEnd(source, at + 1, braces);
+      tokens.push({ kind: "string", text: "", start });
+    } else if (char === "/" && regexAllowedAfter(tokens.at(-1))) {
+      at = regexEnd(source, at);
+      tokens.push({ kind: "regex", text: "", start });
+    } else {
+      const token = wordToken(source, at);
+      if (token === undefined) {
+        at += 1;
+        continue;
+      }
+      at = start + token.text.length;
+      tokens.push(token);
+      if (token.text === "{") braces.push("block");
+      else if (token.text === "}") braces.pop();
     }
-  };
-  const visit = (node) => {
-    read(ts.getLeadingCommentRanges(source, node.getFullStart()));
-    read(ts.getTrailingCommentRanges(source, node.getEnd()));
-    for (const child of node.getChildren(file)) visit(child);
-  };
-  visit(file);
-  return lines;
+  }
+  return { tokens, comments };
 };
+
+const kind = (token) => (token?.kind === "punct" ? token.text : undefined);
+
+const isPropertyRead = (tokens, end) =>
+  tokens[end]?.kind === "id" &&
+  (kind(tokens[end - 1]) === "." || kind(tokens[end - 1]) === "?.");
+
+/** First token of the `??` chain whose last operand ends at `end`. */
+const chainStart = (tokens, end) => {
+  let at = end;
+  for (;;) {
+    while (
+      (kind(tokens[at - 1]) === "." || kind(tokens[at - 1]) === "?.") &&
+      at >= 2
+    )
+      at -= 2;
+    if (kind(tokens[at - 1]) !== "??" || at < 2) return at;
+    at -= 2;
+  }
+};
+
+const isObservedDefault = (tokens, at) => {
+  const token = tokens[at];
+  if (token?.kind === "number" && token.text === "0") return at;
+  if (token?.kind === "id" && token.text === "false") return at;
+  if (kind(token) === "[" && kind(tokens[at + 1]) === "]") return at + 1;
+  return undefined;
+};
+
+// A default followed by one of these is part of a larger operand.
+const continuesOperand = new Set([".", "?.", "[", "(", "+", "-", "*", "/"]);
 
 /** @param {string} source unstripped source, comments included */
 export const optionalFactDefaultCount = (source) => {
-  const file = ts.createSourceFile(
-    "guard.ts",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  let exempt;
-  let count = 0;
-  const visit = (node) => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      isObservedDefault(node.right)
-    ) {
-      exempt ??= exemptLines(file);
-      const start = file.getLineAndCharacterOfPosition(node.getStart()).line;
-      const end = file.getLineAndCharacterOfPosition(node.getEnd()).line;
-      let marked = false;
-      for (let line = start - 1; line <= end && !marked; line += 1)
-        marked = exempt.has(line);
-      if (!marked) count += 1;
+  const { tokens, comments } = tokenize(source);
+  const lineStarts = [0];
+  for (
+    let at = source.indexOf("\n");
+    at !== -1;
+    at = source.indexOf("\n", at + 1)
+  )
+    lineStarts.push(at + 1);
+  const lineOf = (offset) => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (lineStarts[middle] <= offset) low = middle;
+      else high = middle - 1;
     }
-    ts.forEachChild(node, visit);
+    return low;
   };
-  visit(file);
+  const exempt = new Set(
+    comments
+      .filter(({ text }) => exemptionMarker.test(text))
+      .map(({ end }) => lineOf(end - 1)),
+  );
+  let count = 0;
+  tokens.forEach((token, at) => {
+    if (kind(token) !== "??" || !isPropertyRead(tokens, at - 1)) return;
+    const last = isObservedDefault(tokens, at + 1);
+    if (last === undefined) return;
+    if (continuesOperand.has(kind(tokens[last + 1]))) return;
+    const start = lineOf(tokens[chainStart(tokens, at - 1)].start);
+    const end = lineOf(tokens[last].start);
+    for (let line = start - 1; line <= end; line += 1)
+      if (exempt.has(line)) return;
+    count += 1;
+  });
   return count;
 };

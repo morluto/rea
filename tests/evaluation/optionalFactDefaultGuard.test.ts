@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import {
   isComparisonOrCountFile,
@@ -15,6 +16,13 @@ it("counts property reads defaulted to 0, [] or false in any layout", () => {
   expect(optionalFactDefaultCount("(left.exported_types?.length ?? 0)")).toBe(
     1,
   );
+  // The last link of a chain is the operand the default replaces.
+  expect(optionalFactDefaultCount("left.count ?? right.count ?? 0")).toBe(1);
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request default, not an observation\nconst n = left.count ??\n  right.count ?? 0;",
+    ),
+  ).toBe(0);
 });
 
 it("ignores accumulators, indexed reads and other defaults", () => {
@@ -92,6 +100,34 @@ it("counts executable defaults only, whatever strings and regular expressions ho
       'const s = "optional-fact-default: not a real reason"; const n = report.count ?? 0;',
     ),
   ).toBe(1);
+});
+
+it("tracks template substitutions and division", () => {
+  expect(
+    optionalFactDefaultCount(
+      "const t = `${{ a: 1 }.a} x ?? 0`; const n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount(
+      "const r = total / 2; const n = report.count ?? 0; // /",
+    ),
+  ).toBe(1);
+  expect(optionalFactDefaultCount("const n = (report.count ?? 0) + 1;")).toBe(
+    1,
+  );
+  expect(optionalFactDefaultCount("const n = report.count ?? 0 + 1;")).toBe(0);
+});
+
+it("loads without installed dependencies, as CI runs it before npm ci", async () => {
+  const source = await readFile(
+    new URL(
+      "../../scripts/verify/optional-fact-default-guard.mjs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  expect(source).not.toMatch(/\bfrom\s+["'](?!node:|\.)/u);
 });
 
 it("selects comparison, coverage and count files only", () => {
