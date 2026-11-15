@@ -1619,13 +1619,8 @@ export const semanticOriginalGlobalProcessAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  !ambientPathMayObserveAt(
-    state,
-    node,
-    ["global", "process"],
-    "value",
-    "top-level",
-  ) && !ambientBindingMayObserveWriteAt(state, node, "process", "top-level");
+  !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
+  !ambientBindingMayObserveWriteAt(state, node, "process");
 
 /** Node's unbound process reference shares the cached process exports object. */
 export const semanticGlobalProcessOrigin = (
@@ -1693,7 +1688,7 @@ const isConditionalRequireAt = (
         )))
   )
     return false;
-  return !ambientBindingMayObserveWriteAt(state, node, "require", "top-level");
+  return !ambientBindingMayObserveWriteAt(state, node, "require");
 };
 
 /** Recover an unshadowed literal require origin and its exact member path. */
@@ -1735,7 +1730,7 @@ export const semanticRequireOriginCandidate = (
         (binding === undefined &&
           (javaScriptRuntimeContext(state.program) === "module" ||
             semanticResolutionBlocked(state, current.callee, "require"))) ||
-        ambientBindingMayObserveWriteAt(state, current, "require", "top-level")
+        ambientBindingMayObserveWriteAt(state, current, "require")
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);

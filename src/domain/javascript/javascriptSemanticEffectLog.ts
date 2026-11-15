@@ -406,18 +406,19 @@ const ambientPathEffects = (
 /**
  * `mayObserve` for an ambient member path: whether a recorded write to `path`
  * or to one of its prefixes may run before `read`. With `"contents"`, an
- * escape of it to code whose effects are not evaluated counts too.
+ * escape of it to code whose effects are not evaluated counts too. Ambient
+ * questions use activation timing only, so every reader of one ambient path
+ * or name gets the same answer for the same read.
  */
 export const ambientPathMayObserveAt = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
   path: readonly string[],
   observes: "value" | "contents" = "value",
-  ordering: SemanticEffectOrdering = "activation",
 ): boolean => {
   const { writes, escapes } = ambientPathEffects(state, path);
   const mayPrecede = ({ node }: AmbientEffect): boolean =>
-    semanticEffectMayPrecede(state, read, node, ordering);
+    semanticEffectMayPrecede(state, read, node);
   return (
     writes.some(mayPrecede) ||
     (observes === "contents" && escapes.some(mayPrecede))
@@ -426,16 +427,17 @@ export const ambientPathMayObserveAt = (
 
 /**
  * `mayObserve` for an unbound name: whether a recorded assignment to the
- * ambient binding `name` may run before `read`.
+ * ambient binding `name` may run before `read`. The loader and the origin of
+ * one unbound `require` call, and the original global `process` object, ask
+ * this one question.
  */
 export const ambientBindingMayObserveWriteAt = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
   name: string,
-  ordering: SemanticEffectOrdering = "activation",
 ): boolean =>
   (state.ambientBindingWrites.get(name) ?? []).some((write) =>
-    semanticEffectMayPrecede(state, read, write, ordering),
+    semanticEffectMayPrecede(state, read, write),
   );
 
 /**
