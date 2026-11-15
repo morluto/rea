@@ -406,8 +406,6 @@
     "src/application/binary/BundleResourceSession.ts": 1,
     "src/application/binary/CompositeProvider.ts": 1,
     "src/application/closeOwnedWebResources.ts": 1,
-    "src/application/decompileDirectory/exportResources.ts": 1,
-    "src/application/decompileDirectory/exportTree.ts": 1,
     "src/application/desktop/DesktopApplicationExport.ts": 2,
     "src/application/frida/FridaInstrumentationService.ts": 2,
     "src/application/releaseExposure/ReleaseExposureService.ts": 1,

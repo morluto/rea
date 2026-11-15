@@ -134,3 +134,21 @@ it("keeps an owner's record bound to a composition of owned parts", () => {
   ownerRelease.confirm();
   expect(composed.cleanupIncomplete).toBe(false);
 });
+
+// A primary that still holds resources keeps the composite incomplete after
+// the cleanup that followed it releases: binding only the cleanup would let
+// the composite read as complete while the primary's resources remain owned.
+it("keeps a composed failure incomplete until the primary's own owner releases", () => {
+  const primaryRelease = new AnalysisCleanupRelease();
+  const cleanupRelease = new AnalysisCleanupRelease();
+  const composed = analysisErrorWithCleanupDependencies(
+    primaryRelease.bind(resource("session")),
+    cleanupRelease.bind(resource("workspace")),
+  );
+  cleanupRelease.confirm();
+  expect(composed.cleanupIncomplete).toBe(true);
+  expect(composed.cleanupResources).toEqual(["session"]);
+  primaryRelease.confirm();
+  expect(composed.cleanupIncomplete).toBe(false);
+  expect(composed.cleanupResources).toEqual([]);
+});
