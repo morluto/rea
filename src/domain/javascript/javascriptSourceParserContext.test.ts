@@ -271,3 +271,46 @@ it("detects JavaScript module syntax within an observed unspecified package", ()
   expect(file.errors).toEqual([]);
   expect(javaScriptRuntimeContext(file.program)).toBe("module");
 });
+
+// The loader and the origin of one unbound require call answer the same
+// question: may an assignment to `require` run before the call?
+it.each([
+  ['const fs = require("fs"); for (const x of [1]) require = custom;', true],
+  ['const fs = require("fs"); for (const x of []) require = custom;', true],
+  ['require = wrap(require("fs"));', true],
+  ['const fs = require("fs"); require = custom;', true],
+  ['const fs = require("fs"); while (ready) require = custom;', false],
+  ['function load() { require = custom; } const fs = require("fs");', false],
+] as const)(
+  "agrees on loader and origin for an unbound require in %s",
+  (source, unchanged) => {
+    const { file } = parseRecoveredJavaScript(
+      source,
+      "entry.cjs",
+      {},
+      "commonjs",
+    );
+    expect(javaScriptRuntimeContext(file.program)).toBe("commonjs");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(file.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    let required: t.CallExpression | undefined;
+    traverseJavaScriptAst(file.program, {
+      enter: (node) => {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "require" })
+        )
+          required = node;
+      },
+    });
+    if (required === undefined) throw new Error("Expected a require call");
+    expect(semanticRequireLoaderAt(required, index.bindings, new Set())).toBe(
+      unchanged ? "commonjs-loader" : "unknown",
+    );
+    expect(
+      semanticRequireOrigin(required, index.bindings)?.origin.specifier,
+    ).toBe(unchanged ? "fs" : undefined);
+  },
+);

@@ -118,6 +118,17 @@ export const invalidateSemanticRequireDelegateWrites = (
   moduleReturnedReferences.delete(state);
 };
 
+/**
+ * Whether an assignment to the unbound `require` may run before `read`. The
+ * loader fact and the origin of the same call ask this one question, so they
+ * use one ordering: activation timing, which also orders reads before writes
+ * in later or empty loops and inside the assignment's own right-hand side.
+ */
+const requireRebindingMayPrecede = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => ambientBindingMayObserveWriteAt(state, read, "require");
+
 const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -183,7 +194,7 @@ const requireLoaderValueAt = (
       semanticResolutionBlocked(state, loader, "require")
     )
       return "unknown";
-    return ambientBindingMayObserveWriteAt(state, node, "require")
+    return requireRebindingMayPrecede(node, state)
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
@@ -1693,7 +1704,7 @@ const isConditionalRequireAt = (
         )))
   )
     return false;
-  return !ambientBindingMayObserveWriteAt(state, node, "require", "top-level");
+  return !requireRebindingMayPrecede(node, state);
 };
 
 /** Recover an unshadowed literal require origin and its exact member path. */
@@ -1735,7 +1746,7 @@ export const semanticRequireOriginCandidate = (
         (binding === undefined &&
           (javaScriptRuntimeContext(state.program) === "module" ||
             semanticResolutionBlocked(state, current.callee, "require"))) ||
-        ambientBindingMayObserveWriteAt(state, current, "require", "top-level")
+        requireRebindingMayPrecede(current, state)
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);
