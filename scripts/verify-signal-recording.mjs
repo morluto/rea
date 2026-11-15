@@ -15,9 +15,11 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { releaseAfter, withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.platform !== "linux")
@@ -44,7 +46,7 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-signal-verifier-",
 });
 const path = join(root.path, "recording with spaces.vcd");
@@ -80,6 +82,9 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
+// The MCP server child reads files under the root until it has exited.
+root.releaseAfter(() => client.close());
+root.releaseAfter(() => transport.close());
 // Independently synthesize 9600-baud 8N1 samples at 1 MHz: bytes 52 45 41.
 const lines = [
   "$timescale 1 us $end",
@@ -107,7 +112,7 @@ const source = lines.join("\n") + "\n";
 let cases = 0;
 const discoveryMeasurements = [];
 
-await withVerifierCleanup(async () => {
+await withVerifierFixture(root, async () => {
   await writeFile(path, source);
   await client.connect(transport);
   const advertised = (await client.listTools()).tools.find(
@@ -438,14 +443,7 @@ await withVerifierCleanup(async () => {
     "paged.vcd",
     "recording with spaces.vcd",
   ]);
-}, [
-  // The MCP server child reads files under the root until it has exited.
-  releaseAfter(
-    [() => client.close(), () => transport.close()],
-    () => root.close(),
-    root.path,
-  ),
-]);
+});
 console.log(
   JSON.stringify(
     {

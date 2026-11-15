@@ -7,7 +7,7 @@ type Field = ManagedMemberInspection["fields"][number];
 /**
  * The exact signature across builds: raw bytes with type operands resolved to
  * names. Raw bytes name types by build-local rows, so they stand in only when
- * REA could not resolve the operands, or for Evidence recorded before it did.
+ * REA could not resolve the operands.
  * The kind is part of the key: an undecodable blob can hold another
  * signature's resolved preimage, so its raw digest can equal that resolved
  * digest without the two being the same signature.
@@ -39,8 +39,8 @@ const withoutResolution = <Member extends Method | Field>(
   }));
 
 /**
- * Compare raw signatures on both sides when either observation predates
- * resolved digests; a resolved digest never equals a raw one for a signature
+ * Compare raw signatures on both sides when either observation does not
+ * attest resolved digests; a resolved digest never equals a raw one for a signature
  * that names a type, so mixing them would lose pairs a raw comparison finds.
  */
 export const comparableSides = (

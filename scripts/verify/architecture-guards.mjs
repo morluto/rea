@@ -330,6 +330,16 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Turning a completed result into a cancellation after cleanup is the
+// finalization precedence that runOwned owns (src/providers/runOwned.ts).
+checkCounted(
+  "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
+  "completed-abort-reclassification",
+  files,
+  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  ["src/providers/runOwned.ts"],
+);
+
 // An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
 // MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
 // A bare `.abort()` leaves an anonymous platform AbortError as the cause.
@@ -482,6 +492,25 @@ checkCounted(
   ["src/domain/analysisErrorBase.ts"],
 );
 
+// The running host is read once by src/platform/HostPlatform; composition
+// takes it from there and passes the platform or architecture on as a
+// required parameter. An ambient read elsewhere mixes the host REA runs on
+// with the host a caller asked about, and cannot be selected by a test.
+checkCounted(
+  "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
+  "ambient-host-platform",
+  files,
+  /\bprocess\.platform\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+checkCounted(
+  "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
+  "ambient-host-architecture",
+  files,
+  /\bprocess\.arch\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -505,6 +534,33 @@ checkCounted(
   "keyed-first-match",
   parserFiles,
   countKeyedFirstMatches,
+  [],
+);
+
+// A verifier fixture root is removed only after the MCP clients, sessions and
+// processes that may still use it confirm cleanup; otherwise it is retained
+// and named. scripts/lib/verifier-fixture.mjs owns that ordering on a
+// src/process PrivateRuntimeRoot, so verifiers allocate roots through it.
+const verifierScripts = await Promise.all(
+  (await readdir(join(root, "scripts"), { recursive: true }))
+    .map((path) => path.split(sep).join("/"))
+    .filter(
+      (path) =>
+        /^(?:verify-[^/]+|verify\/.+)\.mjs$/u.test(path) &&
+        path !== "verify/architecture-guards.mjs",
+    )
+    .map(async (path) => ({
+      path: `scripts/${path}`,
+      content: stripComments(
+        await readFile(join(root, "scripts", path), "utf8"),
+      ),
+    })),
+);
+checkCounted(
+  "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
+  "verifier-fixture-root",
+  verifierScripts,
+  /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );
 

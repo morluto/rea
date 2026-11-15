@@ -625,6 +625,13 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
     settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
   ).toBe(false);
   expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
+  // Only Windows refuses an existing Ghidra project.
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "darwin"),
+  ).toBe(false);
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "win32"),
+  ).toBe(true);
   expect(
     settingAffectsProbe(
       "jadx",
