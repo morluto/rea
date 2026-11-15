@@ -26,6 +26,33 @@ it("ignores accumulators, indexed reads and other defaults", () => {
   expect(optionalFactDefaultCount("report.count ?? fallback.count")).toBe(0);
 });
 
+it("honours an exemption marker that gives a reason", () => {
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request default, not an observation\nconst offset = page.offset ?? 0;",
+    ),
+  ).toBe(0);
+  expect(
+    optionalFactDefaultCount(
+      "const offset = page.offset ?? 0; // optional-fact-default: request default, not observed",
+    ),
+  ).toBe(0);
+  expect(
+    optionalFactDefaultCount("// e.g. report.count ?? 0 hides unknown"),
+  ).toBe(0);
+  // A bare marker, or one two lines above, does not exempt the default.
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default:\nconst offset = page.offset ?? 0;",
+    ),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request default, not observed\n\nconst n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+});
+
 it("selects comparison, coverage and count files only", () => {
   expect(isComparisonOrCountFile("src/domain/artifactComparison.ts")).toBe(
     true,
