@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 
-// A reviewable summary of what the packaged server advertises. A change that
-// touches many tools' schemas at once, such as a pattern added to a shared
-// path schema (#10830), shows up in review as one line per pattern instead of
-// being buried in generated contracts.
+// A reviewable summary of what the packaged server advertises, recorded as one
+// file per tool. A change that touches many tools' schemas at once, such as a
+// pattern added to a shared path schema (#10830), still shows up in review as
+// one aggregated line per pattern, while a PR that adds a tool adds only its
+// own file and does not conflict with other tool PRs (#11189).
 
 const SHOWN_NAMES = 8;
+const KINDS = ["input", "output"];
 
 const sorted = (record) =>
   Object.fromEntries(
@@ -15,71 +17,88 @@ const sorted = (record) =>
   );
 
 /**
- * Summarize listings from every profile: each advertised pattern with the
- * tool schemas that advertise it, and a digest of each tool's schema per
- * input or output profile.
+ * Summarize listings from every profile, per tool: a digest of each schema
+ * per input or output profile, and the patterns each schema kind advertises.
  */
 export const summarizeAdvertisedCatalogs = (
   catalogs,
   advertisedSchemaPatterns,
 ) => {
-  const patterns = new Map();
   const tools = new Map();
-  const schemas = catalogs.flatMap(({ profile, tools: listed }) =>
-    listed.flatMap((tool) =>
-      [
-        ["input", profile.input],
-        ["output", profile.output],
-      ].flatMap(([kind, selected]) => {
-        const schema = tool[`${kind}Schema`];
-        return schema === undefined
-          ? []
-          : [{ name: tool.name, kind, group: `${kind} ${selected}`, schema }];
-      }),
-    ),
-  );
-  for (const { name, kind, group, schema } of schemas) {
-    for (const { pattern } of advertisedSchemaPatterns(schema)) {
-      if (!patterns.has(pattern)) patterns.set(pattern, new Set());
-      patterns.get(pattern).add(`${name} ${kind}`);
-    }
-    if (!tools.has(name)) tools.set(name, {});
-    tools.get(name)[group] = createHash("sha256")
-      .update(JSON.stringify(schema))
-      .digest("hex")
-      .slice(0, 16);
-  }
-  return {
-    patterns: sorted(
-      Object.fromEntries(
-        [...patterns].map(([pattern, sites]) => [pattern, [...sites].sort()]),
-      ),
-    ),
-    tools: sorted(
-      Object.fromEntries(
-        [...tools].map(([name, digests]) => [name, sorted(digests)]),
-      ),
-    ),
+  const entry = (name) => {
+    if (!tools.has(name))
+      tools.set(name, {
+        schemas: {},
+        patterns: Object.fromEntries(KINDS.map((kind) => [kind, new Set()])),
+      });
+    return tools.get(name);
   };
+  for (const { profile, tools: listed } of catalogs)
+    for (const tool of listed)
+      for (const kind of KINDS) {
+        const schema = tool[`${kind}Schema`];
+        if (schema === undefined) continue;
+        const record = entry(tool.name);
+        record.schemas[`${kind} ${profile[kind]}`] = createHash("sha256")
+          .update(JSON.stringify(schema))
+          .digest("hex")
+          .slice(0, 16);
+        for (const { pattern } of advertisedSchemaPatterns(schema))
+          record.patterns[kind].add(pattern);
+      }
+  return Object.fromEntries(
+    [...tools]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([name, { schemas, patterns }]) => [
+        name,
+        {
+          schemas: sorted(schemas),
+          patterns: Object.fromEntries(
+            KINDS.flatMap((kind) =>
+              patterns[kind].size === 0
+                ? []
+                : [[kind, [...patterns[kind]].sort()]],
+            ),
+          ),
+        },
+      ]),
+  );
 };
+
+/** The committed file name for one tool's summary. */
+export const toolSummaryFile = (name) => `${name}.json`;
+
+/** One tool's summary as committed: sorted, two-space JSON with a newline. */
+export const serializeToolSummary = (summary) =>
+  `${JSON.stringify(summary, null, 2)}\n`;
 
 const names = (values) =>
   values.length > SHOWN_NAMES
     ? `${values.slice(0, SHOWN_NAMES).join(", ")} and ${String(values.length - SHOWN_NAMES)} more`
     : values.join(", ");
 
-/** Review lines for every difference between two summaries. */
+/** Each `<tool> <kind>` site that advertises each pattern, across tools. */
+const patternSites = (tools) => {
+  const sites = new Map();
+  for (const [name, { patterns }] of Object.entries(tools))
+    for (const [kind, listed] of Object.entries(patterns ?? {}))
+      for (const pattern of listed) {
+        if (!sites.has(pattern)) sites.set(pattern, new Set());
+        sites.get(pattern).add(`${name} ${kind}`);
+      }
+  return sites;
+};
+
+/** Review lines for every difference between two per-tool summaries. */
 export const describeSummaryChanges = (recorded, current) => {
   const lines = [];
-  const recordedPatterns = recorded?.patterns ?? {};
-  for (const pattern of new Set([
-    ...Object.keys(recordedPatterns),
-    ...Object.keys(current.patterns),
-  ])) {
-    const before = new Set(recordedPatterns[pattern] ?? []);
-    const after = new Set(current.patterns[pattern] ?? []);
-    const gained = [...after].filter((site) => !before.has(site));
-    const lost = [...before].filter((site) => !after.has(site));
+  const before = patternSites(recorded);
+  const after = patternSites(current);
+  for (const pattern of new Set([...before.keys(), ...after.keys()])) {
+    const was = before.get(pattern) ?? new Set();
+    const is = after.get(pattern) ?? new Set();
+    const gained = [...is].filter((site) => !was.has(site)).sort();
+    const lost = [...was].filter((site) => !is.has(site)).sort();
     if (gained.length > 0)
       lines.push(
         `${String(gained.length)} tool schemas gained pattern /${pattern}/: ${names(gained)}`,
@@ -89,23 +108,22 @@ export const describeSummaryChanges = (recorded, current) => {
         `${String(lost.length)} tool schemas lost pattern /${pattern}/: ${names(lost)}`,
       );
   }
-  const recordedTools = recorded?.tools ?? {};
   const changed = new Map();
   for (const tool of new Set([
-    ...Object.keys(recordedTools),
-    ...Object.keys(current.tools),
-  ]))
-    for (const group of new Set([
-      ...Object.keys(recordedTools[tool] ?? {}),
-      ...Object.keys(current.tools[tool] ?? {}),
-    ]))
-      if (recordedTools[tool]?.[group] !== current.tools[tool]?.[group]) {
+    ...Object.keys(recorded),
+    ...Object.keys(current),
+  ])) {
+    const was = recorded[tool]?.schemas ?? {};
+    const is = current[tool]?.schemas ?? {};
+    for (const group of new Set([...Object.keys(was), ...Object.keys(is)]))
+      if (was[group] !== is[group]) {
         if (!changed.has(group)) changed.set(group, []);
         changed.get(group).push(tool);
       }
+  }
   for (const [group, changedTools] of changed)
     lines.push(
-      `${String(changedTools.length)} tools changed their ${group} schema: ${names(changedTools)}`,
+      `${String(changedTools.length)} tools changed their ${group} schema: ${names(changedTools.sort())}`,
     );
   return lines;
 };

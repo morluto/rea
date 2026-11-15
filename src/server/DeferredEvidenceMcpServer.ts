@@ -226,13 +226,12 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
    */
   protected override describeTool(
     name: string,
-    description: string | undefined,
-    guidance: () => readonly string[],
+    advertised: () => string | undefined,
   ): { description?: string } {
     const recorded = this.tools.get(name)?.registered.description;
     if (this.materializing && recorded !== undefined)
       return { description: recorded };
-    return super.describeTool(name, description, guidance);
+    return super.describeTool(name, advertised);
   }
 
   protected override bindTool(

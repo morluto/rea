@@ -390,11 +390,11 @@ recovery to the resource kind. The domain owner is
 It has three variants. Each one projects under `details.refusal` with the
 `operation` the error is attributed to:
 
-| Variant              | Producer fact                                                          | Projected fields                                            |
-| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`        | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing` |
-| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                             | `control`, `setting`, `effective_value`, `unit`, `range`    |
-| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }` | `field`, `candidates`                                       |
+| Variant              | Producer fact                                                          | Projected fields                                                                    |
+| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`        | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                             | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }` | `field`, `candidates`                                                               |
 
 Presentation is total over these variants. Authored remediation still wins.
 Without it, the variant names the recovery: fixed ceilings and their narrowing

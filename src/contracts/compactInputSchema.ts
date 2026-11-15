@@ -109,7 +109,7 @@ export const compactAdvertisedInputSchema = (
 // read one projection of the same memoized canonical schema object.
 const compacted = new WeakMap<object, Map<number, CompactedInputSchema>>();
 
-/** The advertised input for the selected presentation, with its guidance. */
+/** The compact advertised input with its guidance; `advertisedTool.ts` composes the tool. */
 export const presentAdvertisedInput = (
   schema: Record<string, unknown>,
   compactPresentation: CompactInputSchemaPresentation,
@@ -125,30 +125,3 @@ export const presentAdvertisedInput = (
     );
   return presented;
 };
-
-/** Return the JSON schema clients receive for the selected input presentation. */
-export const presentAdvertisedInputSchema = (
-  schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation,
-): Record<string, unknown> =>
-  presentAdvertisedInput(schema, compactPresentation).schema;
-
-/** The tool description followed by the input guidance its schema omits. */
-export function describeAdvertisedTool(
-  description: string,
-  guidance: readonly string[],
-): string;
-export function describeAdvertisedTool(
-  description: string | undefined,
-  guidance: readonly string[],
-): string | undefined;
-export function describeAdvertisedTool(
-  description: string | undefined,
-  guidance: readonly string[],
-): string | undefined {
-  if (guidance.length === 0) return description;
-  const input = guidance.join(" ");
-  return description === undefined || description === ""
-    ? input
-    : `${description}\n\n${input}`;
-}
