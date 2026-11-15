@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { HopperRegexSearch } from "../../../../src/hopper/HopperRegexSearch.js";
-import { HopperRemoteError } from "../../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../../src/hopper/HopperErrors.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
   HopperFixtureLauncher,

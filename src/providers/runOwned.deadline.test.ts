@@ -16,6 +16,7 @@ import { Deadline } from "../domain/deadline.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ok, err, type Result } from "../domain/result.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 import { finalizedResult, runOwned, type Finalized } from "./runOwned.js";
 
 const operation = "fixture_operation";
@@ -286,7 +287,7 @@ it("follows a late close rejection's own retry owner when no leases were supplie
   // The late owner names the resources still held.
   expect(finalized.error.cleanupResources).toEqual(["/owned/root"]);
   // The producer's own retry confirms release; the late failure follows it.
-  producerCleanup.resolveCleanup();
+  releaseOwnedCleanup(producerCleanup);
   expect(finalized.error.cleanupIncomplete).toBe(false);
 });
 
@@ -499,7 +500,7 @@ it("follows a late close rejection whose owner already released before it arrive
     throw new Error(`expected retained cleanup, got ${finalized.kind}`);
   // A concurrent retry released the producer's resources before the original
   // close rejected with that producer's error.
-  producerCleanup.resolveCleanup();
+  releaseOwnedCleanup(producerCleanup);
   rejectClose(producerCleanup);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(finalized.error.cleanupIncomplete).toBe(false);

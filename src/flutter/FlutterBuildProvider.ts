@@ -42,6 +42,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
 import {
@@ -113,11 +114,7 @@ const sha256File = async (
     }
     return hash.digest("hex");
   } catch (cause) {
-    if (
-      cause instanceof Error &&
-      cause.name === "AbortError" &&
-      cause.cause === marker
-    )
+    if (isAbortWithReason(cause, marker))
       throw cancelledBy(operation, carriedReason(signal?.reason));
     throw cause;
   } finally {

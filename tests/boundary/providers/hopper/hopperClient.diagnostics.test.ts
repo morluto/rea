@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 
 import { expect, it, onTestFinished } from "vitest";
 
-import { HopperTimeoutError } from "../../../../src/domain/hopperErrors.js";
+import { HopperTimeoutError } from "../../../../src/hopper/HopperErrors.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";

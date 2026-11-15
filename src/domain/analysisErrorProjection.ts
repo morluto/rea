@@ -12,7 +12,7 @@ import {
   UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
-  assertKnownAnalysisErrorTag,
+  assertKnownAnalysisError,
   hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
@@ -48,11 +48,14 @@ import {
   type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorOptions,
-  type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
 import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
+import {
+  classifyAnalysisError,
+  RETRYABLE_CODES,
+} from "./analysisErrorClassification.js";
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -391,9 +394,9 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     cleanupReport = owner.cleanupReport;
-  assertKnownAnalysisErrorTag(error._tag);
+  assertKnownAnalysisError(error);
   const primary = primaryAnalysisError(error);
-  assertKnownAnalysisErrorTag(primary._tag);
+  assertKnownAnalysisError(primary);
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
@@ -562,156 +565,11 @@ const errorRecovery = (
 
 const underlyingErrorCode = (
   error: AnalysisError,
-): AnalysisErrorProjection["code"] => {
-  const owned = error.ownPresentation();
-  if (owned !== undefined) return owned.code;
-  if (error instanceof ProviderSelectionError)
-    return error.reason === "provider_unavailable"
-      ? "provider_unavailable"
-      : "capability_unavailable";
-  if (error instanceof BrowserObservationError)
-    return error.userCategory === "cancelled"
-      ? "cancelled"
-      : BROWSER_ERROR_CODES[error.reason];
-  if (error instanceof ArtifactOperationError)
-    return artifactOperationCode(error);
-  if (error instanceof BinaryTargetError)
-    return error.constraint === "load_selection_rejected"
-      ? "invalid_request"
-      : error.systemCode === undefined
-        ? "target_unavailable"
-        : "access_denied";
-  if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
-  if (error instanceof UnknownRegistryError)
-    return unknownRegistryCode(error.reason);
-  if (error._tag === "ProcessCaptureError") return processCaptureCode(error);
-  return staticErrorCode(error._tag);
-};
-
-const BROWSER_ERROR_CODES: Readonly<
-  Record<BrowserObservationError["reason"], AnalysisErrorProjection["code"]>
-> = {
-  endpoint_unreachable: "provider_unavailable",
-  invalid_endpoint_response: "unreadable_output",
-  target_not_found: "target_unavailable",
-  target_not_allowed: "target_unavailable",
-  service_worker_blocked: "target_unavailable",
-  target_changed: "target_unavailable",
-  target_session_detached: "target_unavailable",
-  protocol_error: "unreadable_output",
-  disconnected: "provider_unavailable",
-  payload_limit: "truncated",
-  window_not_found: "unreadable_output",
-  window_metadata_missing: "unreadable_output",
-  process_ownership_unavailable: "unreadable_output",
-  cleanup_failed: "execution_failure",
-  cancelled: "cancelled",
-  timeout: "provider_timeout",
-};
-
-const artifactOperationCode = (
-  error: ArtifactOperationError,
-): AnalysisErrorProjection["code"] => {
-  if (error.reason === "integrity" && error.artifactDetails !== undefined)
-    return "artifact_integrity_mismatch";
-  if (error.reason === "limit") return "truncated";
-  if (error.reason === "cancelled") return "cancelled";
-  return "artifact_operation_failed";
-};
-
-const evidenceFileCode = (
-  reason: EvidenceFileError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "invalid-json") return "evidence_integrity_mismatch";
-  if (reason === "path-limit" || reason === "storage-limit")
-    return "resource_constraint";
-  // A missing, non-file or already-existing path is the caller's selection.
-  if (reason === "io") return "execution_failure";
-  return "invalid_request";
-};
-
-const unknownRegistryCode = (
-  reason: UnknownRegistryError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "revision-conflict") return "revision_conflict";
-  if (reason === "already-exists" || reason === "constraint")
-    return "invalid_request";
-  if (reason === "limit") return "truncated";
-  if (reason === "integrity") return "evidence_integrity_mismatch";
-  return "execution_failure";
-};
-
-const processCaptureCode = (
-  error: AnalysisError,
-): AnalysisErrorProjection["code"] => {
-  if (error.cleanupIncomplete) return "cleanup_incomplete";
-  if (error.userCategory === "cancelled") return "cancelled";
-  return "process_capture_failed";
-};
-
-/** Errors that present themselves through `ownPresentation`. */
-type OwnPresentedErrorTag =
-  | "HopperTimeoutError"
-  | "HopperCancelledError"
-  | "HopperProtocolError"
-  | "HopperRemoteError"
-  | "HopperProcessError"
-  | "HopperStartError";
-
-type SpecializedErrorTag =
-  | OwnPresentedErrorTag
-  | "ArtifactOperationError"
-  | "BinaryTargetError"
-  | "BrowserObservationError"
-  | "EvidenceFileError"
-  | "ProcessCaptureError"
-  | "ProviderSelectionError"
-  | "UnknownRegistryError";
-
-const STATIC_ERROR_CODES = {
-  AnalysisProtocolError: "unreadable_output",
-  AnalysisOutputError: "unreadable_output",
-  AnalysisInputError: "invalid_request",
-  AnalysisAccessDeniedError: "access_denied",
-  AnalysisArtifactChangedError: "artifact_changed",
-  AnalysisCapabilityUnavailableError: "capability_unavailable",
-  AnalysisUnsupportedTargetError: "unsupported_target",
-  AnalysisCancelledError: "cancelled",
-  AnalysisTimeoutError: "provider_timeout",
-  AnalysisResourceConstraintError: "resource_constraint",
-  ConfigurationError: "configuration_invalid",
-  NoBinaryOpenError: "target_unavailable",
-  EvidenceIntegrityError: "evidence_integrity_mismatch",
-  ProviderAdapterError: "execution_failure",
-} as const satisfies Readonly<
-  Record<
-    Exclude<AnalysisErrorTag, SpecializedErrorTag>,
-    AnalysisErrorProjection["code"]
-  >
->;
-
-const staticErrorCode = (
-  tag: AnalysisErrorTag,
-): AnalysisErrorProjection["code"] => {
-  switch (tag) {
-    case "ArtifactOperationError":
-    case "BinaryTargetError":
-    case "BrowserObservationError":
-    case "EvidenceFileError":
-    case "ProcessCaptureError":
-    case "ProviderSelectionError":
-    case "UnknownRegistryError":
-    case "HopperTimeoutError":
-    case "HopperCancelledError":
-    case "HopperProtocolError":
-    case "HopperRemoteError":
-    case "HopperProcessError":
-    case "HopperStartError":
-      throw new TypeError(`Unhandled specialized analysis error: ${tag}`);
-    default:
-      return STATIC_ERROR_CODES[tag];
-  }
-};
+): AnalysisErrorProjection["code"] =>
+  // A capture whose cleanup did not finish names that as its execution failure.
+  error._tag === "ProcessCaptureError" && error.cleanupIncomplete
+    ? "cleanup_incomplete"
+    : classifyAnalysisError(error).code;
 
 const errorDetails = (
   error: AnalysisError,
@@ -808,7 +666,12 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return projectArtifactIntegrityDetails(error.artifactDetails);
+    return {
+      ...projectArtifactIntegrityDetails(error.artifactDetails),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
+    };
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -816,6 +679,9 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
@@ -1033,14 +899,6 @@ const lifecycleErrorDetails = (
     };
   return undefined;
 };
-
-const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
-  "artifact_changed",
-  "provider_timeout",
-  "cancelled",
-  "revision_conflict",
-  "provider_unavailable",
-]);
 
 export interface AnalysisErrorProjection extends Readonly<
   Record<string, JsonValue>

@@ -177,13 +177,23 @@ check(
   ["src/process/SignalAbort.ts"],
 );
 
-// Provider errors carry their own presentation (AnalysisError.ownPresentation);
-// the domain presenter reads it and never imports a provider's error types.
+// Hopper's error types live with the Hopper adapter. Shared layers read the
+// provider-neutral facts every AnalysisError carries (ownPresentation,
+// providerWide, providerRequest) and never import a provider's error types.
 check(
-  "domain import of Hopper error types (implement ownPresentation in the error's module)",
-  files.filter((file) => file.path.startsWith("src/domain/")),
-  /from "\.{1,2}\/(?:[\w-]+\/)*hopperErrors\.js"/u,
-  ["src/domain/hopperErrors.ts"],
+  "import of Hopper error types outside src/hopper (use the provider-neutral AnalysisError facts)",
+  files.filter((file) => !file.path.startsWith("src/hopper/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
+);
+
+// An unrecognised command outcome is reported only by the shared outcome
+// classifier, which attaches the outcome it examined; a provider reports it
+// through the dialect's `unclassified` callback.
+check(
+  "UnclassifiedProviderFailure construction outside classifyProviderOutcome (use the dialect's unclassified report)",
+  files,
+  /\bnew\s+UnclassifiedProviderFailure\b/u,
+  ["src/process/classifyProviderOutcome.ts"],
 );
 
 // "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
@@ -326,6 +336,16 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// Whether an abort error is a signal's own cancellation is decided by the
+// signal owner; a name comparison alone accepts another signal's abort.
+checkCounted(
+  "AbortError name comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  "abort-error-name",
+  files,
+  /\.name\s*===\s*["']AbortError["']/gu,
+  ["src/process/SignalAbort.ts"],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can
@@ -346,6 +366,19 @@ checkCounted(
   files,
   /\b_source\s*\.\s*layers\b/gu,
   ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
 );
 
 // Turning a completed result into a cancellation after cleanup is the
@@ -380,22 +413,6 @@ checkCounted(
   files,
   /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
   ["src/gdb/GdbMiRecord.ts"],
-);
-
-// CDP event payloads are parsed once at the connection by the registered
-// schema in src/browser/protocol/CdpEvents.ts; a subscriber reads
-// `event.registered`, not the raw payload, so malformed members cannot be
-// reinterpreted, dropped or defaulted differently by each subscriber.
-checkCounted(
-  "raw CDP event payload read (register the event in src/browser/protocol/CdpEvents and read event.registered)",
-  "cdp-raw-event-params",
-  files.filter(
-    (file) =>
-      file.path.startsWith("src/browser/") ||
-      file.path.startsWith("src/inspector/"),
-  ),
-  /\bevent\.params\b/gu,
-  ["src/browser/CdpConnection.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -466,11 +483,21 @@ const PROCESS_LIFECYCLE_OWNERS = [
   "src/android/JadxWorkspaceRoot.ts",
   "src/native/pwntools/PwntoolsDecoder.ts",
 ];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
   parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 
@@ -526,23 +553,17 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
+// Cleanup completion is recorded by the owner and read by errors when asked;
+// AnalysisError has no push API. Composing dependency sets with
+// bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
-  files,
-  /\.resolveCleanup\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
-);
-checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts", "src/providers/runOwned.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/domain/analysisErrorCleanup.ts"],
 );
+
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
 // callers choose only how they probe each candidate.

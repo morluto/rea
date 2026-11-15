@@ -30,6 +30,7 @@ import type {
   JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFileSet,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 interface ExpectedFile {
   readonly path: string;
@@ -388,12 +389,11 @@ const readText = async (
   try {
     return {
       included: true,
-      value: new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM:
-          input.expected.kind === "javascript" ||
-          input.expected.kind === "html",
-      }).decode(bytes),
+      value: strictUtf8Decoder(
+        input.expected.kind === "javascript" || input.expected.kind === "html"
+          ? "preserve"
+          : "strip-signature",
+      ).decode(bytes),
     };
   } catch (cause: unknown) {
     // Non-UTF8 bytes are counted; the fixed reason preserves the schema.

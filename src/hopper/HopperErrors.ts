@@ -1,24 +1,63 @@
 import {
-  AnalysisError,
+  ProviderOwnedAnalysisError,
+  providerErrorTag,
   type AnalysisContinuingCallerGuidance,
   type AnalysisErrorOptions,
   type AnalysisErrorOwnPresentation,
-} from "./analysisErrorBase.js";
+  type ProviderRequestFailure,
+} from "../domain/analysisErrorBase.js";
+import {
+  catalogueRow,
+  type AnalysisErrorCatalogueEntry,
+  type AnalysisErrorClassification,
+} from "../domain/analysisErrorClassification.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   providerRetryAction,
   type HopperProcessProviderState,
   type ProviderFailureStage,
-} from "./providerOperationHealth.js";
+} from "../domain/providerOperationHealth.js";
 import {
   dialogTimeoutFromDiagnostic,
   hopperStartupFailure,
   invalidDialogTimeoutMessage,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
-} from "./hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
+
+/** Hopper's caller-facing code and category; presentations and the catalogue read it. */
+const HOPPER_CLASSIFICATIONS = {
+  timeout: { code: "provider_timeout", category: "timeout" },
+  cancelled: { code: "cancelled", category: "cancelled" },
+  protocol: { code: "unreadable_output", category: "execution_failure" },
+  unavailable: { code: "provider_unavailable", category: "unavailable" },
+} as const satisfies Record<string, AnalysisErrorClassification>;
+
+/** A remote error's classification follows the bridge's diagnostic type. */
+const hopperRemoteClassification = (
+  diagnosticType: HopperDiagnosticType,
+): AnalysisErrorClassification =>
+  diagnosticType === "invalid_request"
+    ? { code: "invalid_request", category: "invalid_input" }
+    : {
+        code: "execution_failure",
+        category:
+          diagnosticType === "authorization"
+            ? "unavailable"
+            : "execution_failure",
+      };
 
 /** Base class for failures produced specifically by the Hopper provider. */
-export abstract class HopperError extends AnalysisError {}
+export abstract class HopperError extends ProviderOwnedAnalysisError {}
+
+/** The Hopper request a failure answered, as recorded by the client. */
+const hopperRequestFacts = (
+  operation: string | undefined,
+  requestId: number | undefined,
+): Readonly<Record<string, JsonValue>> => ({
+  ...(operation === undefined ? {} : { operation }),
+  ...(requestId === undefined ? {} : { request_id: requestId }),
+});
 
 /** Observed launcher outcome; a helper exit does not establish GUI lifetime. */
 export type HopperLauncherOutcome = {
@@ -61,7 +100,7 @@ const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
   "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
 
 export class HopperTimeoutError extends HopperError {
-  readonly _tag = "HopperTimeoutError";
+  readonly _tag = providerErrorTag("HopperTimeoutError");
 
   constructor(
     readonly timeoutMs: number,
@@ -87,6 +126,22 @@ export class HopperTimeoutError extends HopperError {
     );
   }
 
+  override providerRequest(): ProviderRequestFailure {
+    return {
+      facts: hopperRequestFacts(this.operation, this.requestId),
+      reattribute: (operation, options) =>
+        new HopperTimeoutError(
+          this.timeoutMs,
+          operation,
+          this.requestId,
+          this.providerState,
+          this.stage,
+          this.launcherOutcome,
+          options,
+        ),
+    };
+  }
+
   override ownPresentation(): AnalysisErrorOwnPresentation {
     const { operation } = this;
     const continuing =
@@ -96,8 +151,7 @@ export class HopperTimeoutError extends HopperError {
           ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
           : "Check binary_session for Hopper health, then retry the operation.";
     return {
-      code: "provider_timeout",
-      category: "timeout",
+      ...HOPPER_CLASSIFICATIONS.timeout,
       message:
         operation === undefined
           ? "REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. Review the captured launcher outcome and resolve retained cleanup before retrying."
@@ -133,7 +187,7 @@ export class HopperTimeoutError extends HopperError {
 
 /** The caller cancelled a Hopper operation before it completed. */
 export class HopperCancelledError extends HopperError {
-  readonly _tag = "HopperCancelledError";
+  readonly _tag = providerErrorTag("HopperCancelledError");
 
   constructor(
     ...parameters:
@@ -155,8 +209,7 @@ export class HopperCancelledError extends HopperError {
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
     return {
-      code: "cancelled",
-      category: "cancelled",
+      ...HOPPER_CLASSIFICATIONS.cancelled,
       details: { operation: "hopper", cleanup: "complete" },
     };
   }
@@ -177,10 +230,10 @@ export const hopperCancelledBySignal = (
 
 /** Hopper returned bytes or JSON that do not satisfy the NDJSON RPC contract. */
 export class HopperProtocolError extends HopperError {
-  readonly _tag = "HopperProtocolError";
+  readonly _tag = providerErrorTag("HopperProtocolError");
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
-    return { code: "unreadable_output", category: "execution_failure" };
+    return HOPPER_CLASSIFICATIONS.protocol;
   }
 }
 
@@ -199,7 +252,7 @@ export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
 }
 
 export class HopperRemoteError extends HopperError {
-  readonly _tag = "HopperRemoteError";
+  readonly _tag = providerErrorTag("HopperRemoteError");
   readonly diagnosticType: HopperDiagnosticType;
   readonly operation: string | undefined;
   readonly requestId: number | undefined;
@@ -215,19 +268,31 @@ export class HopperRemoteError extends HopperError {
     this.requestId = context.requestId;
   }
 
-  override ownPresentation(): AnalysisErrorOwnPresentation {
-    const invalidRequest = this.diagnosticType === "invalid_request";
+  override providerRequest(): ProviderRequestFailure {
     return {
-      code: invalidRequest ? "invalid_request" : "execution_failure",
-      category: invalidRequest
-        ? "invalid_input"
-        : this.diagnosticType === "authorization"
-          ? "unavailable"
-          : "execution_failure",
+      facts: {
+        ...hopperRequestFacts(this.operation, this.requestId),
+        provider_code: this.code,
+        diagnostic_type: this.diagnosticType,
+      },
+      reattribute: (operation, options) =>
+        new HopperRemoteError(this.code, this.safeMessage, {
+          ...options,
+          operation,
+          requestId: this.requestId,
+          diagnosticType: this.diagnosticType,
+        }),
+    };
+  }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    return {
+      ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
-      remediation: invalidRequest
-        ? "Correct the reported address, document, or arguments and retry."
-        : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
+      remediation:
+        this.diagnosticType === "invalid_request"
+          ? "Correct the reported address, document, or arguments and retry."
+          : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
       details: {
         stage: "analysis",
         provider_code: this.code,
@@ -250,7 +315,7 @@ export interface HopperProcessErrorContext extends AnalysisErrorOptions {
 }
 
 export class HopperProcessError extends HopperError {
-  readonly _tag = "HopperProcessError";
+  readonly _tag = providerErrorTag("HopperProcessError");
   readonly failureCode: HopperStartupFailureCode | undefined;
   override readonly userMessage: string | undefined;
   readonly providerState: HopperProcessProviderState;
@@ -291,11 +356,34 @@ export class HopperProcessError extends HopperError {
       context.providerState ?? (exitCode === null ? "unknown" : "exited");
   }
 
+  override get providerWide(): boolean {
+    return true;
+  }
+
+  override providerRequest(): ProviderRequestFailure {
+    return {
+      facts: hopperRequestFacts(this.operation, this.requestId),
+      reattribute: (operation, options) =>
+        new HopperProcessError(this.exitCode, {
+          ...options,
+          operation,
+          requestId: this.requestId,
+          providerState: this.providerState,
+          stage: this.stage,
+          ...(this.diagnostic === undefined
+            ? {}
+            : { diagnostic: this.diagnostic }),
+          ...(this.launcherFailure === undefined
+            ? {}
+            : { launcherFailure: this.launcherFailure }),
+        }),
+    };
+  }
+
   override ownPresentation(): AnalysisErrorOwnPresentation {
     const continuing = this.#continuing();
     return {
-      code: "provider_unavailable",
-      category: "unavailable",
+      ...HOPPER_CLASSIFICATIONS.unavailable,
       message: this.#message(),
       ...(continuing === undefined ? {} : { continuing }),
       remediation:
@@ -417,7 +505,7 @@ export const hopperAppleEventsAuthorizationDenied = (
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
-  readonly _tag = "HopperStartError";
+  readonly _tag = providerErrorTag("HopperStartError");
   override readonly userMessage: string | undefined;
   readonly ownerRunId: string | undefined;
   readonly launcherFailure: HopperLauncherOutcome | undefined;
@@ -438,11 +526,14 @@ export class HopperStartError extends HopperError {
     this.launchRejection = options?.launchRejection;
   }
 
+  override get providerWide(): boolean {
+    return true;
+  }
+
   override ownPresentation(): AnalysisErrorOwnPresentation {
     const denied = hopperAppleEventsAuthorizationDenied(this.launchRejection);
     return {
-      code: "provider_unavailable",
-      category: "unavailable",
+      ...HOPPER_CLASSIFICATIONS.unavailable,
       message: denied
         ? HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE
         : (this.userMessage ??
@@ -471,3 +562,54 @@ export class HopperStartError extends HopperError {
     };
   }
 }
+
+const HOPPER_DIAGNOSTIC_TYPES = {
+  remote: true,
+  authorization: true,
+  invalid_request: true,
+  capability_unavailable: true,
+  bridge_exception: true,
+} as const satisfies Record<HopperDiagnosticType, true>;
+
+/** Hopper's rows in the generated error catalogue. */
+export const hopperErrorCatalogue =
+  (): readonly AnalysisErrorCatalogueEntry[] => [
+    catalogueRow(
+      providerErrorTag("HopperTimeoutError"),
+      "",
+      HOPPER_CLASSIFICATIONS.timeout,
+    ),
+    catalogueRow(
+      providerErrorTag("HopperCancelledError"),
+      "",
+      HOPPER_CLASSIFICATIONS.cancelled,
+    ),
+    catalogueRow(
+      providerErrorTag("HopperProtocolError"),
+      "",
+      HOPPER_CLASSIFICATIONS.protocol,
+    ),
+    ...Object.keys(HOPPER_DIAGNOSTIC_TYPES).map((diagnosticType) =>
+      catalogueRow(
+        providerErrorTag("HopperRemoteError"),
+        `diagnostic_type=${diagnosticType}`,
+        hopperRemoteClassification(diagnosticType as HopperDiagnosticType),
+      ),
+    ),
+    catalogueRow(
+      providerErrorTag("HopperProcessError"),
+      "",
+      HOPPER_CLASSIFICATIONS.unavailable,
+    ),
+    catalogueRow(
+      providerErrorTag("HopperStartError"),
+      "",
+      HOPPER_CLASSIFICATIONS.unavailable,
+    ),
+    catalogueRow(
+      providerErrorTag("HopperStartError"),
+      "Apple Events authorization denied",
+      HOPPER_CLASSIFICATIONS.unavailable,
+      false,
+    ),
+  ];

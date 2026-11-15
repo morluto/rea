@@ -16,6 +16,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { kunaAddressFromJsonNumber } from "./KunaJson.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /**
  * stream-json 3's synchronous tokenizer behind `parser`, which its
@@ -136,7 +137,7 @@ const detached = (text: string): string =>
  */
 export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   readonly #hash = createHash("sha256");
-  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
+  readonly #decoder = strictUtf8Decoder("strip-signature");
   readonly #tokens = jsonParser({
     packKeys: false,
     packNumbers: false,

@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { randomUUID, createHash } from "node:crypto";
@@ -36,6 +37,7 @@ import {
   cancelledBy,
   isAborted,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -494,10 +496,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         };
         try {
           // Keep source characters intact so locations match the hashed artifact.
-          const source = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(bytes.bytes);
+          const source = decodeStrictUtf8(bytes.bytes, "preserve");
           glue[glueIndex] = {
             artifact: glueArtifact,
             ...associateWasmGlue(
@@ -524,12 +523,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       }).catch((cause: unknown) => {
         // Node rejects a write this signal aborted with an envelope that
         // carries the signal's own reason; any other failure stays itself.
-        if (
-          isAborted(signal) &&
-          cause instanceof Error &&
-          cause.cause === signal.reason
-        )
-          throw cancelledBy(OPERATION, signal);
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
         throw cause;
       });
       snapshotHash = selected.sha256;
