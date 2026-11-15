@@ -1,3 +1,4 @@
+import type { EvidenceRequestFrameInput } from "../domain/evidenceInputContract.js";
 import type { Logger } from "pino";
 import type { z } from "zod";
 
@@ -51,8 +52,9 @@ type EvidenceOperation<Input> = (
 
 /**
  * Run the contract's workflow and deliver its Evidence. After SDK admission
- * the workflow receives the contract's parsed input; an application-admitted
- * workflow receives the raw request and validates it itself.
+ * the workflow receives the contract's request frame (the parsed input, with
+ * declared Evidence inputs still unchecked); an application-admitted workflow
+ * receives the raw request and validates it itself.
  */
 type EvidenceBinding<Input = unknown> =
   | {
@@ -78,7 +80,9 @@ interface RetainedSummaryBinding<Input> {
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
 export type ContractToolBinding<Name extends CatalogToolName> =
-  | EvidenceBinding<ContractInput<Name>>
+  // The SDK admits the request frame: declared Evidence inputs stay
+  // unchecked until the workflow resolves them.
+  | EvidenceBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
