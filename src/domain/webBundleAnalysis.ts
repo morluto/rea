@@ -3,7 +3,7 @@ import {
   deadlineParameterLimit,
 } from "./analysisResourceLimits.js";
 import type { AnalysisControlLimit } from "./analysisSettings.js";
-import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
+import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
@@ -557,8 +557,8 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
-      /** The setting that bounded these scripts, and how to change it. */
-      limit: analysisSettingLimitSchema.exactOptional(),
+      /** The setting or request parameter that bounded these scripts, and how to change it. */
+      limit: analysisResultLimitSchema.exactOptional(),
       remediation: z.string().exactOptional(),
       /**
        * The phase a work allowance refused for these scripts. Their parse

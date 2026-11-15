@@ -625,6 +625,30 @@ export const analysisSettingLimitSchema = z.strictObject({
   required_value: z.number().exactOptional(),
   parameter: z.string().exactOptional(),
 }) satisfies z.ZodType<AnalysisSettingLimit>;
+
+/**
+ * A per-call request parameter that bounded a result, named by its contract
+ * field. Adapters render their own spelling of it (a CLI flag) outside the
+ * record.
+ */
+export const analysisParameterLimitSchema = z.strictObject({
+  control_kind: z.literal("parameter"),
+  parameter: z.string(),
+  effective_value: z.number(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  default_value: z.number(),
+  applies_at: z.literal("next_call"),
+}) satisfies z.ZodType<
+  Extract<AnalysisControlLimit, { readonly control_kind: "parameter" }>
+>;
+
+/** The control a result records for a refusal: a setting or a request parameter. */
+export const analysisResultLimitSchema = z.union([
+  analysisSettingLimitSchema,
+  analysisParameterLimitSchema,
+]);
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];
