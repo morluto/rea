@@ -149,8 +149,8 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
-  MachoBinaryFormatError,
   MachoCommandNamesLimitError,
   readMachoCommandNames,
 } from "./MachoCommandNames.js";
@@ -1739,8 +1739,6 @@ const nativeMachoSourcePrimary = (
   operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoBinaryFormatError)
-    return new AnalysisOutputError(operation, cause.message, { cause });
   if (cause instanceof MachoCommandNamesLimitError)
     return new AnalysisResourceConstraintError(
       operation,
@@ -1749,6 +1747,8 @@ const nativeMachoSourcePrimary = (
       { maximum: cause.maximum, unit: cause.unit },
       { cause, retryable: false },
     );
+  if (cause instanceof ParseFailureError && cause.kind !== "limit")
+    return new AnalysisOutputError(operation, cause.message, { cause });
   const completed =
     cause instanceof NativeMachoSourceVerificationFailure
       ? cause.completed

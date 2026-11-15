@@ -348,7 +348,7 @@ describe("parseDecodedStrings", () => {
       error: {
         _tag: "ApktoolStringsDocumentError",
         reason: "malformed",
-        cause: { _tag: "XmlDocumentParseError" },
+        cause: { _tag: "ParseFailureError", kind: "malformed" },
       },
     });
   });
