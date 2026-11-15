@@ -15,10 +15,8 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/proce
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";

@@ -48,7 +48,7 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../../../src/logger.js";

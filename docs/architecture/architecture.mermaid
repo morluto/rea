@@ -78,7 +78,7 @@ graph TD
 
     subgraph "Contracts Layer"
         CONTRACTS["src/contracts/<br/>Caller-visible schemas for analysis, reverse engineering, managed, browser, Electron, application, and session tools"]
-        ERRORS["src/contracts/errorSchemas.ts<br/>Shared analysis error schemas<br/>CLI diagnostics, generated error catalog"]
+        ERRORS["src/contracts/errorSchemas.ts<br/>CLI error envelope and published error JSON Schema<br/>projection schema owned by src/domain/analysisErrorProjectionSchema.ts"]
     end
 
     subgraph "Domain Layer"
