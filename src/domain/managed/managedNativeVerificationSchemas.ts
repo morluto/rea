@@ -143,7 +143,11 @@ export const managedNativeVerificationRequestSchema = z
   .superRefine(distinctNativeSources);
 
 const verificationCoverageSchema = z.strictObject({
-  status: z.enum(["complete-within-inputs", "partial"]),
+  status: z
+    .enum(["complete-within-inputs", "partial", "unknown"])
+    .describe(
+      "unknown when the managed boundary inspection is unavailable; partial for a partial inspection, unsupported native Evidence or non-exhaustive exports.",
+    ),
 });
 
 /** Provider-neutral managed/native verification result. */

@@ -103,7 +103,7 @@ it.each([
   ["configuration", "vitest.config.ts"],
   ["documentation", "README.md"],
   ["CLI implementation", "src/cli/apktoolCommands.ts"],
-  ["MCP implementation", "src/server/registerSqliteTools.ts"],
+  ["MCP implementation", "src/server/contractToolBindings.ts"],
   ["process ownership", "src/process/ProcessOwnership.ts"],
   ["acceptance test", acceptance],
   ["composition test", composition],

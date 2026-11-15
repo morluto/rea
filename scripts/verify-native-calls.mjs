@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import {
   artifactCli,
+  artifactCliFailure,
   artifactMcpResult,
   artifactMcpCall,
   withArtifactMcp,
@@ -201,29 +202,10 @@ const checkBounds = async (binary) => {
   assert.equal(alive(elapsed.process.pid), false);
 };
 
-const cliFailure = async (binary) => {
-  let output;
-  try {
-    const completed = await exec(
-      process.execPath,
-      [
-        fileURLToPath(new URL("rea.mjs", import.meta.url)),
-        "observe-native-calls",
-        binary,
-        JSON.stringify(INPUT),
-        "--json",
-      ],
-      {
-        env: { ...process.env, REA_LOG_LEVEL: "silent" },
-        timeout: CLI_TIMEOUT_MS,
-      },
-    );
-    output = completed.stdout;
-  } catch (cause) {
-    return JSON.parse(cause.stdout);
-  }
-  throw new Error(`observe-native-calls unexpectedly succeeded: ${output}`);
-};
+const cliFailure = (binary) =>
+  artifactCliFailure("observe-native-calls", binary, [JSON.stringify(INPUT)], {
+    timeoutMs: CLI_TIMEOUT_MS,
+  });
 
 /** Hardened runtime blocks the debugger unless get-task-allow is granted. */
 const checkHardenedRuntime = async (directory, binary) => {
@@ -265,6 +247,8 @@ const checkHardenedRuntime = async (directory, binary) => {
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>',
   );
   await exec("/bin/cp", [binary, allowed]);
+  // The copy keeps its UUID, but LLDB finds its DWARF only in an adjacent dSYM.
+  await exec("/bin/cp", ["-R", `${binary}.dSYM`, `${allowed}.dSYM`]);
   await exec("/usr/bin/xcrun", [
     "codesign",
     "-f",

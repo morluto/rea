@@ -25,7 +25,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeImports,
-  PeImportLimitFailure,
+  PE_IMPORT_LIMITS,
   type PeImportLimit,
 } from "./PeImportParser.js";
 
@@ -131,8 +131,7 @@ const peImportsFailure = (
           input.max_file_bytes,
           MAX_INSPECT_PE_IMPORT_FILE_BYTES,
         ),
-      limit: (failure) =>
-        failure instanceof PeImportLimitFailure ? failure.limit : null,
+      limits: PE_IMPORT_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

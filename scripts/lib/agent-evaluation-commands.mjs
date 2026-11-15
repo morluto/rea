@@ -173,7 +173,8 @@ export function createAgentEvaluationCommands({
         ["--version"],
         repositoryRoot,
         process.env,
-        { timeoutMs: 10_000, diagnosticBytes: 8192 },
+        // A version probe is short; it never outlasts the command budget.
+        { timeoutMs: Math.min(timeoutMs, 10_000), diagnosticBytes: 8192 },
         `${command} --version timed out`,
       );
       if (result.exitCode !== 0)

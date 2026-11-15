@@ -5,6 +5,7 @@ import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { evidenceSchema } from "../evidence.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
+import { applicationCoverageStatusSchema } from "./javascriptApplicationEvidenceSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const graphIdSchema = prefixedDigestSchema("jag");
@@ -175,6 +176,15 @@ export const projectedExportReturnShapesSchema = z
       });
   });
 
+/** A side's source omission count; null when the side has no return-shape projection. */
+const sourceOmissionCountSchema = z
+  .int()
+  .min(0)
+  .nullable()
+  .describe(
+    "Null (unknown) when the side's export selection recovered no return-shape projection; zero only when the projection omitted none.",
+  );
+
 const exportCandidateSchema = z.strictObject({
   node_id: nodeIdSchema,
   module_path: nonEmptyTextSchema,
@@ -283,19 +293,18 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
   }),
   changes: z.array(javaScriptExportShapeComparisonChangeSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
-    left_graph_status: z.enum([
-      "complete",
+    /**
+     * `unknown` when either source graph's coverage is unknown or
+     * unavailable; `truncated` and `partial` are known gaps.
+     */
+    status: z.enum([
+      "complete-within-inputs",
       "partial",
+      "truncated",
       "unknown",
-      "unavailable",
     ]),
-    right_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
-      "unavailable",
-    ]),
+    left_graph_status: applicationCoverageStatusSchema,
+    right_graph_status: applicationCoverageStatusSchema,
     paired_variants: z.int().min(0),
     unpaired_left_variants: z.int().min(0),
     unpaired_right_variants: z.int().min(0),
@@ -303,10 +312,10 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
     omitted_right_variants: z.int().min(0),
     left_source_omitted_variants: z.int().min(0).nullable(),
     right_source_omitted_variants: z.int().min(0).nullable(),
-    left_omitted_fields: z.int().min(0),
-    right_omitted_fields: z.int().min(0),
-    left_omitted_property_coverage: z.int().min(0),
-    right_omitted_property_coverage: z.int().min(0),
+    left_omitted_fields: sourceOmissionCountSchema,
+    right_omitted_fields: sourceOmissionCountSchema,
+    left_omitted_property_coverage: sourceOmissionCountSchema,
+    right_omitted_property_coverage: sourceOmissionCountSchema,
     omitted_candidates: z.int().min(0),
     omitted_changes: z.int().min(0),
   }),

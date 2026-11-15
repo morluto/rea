@@ -12,6 +12,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 /** Static APK signature-scheme inspection of a selected local archive. */
 export const INSPECT_APK_SIGNATURE_CONTRACT = {
   name: "inspect_apk_signature",
+  availability: "standalone",
   ...toolContractMetadata("inspect_apk_signature"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

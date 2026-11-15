@@ -661,6 +661,10 @@ describe("ReleaseExposureReader limits", () => {
     try {
       const scanned = await inspect(root);
       expect(scanned.limitations).toHaveLength(8);
+      // The reports past the cap are counted, not dropped silently.
+      expect(scanned.omitted).toContainEqual(
+        expect.objectContaining({ subject: "limitations", count: 4 }),
+      );
     } finally {
       stableRead.impl = real;
     }

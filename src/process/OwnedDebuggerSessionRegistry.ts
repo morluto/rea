@@ -139,6 +139,8 @@ export class OwnedDebuggerSessionRegistry<
       controller.abort(callerSignal?.reason);
     };
     callerSignal?.addEventListener("abort", relayAbort, { once: true });
+    // An abort dispatched while the listener was being added never reaches it.
+    if (callerSignal?.aborted) relayAbort();
     const started = Promise.resolve()
       .then(() => run(controller.signal))
       .finally(() => {

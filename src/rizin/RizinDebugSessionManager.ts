@@ -1304,12 +1304,9 @@ export class RizinDebugSessionManager {
         synchronization.resolve();
       return;
     }
-    const historyPrefix = utf8HeadExcerpt(
-      frame.text,
-      MAX_RECENT_FRAME_BYTES,
-    ).text;
-    const historyTruncated =
-      historyPrefix.length < frame.text.length || frame.truncated;
+    const history = utf8HeadExcerpt(frame.text, MAX_RECENT_FRAME_BYTES);
+    const historyPrefix = history.text;
+    const historyTruncated = history.truncated || frame.truncated;
     if (historyTruncated) session.historyTruncated = true;
     session.history.push(
       historyTruncated

@@ -118,7 +118,11 @@ export const managedApplicationGraphResultSchema = z
     }),
     graph: javascriptApplicationGraphSchema,
     coverage: z.strictObject({
-      status: z.enum(["complete-within-inputs", "partial"]),
+      status: z
+        .enum(["complete-within-inputs", "partial", "unknown"])
+        .describe(
+          "complete-within-inputs when every supplied managed Evidence record is complete and nothing was omitted; unknown when a supplied record is unavailable.",
+        ),
     }),
     evidence_links: z.array(evidenceIdSchema).min(1).max(3),
     limitations: z.array(nonEmptyTextSchema),
@@ -428,8 +432,13 @@ const projectionLimitations = (
         "Managed native-boundary Evidence was not supplied; P/Invoke and native-implementation nodes are absent.",
       ]
     : []),
-  ...(omissions.partialInput
+  ...(omissions.inputStates.includes("partial")
     ? ["At least one supplied managed Evidence record has partial coverage."]
+    : []),
+  ...(omissions.inputStates.includes("unavailable")
+    ? [
+        "At least one supplied managed Evidence record is unavailable; what the graph omits is unknown.",
+      ]
     : []),
   ...(omissions.selectedTypes === null
     ? []
