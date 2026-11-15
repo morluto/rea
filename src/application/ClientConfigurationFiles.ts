@@ -119,6 +119,15 @@ export const readClientConfigurationFiles = async (
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
+  // An unresolved location is evidence only: its path may be relative to
+  // REA's own folder, so reading it would inspect a file the client never
+  // loads.
+  if (client.configPathError !== undefined)
+    return err({
+      kind: "unreadable",
+      path: client.configPath,
+      detail: client.configPathError,
+    });
   const documents: ClientConfigurationSource[] = [];
   for (const path of client.configPaths ?? [client.configPath]) {
     const document = await readConfigurationFile(
