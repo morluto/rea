@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   readerIntegrityFailure,
   bindArtifactFileCleanup,
@@ -196,7 +197,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(
       environment,
     ),
-    platform: NodeJS.Platform = process.platform,
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     tracerFactory?: () => NativeCallTracer,
     privateRuntimeRootFactory?: SignatureRuntimeRootFactory,
   ) {

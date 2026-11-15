@@ -198,8 +198,6 @@ it("retains unknown process identity even after its exact transport closes", asy
 });
 
 it("refreshes Windows lineage and never authorizes retry from a cached verified snapshot", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { value: "win32" });
   vi.spyOn(
     ownershipObservation,
     "observeOwnedProcessLineage",
@@ -217,19 +215,16 @@ it("refreshes Windows lineage and never authorizes retry from a cached verified 
     { close: async () => undefined },
     ownership,
     verified,
+    "win32",
   );
   const scope = new ArtifactResourceScope();
-  try {
-    await owner.release(scope);
-    const error = bindFailure(owner);
-    expect(error.cleanupIncomplete).toBe(true);
-    absence.mockResolvedValue({ cleaned: true, signaled: false });
-    await scope.close();
-    expect(error.cleanupIncomplete).toBe(false);
-    expect(terminate).not.toHaveBeenCalled();
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-  }
+  await owner.release(scope);
+  const error = bindFailure(owner);
+  expect(error.cleanupIncomplete).toBe(true);
+  absence.mockResolvedValue({ cleaned: true, signaled: false });
+  await scope.close();
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(terminate).not.toHaveBeenCalled();
 });
 
 it.skipIf(process.platform === "win32")(

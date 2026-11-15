@@ -3,7 +3,10 @@ import {
   providerResultDiagnostics,
 } from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
-import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  HOST_PLATFORM,
+  type HostPlatform,
+} from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { invariantViolation } from "../../domain/internalInvariant.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
@@ -187,6 +190,8 @@ export class PwntoolsDecoder<
     readonly createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-artifact-decoder-" }),
+    /** The host the decoder runs on; selects the supported-host gate. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {
     this.identity = profile.identity;
   }
@@ -252,7 +257,7 @@ export class PwntoolsDecoder<
   ): Promise<Result<Report, AnalysisError>> {
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     const selectedLimits = pwntoolsProducerLimitsSchema.safeParse(
       input.producer_limits === undefined ? {} : input.producer_limits,
@@ -336,10 +341,10 @@ export class PwntoolsDecoder<
     try {
       if (options?.signal?.aborted)
         throw cancelledBy(OPERATION, options.signal);
-      if (!pwntoolsHostSupported(process.platform, process.arch)) {
+      if (!pwntoolsHostSupported(this.host.platform, this.host.architecture)) {
         const requirement = pwntoolsHostRequirement(
-          process.platform,
-          process.arch,
+          this.host.platform,
+          this.host.architecture,
         );
         throw new AnalysisCapabilityUnavailableError(
           this.identity.id,
