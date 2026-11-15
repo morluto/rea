@@ -42,6 +42,10 @@ const skillDirectory = join(
   "reverse-engineer-anything",
 );
 const expectedNames = TOOL_CONTRACTS.map((tool) => "rea__" + tool.name).sort();
+const SEARCH_TOOL_LIMIT = 255; // native search_tool limit is uint8
+const discoveredTools = new Map();
+const lookedUpTools = new Set();
+const discoveryQueries = [];
 let clientVersion = null;
 let expectedSkill;
 let turn = 0;
@@ -103,10 +107,6 @@ await withVerifierCleanup(async () => {
           (_, index) =>
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
-    );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
     );
     const schemaValidator = new Ajv2020({
       strict: false,
@@ -202,6 +202,7 @@ await withVerifierCleanup(async () => {
         if (!catalogChecked) {
           const discovery =
             lastTool === "search_tool" ? JSON.parse(last) : undefined;
+          if (discovery !== undefined) discoveryQueries.push(discovery);
           if (discovery?.status === "partial" && !diagnosticsRequested) {
             diagnosticsRequested = true;
             const diagnostic = [
@@ -250,10 +251,31 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
-            .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
+            return call("search_tool", {
+              query: "rea",
+              limit: SEARCH_TOOL_LIMIT,
+            });
+          for (const result of discovery.results) {
+            if (result.server !== "rea") continue;
+            for (const tool of result.tools)
+              discoveredTools.set(tool.tool_name, tool);
+          }
+          const missing = expectedNames.filter(
+            (name) => !discoveredTools.has(name),
+          );
+          if (missing.length > 0) {
+            const name = missing[0];
+            assert(
+              !lookedUpTools.has(name),
+              `Native search_tool did not discover ${name} by its qualified name`,
+            );
+            lookedUpTools.add(name);
+            return call("search_tool", {
+              query: name,
+              limit: SEARCH_TOOL_LIMIT,
+            });
+          }
+          const inventory = [...discoveredTools.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
@@ -271,7 +293,14 @@ await withVerifierCleanup(async () => {
             );
             schemasChecked++;
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(
+              { queries: discoveryQueries, tools: inventory },
+              null,
+              2,
+            ),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
@@ -521,7 +550,7 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool; the complete inventory is discovered with an explicit full-catalog query paged by qualified-name lookups past the native uint8 search_tool limit; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
       schemasChecked,
