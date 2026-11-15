@@ -45,7 +45,12 @@ const common = {
     })
     .optional(),
   mode: z.enum(["attached", "headless"]).default("attached"),
-  protocol: z.literal("native").optional(),
+  /**
+   * Attached mode serves two upstream protocols, so an attached registration
+   * names one; omitting it no longer selects the legacy 1.4 GUI proxy.
+   * Headless mode has one protocol (the database supervisor).
+   */
+  protocol: z.enum(["legacy", "native"]).optional(),
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
@@ -85,9 +90,18 @@ const registrationSchema = z
       .strict(),
   ])
   .refine(
-    (config) => config.protocol !== "native" || config.mode === "attached",
-    "The native IDA MCP protocol requires attached mode",
-  );
+    (config) => config.protocol === undefined || config.mode === "attached",
+    "An IDA MCP protocol requires attached mode; headless registrations omit protocol",
+  )
+  .refine(
+    (config) => config.protocol !== undefined || config.mode !== "attached",
+    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin) or "legacy" (ida-pro-mcp 1.4 GUI proxy)',
+  )
+  // Resolve the upstream protocol once; consumers never infer it from mode.
+  .transform((config) => ({
+    ...config,
+    protocol: config.protocol ?? ("modern" as const),
+  }));
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -130,13 +144,10 @@ export const IDA_COMPATIBILITY_PROFILES = {
 export type IdaCompatibilityProfile =
   (typeof IDA_COMPATIBILITY_PROFILES)[keyof typeof IDA_COMPATIBILITY_PROFILES];
 
-/** Preserve existing attached/headless registrations when protocol is omitted. */
+/** The compatibility facts of the registration's resolved protocol. */
 export const idaCompatibilityProfile = (
   config: IdaConfiguration,
-): IdaCompatibilityProfile =>
-  IDA_COMPATIBILITY_PROFILES[
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern")
-  ];
+): IdaCompatibilityProfile => IDA_COMPATIBILITY_PROFILES[config.protocol];
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (

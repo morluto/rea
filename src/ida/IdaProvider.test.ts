@@ -81,7 +81,11 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
   const path = join(root, "registration.json");
   await writeFile(
     path,
-    JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+    JSON.stringify({
+      mode: "attached",
+      url: "http://127.0.0.1:13337/mcp",
+      protocol: "legacy",
+    }),
   );
   const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
   if (!config.ok) throw config.error;
@@ -329,10 +333,12 @@ it.each(["http", "stdio"] as const)(
             transport === "http"
               ? {
                   url: "http://127.0.0.1:8745/mcp",
+                  protocol: "legacy",
                   headers: { Authorization: token, "X-Input": "retained" },
                 }
               : {
                   command: "fixture",
+                  protocol: "legacy",
                   env: { PRIVATE_VALUE: token, IDADIR: "/fixture/ida" },
                   sensitive: { env: ["PRIVATE_VALUE"] },
                 },
@@ -360,6 +366,7 @@ it.each(["http", "stdio"] as const)(
           transport === "http"
             ? {
                 url: "http://127.0.0.1:8745/mcp",
+                protocol: "legacy",
                 headers: {
                   Authorization: "second credential",
                   "X-Input": "changed input",
@@ -367,6 +374,7 @@ it.each(["http", "stdio"] as const)(
               }
             : {
                 command: "fixture",
+                protocol: "legacy",
                 env: {
                   PRIVATE_VALUE: "second credential",
                   IDADIR: "/changed/ida",
@@ -396,7 +404,11 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
   try {
     await writeFile(
       path,
-      JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+      JSON.stringify({
+        mode: "attached",
+        url: "http://127.0.0.1:13337/mcp",
+        protocol: "legacy",
+      }),
     );
     const parsed = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!parsed.ok) throw parsed.error;
