@@ -15,6 +15,7 @@ import {
   listElectronTargets,
 } from "../application/javascript/ElectronObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
+import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
@@ -112,6 +113,7 @@ export const registerElectronTools = (
             request,
             options.artifactResources,
             {
+              sourceAnalysis: javascriptSourceAnalysis,
               signal,
               progress,
               environment: options.environment,

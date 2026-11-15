@@ -4,7 +4,7 @@ import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
-import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
+import { JavaScriptAnalysisWorker } from "./JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
 import { ArtifactResourceScope } from "../../resources/index.js";
