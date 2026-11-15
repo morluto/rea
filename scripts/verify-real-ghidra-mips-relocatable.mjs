@@ -233,7 +233,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.equal(parameters.mips_elf.type, 1);
     assert.equal(
       parameters.mips_support_lane,
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     assert.equal(
       parameters.mips_soft_float_storage,

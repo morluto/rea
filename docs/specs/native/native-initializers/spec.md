@@ -69,6 +69,11 @@ slot's location, resolved target and how that target was obtained. The
 - Paging uses `offset` / `limit` (default 64, maximum 4096) over a stable
   ordered index. `coverage.examined_entries` counts every slot read, including
   omitted sentinels; `total_entries` is set only when the inventory is complete.
+  `coverage.status` is `partial` when declared slots or names were examined but
+  not reported (budgets, unreadable arrays, withheld names) and `unknown` when
+  completeness cannot be determined (relocation, fixup, symbol or mapping
+  coverage, duplicate or unterminated dynamic tags); unknown wins when both
+  occur.
 - Malformed headers, multiple `PT_DYNAMIC` segments and truncated dynamic
   sections fail without partial success. Cancellation is honored during slot
   collection, the section relocation walk and the dynamic relocation walk,

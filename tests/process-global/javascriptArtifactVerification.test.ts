@@ -1,5 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { open, realpath, writeFile } from "node:fs/promises";
+import { javascriptSourceAnalysis } from "../../src/composition/javascriptSourceAnalysis.js";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { analyzeJavaScriptApplication } from "../../src/application/javascript/JavaScriptApplicationService.js";
@@ -105,6 +106,7 @@ it.each(
       { input_path: root, source_paths: ["main.js"] },
       scope,
       {
+        sourceAnalysis: javascriptSourceAnalysis,
         signal: controller.signal,
         progress: {
           report: async (update) => {

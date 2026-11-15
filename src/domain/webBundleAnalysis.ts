@@ -1,4 +1,5 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
 import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
@@ -158,7 +159,7 @@ const webBundleHeapRange = (): string =>
 
 const webBundleHeapIncrease = (heapMb: number): string =>
   heapMb < MAX_WEB_BUNDLE_HEAP_MB
-    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}).`
     : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`;
 
 const webBundleHeapDoesNotRaise =
@@ -180,6 +181,26 @@ export const webBundleHeapExhaustedReason = (
         : `Owned web analyzer ran out of memory before its ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was reported as reached. That configured limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this exit is not V8 old-space exhaustion.`;
   }
 };
+
+/**
+ * The per-call control of an exhaustion that a larger `max_heap_mb` raises,
+ * or undefined when that allowance did not stop the analyzer.
+ */
+export const webBundleHeapLimit = (
+  exhaustion: WebBundleMemoryExhaustion,
+): AnalysisControlLimit | undefined =>
+  exhaustion.kind === "bun-allocation"
+    ? undefined
+    : {
+        control_kind: "parameter",
+        parameter: "max_heap_mb",
+        effective_value: exhaustion.heapMb,
+        unit: "MiB",
+        minimum: MIN_WEB_BUNDLE_HEAP_MB,
+        maximum: MAX_WEB_BUNDLE_HEAP_MB,
+        default_value: DEFAULT_WEB_BUNDLE_HEAP_MB,
+        applies_at: "next_call",
+      };
 
 export const webBundleHeapExhaustedRemediation = (
   exhaustion: WebBundleMemoryExhaustion,

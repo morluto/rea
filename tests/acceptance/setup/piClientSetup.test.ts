@@ -6,10 +6,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 for (const [setting, profile] of [
   ["REA_MCP_INPUT_SCHEMA_PROFILE", ""],

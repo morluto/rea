@@ -8,8 +8,8 @@ import {
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
 import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
-import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   createGoBinaryByteStringFixture,

@@ -7,7 +7,7 @@ import {
   type GdbToolManager,
 } from "../../../src/server/registerGdbTools.js";
 import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createEvidence,
@@ -105,11 +105,14 @@ const connect = async (retain = true) => {
     undefined,
     retain ? lookup : undefined,
   );
-  registerAnalysisViewTool(
+  registerServiceTools(
     server,
-    logger,
-    retain ? lookup : undefined,
-    retain ? record : undefined,
+    { analysisView: {} },
+    {
+      logger,
+      evidenceById: retain ? lookup : undefined,
+      recordEvidence: retain ? record : undefined,
+    },
   );
   const client = new Client({ name: "command-view-client", version: "1" });
   onTestFinished(async () => {

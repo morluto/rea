@@ -5,8 +5,6 @@ import { Readable } from "node:stream";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
-} from "../../resources/index.js";
-import {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
   SafeOutputTree,

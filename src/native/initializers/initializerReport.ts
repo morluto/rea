@@ -11,6 +11,10 @@ import {
   NATIVE_INITIALIZER_LIMITATIONS,
 } from "../../domain/native/nativeInitializers.js";
 import type { InitializerNotes } from "./initializerNotes.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
 
 /** Page requested by the caller after schema defaults. */
 export interface InitializerPage {
@@ -51,7 +55,7 @@ const pageOf = (
   entries: readonly CollectedInitializer[],
   examined: number,
   page: InitializerPage,
-  incomplete: boolean,
+  status: CoverageStatus,
 ): {
   readonly entries: CollectedInitializer[];
   readonly coverage: NativeInitializerCoverage;
@@ -60,9 +64,9 @@ const pageOf = (
   return {
     entries: returned,
     coverage: {
-      status: incomplete ? "incomplete" : "complete",
+      status,
       examined_entries: examined,
-      total_entries: incomplete ? null : entries.length,
+      total_entries: status === "complete" ? entries.length : null,
       returned_entries: returned.length,
       offset: page.offset,
       limit: page.limit,
@@ -88,7 +92,9 @@ const toEntry = (entry: CollectedInitializer): NativeInitializerEntry => ({
 
 /**
  * Standing limitations first, then observations from this image. `examined`
- * counts every slot read, including omitted sentinels.
+ * counts every slot read, including omitted sentinels. `coverage` is the
+ * scan's own: `partial` when it left declared slots or names unreported,
+ * `unknown` when it could not determine whether the listed facts are complete.
  */
 export const finishInitializerReport = (
   body: Omit<
@@ -99,7 +105,7 @@ export const finishInitializerReport = (
   examined: number,
   notes: InitializerNotes,
   page: InitializerPage,
-  incomplete: boolean,
+  coverage: CoverageStatus,
 ): NativeInitializerInspection => {
   let withheld = 0;
   for (const entry of entries)
@@ -111,13 +117,17 @@ export const finishInitializerReport = (
     ])
       if (name !== null && name.length > MAX_NATIVE_INITIALIZER_NAME_BYTES)
         withheld += 1;
-  const incompleteReport = incomplete || withheld > 0;
-  const paged = pageOf(entries, examined, page, incompleteReport);
+  // A withheld name is a known gap in this entry's reported facts.
+  const status = joinCoverageStatus([
+    coverage,
+    withheld > 0 ? "partial" : "complete",
+  ]);
+  const paged = pageOf(entries, examined, page, status);
   const returned = paged.entries.map(toEntry);
   return {
     ...body,
     applicability: "applicable",
-    status: incompleteReport ? "incomplete" : "parsed",
+    status: status === "complete" ? "parsed" : "incomplete",
     coverage: paged.coverage,
     entries: returned,
     limitations: [

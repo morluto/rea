@@ -670,10 +670,11 @@ it("verifies exactly the selected subset and never publishes it as timing histor
   }
   await workflowGit(root, ["add", "src", "tests"]);
   const selection = {
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 2 changed",
-    groups: [["src/a.test.ts"], ["tests/b.test.ts"]],
+    files: ["src/a.test.ts", "tests/b.test.ts"],
+    shards: 2,
   };
   const run = async (names: readonly string[], plan: unknown = selection) => {
     await writeFile(
@@ -707,7 +708,7 @@ it("verifies exactly the selected subset and never publishes it as timing histor
       stderr: expect.stringContaining("Incomplete selected test inventory"),
     });
   // A full plan keeps the complete tracked inventory and its history.
-  const full = { version: 2, mode: "full", reason: "Shared", groups: [] };
+  const full = { version: 3, mode: "full", reason: "Shared" };
   await expect(
     run(["src/a.test.ts", "tests/b.test.ts"], full),
   ).rejects.toMatchObject({
@@ -719,11 +720,12 @@ it("verifies exactly the selected subset and never publishes it as timing histor
   ).resolves.toContain("tests/unselected.test.ts");
   // An unreadable plan fails closed.
   for (const plan of [
-    { ...selection, version: 1 },
-    { ...selection, groups: [] },
-    { ...selection, groups: [["../escape.test.ts"]] },
-    { ...selection, groups: [["src/a.test.ts"], ["src/a.test.ts"]] },
-    { ...full, groups: [["src/a.test.ts"]] },
+    { ...selection, version: 2 },
+    { ...selection, files: [] },
+    { ...selection, files: ["../escape.test.ts"] },
+    { ...selection, files: ["src/a.test.ts", "src/a.test.ts"] },
+    { ...selection, shards: 3 },
+    { ...full, files: ["src/a.test.ts"] },
   ])
     await expect(run(["src/a.test.ts"], plan)).rejects.toMatchObject({
       stderr: expect.stringContaining("Invalid portable test selection plan"),

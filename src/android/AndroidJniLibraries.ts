@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  streamChunkToBuffer,
 } from "../resources/index.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { streamChunkToBuffer } from "../resources/index.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
@@ -14,7 +14,7 @@ import type {
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { inspectAndroidJniLibrary } from "../native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
 import {
   JadxInterruption,
   throwIfJadxInterrupted,
