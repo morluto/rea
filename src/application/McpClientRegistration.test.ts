@@ -364,6 +364,15 @@ it("refuses global Junie registration when known configuration disables or obscu
   expect(await register({})).toMatchObject({ ok: true });
   await writeFile(config, JSON.stringify({ "mcp-default-locations": "no" }));
   expect(await register({})).toMatchObject({ ok: false });
+  // Junie reads strict JSON, so a document it cannot load decides nothing.
+  for (const source of [
+    '{ // comment\n "mcp-default-locations": true }',
+    '{ "mcp-default-locations": true, }',
+    " ",
+  ]) {
+    await writeFile(config, source);
+    expect(await register({})).toMatchObject({ ok: false });
+  }
 });
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");

@@ -1,7 +1,8 @@
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
 import {
-  readConfigurationFile,
+  readConfigurationText,
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 
@@ -38,18 +39,30 @@ export const readJunieLocationBlock = async (
     );
   if (settings.configDefaultLocations?.toLowerCase() === "false")
     return ok(undefined);
-  const read = await readConfigurationFile(
-    settings.userConfigPath,
-    "json",
-    resources,
-  );
+  const read = await readConfigurationText(settings.userConfigPath, resources);
   if (!read.ok)
     return err({
       ...read.error,
       detail: `Cannot inspect Junie's user configuration to determine its MCP locations. ${read.error.detail}`,
     });
-  const value = read.value?.document["mcp-default-locations"];
-  if (value === undefined) return ok(undefined);
+  if (read.value === undefined) return ok(undefined);
+  // Junie reads config.json as strict JSON: comments, trailing commas or an
+  // empty file leave its MCP location choice unknown rather than default.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(read.value);
+  } catch (cause: unknown) {
+    return err({
+      kind: "malformed",
+      path: settings.userConfigPath,
+      detail: `Cannot parse Junie's user configuration as JSON to determine its MCP locations: ${cause instanceof Error ? cause.message : String(cause)}`,
+    });
+  }
+  const record = clientConfigurationRecordSchema.safeParse(parsed);
+  const value = record.success
+    ? record.data["mcp-default-locations"]
+    : undefined;
+  if (record.success && value === undefined) return ok(undefined);
   if (typeof value !== "boolean")
     return err({
       kind: "malformed",
