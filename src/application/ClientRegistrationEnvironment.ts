@@ -29,7 +29,7 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
+import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 export type ProviderRequestBudgetResolver = (

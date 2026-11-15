@@ -37,7 +37,7 @@ import {
 import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
-} from "./mcpStartupPolicy.js";
+} from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./domain/isRecord.js";

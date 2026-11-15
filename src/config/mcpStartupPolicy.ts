@@ -1,8 +1,8 @@
-import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import {
   mcpPhaseBudgetRecovery,
   type McpPhaseBudget,
-} from "./config/mcpStartupBudgets.js";
+} from "./mcpStartupBudgets.js";
 
 /**
  * Client startup guidance, operation headroom, and doctor output retention.
