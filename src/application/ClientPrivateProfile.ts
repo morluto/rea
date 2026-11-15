@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, open, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
@@ -43,9 +43,12 @@ export const privateProfileModesCurrent = async (
   platform: NodeJS.Platform = process.platform,
 ): Promise<boolean> => {
   if (platform === "win32") return true;
+  // Setup and `rea mcp add` publish a linked profile at its canonical path,
+  // so the modes that count are those of the file and folder it names.
+  const target = await realpath(configPath);
   const [file, directory] = await Promise.all([
-    lstat(configPath),
-    lstat(dirname(configPath)),
+    stat(target),
+    stat(dirname(target)),
   ]);
   return (
     (file.mode & 0o777) === PRIVATE_PROFILE_MODES.file &&
