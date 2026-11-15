@@ -33,6 +33,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 const roots: string[] = [];
 const windowsRuntimes = new Set<WindowsPrivateRuntime>();
@@ -2331,7 +2332,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   const client = new IdaSessionClient(
     config,
     target,
-    createIdaMcpConnection(config, {}),
+    createIdaMcpConnection(config, {}, idaConnectionDependencies()),
   );
   const executing = client.execute("health", {});
   try {

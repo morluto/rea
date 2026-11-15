@@ -36,6 +36,7 @@ import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -51,12 +52,12 @@ import {
 } from "../../domain/reverseEngineering.js";
 import type {
   ReverseEngineeringCommandPort,
+  ReverseEngineeringCommandRepair,
   ReverseEngineeringCommandSelection,
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
 import {
-  execFileOutput,
   execFileOutputFailure,
   HOST_SPAWN_CAPACITY_CODES,
 } from "../../process/ExecFileOutput.js";
@@ -121,7 +122,6 @@ const MAX_ACTIVE_CAPTURE_BYTES =
 export interface ReverseEngineeringServiceOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly commands: ReverseEngineeringCommandPort;
-  readonly run?: ReverseEngineeringCommandRunner;
   readonly runOwned?: typeof runOwnedCommand;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
@@ -131,7 +131,12 @@ interface ReverseEngineeringCommandRunner {
   (
     command: string,
     arguments_: readonly string[],
-    options?: Parameters<typeof execFileOutput>[2],
+    options: {
+      readonly env: NodeJS.ProcessEnv;
+      readonly signal: AbortSignal | undefined;
+      readonly timeout: number;
+      readonly maxBuffer: number;
+    },
   ): Promise<{
     readonly stdout: string;
     readonly stderr: string;
@@ -176,24 +181,13 @@ interface ReverseCommandObservation {
   readonly outputBudgetBytes: number;
 }
 
-/** The provider a reverse command runs and how a caller repairs its command. */
-const reverseCommandRepair = (
-  operation: ReverseEngineeringOperation,
-): { readonly provider: string; readonly remediationAction: string } => {
-  const objdump = operation === "inspect_with_objdump";
-  return {
-    provider: objdump ? "objdump" : "rizin",
-    remediationAction: `Set ${objdump ? "REA_OBJDUMP_COMMAND" : "REA_RIZIN_COMMAND"} to an installed executable ${objdump ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
-  };
-};
-
 /** A configured command the host search did not find; nothing was launched. */
 const reverseCommandUnavailable = (
   operation: ReverseEngineeringOperation,
   unavailable: ReverseEngineeringCommandUnavailable,
 ): AnalysisCapabilityUnavailableError => {
-  const { provider, remediationAction } = reverseCommandRepair(operation);
-  const { command, reason } = unavailable;
+  const { command, reason, repair } = unavailable;
+  const { provider, remediationAction } = repair;
   return new AnalysisCapabilityUnavailableError(
     unavailable.identity.id,
     operation,
@@ -233,7 +227,8 @@ export class ReverseEngineeringService {
     ProviderProcessSupervisor,
     {
       readonly observation: AnalysisCleanupObservation;
-      readonly failures: Set<AnalysisError>;
+      /** Confirmed by a later verified stop; retry failures read it. */
+      readonly release: AnalysisCleanupRelease;
       readonly retryFailure?: AnalysisError;
     }
   >();
@@ -253,16 +248,16 @@ export class ReverseEngineeringService {
   constructor(options: ReverseEngineeringServiceOptions) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#commands = options.commands;
-    this.#run =
-      options.run ??
-      runOwnedCommandOutput(
-        options.runOwned ?? runOwnedCommand,
-        (owner, cleanup) =>
-          this.#pendingCleanup.set(owner, {
-            observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
-          }),
-      );
+    this.#run = runOwnedCommandOutput(
+      options.runOwned ?? runOwnedCommand,
+      (owner, cleanup) =>
+        this.#pendingCleanup.set(owner, {
+          observation: cleanup,
+          release:
+            this.#pendingCleanup.get(owner)?.release ??
+            new AnalysisCleanupRelease(),
+        }),
+    );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
   }
@@ -305,21 +300,22 @@ export class ReverseEngineeringService {
         };
         let retryFailure = retained.retryFailure;
         if (retryFailure === undefined) {
-          retryFailure = new AnalysisOutputError(
-            operation,
-            "A previous provider process still requires cleanup.",
-            { cleanup: observation },
+          retryFailure = retained.release.bind(
+            new AnalysisOutputError(
+              operation,
+              "A previous provider process still requires cleanup.",
+              { cleanup: observation },
+            ),
           );
-          retained.failures.add(retryFailure);
         }
         this.#pendingCleanup.set(owner, {
           observation,
-          failures: retained.failures,
+          release: retained.release,
           retryFailure,
         });
         if (failure === undefined) failure = retryFailure;
       } else {
-        for (const previous of retained.failures) previous.resolveCleanup();
+        retained.release.confirm();
         this.#pendingCleanup.delete(owner);
       }
     }
@@ -343,6 +339,7 @@ export class ReverseEngineeringService {
     operation: ReverseEngineeringOperation,
     dispatch: number,
     failure: AnalysisCapabilityUnavailableError,
+    repair: ReverseEngineeringCommandRepair,
   ): void {
     const outcome = this.#outcome(operation);
     if (
@@ -352,9 +349,7 @@ export class ReverseEngineeringService {
       outcome.failure = {
         dispatch,
         reason: failure.userMessage ?? failure.message,
-        remediation:
-          failure.remediationAction ??
-          reverseCommandRepair(operation).remediationAction,
+        remediation: failure.remediationAction ?? repair.remediationAction,
       };
   }
 
@@ -507,7 +502,12 @@ export class ReverseEngineeringService {
     // discovery reports it like a launch failure until a later success.
     if (!selection.ok) {
       const refusal = reverseCommandUnavailable(operation, selection.error);
-      this.#recordUnavailable(operation, ++this.#dispatched, refusal);
+      this.#recordUnavailable(
+        operation,
+        ++this.#dispatched,
+        refusal,
+        selection.error.repair,
+      );
       return Promise.resolve(err(refusal));
     }
     if (
@@ -585,6 +585,7 @@ export class ReverseEngineeringService {
       outputBudgetBytes,
     } = request;
     const { executable: command, arguments: args } = profile;
+    const { provider, setting } = profile.repair;
     if (signal?.aborted) return err(cancelledBy(operation, signal));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
@@ -691,7 +692,6 @@ export class ReverseEngineeringService {
         },
         signal,
         timeout: timeoutMs,
-        stopSignal: "SIGTERM",
         maxBuffer: outputBudgetBytes,
       });
       stdout = output.stdout;
@@ -788,12 +788,6 @@ export class ReverseEngineeringService {
         typeof code === "string" &&
         HOST_SPAWN_CAPACITY_CODES.has(code)
       ) {
-        const provider =
-          operation === "inspect_with_objdump" ? "objdump" : "rizin";
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
           "capacity",
@@ -826,12 +820,6 @@ export class ReverseEngineeringService {
             ? cause.cause
             : undefined;
       if (earlyFailure === undefined && admissionFailure !== undefined) {
-        const provider =
-          operation === "inspect_with_objdump" ? "objdump" : "rizin";
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         const rawSystemCode =
           admissionFailure.detail?.system_code ??
           (typeof admissionFailure.cause === "object" &&
@@ -881,10 +869,6 @@ export class ReverseEngineeringService {
             carriedReason(darwinFailure.cancellation?.reason),
           );
         } else {
-          const setting =
-            operation === "inspect_with_objdump"
-              ? "REA_OBJDUMP_COMMAND"
-              : "REA_RIZIN_COMMAND";
           earlyFailure = new AnalysisCapabilityUnavailableError(
             "process-ownership",
             "prepare_owned_process",
@@ -925,10 +909,6 @@ export class ReverseEngineeringService {
         code !== "ETIMEDOUT" &&
         !commandCancelled(signal, cause, code)
       ) {
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         const remediation =
           controlFailure.remediationAction === undefined
             ? `${setting} does not need to change.`
@@ -980,8 +960,7 @@ export class ReverseEngineeringService {
             ...reverseCommandTimeoutGuidance(timeoutMs),
           });
         else {
-          const { provider, remediationAction } =
-            reverseCommandRepair(operation);
+          const { provider, remediationAction } = profile.repair;
           earlyFailure = new AnalysisCapabilityUnavailableError(
             profile.identity.id,
             operation,
@@ -1092,7 +1071,12 @@ export class ReverseEngineeringService {
         earlyFailure.diagnostics?.boundary === "provider-launch" &&
         earlyFailure.providerId === profile.identity.id
       ) {
-        this.#recordUnavailable(operation, dispatch, earlyFailure);
+        this.#recordUnavailable(
+          operation,
+          dispatch,
+          earlyFailure,
+          profile.repair,
+        );
       }
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
     }
@@ -1293,7 +1277,7 @@ export class ReverseEngineeringService {
     cleanupOwner: ProviderProcessSupervisor | undefined,
   ): AnalysisError {
     if (cleanupOwner !== undefined && failure.cleanupIncomplete)
-      this.#pendingCleanup.get(cleanupOwner)?.failures.add(failure);
+      this.#pendingCleanup.get(cleanupOwner)?.release.bind(failure);
     return failure;
   }
 }
@@ -1361,7 +1345,7 @@ const runOwnedCommandOutput =
       cleanup: AnalysisCleanupObservation,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
-  async (command, args, options = {}) => {
+  async (command, args, options) => {
     const spawnEnv = { ...options.env };
     try {
       const snapshot = await runOwned(
@@ -1375,9 +1359,8 @@ const runOwnedCommandOutput =
           sweepTokenOwnedProcesses: true,
         },
         {
-          timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-          diagnosticBytes:
-            options.maxBuffer ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+          timeoutMs: options.timeout,
+          diagnosticBytes: options.maxBuffer,
           acceptNonZeroExit: true,
         },
         { signal: options.signal },

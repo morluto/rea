@@ -8,6 +8,7 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence, EvidenceProvider } from "../domain/evidence.js";
 import { jsonValueSchema, jsonObjectSchema } from "../domain/jsonValue.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -205,7 +206,7 @@ export const parseAdbUiReply = (
     return fail("UI response is not bounded canonical base64");
   try {
     const parsed = envelope.safeParse(
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+      JSON.parse(decodeStrictUtf8(bytes, "strip-signature")),
     );
     if (!parsed.success) return fail("UI response violated protocol v2");
     return ok(parsed.data);

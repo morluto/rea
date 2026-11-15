@@ -2325,6 +2325,40 @@ it("settles a result-transport capacity refusal while preserving recovered facts
   });
 });
 
+test.each(["control", "input"] as const)(
+  "keeps strict UTF-8 and BOM policy for %s replies",
+  (channel) => {
+    const reply = {
+      protocol: 2,
+      request_id: snapshotId,
+      instance_id: instance,
+      ok: true,
+      result: { text: "世界" },
+      error: null,
+    };
+    const wire = (bytes: Buffer) => {
+      const frame = `REA_UI_V2:${bytes.toString("base64")}`;
+      return channel === "input"
+        ? frame
+        : `Broadcast completed: result=1, data="${frame}"`;
+    };
+    const bytes = Buffer.from(JSON.stringify(reply));
+    expect(parseAdbUiReply(wire(bytes), channel)).toEqual({
+      ok: true,
+      value: reply,
+    });
+    expect(
+      parseAdbUiReply(
+        wire(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes])),
+        channel,
+      ),
+    ).toEqual({ ok: true, value: reply });
+    expect(parseAdbUiReply(wire(Buffer.from([0xc3, 0x28])), channel).ok).toBe(
+      false,
+    );
+  },
+);
+
 test("rejects malformed, duplicate and oversized terminal records before accepting UI data", () => {
   for (const value of [
     "",

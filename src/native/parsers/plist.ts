@@ -44,6 +44,7 @@ import {
   decodeXmlPlistText,
   XmlPlistTextDecodeError,
 } from "../../domain/propertyListXmlText.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /**
  * Input ceiling matches native command output; projection is bounded separately.
@@ -202,9 +203,7 @@ export const readPlistJsonSource = (
   bytes: Buffer,
 ): PlistJsonParseAttempt | undefined => {
   try {
-    return readPlistJson(
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    );
+    return readPlistJson(decodeStrictUtf8(bytes, "strip-signature"));
   } catch {
     return undefined;
   }

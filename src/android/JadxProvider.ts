@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -22,7 +23,10 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { AndroidMappingSource } from "../domain/android/androidMapping.js";
 import {
@@ -122,9 +126,13 @@ interface PendingCleanup {
   session: JadxSession | undefined;
   root: JadxWorkspaceRoot | undefined;
   readonly fileHandles: Map<OwnedFileHandle, string>;
+  /** Reports admission failure; bound to `descriptorRelease`. */
   readonly previousError: AnalysisError | undefined;
+  /** Confirmed once every descriptor owner from the admission close failure closes. */
+  readonly descriptorRelease: AnalysisCleanupRelease;
+  /** Confirmed once this whole retained cleanup completes; errors it reported read it. */
+  readonly release: AnalysisCleanupRelease;
   readonly operationCause: unknown;
-  reportedErrors: WeakRef<AnalysisError>[];
 }
 
 /** Every descriptor owner nested in one rejected close, without treating a later owner as the first. */
@@ -156,18 +164,20 @@ const cleanupFailure = (
   resources: PendingCleanup,
   cleanup: ProviderCleanupError,
 ): AnalysisError =>
-  (resources.previousError === undefined
-    ? cleanup
-    : analysisErrorWithCleanupFailure(
-        resources.previousError,
-        cleanup,
-        resources.operation,
-      )
-  ).bindCleanupResourceOwner({
-    get cleanupResources() {
-      return cleanupResources(resources);
-    },
-  });
+  resources.release.bind(
+    (resources.previousError === undefined
+      ? cleanup
+      : analysisErrorWithCleanupFailure(
+          resources.previousError,
+          cleanup,
+          resources.operation,
+        )
+    ).bindCleanupResourceOwner({
+      get cleanupResources() {
+        return cleanupResources(resources);
+      },
+    }),
+  );
 
 const cleanup = async (
   resources: PendingCleanup,
@@ -199,7 +209,7 @@ const cleanup = async (
         trackedInMap.length > 0 &&
         trackedInMap.every((candidate) => !resources.fileHandles.has(candidate))
       )
-        resources.previousError?.resolveCleanup();
+        resources.descriptorRelease.confirm();
     } catch (cause: unknown) {
       fileCloseCauses.push(cause);
     }
@@ -355,11 +365,11 @@ export class JadxProvider implements AndroidAnalysisPort {
       const outcome: Outcome =
         !retired.ok && !cleanup.ok
           ? err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 retired.error,
                 cleanup.error,
                 request.operation,
-              ).bindCleanupDependencies([retired.error, cleanup.error]),
+              ),
             )
           : !retired.ok
             ? retired
@@ -401,11 +411,11 @@ export class JadxProvider implements AndroidAnalysisPort {
             "close_binary",
           );
           if (!retired.ok)
-            throw analysisErrorWithCleanupFailure(
+            throw analysisErrorWithCleanupDependencies(
               retired.error,
               cleanup,
               "close_binary",
-            ).bindCleanupDependencies([retired.error, cleanup]);
+            );
           throw cleanup;
         }
         if (!retired.ok) throw retired.error;
@@ -425,8 +435,9 @@ export class JadxProvider implements AndroidAnalysisPort {
         root: this.#retained.root,
         fileHandles: new Map(),
         previousError: undefined,
+        descriptorRelease: new AnalysisCleanupRelease(),
+        release: new AnalysisCleanupRelease(),
         operationCause: undefined,
-        reportedErrors: [],
       };
       this.#retained = undefined;
     }
@@ -434,17 +445,8 @@ export class JadxProvider implements AndroidAnalysisPort {
     const pending = this.#pendingCleanup;
     const result = await cleanup(pending);
     if (result.ok) {
-      for (const reportedError of pending.reportedErrors)
-        reportedError.deref()?.resolveCleanup();
-      pending.reportedErrors = [];
+      pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else {
-      pending.reportedErrors = [
-        ...pending.reportedErrors.filter(
-          (reportedError) => reportedError.deref() !== undefined,
-        ),
-        new WeakRef(result.error),
-      ];
     }
     return result;
   }
@@ -722,19 +724,25 @@ export class JadxProvider implements AndroidAnalysisPort {
       root ??= this.#retained?.root;
       session ??= this.#retained?.session;
       this.#retained = undefined;
+      // The admission failure reads its descriptors' release however it is
+      // first projected: by a cleanup failure or returned on its own.
+      const descriptorRelease = new AnalysisCleanupRelease();
+      const admissionFailure = (): AnalysisError =>
+        descriptorRelease.bind(failure());
       this.#pendingCleanup = {
         operation: request.operation,
         session,
         root,
         fileHandles,
         get previousError() {
-          return failure();
+          return admissionFailure();
         },
+        descriptorRelease,
+        release: new AnalysisCleanupRelease(),
         operationCause: cause,
-        reportedErrors: [],
       };
       const retired = await this.#retire();
-      return retired.ok ? err(failure()) : retired;
+      return retired.ok ? err(admissionFailure()) : retired;
     }
   }
 }

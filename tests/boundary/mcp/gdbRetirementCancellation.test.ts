@@ -24,6 +24,7 @@ import {
   createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it("compares cancellation before dispatch, during retirement, and an uncancelled control", async () => {
   for (const mode of ["pre-aborted", "during-retirement", "control"] as const) {
@@ -277,7 +278,7 @@ it("follows the original owner of a completed mutation's retirement failure", as
         execute: async () => ok({ operation: "health", value: null }),
         close: async () => {
           if (!closed) return err(cleanup);
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
           return ok(null);
         },
       }) as never,

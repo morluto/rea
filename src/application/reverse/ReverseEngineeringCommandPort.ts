@@ -5,11 +5,22 @@ import type {
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
+/** How a caller repairs a configured provider command; named by the provider. */
+export interface ReverseEngineeringCommandRepair {
+  /** The provider's name in reports, such as "objdump". */
+  readonly provider: string;
+  /** The environment setting that selects the command. */
+  readonly setting: string;
+  /** What to change when the command cannot be found or launched. */
+  readonly remediationAction: string;
+}
+
 /** Provider-neutral command profile consumed by the shared application workflow. */
 export interface ReverseEngineeringProviderCommand {
   readonly executable: string;
   readonly arguments: readonly string[];
   readonly identity: EvidenceProvider;
+  readonly repair: ReverseEngineeringCommandRepair;
   /** What the provider cannot attest about the arguments it built. */
   readonly limitations?: readonly string[];
   /**
@@ -27,6 +38,7 @@ export interface ReverseEngineeringProviderCommand {
  */
 export interface ReverseEngineeringCommandUnavailable {
   readonly identity: EvidenceProvider;
+  readonly repair: ReverseEngineeringCommandRepair;
   /** The command as configured. */
   readonly command: string;
   readonly reason:
