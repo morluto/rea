@@ -337,9 +337,7 @@ it("binds reused facts to the current Evidence ID and validates its subject on e
     page(
       {
         ...next,
-        subject: changedEvidenceSubject(subject, {
-          digest: { sha256: "f".repeat(64) },
-        }),
+        subject: changedEvidenceSubject(subject, { sha256: "f".repeat(64) }),
       },
       { kind: "inventory", collection: "nodes" },
     ),

@@ -232,11 +232,11 @@ it("keeps retained admission and payload ownership for a large capture when only
   const subject = retained.subject!;
   const selected = rebindEvidenceToTargetPath(retained, {
     path: "/selected/capture.har",
-    sha256: subject.digest.sha256,
-    format: subject.format,
-    ...(subject.architecture === null
+    sha256: subject.identity.sha256,
+    format: subject.identity.format,
+    ...(subject.identity.architecture === null
       ? {}
-      : { architecture: subject.architecture }),
+      : { architecture: subject.identity.architecture }),
   });
   const retention = {
     recordEvidence: (evidence: Evidence) => ledger.record(evidence),

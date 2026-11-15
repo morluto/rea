@@ -40,7 +40,7 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
           location.kind !== "artifact-path" || !location.path.includes(literal),
       ),
     ).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(result.value.subject?.identity.sha256).toBe(report.artifact.sha256);
   },
 );
 
@@ -79,7 +79,7 @@ it("keeps observed artifact identity when the entire sensitive path is excluded"
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     local_path: "",
-    digest: { sha256: "a".repeat(64) },
+    identity: { sha256: "a".repeat(64) },
   });
   expect(result.value.locations).toEqual([]);
 });
@@ -351,7 +351,7 @@ it.each([
     ].flat();
     for (const literal of literals)
       expect(texts.every((text) => !text.includes(literal))).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(result.value.subject?.identity.sha256).toBe(report.artifact.sha256);
     expect(projected.decoder).toEqual(report.decoder);
     expect(projected.records[0]?.reported).toEqual(first.reported);
   },

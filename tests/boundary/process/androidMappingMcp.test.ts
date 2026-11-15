@@ -169,7 +169,7 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       contract.outputSchema.parse(response.structuredContent),
     );
     expect(evidence.parameters.mapping_path).toBe(path);
-    expect(evidence.subject?.digest.sha256).toBe(apkSha256);
+    expect(evidence.subject?.identity.sha256).toBe(apkSha256);
     expect(evidence.limitations.join(" ")).toContain("pg_map_id");
     const result = androidResultSchemas.inspect_android_class.parse(
       evidence.normalized_result,

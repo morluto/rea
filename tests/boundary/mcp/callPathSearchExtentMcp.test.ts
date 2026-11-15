@@ -27,8 +27,8 @@ const observe = (
   return createEvidence(
     {
       path: template.subject.local_path,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: template.subject.identity.sha256,
+      format: template.subject.identity.format,
     },
     template.provider,
     {

@@ -88,8 +88,8 @@ it("keeps input capacity limits while composing dossiers that cannot be resent i
   const source = createEvidence(
     {
       path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
+      sha256: base.subject.identity.sha256,
+      format: base.subject.identity.format,
     },
     base.provider,
     {
@@ -222,8 +222,8 @@ it("reports missing sources for a retained dossier with a large link set", async
   const source = createEvidence(
     {
       path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
+      sha256: base.subject.identity.sha256,
+      format: base.subject.identity.format,
     },
     base.provider,
     {

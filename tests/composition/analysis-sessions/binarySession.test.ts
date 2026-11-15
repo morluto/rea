@@ -670,11 +670,11 @@ describe("evidence metadata imports and snapshot cache", () => {
     const addition = createEvidence(
       {
         path: existing.subject.local_path,
-        sha256: existing.subject.digest.sha256,
-        format: existing.subject.format,
-        ...(existing.subject.architecture === null
+        sha256: existing.subject.identity.sha256,
+        format: existing.subject.identity.format,
+        ...(existing.subject.identity.architecture === null
           ? {}
-          : { architecture: existing.subject.architecture }),
+          : { architecture: existing.subject.identity.architecture }),
       },
       { id: "fixture", name: "Fixture", version: "1" },
       {

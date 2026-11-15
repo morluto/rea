@@ -452,7 +452,7 @@ cliTest.skipIf(process.platform === "win32")(
     const left = inventoryEvidence(result.json);
     const { call, inspect } = await connectArtifactComparisonMcp();
     const right = await inspect(rightPath);
-    expect(right.subject?.digest.sha256).toBe(left.subject?.digest.sha256);
+    expect(right.subject?.identity.sha256).toBe(left.subject?.identity.sha256);
     const comparison = await call("compare_artifacts", { left, right });
     expect(comparison.isError, JSON.stringify(comparison)).not.toBe(true);
     expect(

@@ -1776,8 +1776,8 @@ it("keeps snapshot identity stable across limits that preserve source observatio
   expect(first.report.root.snapshot_sha256).toBe(
     second.report.root.snapshot_sha256,
   );
-  expect(first.evidence.subject?.digest.sha256).toBe(
-    second.evidence.subject?.digest.sha256,
+  expect(first.evidence.subject?.identity.sha256).toBe(
+    second.evidence.subject?.identity.sha256,
   );
   expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
   expect(first.evidence.parameters).toMatchObject({

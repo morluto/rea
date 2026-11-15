@@ -14,7 +14,7 @@ import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
 import {
   binaryTargetIdentity,
-  fileTargetIdentitySchema,
+  fileTargetSelectionSchema,
   sameTargetIdentity,
   type FileTargetIdentity,
   type FileTargetSelection,
@@ -57,14 +57,6 @@ export const providerSchema = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectBaseSchema = z.strictObject({
-  /** The committed target identity; the remaining members are display facts. */
-  identity: fileTargetIdentitySchema,
-  name: z.string().min(1),
-  /** Duplicates `identity.sha256` until readers move to the identity accessors. */
-  digest: z.strictObject({ sha256: digestSchema }),
-  local_path: nulFreeStringSchema,
-});
 /** Formats whose identity carries each selection kind. */
 const SELECTION_FORMATS: Readonly<
   Record<FileTargetSelection["kind"], readonly string[]>
@@ -72,32 +64,29 @@ const SELECTION_FORMATS: Readonly<
   "entry-point": ["raw-binary", "gamecube-dol"],
   "esp-flash": ["esp-flash-image"],
 };
-const subjectSchema = withEvidenceSubjectDeclaration(
-  subjectBaseSchema,
-).superRefine((subject, context) => {
-  const { identity } = subject;
-  // The declaration members duplicate the identity until they are removed;
-  // one producer writes both, so any disagreement is a forged record.
-  if (
-    identity.sha256 !== subject.digest.sha256 ||
-    identity.format !== subject.format ||
-    identity.architecture !== subject.architecture
-  )
-    context.addIssue({
-      code: "custom",
-      path: ["identity"],
-      message:
-        "Evidence subject identity does not match its digest, format and architecture",
-    });
+/** The file identity an Evidence subject commits to, with its format-owned declaration. */
+const subjectIdentitySchema = withEvidenceSubjectDeclaration(
+  z.strictObject({
+    kind: z.literal("file"),
+    sha256: digestSchema,
+    selection: fileTargetSelectionSchema.nullable(),
+  }),
+).superRefine((identity, context) => {
   if (
     identity.selection !== null &&
     !SELECTION_FORMATS[identity.selection.kind].includes(identity.format)
   )
     context.addIssue({
       code: "custom",
-      path: ["identity", "selection"],
+      path: ["selection"],
       message: `A ${identity.selection.kind} selection does not apply to format ${identity.format}`,
     });
+});
+const subjectSchema = z.strictObject({
+  /** The committed target identity; the remaining members are display facts. */
+  identity: subjectIdentitySchema,
+  name: z.string().min(1),
+  local_path: nulFreeStringSchema,
 });
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
@@ -235,7 +224,7 @@ export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 export interface EvidenceSubjectTarget {
   readonly path: string;
   readonly sha256: string;
-  readonly format: z.infer<typeof subjectSchema>["format"];
+  readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
   /** What the observation selected inside the bytes; absent selects nothing. */
   readonly selection?: FileTargetSelection;
@@ -251,12 +240,12 @@ export const evidenceSubjectTarget = (
     ? undefined
     : {
         path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        sha256: subject.identity.sha256,
+        format: subject.identity.format,
         name: subject.name,
-        ...(subject.architecture === null
+        ...(subject.identity.architecture === null
           ? {}
-          : { architecture: subject.architecture }),
+          : { architecture: subject.identity.architecture }),
         ...(subject.identity.selection === null
           ? {}
           : { selection: subject.identity.selection }),
@@ -297,9 +286,6 @@ export const evidenceSubject = (
     name:
       ("name" in target ? target.name : undefined) ??
       (basename(target.path) || "artifact"),
-    digest: { sha256: target.sha256 },
-    format: target.format,
-    architecture: target.architecture ?? null,
     local_path: target.path,
   });
 

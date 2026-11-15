@@ -95,7 +95,7 @@ export const assertRecordedMcpEvidence = (
   );
   const evidence = parseEvidence(parsed);
   expect(evidence.confidence).toBe(confidence);
-  expect(evidence.subject?.digest.sha256).toBe(expected.artifact.sha256);
+  expect(evidence.subject?.identity.sha256).toBe(expected.artifact.sha256);
   expect(parsed.normalized_result).toEqual(expected);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   return evidence;

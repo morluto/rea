@@ -300,7 +300,7 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
   const called = await cli(path, "har", ["--record", "1", "--record", "0"]);
   expect(called.ok, called.stdout).toBe(true);
   const result = { value: parseEvidence(JSON.parse(called.stdout)) };
-  expect(result.value.subject?.digest).toMatchObject({
+  expect(result.value.subject?.identity).toMatchObject({
     sha256: createHash("sha256").update(text).digest("hex"),
   });
   expect(result.value.normalized_result).toMatchObject({

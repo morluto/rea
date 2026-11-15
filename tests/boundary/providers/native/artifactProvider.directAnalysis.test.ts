@@ -54,7 +54,7 @@ it("runs static .app decoding without registering native analysis engines", asyn
   );
   expect(result.documents).toEqual([]);
   expect(result.graph.target_sha256).toBe(
-    evidence.subject?.digest.sha256 ?? null,
+    evidence.subject?.identity.sha256 ?? null,
   );
 });
 

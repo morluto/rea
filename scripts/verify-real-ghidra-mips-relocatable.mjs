@@ -278,8 +278,8 @@ async function verifyFixture(byteOrder, kernelModule) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "mips");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "mips");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     assert.equal(
       functionDossierSchema.parse(evidence.normalized_result).procedure.address,
       dossier.procedure.address,

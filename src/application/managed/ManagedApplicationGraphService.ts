@@ -89,7 +89,11 @@ const subjectTarget = (
     input.artifact?.evidence.subject ??
     input.members?.evidence.subject ??
     input.boundaries?.evidence.subject;
-  if (subject === undefined || subject === null || subject.format !== "pe")
+  if (
+    subject === undefined ||
+    subject === null ||
+    subject.identity.format !== "pe"
+  )
     return undefined;
   return evidenceSubjectTarget(subject);
 };

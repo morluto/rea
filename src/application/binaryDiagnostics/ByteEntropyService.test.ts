@@ -31,7 +31,7 @@ it("keeps whole-file identity and entropy while selecting unaligned blocks and a
     bytes: 1024,
     sha256: createHash("sha256").update(bytes).digest("hex"),
   });
-  expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+  expect(result.value.subject?.identity.sha256).toBe(report.artifact.sha256);
   expect(result.value.confidence).toBe("observed");
 });
 

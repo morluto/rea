@@ -645,7 +645,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     if (evidence === undefined) throw new Error("missing inventory Evidence");
     expect(evidence).toMatchObject({
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "ipa" },
+      subject: { identity: { format: "ipa" } },
     });
     const inventoryInspection = z
       .object({
@@ -921,8 +921,8 @@ const withForeignMetadataAndNestedZipMember = (
   return createEvidence(
     {
       path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: subject.identity.sha256,
+      format: subject.identity.format,
     },
     evidence.provider,
     {

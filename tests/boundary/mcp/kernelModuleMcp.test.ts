@@ -112,7 +112,7 @@ mcpTest(
         machine: 20,
         applicability: "applicable",
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      expect(evidence.subject?.identity.architecture).toBe("powerpc");
       expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
         key: "license",
         value: "GPL",

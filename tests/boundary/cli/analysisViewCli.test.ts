@@ -526,7 +526,7 @@ cliTest(
         parent_evidence_id: parent.evidence_id,
         kind: "inventory",
         source_complete: true,
-        artifact: { path: archive, sha256: parent.subject?.digest.sha256 },
+        artifact: { path: archive, sha256: parent.subject?.identity.sha256 },
         items: [expect.objectContaining({ logical_path: "main.js" })],
         coverage: { total: 1, exhausted: true, next_offset: null },
       },
@@ -558,8 +558,8 @@ cliTest(
       return createEvidence(
         {
           path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
+          sha256: subject.identity.sha256,
+          format: subject.identity.format,
         },
         carrier.provider,
         { operation: carrier.operation, parameters: {}, result },
@@ -1248,7 +1248,7 @@ cliTest(
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
     const parent = parseEvidence(capture.json);
-    expect(parent.subject?.digest.sha256).toBe(
+    expect(parent.subject?.identity.sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
     expect(JSON.stringify(parent)).not.toContain("password");
@@ -1557,7 +1557,10 @@ cliTest(
         name: "grafana-example",
         templated_groups: 6,
         coverage: { total: 22, exhausted: true },
-        artifact: { path: capturePath, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: capturePath,
+          sha256: parent.subject?.identity.sha256,
+        },
         records: expect.arrayContaining([
           {
             ordinal: 3,

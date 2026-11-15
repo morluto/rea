@@ -78,7 +78,7 @@ cliTest.skipIf(process.platform === "win32").for([
     expect(evidence.subject?.local_path).toBe(
       evidence.normalized_result.artifact.resolved_path,
     );
-    expect(evidence.subject?.digest.sha256).toBe(digest);
+    expect(evidence.subject?.identity.sha256).toBe(digest);
     expect(evidence.normalized_result.runtime_implications).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -169,10 +169,10 @@ cliTest(
       "inspect_electron_fuses",
     ).outputSchema.parse(thinResult.json);
     expect(thinEvidence.subject?.local_path).toBe(join(root, "thin"));
-    expect(thinEvidence.subject?.digest.sha256).toBe(
+    expect(thinEvidence.subject?.identity.sha256).toBe(
       createHash("sha256").update(thin.bytes).digest("hex"),
     );
-    expect(thinEvidence.subject?.architecture).toBe("arm64");
+    expect(thinEvidence.subject?.identity.architecture).toBe("arm64");
     expect(
       thinEvidence.normalized_result.slices[0]?.sentinels[0],
     ).toMatchObject({
@@ -196,7 +196,7 @@ cliTest(
     expect(universalEvidence.normalized_result.artifact.format).toBe(
       "mach-o-universal",
     );
-    expect(universalEvidence.subject?.architecture).toBeNull();
+    expect(universalEvidence.subject?.identity.architecture).toBeNull();
     expect(
       universalEvidence.normalized_result.slices.map((slice) => ({
         file_offset: slice.file_offset,
@@ -245,7 +245,7 @@ cliTest.for([
       result.json,
     );
     expect(evidence.normalized_result.artifact.format).toBe(format);
-    expect(evidence.subject?.architecture).toBe(architecture);
+    expect(evidence.subject?.identity.architecture).toBe(architecture);
     expect(evidence.normalized_result.slices).toMatchObject([
       {
         architecture,

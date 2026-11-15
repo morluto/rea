@@ -39,8 +39,8 @@ const machoExports = (count: number): Evidence => {
   return createEvidence(
     {
       path: source.subject.local_path,
-      sha256: source.subject.digest.sha256,
-      format: source.subject.format,
+      sha256: source.subject.identity.sha256,
+      format: source.subject.identity.format,
     },
     source.provider,
     {

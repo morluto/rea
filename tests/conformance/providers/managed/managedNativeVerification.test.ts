@@ -51,11 +51,11 @@ const nativeEvidenceWithExports = (
       ? undefined
       : {
           path: path ?? native.subject.local_path,
-          sha256: native.subject.digest.sha256,
-          format: native.subject.format,
-          ...(native.subject.architecture === null
+          sha256: native.subject.identity.sha256,
+          format: native.subject.identity.format,
+          ...(native.subject.identity.architecture === null
             ? {}
-            : { architecture: native.subject.architecture }),
+            : { architecture: native.subject.identity.architecture }),
         },
     native.provider,
     {
@@ -421,11 +421,11 @@ it("reports module mismatch as a contradiction within supplied Evidence", () => 
   const mismatched = createEvidence(
     {
       path: "/examples/other.dll",
-      sha256: native.subject.digest.sha256,
+      sha256: native.subject.identity.sha256,
       format: "pe",
-      ...(native.subject.architecture === null
+      ...(native.subject.identity.architecture === null
         ? {}
-        : { architecture: native.subject.architecture }),
+        : { architecture: native.subject.identity.architecture }),
     },
     native.provider,
     {
@@ -948,8 +948,8 @@ it("reports coverage unknown when the managed boundary inspection is unavailable
       ? undefined
       : {
           path: exhaustive.subject.local_path,
-          sha256: exhaustive.subject.digest.sha256,
-          format: exhaustive.subject.format,
+          sha256: exhaustive.subject.identity.sha256,
+          format: exhaustive.subject.identity.format,
         },
     exhaustive.provider,
     {

@@ -36,7 +36,7 @@ cliTest(
       matched_count: 1,
       entries: [{ name: "CONFIG_SECURITY_SELINUX", kind: "y", value: "y" }],
     });
-    expect(evidence.subject?.format).toBe("elf");
+    expect(evidence.subject?.identity.format).toBe("elf");
   },
 );
 

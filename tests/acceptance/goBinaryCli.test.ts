@@ -329,7 +329,7 @@ for (const bits of [32, 64] as const) {
           });
           expect(result.exitCode, result.stderr).toBe(0);
           const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-          expect(evidence.subject?.digest.sha256).toBe(
+          expect(evidence.subject?.identity.sha256).toBe(
             createHash("sha256").update(bytes).digest("hex"),
           );
           expect(evidence.normalized_result.build_info).toMatchObject({
@@ -516,7 +516,7 @@ for (const format of ["elf", "pe", "macho"] as const) {
         const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
         expect(evidence.raw_result).toBeNull();
         expect(evidence.subject?.local_path).toBe(path);
-        expect(evidence.subject?.digest.sha256).toBe(
+        expect(evidence.subject?.identity.sha256).toBe(
           createHash("sha256").update(fixture.bytes).digest("hex"),
         );
         const report = evidence.normalized_result;
@@ -587,7 +587,7 @@ cliTest("preserves MIPS identity in Go CLI Evidence", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-  expect(evidence.subject?.architecture).toBe("mips");
+  expect(evidence.subject?.identity.architecture).toBe("mips");
   expect(evidence.normalized_result).toMatchObject({
     architecture: "mips",
     bits: 64,

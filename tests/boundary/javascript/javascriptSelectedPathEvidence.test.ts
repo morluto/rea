@@ -137,8 +137,8 @@ cliTest(
     expect(physicalEvidence.normalized_result).toEqual(
       aliasEvidence.normalized_result,
     );
-    expect(physicalEvidence.subject?.digest.sha256).toBe(
-      aliasEvidence.subject?.digest.sha256,
+    expect(physicalEvidence.subject?.identity.sha256).toBe(
+      aliasEvidence.subject?.identity.sha256,
     );
     expect(physicalEvidence.evidence_id).not.toBe(aliasEvidence.evidence_id);
     const bundlePath = join(root, "retained-evidence.json");

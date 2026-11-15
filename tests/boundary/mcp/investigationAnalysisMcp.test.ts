@@ -223,11 +223,11 @@ const dossierWithCallees = (addresses: readonly string[]) => {
   return createEvidence(
     {
       path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
-      ...(base.subject.architecture === null
+      sha256: base.subject.identity.sha256,
+      format: base.subject.identity.format,
+      ...(base.subject.identity.architecture === null
         ? {}
-        : { architecture: base.subject.architecture }),
+        : { architecture: base.subject.identity.architecture }),
     },
     base.provider,
     {
@@ -387,8 +387,10 @@ it.each([
         provider,
         subject: {
           local_path: path,
-          digest: { sha256: session.activeTarget()?.sha256 },
-          format: session.activeTarget()?.format,
+          identity: {
+            sha256: session.activeTarget()?.sha256,
+            format: session.activeTarget()?.format,
+          },
         },
         raw_result: rawResult,
         limitations: scenario.providerLimitations,
@@ -653,8 +655,8 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
     const left = createEvidence(
       {
         path: fixture.subject!.local_path,
-        sha256: fixture.subject!.digest.sha256,
-        format: fixture.subject!.format,
+        sha256: fixture.subject!.identity.sha256,
+        format: fixture.subject!.identity.format,
       },
       fixture.provider,
       {

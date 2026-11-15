@@ -34,8 +34,8 @@ const pathSource = () => {
   return createEvidence(
     {
       path: `${template.subject.local_path}/workflow-unknown-path`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: template.subject.identity.sha256,
+      format: template.subject.identity.format,
     },
     template.provider,
     {
@@ -69,8 +69,8 @@ const incompleteRight = (suffix: string) => {
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: template.subject.identity.sha256,
+      format: template.subject.identity.format,
     },
     template.provider,
     {

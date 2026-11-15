@@ -41,9 +41,10 @@ describe.skipIf(process.platform === "win32")(
             const evidence = toolContract(operation).outputSchema.parse(
               result.json,
             );
-            expect(evidence.subject?.digest.sha256, `${command} ${path}`).toBe(
-              selectedDigest,
-            );
+            expect(
+              evidence.subject?.identity.sha256,
+              `${command} ${path}`,
+            ).toBe(selectedDigest);
           }
       },
     );
@@ -80,7 +81,7 @@ describe.skipIf(process.platform === "win32")(
           const evidence = toolContract(
             "inspect_pe_resources",
           ).outputSchema.parse(result.json);
-          expect(evidence.subject?.digest.sha256, path).toBe(selectedDigest);
+          expect(evidence.subject?.identity.sha256, path).toBe(selectedDigest);
         }
       },
     );

@@ -32,7 +32,7 @@ it("refuses changed admitted archives over stdio MCP before publishing extractio
     const inspected = await call("inspect_artifact", { detail: "complete" });
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const evidence = parseEvidence(inspected.structuredContent);
-    expect(evidence.subject?.digest.sha256).toBe(digest);
+    expect(evidence.subject?.identity.sha256).toBe(digest);
     const inspection = artifactInspectionResultSchema.parse(
       evidence.normalized_result,
     );

@@ -71,8 +71,8 @@ export const fragmentInventoryEvidence = (
     createEvidence(
       {
         path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        sha256: subject.identity.sha256,
+        format: subject.identity.format,
       },
       evidence.provider,
       {

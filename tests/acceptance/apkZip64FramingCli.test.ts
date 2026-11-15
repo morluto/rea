@@ -44,7 +44,7 @@ const expectUnsignedArchive = async (
     const evidence = parseEvidence(value);
     expect(evidence.subject).toMatchObject({
       local_path: path,
-      digest: { sha256 },
+      identity: { sha256 },
     });
     expect(
       apkSignatureResultSchema.parse(evidence.normalized_result),

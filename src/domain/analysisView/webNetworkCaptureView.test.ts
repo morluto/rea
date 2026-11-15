@@ -161,7 +161,7 @@ it("checks each parent's subject even after its immutable capture has been valid
       {
         ...source,
         subject: changedEvidenceSubject(source.subject, {
-          digest: { sha256: "e".repeat(64) },
+          sha256: "e".repeat(64),
         }),
       },
       { kind: "summary" },
@@ -247,7 +247,7 @@ it("retains explicitly unknown digests and rejects a different subject digest", 
     {
       ...parent,
       subject: changedEvidenceSubject(parent.subject, {
-        digest: { sha256: "e".repeat(64) },
+        sha256: "e".repeat(64),
       }),
     },
     { kind: "summary" },

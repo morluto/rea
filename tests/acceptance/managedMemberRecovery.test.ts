@@ -80,8 +80,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(mcpEvidence.subject?.identity.sha256).toBe(sha256);
+      expect(cliEvidence.subject?.identity.sha256).toBe(sha256);
       const report = managedMemberInspectionSchema.parse(
         mcpEvidence.normalized_result,
       );

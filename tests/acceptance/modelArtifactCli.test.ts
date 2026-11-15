@@ -944,7 +944,7 @@ cliTest(
       });
       expect(hashed.isError, JSON.stringify(hashed)).not.toBe(true);
       expect(
-        parseEvidence(hashed.structuredContent).subject?.digest.sha256,
+        parseEvidence(hashed.structuredContent).subject?.identity.sha256,
       ).toBe(createHash("sha256").update(fixture.bytes).digest("hex"));
       const summary = await call("inspect_model_artifact", { path });
       expect(summary.isError, JSON.stringify(summary)).not.toBe(true);

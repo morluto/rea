@@ -191,8 +191,8 @@ it("projects a single inventory page as partial and links only that source", asy
   const page = createEvidence(
     {
       path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: subject.identity.sha256,
+      format: subject.identity.format,
     },
     inventory.provider,
     {

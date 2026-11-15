@@ -49,7 +49,7 @@ cliTest.for([
     const before = await call(operation, parameters);
     expect(before.isError).not.toBe(true);
     const initial = parseEvidence(before.structuredContent);
-    expect(initial.subject?.digest.sha256).toBe(
+    expect(initial.subject?.identity.sha256).toBe(
       createHash("sha256").update(original).digest("hex"),
     );
 
@@ -77,7 +77,7 @@ cliTest.for([
     const after = await call(operation, parameters);
     expect(after.isError).not.toBe(true);
     const refreshed = parseEvidence(after.structuredContent);
-    expect(refreshed.subject?.digest.sha256).toBe(
+    expect(refreshed.subject?.identity.sha256).toBe(
       createHash("sha256").update(changed).digest("hex"),
     );
     const nibHash = createHash("sha256").update(changedNib).digest("hex");

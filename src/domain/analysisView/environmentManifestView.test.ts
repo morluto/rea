@@ -1182,9 +1182,7 @@ it("refuses a parent whose subject is absent or names another digest", () => {
     projectAnalysisView(
       {
         ...parent,
-        subject: changedEvidenceSubject(subject, {
-          digest: { sha256: "0".repeat(64) },
-        }),
+        subject: changedEvidenceSubject(subject, { sha256: "0".repeat(64) }),
       },
       view(),
     ),

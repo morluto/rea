@@ -136,8 +136,8 @@ describe("known-answer packaged artifact digest binding", () => {
         arguments: { input_path: targets.javascript },
       });
       const evidence = resultEvidence(result);
-      expect(evidence.subject?.digest.sha256).toEqual(expect.any(String));
-      expect(evidence.subject?.digest.sha256).not.toBe(
+      expect(evidence.subject?.identity.sha256).toEqual(expect.any(String));
+      expect(evidence.subject?.identity.sha256).not.toBe(
         targets.javascriptSha256,
       );
       const manifest = claimManifest(claims, evidence);
@@ -292,7 +292,7 @@ describe("Notes export known-answer evaluation", () => {
         }
         const workflow = await notesWorkflow(harness, path);
         const digest = notesEvidence(workflow, "analyze_javascript_application")
-          .subject?.digest.sha256;
+          .subject?.identity.sha256;
         expect(digest === targets.notesElectronSha256).toBe(path === foreign);
         const assessment = grade(
           workflow.events,

@@ -61,8 +61,8 @@ export const applicationGraphSubjectTarget = (
   return evidenceSubjectTarget(
     staticRootObserved ||
       (source.kind === "managed-application" &&
-        subject?.format === "pe" &&
-        subject.digest.sha256 === source.rootArtifactSha256)
+        subject?.identity.format === "pe" &&
+        subject.identity.sha256 === source.rootArtifactSha256)
       ? subject
       : null,
   );

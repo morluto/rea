@@ -565,8 +565,8 @@ const createPagedInspectionEvidence = async (
       sha256:
         corruption === "carrier-subject"
           ? "a".repeat(64)
-          : target.digest.sha256,
-      format: target.format,
+          : target.identity.sha256,
+      format: target.identity.format,
     },
     fixtureProvider,
     {

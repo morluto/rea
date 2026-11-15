@@ -30,8 +30,8 @@ export type FileTargetSelection = z.infer<typeof fileTargetSelectionSchema>;
 
 /**
  * A hashed local file, path-free. Format and architecture are validated by
- * the persistence format that embeds the identity (for Evidence, the subject
- * declaration it must agree with).
+ * the persistence format that embeds the identity (for Evidence, the
+ * format-owned subject declaration).
  */
 export const fileTargetIdentitySchema = z.strictObject({
   kind: z.literal("file"),

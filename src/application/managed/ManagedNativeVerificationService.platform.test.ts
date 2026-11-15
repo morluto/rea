@@ -107,7 +107,9 @@ const verify = (
     managedEvidence,
     nativeEvidence,
   ]);
-  expect(execution.value.sourceEvidence[1]?.subject?.format).toBe(format);
+  expect(execution.value.sourceEvidence[1]?.subject?.identity.format).toBe(
+    format,
+  );
   const result = managedNativeVerificationResultSchema.parse(
     execution.value.evidence.normalized_result,
   );

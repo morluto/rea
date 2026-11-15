@@ -80,7 +80,7 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         artifact_changed: false,
       });
       expect(evidence.raw_result).toEqual(evidence.normalized_result);
-      expect(evidence.subject?.digest.sha256).toBe(
+      expect(evidence.subject?.identity.sha256).toBe(
         createHash("sha256").update(content).digest("hex"),
       );
       expect(evidence.parameters.command).toBe(outcome.command);

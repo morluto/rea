@@ -296,7 +296,7 @@ const expectIl2cppSource = (
   expect(source.operation).toBe("observe_il2cpp_metadata_source");
   expect(source.subject).toMatchObject({
     local_path: path,
-    digest: { sha256 },
+    identity: { sha256 },
   });
   expect(source.normalized_result).toEqual({
     artifact: { path, sha256, bytes: bytes.length },

@@ -1025,7 +1025,9 @@ by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
 `architecture` and `selection`: the raw or DOL entry point or the ESP flash
 offsets that select what was analysed, otherwise `null`), and the Evidence ID
 commits to that identity; `subject.name` and `subject.local_path` are display
-facts outside the ID. Retention has no automatic persistence or silent eviction.
+facts outside the ID. The subject has no separate `digest`, `format` or
+`architecture` members; read them from `subject.identity`. Retention has no
+automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint

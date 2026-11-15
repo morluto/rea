@@ -23,7 +23,7 @@ it("checks parent subject identity again when signing facts are already cached",
     const result = await service.inspect({ path, detail: "complete" });
     if (!result.ok) throw result.error;
     const evidence = result.value;
-    if (evidence.subject === null || evidence.subject.format !== "apk")
+    if (evidence.subject === null || evidence.subject.identity.format !== "apk")
       throw new Error("selected file subject missing");
     const parent = {
       predicateType: evidence.predicate_type,
@@ -39,14 +39,20 @@ it("checks parent subject identity again when signing facts are already cached",
     for (const format of ["file", "apk", "zip"] as const)
       expect(
         projectApkSignatureView(
-          { ...parent, subject: { ...evidence.subject, format } },
+          {
+            ...parent,
+            subject: {
+              ...evidence.subject,
+              identity: { ...evidence.subject.identity, format },
+            },
+          },
           { kind: "summary" },
         ).ok,
       ).toBe(true);
     const rebound = rebindEvidenceToTargetPath(evidence, {
       path: join(root, "alias.apk"),
-      sha256: evidence.subject.digest.sha256,
-      format: evidence.subject.format,
+      sha256: evidence.subject.identity.sha256,
+      format: evidence.subject.identity.format,
     });
     const exporting = new EvidenceLedger();
     expect(exporting.record(rebound).ok).toBe(true);
@@ -65,10 +71,16 @@ it("checks parent subject identity again when signing facts are already cached",
       artifact: { path },
     });
     for (const subject of [
-      { ...evidence.subject, format: "directory" as const },
       {
         ...evidence.subject,
-        digest: { ...evidence.subject.digest, sha256: "00".repeat(32) },
+        identity: {
+          ...evidence.subject.identity,
+          format: "directory" as const,
+        },
+      },
+      {
+        ...evidence.subject,
+        identity: { ...evidence.subject.identity, sha256: "00".repeat(32) },
       },
     ]) {
       const invalid = projectApkSignatureView(

@@ -288,9 +288,9 @@ cliTest(
           path,
           sha256: report.artifact.sha256,
           format: format === "macho" ? "mach-o" : format,
-          ...(full.subject.architecture === null
+          ...(full.subject.identity.architecture === null
             ? {}
-            : { architecture: full.subject.architecture }),
+            : { architecture: full.subject.identity.architecture }),
         },
         full.provider,
         {
@@ -339,9 +339,9 @@ cliTest(
         path,
         sha256: report.artifact.sha256,
         format: "elf",
-        ...(full.subject.architecture === null
+        ...(full.subject.identity.architecture === null
           ? {}
-          : { architecture: full.subject.architecture }),
+          : { architecture: full.subject.identity.architecture }),
       },
       full.provider,
       {

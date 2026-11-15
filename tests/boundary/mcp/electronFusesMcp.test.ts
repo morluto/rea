@@ -202,7 +202,7 @@ fuseMcpTest.for([
     const evidence = toolContract("inspect_electron_fuses").outputSchema.parse(
       response.structuredContent,
     );
-    expect(evidence.subject?.architecture).toBe(architecture);
+    expect(evidence.subject?.identity.architecture).toBe(architecture);
     expect(evidence.normalized_result.slices).toMatchObject([
       {
         architecture,

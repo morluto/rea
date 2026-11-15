@@ -72,7 +72,7 @@ it("keeps a truncated COFF header unknown without refusing a recognized PE conta
   expect(result).toMatchObject({
     ok: true,
     value: {
-      subject: { architecture: null },
+      subject: { identity: { architecture: null } },
       normalized_result: {
         slices: [{ architecture: null, sentinel_count: 0 }],
       },
@@ -97,8 +97,8 @@ const assertArchitecture = async (
     new ElectronFuseProvider(),
   ).inspect({ path });
   if (!result.ok) throw result.error;
-  expect(result.value.subject?.architecture).toBe(architecture);
-  expect(result.value.subject?.digest.sha256).toBe(
+  expect(result.value.subject?.identity.architecture).toBe(architecture);
+  expect(result.value.subject?.identity.sha256).toBe(
     createHash("sha256").update(image.bytes).digest("hex"),
   );
   expect(result.value.normalized_result).toMatchObject({

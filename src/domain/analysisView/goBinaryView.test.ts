@@ -78,7 +78,7 @@ it.each(["digest", "format"] as const)(
     if (input.subject == null) throw new Error("Expected artifact subject");
     const subject = changedEvidenceSubject(
       input.subject,
-      field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {},
+      field === "digest" ? { sha256: "b".repeat(64) } : {},
     );
     const result = projectAnalysisView(
       {
@@ -109,7 +109,7 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject?.format !== "elf")
+    if (input.subject?.identity.format !== "elf")
       throw new Error("Expected ELF subject");
     const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
@@ -142,7 +142,7 @@ it("revalidates the parent subject after immutable Go report facts have been cac
       {
         ...input,
         subject: changedEvidenceSubject(input.subject, {
-          digest: { sha256: "b".repeat(64) },
+          sha256: "b".repeat(64),
         }),
       },
       { kind: "summary" },

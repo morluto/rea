@@ -25,10 +25,10 @@ const emptyExportEvidence = () => {
     {
       path: "/fixtures/empty-exports.dylib",
       sha256: "8".repeat(64),
-      format: original.subject.format,
-      ...(original.subject.architecture === null
+      format: original.subject.identity.format,
+      ...(original.subject.identity.architecture === null
         ? {}
-        : { architecture: original.subject.architecture }),
+        : { architecture: original.subject.identity.architecture }),
     },
     original.provider,
     {
@@ -190,8 +190,8 @@ it("retains partial native export coverage after an observed match", async () =>
   const native = createEvidence(
     {
       path: original.subject.local_path!,
-      sha256: original.subject.digest.sha256,
-      format: original.subject.format,
+      sha256: original.subject.identity.sha256,
+      format: original.subject.identity.format,
     },
     original.provider,
     {
