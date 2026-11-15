@@ -13,6 +13,8 @@ import {
   nativeJsonParseRequiredBytes,
 } from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
+import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -91,6 +93,8 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure)
+      return jsonFileCleanupError(value, operation, cause);
     if (cause instanceof JsonInputCancellationFailure)
       return cancelled(cause.reason);
     if (cause instanceof JsonInputPhysicalReadFailure) {
@@ -338,6 +342,37 @@ const inputError = (operation: string): JsonValue => ({
       { path: [], reason: "invalid_format", expected: "JSON" },
     ]),
   ),
+});
+
+/**
+ * The file's final close failed after its owner's retries, so the handle
+ * stays open with its owner until this one-shot process exits. Report the
+ * incomplete cleanup and the file rather than an unclassified failure.
+ */
+const jsonFileCleanupError = (
+  path: string,
+  operation: string,
+  failure: RegularFileCleanupFailure,
+) => ({
+  ok: false as const,
+  error: {
+    error: "Application workflow failed",
+    ...projectAnalysisError(
+      new ProviderCleanupError(
+        "json-input-file",
+        [path],
+        {
+          reason:
+            failure.cleanupCause instanceof Error
+              ? failure.cleanupCause.message
+              : "file close failed",
+        },
+        { operation, cause: failure },
+      ),
+      "invocation",
+    ),
+    input_path: path,
+  },
 });
 
 const jsonFileReadError = (

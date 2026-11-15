@@ -43,6 +43,8 @@ import {
   type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
+  type CliCheckedJsonInputs,
+  type CliJsonInputCheck,
   withoutDefault,
 } from "./contractCliDescription.js";
 import {
@@ -63,6 +65,9 @@ export interface ContractCommandContext<
     Record<string, unknown>
   >,
   Parsed = unknown,
+  Checked extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
 > {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
@@ -93,6 +98,8 @@ export interface ContractCommandContext<
    * run time and admission parsed the whole input; undefined otherwise.
    */
   readonly parsed: Parsed | undefined;
+  /** What each `jsonInputChecks` check admitted, by contract field. */
+  readonly checked: Checked;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
 }
@@ -517,16 +524,22 @@ export const registerContractCommand = <
   Contract extends ProjectedContract,
   Value,
   CliOptions extends CliOptionShape = Record<never, z.ZodType>,
+  Checks extends {
+    readonly [Key in ContractField<Contract>]?: CliJsonInputCheck;
+  } = Record<never, CliJsonInputCheck>,
 >(
   cli: CliInstance,
   logger: Logger,
   contract: Contract,
-  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions> & {
+    readonly jsonInputChecks?: Checks;
+  },
   run: (
     input: z.input<Contract["inputSchema"]>,
     context: ContractCommandContext<
       CliOptionValues<CliOptions>,
-      z.output<Contract["inputSchema"]>
+      z.output<Contract["inputSchema"]>,
+      CliCheckedJsonInputs<Checks>
     >,
   ) => Promise<Value>,
 ): void => {
@@ -615,6 +628,7 @@ export const registerContractCommand = <
                 parsed: admitted.value.parsed as
                   | z.output<Contract["inputSchema"]>
                   | undefined,
+                checked: read.checked as CliCheckedJsonInputs<Checks>,
                 cliOptions: selected.cliOptionValues(
                   values,
                 ) as CliOptionValues<CliOptions>,
@@ -885,6 +899,7 @@ export const registerRoutedCommand = (
               opening: opening.value,
               delivery: admitted.value.delivery,
               parsed: admitted.value.parsed,
+              checked: { ...shared.checked, ...read.checked },
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),
               ),
@@ -1041,11 +1056,21 @@ const readJsonInputs = async (
   signal: AbortSignal,
   keys: ReadonlySet<string> = jsonInputKeys(description),
 ): Promise<
-  | { readonly ok: true; readonly value: Readonly<Record<string, unknown>> }
+  | {
+      readonly ok: true;
+      readonly value: Readonly<Record<string, unknown>>;
+      readonly checked: Readonly<Record<string, unknown>>;
+    }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
   const decoded: Record<string, unknown> = { ...values };
-  for (const { key, runtimeJson } of description.parameters) {
+  const checked: Record<string, unknown> = {};
+  for (const {
+    field,
+    key,
+    runtimeJson,
+    checkJsonInput,
+  } of description.parameters) {
     const text = values[key];
     if (!keys.has(key) || typeof text !== "string") continue;
     const parsed = await parseCliJsonInput(
@@ -1072,8 +1097,20 @@ const readJsonInputs = async (
             ),
       };
     decoded[key] = parsed.value;
+    if (checkJsonInput === undefined) continue;
+    // Refuse this input before the next one is read.
+    const admitted = checkJsonInput(parsed.value);
+    if (!admitted.ok)
+      return {
+        ok: false,
+        error: projectCliInputFields(
+          projectAnalysisError(admitted.error),
+          description.inputBinding,
+        ),
+      };
+    checked[field] = admitted.value;
   }
-  return { ok: true, value: decoded };
+  return { ok: true, value: decoded, checked };
 };
 
 /** A file failure names the selected path, and a cancellation is its own. */

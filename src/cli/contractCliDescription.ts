@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { CallerInputPaths } from "../domain/evidence.js";
@@ -53,6 +54,20 @@ export type ContractField<Contract extends DocumentContract> =
   | (BranchKey<z.input<Contract["inputSchema"]>> & string);
 
 type BranchKey<Input> = Input extends unknown ? keyof Input : never;
+
+/** Check one decoded JSON input before the next input is read. */
+export type CliJsonInputCheck = (
+  value: unknown,
+) => Result<unknown, AnalysisError>;
+
+/** The value each JSON input check admitted, by contract field. */
+export type CliCheckedJsonInputs<Checks> = {
+  readonly [Key in keyof Checks]?: Checks[Key] extends (
+    value: unknown,
+  ) => Result<infer Value, AnalysisError>
+    ? Value
+    : never;
+};
 
 /** How one contract field is spelled on the CLI. */
 export interface CliFieldProjection {
@@ -123,6 +138,13 @@ export interface CliContractProjection<
    * `runtimeJson`, before any target is opened.
    */
   readonly jsonInputs?: { readonly [Key in Field]?: string };
+  /**
+   * Checks of `jsonInputs` fields, run on each decoded input as soon as it
+   * is read, in argv order, so a refused input stops the command before the
+   * next input is read. Each check's value reaches the handler as
+   * `checked`; the contract still admits the whole input afterwards.
+   */
+  readonly jsonInputChecks?: { readonly [Key in Field]?: CliJsonInputCheck };
   /**
    * Nullable limits whose null ("all remaining") is spelled by a bare flag,
    * keyed by contract field. The limit option takes only a value; the flag
@@ -471,6 +493,8 @@ export interface ContractCliParameter {
    * parameters are admitted, so `admit` receives the decoded value.
    */
   readonly jsonInput: boolean;
+  /** Checks the decoded JSON input as soon as it is read, if declared. */
+  readonly checkJsonInput: CliJsonInputCheck | undefined;
   /** The bare flag that sets this nullable field to null, if any. */
   readonly nullFlag: string | undefined;
   /** The member of the object field this option supplies, if flattened. */
@@ -1547,6 +1571,14 @@ export const describeContractCommand = <
   for (const field of Object.keys(jsonInputFields))
     if (Object.hasOwn(projection.runtimeJson ?? {}, field))
       throw new Error(`${contract.name}.${field} is JSON text and JSON input`);
+  const jsonInputChecks: Readonly<
+    Record<string, CliJsonInputCheck | undefined>
+  > = projection.jsonInputChecks ?? {};
+  for (const field of Object.keys(jsonInputChecks))
+    if (!Object.hasOwn(jsonInputFields, field))
+      throw new Error(
+        `${contract.name}.${field} is checked but not a JSON input`,
+      );
   const runtimeJsonFields: Readonly<Record<string, string | undefined>> = {
     ...projection.runtimeJson,
     ...jsonInputFields,
@@ -1603,13 +1635,15 @@ export const describeContractCommand = <
     if (runtimeJson !== undefined) {
       // Argv requires the text of a required field; the contract admits
       // what it decodes to. Help and `--schema` show a contract default as
-      // the JSON text that decodes to it.
+      // the JSON text that decodes to it. Empty text is neither JSON nor a
+      // file path, so a JSON input refuses it before any input is read.
+      const text = jsonInput ? z.string().min(1) : z.string();
       schema =
         declared instanceof z.ZodDefault
-          ? z.string().default(JSON.stringify(declared.parse(undefined)))
+          ? text.default(JSON.stringify(declared.parse(undefined)))
           : admitsOmission(declared)
-            ? z.string().optional()
-            : z.string();
+            ? text.optional()
+            : text;
       if (declared.description !== undefined && !viewSelection)
         schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
@@ -1704,6 +1738,7 @@ export const describeContractCommand = <
       viewSelection,
       runtimeJson,
       jsonInput,
+      checkJsonInput: jsonInputChecks[field],
       nullFlag,
       member: undefined,
       selectorOption,
@@ -1749,6 +1784,7 @@ export const describeContractCommand = <
         viewSelection: false,
         runtimeJson: undefined,
         jsonInput: false,
+        checkJsonInput: undefined,
         nullFlag: undefined,
         member,
         selectorOption: undefined,
