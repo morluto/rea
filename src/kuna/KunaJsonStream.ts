@@ -11,6 +11,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
@@ -213,7 +214,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         this.#feed(this.#decoder.decode(chunk, { stream: true }));
       } catch (cause: unknown) {
         this.#reject(cause);
-        this.#rejection.abort();
+        this.#rejection.abort(OwnerCancellation.noLongerNeeded);
       }
     callback();
   }
@@ -254,7 +255,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         : cause instanceof KunaDocumentError
           ? new AnalysisOutputError(this.producer, cause.code, {
               cause,
-              diagnostics: { code: cause.code, ...cause.detail },
+              diagnostics: { code: cause.code, ...cause.facts },
               userMessage: `${this.label} cannot be used`,
             })
           : this.unusable(describe(cause));

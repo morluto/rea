@@ -1,3 +1,7 @@
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -25,11 +29,11 @@ export type CleanupOutcome =
  * Work, owner cleanup and cancellation composed by one precedence rule:
  * - a recorded failure stays primary; a later cancellation is attached to it;
  * - cancellation observed before commit turns a completed value into a
- *   cancellation that keeps the value as its partial observation;
+ *   cancellation that keeps the value (see `CompletedValueRecord`);
  * - cancellation observed after commit keeps the completed value;
  * - unconfirmed cleanup never replaces the primary. A completed value whose
  *   cleanup is unconfirmed is a `cleanup_incomplete` error that keeps the
- *   value as its partial observation (the documented one-shot contract).
+ *   value (the documented one-shot contract).
  */
 export type Finalized<Value> =
   | {
@@ -61,14 +65,53 @@ export interface RecoveredCompletion<Value> {
   readonly cancellationDiagnostics?: Readonly<Record<string, JsonValue>>;
 }
 
-export interface RunOwnedOptions<Value> {
+/** The error that replaces a completed value and must keep it. */
+export type CompletedValueReplacement = "cancellation" | "failure";
+
+/**
+ * How an error that replaces a completed value keeps it: as its partial
+ * observation, or as diagnostics when the value is not an observation a
+ * caller can recover. The replacement lets a producer keep a different
+ * projection for a cancellation than for a cleanup or publication failure.
+ */
+export type CompletedValueRecord<Value> =
+  | {
+      readonly partial: (
+        value: Value,
+        replacedBy: CompletedValueReplacement,
+      ) => AnalysisPartialObservation;
+      readonly diagnostics?: never;
+    }
+  | {
+      readonly diagnostics: (
+        value: Value,
+        replacedBy: CompletedValueReplacement,
+      ) => Readonly<Record<string, JsonValue>>;
+      readonly partial?: never;
+    };
+
+type KeptCompletion =
+  | { readonly partialObservation: AnalysisPartialObservation }
+  | { readonly diagnostics: Readonly<Record<string, JsonValue>> };
+
+export type RunOwnedOptions<Value> = RunOwnedBaseOptions<Value> &
+  CompletedValueRecord<Value>;
+
+interface RunOwnedBaseOptions<Value> {
   readonly providerId: string;
   readonly operation: string;
-  readonly signal: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Releases everything the work acquired; awaited before the signal is read. */
   readonly close: () => Promise<void>;
   /** Names the owned resources when a non-REA close failure names none. */
   readonly fallbackResource?: string;
+  /**
+   * The exact leases whose confirmed release resolves a close failure; they
+   * also attribute its resources. Omit them when close throws an error its
+   * producer already bound, or an artifact reader failure that names its own
+   * retained leases.
+   */
+  readonly cleanupLeases?: readonly AnalysisCleanupLease[];
   /**
    * Publishes a completed value. Cancellation observed before it runs cancels
    * the work; cancellation observed after it keeps the committed value.
@@ -87,10 +130,27 @@ export interface RunOwnedOptions<Value> {
   ) => RecoveredCompletion<Value> | undefined;
 }
 
+const keepCompleted = <Value>(
+  record: CompletedValueRecord<Value>,
+  value: Value,
+  replacedBy: CompletedValueReplacement,
+): KeptCompletion =>
+  record.partial === undefined
+    ? { diagnostics: record.diagnostics(value, replacedBy) }
+    : { partialObservation: record.partial(value, replacedBy) };
+
+const retainCompleted = (
+  error: AnalysisError,
+  kept: KeptCompletion,
+): AnalysisError =>
+  "partialObservation" in kept
+    ? error.retainPartialObservation(kept.partialObservation)
+    : error.retainDiagnostics(kept.diagnostics);
+
 const closeFailure = (
   cause: unknown,
   options: Pick<
-    RunOwnedOptions<unknown>,
+    RunOwnedBaseOptions<unknown>,
     "providerId" | "operation" | "fallbackResource"
   >,
 ): AnalysisError => {
@@ -114,7 +174,7 @@ const closeFailure = (
 };
 
 /** Run owned work, close its owner, and apply the finalization precedence once. */
-export const runOwned = async <Value extends AnalysisPartialObservation>(
+export const runOwned = async <Value>(
   work: () => Promise<Result<Value, AnalysisError>>,
   options: RunOwnedOptions<Value>,
 ): Promise<Finalized<Value>> => {
@@ -141,19 +201,20 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
       committed = true;
       return { ok: true, value };
     } catch (cause) {
+      const kept = keepCompleted(options, value, "failure");
       return {
         ok: false,
         error:
           cause instanceof AnalysisError
-            ? cause.retainPartialObservation(value)
+            ? retainCompleted(cause, kept)
             : new ProviderAdapterError(options.providerId, options.operation, {
                 cause,
-                partialObservation: value,
+                ...kept,
               }),
       };
     }
   };
-  if (primary.ok && options.commit !== undefined && !options.signal.aborted)
+  if (primary.ok && options.commit !== undefined && !isAborted(options.signal))
     primary = await commit(primary.value);
   options.inspectPrimary?.(primary);
   const hadIncompleteCleanup = !primary.ok && primary.error.cleanupIncomplete;
@@ -163,7 +224,16 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     // they can confirm it, so its status is read again afterwards.
     await options.close();
   } catch (cause) {
-    cleanup = { kind: "retained", failure: closeFailure(cause, options) };
+    const failure = closeFailure(cause, options);
+    const leases =
+      options.cleanupLeases ??
+      // A reader failure's leases are authoritative only for the cleanup it
+      // reports.
+      (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+        ? cause.cleanupLeases
+        : undefined);
+    if (leases !== undefined) new AnalysisCleanupLeaseGroup(failure, leases);
+    cleanup = { kind: "retained", failure };
   }
   const signal = options.signal;
   let outcome:
@@ -197,7 +267,7 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     outcome.ok &&
     !primary.ok &&
     options.commit !== undefined &&
-    !signal.aborted
+    !isAborted(signal)
   ) {
     const publication = await commit(outcome.value);
     if (!publication.ok) {
@@ -232,14 +302,21 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
       };
     if (!committed) {
       cancelled = true;
+      const kept = keepCompleted(options, outcome.value, "cancellation");
       outcome = {
         ok: false,
-        error: cancelledBy(options.operation, signal, {
-          partialObservation: outcome.value,
-          ...(outcome.diagnostics === undefined
-            ? {}
-            : { diagnostics: outcome.diagnostics }),
-        }),
+        error: cancelledBy(
+          options.operation,
+          signal,
+          "partialObservation" in kept
+            ? {
+                partialObservation: kept.partialObservation,
+                ...(outcome.diagnostics === undefined
+                  ? {}
+                  : { diagnostics: outcome.diagnostics }),
+              }
+            : { diagnostics: { ...outcome.diagnostics, ...kept.diagnostics } },
+        ),
       };
     }
   }
@@ -248,7 +325,10 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
       return {
         kind: "completed-cleanup-retained",
         value: outcome.value,
-        error: cleanup.failure.retainPartialObservation(outcome.value),
+        error: retainCompleted(
+          cleanup.failure,
+          keepCompleted(options, outcome.value, "failure"),
+        ),
       };
     return {
       kind: cancelled ? "cancelled" : "failed",

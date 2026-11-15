@@ -26,6 +26,7 @@ const createTransport = () =>
     env: {
       PATH: process.env.PATH ?? "",
       REA_LOG_LEVEL: "silent",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       ...(process.platform === "win32"
         ? {
             SystemRoot: process.env.SystemRoot ?? "",

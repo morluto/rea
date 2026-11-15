@@ -49,8 +49,8 @@ interface Ambiguous<Item> {
   readonly basis: ConcreteMatchBasis;
 }
 
-/** A declared type: a historical bare name or a tagged observed nominal digest. */
-type DeclaredName = string | string[] | null;
+/** A declared type's tagged observed nominal digest; null when unresolved. */
+type DeclaredName = readonly ["nominal-name-sha256", string] | null;
 type DeclaredNameOf = (item: Method | Field) => DeclaredName;
 const keyIdentity = (
   item: Method | Field,
@@ -514,19 +514,13 @@ export const keyMembers = (
   readonly fieldMatches: ReturnType<typeof matchFields>;
 } => {
   const [left, right] = comparableSides(observedLeft, observedRight);
-  const modern =
-    left.result.nesting_read !== null && right.result.nesting_read !== null;
   const declared = (
     inspection: ManagedMemberInspection,
     names: ReadonlyMap<string, string | null>,
   ): DeclaredNameOf => {
     return (item) => {
-      if (inspection.nesting_read === false) return null;
+      if (!inspection.nesting_read) return null;
       const digest = names.get(item.declaring_type_token ?? "");
-      // A historical counterpart cannot repair an observed current name gap.
-      if (inspection.nesting_read !== null && digest == null) return null;
-      // Historical observations retain their explicitly limited bare-name mode.
-      if (!modern) return item.declaring_type;
       return digest == null ? null : ["nominal-name-sha256", digest];
     };
   };

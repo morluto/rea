@@ -589,12 +589,12 @@ describe("enhanced MCP batches", () => {
             category: "execution_failure",
             details: { operation: "decompile", reason: "failed" },
             message: expect.stringMatching(
-              /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+              /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
             ),
             retryable: false,
             remediation: {
               action: expect.stringMatching(
-                /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+                /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
               ),
             },
           },
