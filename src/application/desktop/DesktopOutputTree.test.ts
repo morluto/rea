@@ -1,4 +1,4 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -74,5 +74,33 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       });
     }
     expect(await readdir(locked)).toEqual([]);
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "refuses a folder whose parent publication cannot open to sync",
+  async () => {
+    const root = await createTestTempDirectory("rea-output-unreadable-");
+    const parent = join(root, "parent");
+    await mkdir(join(parent, "empty"), { recursive: true });
+    await chmod(parent, 0o300);
+    const refusal = {
+      operation: "export_build_environment",
+      field: "directory",
+    };
+    try {
+      for (const directory of [join(parent, "empty"), join(parent, "absent")])
+        await expect(planOutputTree(directory, refusal)).rejects.toMatchObject({
+          _tag: "AnalysisInputError",
+          issues: [expect.objectContaining({ path: [refusal.field] })],
+        });
+      // A parent publication creates itself is owner-only, so only the
+      // existing ancestor's write access matters there.
+      await expect(
+        planOutputTree(join(parent, "absent", "output"), refusal),
+      ).resolves.toMatchObject({ requested: join(parent, "absent", "output") });
+    } finally {
+      await chmod(parent, 0o700);
+    }
   },
 );

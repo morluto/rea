@@ -96,8 +96,10 @@ export const planOutputTree = async (
         "Output directory is not empty",
       );
     // Publication writes into the folder, or creates it (and any missing
-    // parents) under its nearest existing ancestor, so that directory must
-    // be writable now rather than only when the tree is written.
+    // parents) under its nearest existing ancestor, then opens the folder's
+    // parent to sync it. Check those accesses now rather than only when the
+    // tree is written; parents publication creates itself are owner-only.
+    const parent = dirname(physical);
     const writable =
       existing === undefined ? await nearestExisting(physical) : physical;
     await access(writable, constants.W_OK | constants.X_OK).catch(
@@ -110,6 +112,13 @@ export const planOutputTree = async (
         );
       },
     );
+    if (existing !== undefined || writable === parent)
+      await access(parent, constants.R_OK).catch((cause: unknown) => {
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is not readable",
+          { cause },
+        );
+      });
     return Object.freeze({ requested, physical });
   } catch (cause: unknown) {
     const error =
