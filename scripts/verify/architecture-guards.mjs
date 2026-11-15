@@ -320,7 +320,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     if (owners.includes(file.path)) continue;
     const count =
       typeof pattern === "function"
-        ? pattern(file.content)
+        ? pattern(file.content, file.path)
         : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
@@ -464,14 +464,26 @@ checkCounted(
 
 // Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
 // The pattern matches the inline copy with the same expression in all three
-// places; a named local helper with this body is the same copy. The copy in
-// src/process/RegexMatcher.ts runs inside the isolated worker's source string,
-// which cannot import the owner.
+// places; a named local helper with this body is the same copy.
+// Copies that run in another realm cannot import the owner and are excluded by
+// name, so no slice rewrites them: the regex worker's source string and a
+// fetch run inside the browser page through page.evaluate.
+const ISOLATED_ERROR_MESSAGE_COPIES = new Map([
+  ["src/browser/PlaywrightScenarioRequest.ts", 1],
+  ["src/process/RegexMatcher.ts", 1],
+]);
+const inlineErrorMessage =
+  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu;
 checkCounted(
   "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
   "inline-error-message",
   files,
-  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu,
+  (content, path) =>
+    Math.max(
+      0,
+      (content.match(inlineErrorMessage)?.length ?? 0) -
+        (ISOLATED_ERROR_MESSAGE_COPIES.get(path) ?? 0),
+    ),
   ["src/kernel/errorMessage.ts"],
 );
 
