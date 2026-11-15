@@ -373,7 +373,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "compare-process-captures",
-  "execute-rizin-command",
   "export-web-scripts",
   "guided-workflows",
   "inspect-android-jni-bindings",
