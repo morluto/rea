@@ -1365,6 +1365,9 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // A refused setting (for example the reply ceiling admitted before launch)
+  // is already the caller-facing refusal with its setting and allowed values.
+  if (failure.cause instanceof ConfigurationError) return failure.cause;
   if (failure.kind === "checkpoint") {
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
