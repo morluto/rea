@@ -1312,8 +1312,9 @@ Desktop's configuration it prints a notice on stderr: a running Claude Desktop
 can rewrite the file from memory and drop the registration, so quit it fully,
 rerun `rea mcp add`, then start it again. The JSON report is unchanged.
 fx registration follows `FX_HOME` and fails without writing when fx would
-refuse its value. MCPorter registration writes the file named by
-`MCPORTER_CONFIG`; otherwise it uses the first existing home file under an
+refuse its value or when it contains `.` or `..` segments, which could name the
+home folder. MCPorter registration writes the file named by `MCPORTER_CONFIG`,
+resolved as MCPorter resolves it; otherwise it uses the first existing home file under an
 absolute `XDG_CONFIG_HOME/mcporter`, then `~/.mcporter`, as MCPorter loads them.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
