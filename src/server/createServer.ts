@@ -50,7 +50,6 @@ import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
-import { registerAndroidTools } from "./registerAndroidTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
@@ -511,13 +510,12 @@ export const createServer = (
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
     android: () =>
-      registerAndroidTools(
+      registerServiceTools(
         server,
-        new AndroidAnalysisService(android, recordEvidence),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+        },
+        contractTools,
       ),
     pcap: () => {
       registerServiceTools(
