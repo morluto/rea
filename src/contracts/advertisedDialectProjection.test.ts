@@ -49,6 +49,19 @@ it("does not move a closed allOf member's property scope onto another member", (
   );
 });
 
+it("does not move an allOf member's tuple tail beside other positions", () => {
+  expectWidening(
+    {
+      type: "array",
+      allOf: [
+        { prefixItems: [{ type: "number" }] },
+        { prefixItems: [{ type: "number" }, { type: "string" }], items: false },
+      ],
+    },
+    [[1, "ok"]],
+  );
+});
+
 it("does not move a single union branch's closure onto the parent's properties", () => {
   expectWidening(
     {

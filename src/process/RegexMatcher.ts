@@ -5,7 +5,10 @@ import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -532,19 +535,20 @@ export const regexWorkerHeapError = (
   );
 /**
  * A pattern the regex engine rejects. The caller sees the engine's syntax
- * error on `pattern` and can retry in literal mode. Providers that check the
- * pattern before starting share this result with the worker.
+ * error on `pattern` and can retry in literal mode. The worker, providers that
+ * check the pattern before starting, and remote engines that report their own
+ * syntax error (whose message then replaces the default) share this result.
  */
 export const invalidRegexPatternError = (
   operation: string,
   reason: string,
-  cause?: unknown,
+  options: AnalysisErrorOptions & { readonly userMessage?: string } = {},
 ): AnalysisInputError =>
   new AnalysisInputError(
     operation,
     {
-      cause,
-      userMessage: `Invalid regex pattern: ${reason}`,
+      ...options,
+      userMessage: options.userMessage ?? `Invalid regex pattern: ${reason}`,
       remediationAction:
         "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
     },

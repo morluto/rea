@@ -2,10 +2,10 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -94,19 +94,11 @@ export class CutterBridgeService {
   ): Promise<Result<CutterBridgeDiscovery, AnalysisError>> {
     const { signal } = options;
     if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("list_cutter_sessions", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("list_cutter_sessions", signal));
     try {
       const discovery = await this.client.listSessions(options);
       if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("list_cutter_sessions", {
-            cause: signal.reason,
-          }),
-        );
+        return err(cancelledBy("list_cutter_sessions", signal));
       return ok(discovery);
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
@@ -156,11 +148,7 @@ export class CutterBridgeService {
     const parsed = cutterCommandInputSchema.safeParse(rawInput);
     if (!parsed.success) return err(new AnalysisInputError("cutter_command"));
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("cutter_command", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("cutter_command", options.signal));
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) return cleanup;
@@ -244,8 +232,7 @@ export class CutterBridgeService {
       }
       if (options.signal?.aborted)
         return err(
-          new AnalysisCancelledError("cutter_command", {
-            cause: options.signal.reason,
+          cancelledBy("cutter_command", options.signal, {
             partialObservation: evidence,
           }),
         );
