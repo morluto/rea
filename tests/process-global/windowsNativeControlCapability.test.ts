@@ -16,6 +16,11 @@ import {
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
 
+// The owned launcher selects the Windows native path from HOST_PLATFORM.
+vi.mock("../../src/platform/HostPlatform.js", () => ({
+  HOST_PLATFORM: Object.freeze({ platform: "win32", architecture: "x64" }),
+}));
+
 // Bun on Windows is the runtime whose codec launch requests a Job Object limit.
 vi.mock(
   "../../src/process/JavaScriptWorkerMemoryLimit.js",
@@ -65,7 +70,6 @@ const earlierArtifact = (
 });
 
 it("reports a missing Windows native control as an unavailable capability", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   const spawns: string[] = [];
   const parent = await createTestTempDirectory("rea-native-control-");
   const root = join(parent, "runtime");
@@ -77,7 +81,6 @@ it("reports a missing Windows native control as an unavailable capability", asyn
   let client: Client | undefined;
   let server: ReturnType<typeof createServer> | undefined;
   try {
-    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
     vi.spyOn(nativeLoader, "requireWindowsNativeAuthority").mockReturnValue(
       earlierArtifact(spawns),
     );
@@ -138,7 +141,6 @@ it("reports a missing Windows native control as an unavailable capability", asyn
     expect(rootClosed).toBe(true);
     await decoder.close();
   } finally {
-    Object.defineProperty(process, "platform", platform);
     vi.restoreAllMocks();
     await client?.close();
     await server?.close();
