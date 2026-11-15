@@ -280,12 +280,7 @@
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
-    "src/domain/localPath.ts": 1,
-    "src/electron/ElectronFusePath.ts": 1,
-    "src/ida/IdaWorkspace.ts": 1,
-    "src/inspector/JavaScriptRuntimeScope.ts": 1,
-    "src/serverIdentity.ts": 1,
-    "src/wasm/WabtArtifactProvider.ts": 1
+    "src/domain/localPath.ts": 1
   },
   "hand-caught-configuration-error": {
     "src/application/McpClientRegistration.ts": 1,
