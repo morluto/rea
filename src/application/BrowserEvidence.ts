@@ -1,4 +1,7 @@
-import { unknownTarget } from "../domain/targetIdentity.js";
+import {
+  unknownTarget,
+  type NonFileTargetIdentity,
+} from "../domain/targetIdentity.js";
 import { isDeepStrictEqual } from "node:util";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import {
@@ -6,7 +9,10 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../domain/evidence.js";
-import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import {
+  browserUrlTargetIdentity,
+  sanitizeBrowserUrl,
+} from "../domain/browserObservation.js";
 import type {
   InspectWebPageInput,
   ListBrowserTargetsInput,
@@ -96,7 +102,7 @@ export const createBrowserEvidence = (
   const comparison =
     operation === "compare_web_captures" ||
     operation === "compare_web_screenshots";
-  return createEvidence(unknownTarget("not-observed"), provider, {
+  return createEvidence(browserSubject(operation, observed), provider, {
     predicateType: browserPredicate(operation),
     operation,
     parameters: {
@@ -133,6 +139,44 @@ export const createBrowserEvidence = (
         : []),
     ],
   });
+};
+
+/**
+ * The document one page observation is about: the URL the provider reported
+ * for it. Target lists and comparisons observe no single document.
+ */
+const browserSubject = (
+  operation: BrowserEvidenceOperation,
+  observed: Exclude<
+    BrowserEvidenceResult,
+    WebBundleAcquisitionPartialObservation
+  >,
+): NonFileTargetIdentity => {
+  switch (operation) {
+    case "list_browser_targets":
+    case "compare_web_captures":
+    case "compare_web_screenshots":
+      return unknownTarget("not-observed");
+    case "analyze_web_bundle":
+      // A completed analysis reports its captured page; an acquisition that
+      // stopped before analysis reports the page inspection itself.
+      if ("capture" in observed && "target_url" in observed.capture)
+        return browserUrlTargetIdentity(observed.capture.target_url);
+      if ("target" in observed && "url" in observed.target)
+        return browserUrlTargetIdentity(observed.target.url);
+      break;
+    case "observe_web_session":
+      if ("target" in observed && "initial_url" in observed.target)
+        return browserUrlTargetIdentity(observed.target.initial_url);
+      break;
+    case "inspect_web_page":
+    case "discover_webmcp_tools":
+    case "capture_web_screenshot":
+      if ("target" in observed && "url" in observed.target)
+        return browserUrlTargetIdentity(observed.target.url);
+      break;
+  }
+  throw new Error(`Browser ${operation} result does not report its document`);
 };
 
 const browserParameters = (

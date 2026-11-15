@@ -1,4 +1,5 @@
 import { rm, writeFile } from "node:fs/promises";
+import { snapshotExecution } from "../../src/domain/analysisSnapshot.fixture.js";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -73,7 +74,7 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
       binding: snapshotBinding(profile),
       operation: "procedure_pseudo_code",
       parameters: query,
-      execution: cached,
+      execution: snapshotExecution(cached),
     }),
   );
   snapshot.value.evidence_bundle = createEvidenceBundle([

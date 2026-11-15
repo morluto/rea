@@ -6,6 +6,7 @@
   "src/artifacts/deno/DenoSectionLayout.ts": 1,
   "src/domain/android/proguardMapping.ts": 1,
   "src/domain/apple/interfaceBuilderKeyedArchive.ts": 1,
+  "src/domain/pcap/tsharkJsonPackets.ts": 1,
   "src/evm/EvmoleInterfaceWorker.ts": 2,
   "src/firmware/FirmwareReports.ts": 1,
   "src/model/SafetensorsHeader.ts": 1,

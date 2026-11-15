@@ -54,6 +54,7 @@ import {
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** A refused protobuf body decode; a limit names the budget that owns it. */
@@ -316,7 +317,7 @@ export const historicalCaptureFailure = (
       ...(descriptorRead
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       ...(origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }

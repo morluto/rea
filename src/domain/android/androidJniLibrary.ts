@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { setImmediate as immediate } from "node:timers/promises";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
@@ -23,6 +22,7 @@ import {
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
 } from "../native/elfPointerRelocations.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;
@@ -128,7 +128,7 @@ export const inspectAndroidJniLibrary = async (
     };
     const exportSteps = parseNativeExportsSteps(bytes, {
       path: "[admitted immutable ELF bytes]",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: sha256Hex(bytes),
       bytes: bytes.length,
     });
     let exportStep = exportSteps.next();

@@ -50,6 +50,7 @@ import {
   readManagedSnapshot,
   verifyManagedSourceIdentity,
 } from "./ManagedSnapshot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Execution-free managed PE/CLI auxiliary provider. */
 export class ManagedStaticProvider implements AnalysisProvider {
@@ -199,9 +200,7 @@ class ManagedStaticClient implements AnalysisClient {
       MANAGED_STATIC_PROVIDER.id,
       cleanup?.resources ?? [this.target.path],
       {
-        reason:
-          cleanup?.reason ??
-          (cause instanceof Error ? cause.message : String(cause)),
+        reason: cleanup?.reason ?? errorMessage(cause),
       },
       { cause, operation },
     );

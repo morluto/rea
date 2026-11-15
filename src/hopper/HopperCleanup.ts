@@ -24,6 +24,7 @@ import {
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
 import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface CleanupIssue {
   readonly resource: string;
@@ -141,7 +142,7 @@ export const cleanupHopperSession = async (
       state.resources.add("hopper-lease");
       state.issues.push({
         resource: "hopper-lease",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   }

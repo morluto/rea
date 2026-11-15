@@ -1,6 +1,6 @@
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
-import { isRecord } from "../domain/isRecord.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { isRecord } from "../isRecord.js";
+import { err, ok, type Result } from "../result.js";
 
 /**
  * One `tshark -T json` packet's `_source.layers` record. Export metadata

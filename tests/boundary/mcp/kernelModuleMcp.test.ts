@@ -66,6 +66,28 @@ mcpTest(
           expect.stringContaining("max_modinfo_value_bytes at least 4097"),
         ]),
       );
+      // The result records each control by contract field; MCP text names no
+      // CLI option.
+      expect(initial.normalized_result.modinfo?.omission_limits).toEqual([
+        {
+          control_kind: "parameter",
+          parameter: "max_modinfo_key_bytes",
+          effective_value: 256,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 536870912,
+          default_value: 256,
+          applies_at: "next_call",
+        },
+        expect.objectContaining({
+          parameter: "max_modinfo_value_bytes",
+          effective_value: 4096,
+          default_value: 4096,
+        }),
+      ]);
+      expect(initial.normalized_result.limitations.join(" ")).not.toContain(
+        "--max-modinfo",
+      );
       const recovered = await inspect({
         max_modinfo_key_bytes: 257,
         max_modinfo_value_bytes: 4097,
@@ -78,6 +100,9 @@ mcpTest(
         omitted_fields: [],
       });
       expect(recovered.normalized_result.coverage.status).toBe("complete");
+      expect(recovered.normalized_result.modinfo).not.toHaveProperty(
+        "omission_limits",
+      );
     } finally {
       await session.close();
     }
