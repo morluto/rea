@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 import {
   JsonSchemaReferences,
   type JsonSchemaScope,
