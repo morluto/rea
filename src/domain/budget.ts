@@ -44,6 +44,33 @@ export class Budget {
     if (!this.tryCharge(amount)) throw exhausted();
   }
 
+  /**
+   * Charge `amount` into a cache, evicting entries until it fits. `evict`
+   * discards the oldest entry and returns its charged amount, or `undefined`
+   * when nothing is left to evict. An amount above the maximum evicts nothing
+   * and returns false.
+   */
+  chargeEvicting(amount: number, evict: () => number | undefined): boolean {
+    if (!isAmount(amount) || amount > this.maximum) return false;
+    while (amount > this.remaining) {
+      const freed = evict();
+      if (freed === undefined) return false;
+      this.refund(freed);
+    }
+    return this.tryCharge(amount);
+  }
+
+  /**
+   * Refund everything charged since `mark`, a value of `used` taken earlier,
+   * and return the refunded amount. A mark at or above the current use refunds
+   * nothing: restoring never re-charges, because a re-charge could fail.
+   */
+  restore(mark: number): number {
+    const released = Math.max(0, this.#used - mark);
+    this.refund(released);
+    return released;
+  }
+
   /** Return a reservation that was not retained. */
   refund(amount: number): void {
     if (!isAmount(amount))

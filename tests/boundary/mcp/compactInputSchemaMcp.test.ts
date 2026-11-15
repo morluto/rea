@@ -414,7 +414,7 @@ describe("MCP compact input schema canonical enforcement", () => {
   });
 
   it("compacts plain standard schemas that are not Zod instances", async () => {
-    // Mirrors registerWebNetworkCaptureTool: a plain standard schema reusing
+    // Mirrors the inspect_web_network_capture binding: a plain standard schema reusing
     // the advertised projection while owning its own permissive validator.
     const server = compactServer();
     const contract = TOOL_CONTRACTS.find(

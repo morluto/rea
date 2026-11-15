@@ -25,7 +25,6 @@ import {
   semanticBindingAtRead,
   semanticBindingHasPriorValueWrite,
   semanticEffectTiming,
-  semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
@@ -39,7 +38,14 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticModuleInteropWithAmbientWrites,
+} from "./javascriptModuleInterop.js";
+import {
+  ambientBindingMayObserveWriteAt,
+  ambientPathMayObserveAt,
+} from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
@@ -177,9 +183,7 @@ const requireLoaderValueAt = (
       semanticResolutionBlocked(state, loader, "require")
     )
       return "unknown";
-    return (state.ambientBindingWrites.get("require") ?? []).some(
-      (write) => semanticEffectTiming(node, write, state) !== "after",
-    )
+    return ambientBindingMayObserveWriteAt(state, node, "require")
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
@@ -677,35 +681,6 @@ const selectedRequireSourcesAt = (
     : undefined;
 };
 
-const loaderInvocationInterops = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    readonly writes: number;
-    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
-  }
->();
-
-const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
-  const prior = loaderInvocationInterops.get(state);
-  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
-  const interop = createSemanticModuleInterop(state);
-  for (const effect of state.ambientWriteEffects)
-    if (effect.path[0] === "global")
-      interop.retainWrite(effect.node ?? state.program, [
-        "intrinsic",
-        ...effect.path
-          .slice(1)
-          .map((key) =>
-            key === null || typeof key === "object" ? null : String(key),
-          ),
-      ]);
-  loaderInvocationInterops.set(state, {
-    writes: state.ambientWriteEffects.length,
-    interop,
-  });
-  return interop;
-};
-
 export interface JavaScriptRequireCallFact {
   readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
@@ -887,7 +862,7 @@ export const semanticRequireCallAt = (
           : { sourceRelativePath: selected.sourceRelativePath }),
       };
   }
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   if (!t.isNewExpression(node)) {
     // Invocation normalization retains the selected path identity. Keep its
     // filename alongside that path rather than selecting the outer call again.
@@ -1001,12 +976,6 @@ const isWrapperRequireInitializerCall = (
   );
 };
 
-// Ambient indexing finishes before these derived facts are consumed. Keep only
-// replacement sites, rather than rescanning unrelated global member writes.
-const globalProcessReplacements = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  readonly (t.Node | undefined)[]
->();
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
 type ModuleRequireWrite = {
   readonly node: t.Node;
@@ -1570,7 +1539,7 @@ export const semanticModuleRequireCallAt = (
   if (isCommonJsRequireDelegate(target, state, includeUnknown, node))
     return true;
   if (t.isNewExpression(node)) return false;
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   return (
     interop.intrinsicInvocation(node, (callee) =>
       isCommonJsRequireDelegate(callee, state, false, node)
@@ -1649,31 +1618,14 @@ const objectMayProvideRequire = (node: t.Node | undefined): boolean =>
 export const semanticOriginalGlobalProcessAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  let replacements = globalProcessReplacements.get(state);
-  if (replacements === undefined) {
-    replacements = [
-      ...state.ambientWriteEffects
-        .filter(
-          ({ path }) =>
-            path.length <= 2 &&
-            path.every((key, index) =>
-              semanticPropertyPathKeyMatches(
-                key,
-                ["global", "process"][index]!,
-              ),
-            ),
-        )
-        .map(({ node: write }) => write),
-      ...(state.ambientBindingWrites.get("process") ?? []),
-    ];
-    globalProcessReplacements.set(state, replacements);
-  }
-  return !replacements.some(
-    (write) =>
-      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
-  );
-};
+): boolean =>
+  !ambientPathMayObserveAt(
+    state,
+    node,
+    ["global", "process"],
+    "value",
+    "top-level",
+  ) && !ambientBindingMayObserveWriteAt(state, node, "process", "top-level");
 
 /** Node's unbound process reference shares the cached process exports object. */
 export const semanticGlobalProcessOrigin = (
@@ -1741,10 +1693,7 @@ const isConditionalRequireAt = (
         )))
   )
     return false;
-  return !(state.ambientBindingWrites.get("require") ?? []).some(
-    (write) =>
-      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
-  );
+  return !ambientBindingMayObserveWriteAt(state, node, "require", "top-level");
 };
 
 /** Recover an unshadowed literal require origin and its exact member path. */
@@ -1786,14 +1735,7 @@ export const semanticRequireOriginCandidate = (
         (binding === undefined &&
           (javaScriptRuntimeContext(state.program) === "module" ||
             semanticResolutionBlocked(state, current.callee, "require"))) ||
-        (state.ambientBindingWrites.get("require") ?? []).some(
-          (write) =>
-            !semanticTopLevelEffectFollowsCapture(
-              current,
-              write,
-              state.parentsByNode,
-            ),
-        )
+        ambientBindingMayObserveWriteAt(state, current, "require", "top-level")
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);

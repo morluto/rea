@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 /** Component declarations, not effective installation or runtime state. */
 export const ANDROID_COMPONENT_KINDS = [
@@ -11,6 +12,14 @@ export const ANDROID_COMPONENT_KINDS = [
 export type AndroidComponentKind = (typeof ANDROID_COMPONENT_KINDS)[number];
 
 /** Positions in retained decoded manifest text; offset counts UTF-16 code units. */
+/**
+ * Android manifest and text results report known coverage: `partial` records
+ * a parse failure, truncation or detail limit the producer observed, so they
+ * never report `unknown`.
+ */
+export const androidCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
+export type AndroidCoverage = z.infer<typeof androidCoverageSchema>;
+
 export const androidManifestLocationSchema = z.strictObject({
   line: z.int().positive(),
   column: z.int().positive(),
@@ -40,7 +49,7 @@ export const androidIntentFilterSchema = z.strictObject({
   actions: z.array(z.string()),
   categories: z.array(z.string()),
   data: z.array(androidIntentDataSchema),
-  coverage: z.enum(["complete", "partial"]),
+  coverage: androidCoverageSchema,
 });
 export const androidComponentMetadataSchema = z.strictObject({
   name: z.string().nullable(),
@@ -61,7 +70,7 @@ export const androidManifestComponentSchema = z.strictObject({
   foreground_service_type: z.string().nullable(),
   authorities: z.array(z.string()).nullable(),
   target_activity: z.string().nullable(),
-  declaration_coverage: z.enum(["complete", "partial"]),
+  declaration_coverage: androidCoverageSchema,
   declaration_index: z.int().nonnegative(),
   location: androidManifestLocationSchema.nullable(),
   enabled: z.boolean().nullable(),
