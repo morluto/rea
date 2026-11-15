@@ -1,5 +1,3 @@
-import { TextDecoder } from "node:util";
-
 import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
@@ -21,10 +19,7 @@ const FLAG_TRANSPILED = 1 << 0;
 const FLAG_SOURCE_MAP = 1 << 1;
 const FLAG_CJS = 1 << 2;
 const FLAG_UTF8 = 1 << 3;
-const specifierDecoder = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
+const specifierDecoder = strictUtf8Decoder("preserve");
 const jsonDecoder = strictUtf8Decoder("strip-signature");
 
 const MEDIA_TYPE_NAMES = [
