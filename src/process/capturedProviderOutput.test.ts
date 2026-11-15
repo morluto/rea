@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { capturedProviderOutput } from "./capturedProviderOutput.js";
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "./capturedProviderOutput.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 
 const snapshot = (
@@ -25,6 +28,14 @@ it("keeps the retained text beside the bytes the process wrote", () => {
     signal: null,
     truncated: true,
   });
+});
+
+it("narrows to the three fields a successful result declares", () => {
+  expect(
+    providerResultDiagnostics(
+      capturedProviderOutput(snapshot({ exitCode: 0, signal: null })),
+    ),
+  ).toStrictEqual({ stdout: "head", stderr: "", truncated: false });
 });
 
 it("reports exit facts and an untruncated capture as observed", () => {

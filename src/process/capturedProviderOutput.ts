@@ -19,3 +19,21 @@ export const capturedProviderOutput = (
   signal: snapshot.signal ?? null,
   truncated: snapshot.diagnosticTruncated === true,
 });
+
+/** The retained text and truncation flag a successful result reports as its diagnostics. */
+export interface ProviderResultDiagnostics {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly truncated: boolean;
+}
+
+/** Narrow a captured output to the diagnostics a successful result declares. */
+export const providerResultDiagnostics = ({
+  stdout,
+  stderr,
+  truncated,
+}: AnalysisCapturedOutput): ProviderResultDiagnostics => ({
+  stdout,
+  stderr,
+  truncated,
+});

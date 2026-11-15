@@ -4,7 +4,7 @@
   "src/browser/history/CaptureFailures.ts": 2,
   "src/captures/TsharkCaptureProvider.ts": 1,
   "src/desktop/TaskReaderProcess.ts": 1,
-  "src/evm/EvmoleInterfaceProvider.ts": 2,
+  "src/evm/EvmoleInterfaceProvider.ts": 1,
   "src/firmware/FirmwareCommand.ts": 4,
   "src/firmware/FirmwareProvider.ts": 1,
   "src/gdb/GdbSessionManager.ts": 1,

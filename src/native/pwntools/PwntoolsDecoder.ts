@@ -1,4 +1,7 @@
-import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
@@ -619,7 +622,7 @@ export class PwntoolsDecoder<
         input,
         payload: reply.value,
         snapshot,
-        diagnostics: capturedOutput,
+        diagnostics: providerResultDiagnostics(capturedOutput),
       });
       if (replyFinalization !== undefined) {
         result = err(

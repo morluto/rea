@@ -1,4 +1,7 @@
-import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
@@ -344,7 +347,13 @@ export const inspectPwndbgCore = async ({
         ),
         finalization,
       );
-    return { context: { ...reply.value, diagnostics: output }, finalization };
+    return {
+      context: {
+        ...reply.value,
+        diagnostics: providerResultDiagnostics(output),
+      },
+      finalization,
+    };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
     const primary = classifyProviderFailure(

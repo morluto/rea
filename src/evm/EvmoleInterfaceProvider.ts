@@ -1,4 +1,7 @@
-import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../process/capturedProviderOutput.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
@@ -823,11 +826,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         functions: projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
-        diagnostics: {
-          stdout: execution.stdout.text,
-          stderr: execution.stderr.text,
-          truncated: capturedOutput.truncated,
-        },
+        diagnostics: providerResultDiagnostics(capturedOutput),
         limitations,
       });
       if (!validated.success)
