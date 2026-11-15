@@ -12,7 +12,7 @@ import type {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
@@ -171,21 +171,21 @@ export class AnalysisClientCreation {
       primary =
         primary === undefined
           ? inspections.error
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               inspections.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, inspections.error]);
+            );
     if (primary !== undefined) {
       const closed = await this.#releaseClient(this.#closeOptions);
       return err(
         closed.ok
           ? primary
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               closed.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, closed.error]),
+            ),
       );
     }
     if (this.#client === undefined)
@@ -233,11 +233,11 @@ export class AnalysisClientCreation {
         const closed = await this.#releaseClient(options);
         if (!closed.ok && inspectionFailure !== undefined)
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               closed.error,
               inspectionFailure,
               "create_analysis_client",
-            ).bindCleanupDependencies([closed.error, inspectionFailure]),
+            ),
           );
         if (!closed.ok) return closed;
         if (inspectionFailure !== undefined) return err(inspectionFailure);
