@@ -4,7 +4,7 @@ import type {
   CapabilityDescriptor,
 } from "../AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCloseRejections } from "../../domain/analysisErrorCleanup.js";
 import { err, ok } from "../../domain/result.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
@@ -78,14 +78,13 @@ export const combineBundleResourceClients = (
       closeAnalysisClient(nativeClient, "bundle-resources", options),
     ]);
     if (!artifact.ok && !native.ok) {
-      const failure = analysisErrorWithCleanupFailure(
-        artifact.error,
-        native.error,
-        "close_binary",
+      return err(
+        analysisErrorWithCloseRejections(
+          artifact.error,
+          native.error,
+          "close_binary",
+        ),
       );
-      if (artifact.error.cleanupIncomplete && native.error.cleanupIncomplete)
-        failure.bindCleanupDependencies([artifact.error, native.error]);
-      return err(failure);
     }
     if (!artifact.ok) return artifact;
     if (!native.ok) return native;

@@ -20,7 +20,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
@@ -831,11 +831,11 @@ export const createGhidraProviderClient = (input: {
     const closed = await client.close();
     return closed.ok
       ? extensionFailure
-      : analysisErrorWithCleanupFailure(
+      : analysisErrorWithCleanupDependencies(
           extensionFailure,
           closed.error,
           operation,
-        ).bindCleanupDependencies([extensionFailure, closed.error]);
+        );
   };
   const startSession = async (
     operation: AnalysisOperation,
@@ -1198,12 +1198,7 @@ export const createGhidraProviderClient = (input: {
       if (retained === undefined) return closed;
       return closed.ok
         ? err(retained)
-        : err(
-            analysisErrorWithCleanupFailure(
-              closed.error,
-              retained,
-            ).bindCleanupDependencies([closed.error, retained]),
-          );
+        : err(analysisErrorWithCleanupDependencies(closed.error, retained));
     },
   });
 };
@@ -1331,11 +1326,11 @@ const projectSessionError = (
   );
   return failure.cleanupFailure === undefined
     ? primary
-    : analysisErrorWithCleanupFailure(
+    : analysisErrorWithCleanupDependencies(
         primary,
         failure.cleanupFailure,
         operation,
-      ).bindCleanupDependencies([primary, failure.cleanupFailure]);
+      );
 };
 
 const projectPrimarySessionError = (
