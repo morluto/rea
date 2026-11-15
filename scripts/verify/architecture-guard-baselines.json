@@ -396,14 +396,13 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "cleanup-dependency-binding": {
-    "src/application/DirectAnalysisCleanup.ts": 2,
+    "src/application/DirectAnalysisCleanup.ts": 1,
     "src/application/EvidenceBundleCommands.ts": 1,
     "src/application/JsonFiles.ts": 1,
     "src/application/McpRegistrationGit.ts": 1,
     "src/application/SetupCleanupOwner.ts": 2,
     "src/application/binary/AnalysisProviderRegistry.ts": 2,
-    "src/application/binary/BinarySession.ts": 5,
-    "src/application/binary/BundleResourceSession.ts": 1,
+    "src/application/binary/BinarySession.ts": 1,
     "src/application/binary/CompositeProvider.ts": 1,
     "src/application/closeOwnedWebResources.ts": 1,
     "src/application/desktop/DesktopApplicationExport.ts": 2,
@@ -451,7 +450,6 @@
     "src/process/ArtifactAnalysisResources.ts": 4,
     "src/process/capture/ProcessCaptureError.ts": 3,
     "src/providers/AnalysisClientFailure.ts": 1,
-    "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2
   }
