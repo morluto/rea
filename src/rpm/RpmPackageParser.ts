@@ -53,6 +53,8 @@ const OPENPGP_ALGORITHMS: Readonly<Record<number, string>> = {
 };
 
 const SCRIPTLET_SENSE =
+  RPM_SENSE.pretrans |
+  RPM_SENSE.posttrans |
   RPM_SENSE.interp |
   RPM_SENSE.scriptPre |
   RPM_SENSE.scriptPost |

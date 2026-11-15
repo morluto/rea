@@ -16,6 +16,7 @@ import {
   rpmTruncatedHeaderFixture,
   rpmTruncatedMainHeaderFixture,
   rpmUtf8PackageFixture,
+  RPM_SENSE,
   RPM_SIG_TAG,
   RPM_TAG,
   RPM_TYPE,
@@ -122,6 +123,41 @@ it("reads lead identity, NEVRA, flagged dependencies, scriptlets and header file
   expect(report.limitations).toEqual(
     expect.arrayContaining([...RPM_PACKAGE_LIMITATIONS]),
   );
+});
+
+it("marks Requires(pretrans) and Requires(posttrans) rows as scriptlet-only", () => {
+  const bytes = rpmBinaryPackageFixture({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "transdeps" },
+      { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "0.1" },
+      { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+      { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+      {
+        tag: RPM_TAG.requireName,
+        type: RPM_TYPE.stringArray,
+        strings: ["/usr/bin/pre-tool", "/usr/bin/post-tool", "libc.so.6"],
+      },
+      {
+        tag: RPM_TAG.requireFlags,
+        type: RPM_TYPE.int32,
+        int32: [RPM_SENSE.pretrans, RPM_SENSE.posttrans, 0],
+      },
+      { tag: RPM_TAG.payloadFormat, type: RPM_TYPE.string, string: "cpio" },
+      { tag: RPM_TAG.payloadCompressor, type: RPM_TYPE.string, string: "gzip" },
+    ],
+  });
+  const report = parse(bytes);
+  expect(
+    report.requires?.map(({ name, flags, scriptlet_only }) => ({
+      name,
+      flags,
+      scriptlet_only,
+    })),
+  ).toEqual([
+    { name: "/usr/bin/pre-tool", flags: 0x80, scriptlet_only: true },
+    { name: "/usr/bin/post-tool", flags: 0x20, scriptlet_only: true },
+    { name: "libc.so.6", flags: 0, scriptlet_only: false },
+  ]);
 });
 
 it("returns scriptlet text only when the caller opts in", () => {

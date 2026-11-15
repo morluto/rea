@@ -44,8 +44,9 @@ tags stay `null`. Epoch `0` is reported when that tag is present.
 `provides`, `requires`, `conflicts`, `obsoletes`, and weak dependency sets
 (`recommends`, `suggests`, `supplements`, `enhances`) include each name,
 version text, raw flags, a rendered comparison (`>=`, `=`, `<`, and siblings),
-and whether the row is `rpmlib(...)` or scriptlet-only. A missing set is `null`,
-not an empty list.
+and whether the row is `rpmlib(...)` or scriptlet-only (interpreter,
+pre/post install or erase, or pretrans/posttrans sense flags). A missing set is
+`null`, not an empty list.
 
 `scriptlets` lists PREIN/POSTIN/PREUN/POSTUN/PRETRANS/POSTTRANS and triggers
 with interpreter and byte length. Each trigger row lists every `TRIGGERNAME`

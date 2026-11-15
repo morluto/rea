@@ -109,6 +109,8 @@ export const RPM_SENSE = {
   less: 1 << 1,
   greater: 1 << 2,
   equal: 1 << 3,
+  posttrans: 1 << 5,
+  pretrans: 1 << 7,
   interp: 1 << 8,
   scriptPre: 1 << 9,
   scriptPost: 1 << 10,
