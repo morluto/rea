@@ -17,7 +17,7 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -86,15 +86,11 @@ export class InesArtifactReader implements ArtifactReader {
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     abortIfNeeded(signal);
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "iNES region does not match this reader's inventory",
-        {
-          integrityCheck:
-            produced === undefined ? "foreign-entry" : "entry-metadata",
-        },
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "iNES region does not match this reader's inventory",
+    );
     await this.#verifySource(signal);
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
