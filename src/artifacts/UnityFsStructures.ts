@@ -229,7 +229,12 @@ export const decodeUnityFsLz4 = async (
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   try {
-    return await decodeLz4Block(encoded, expected, signal);
+    return await decodeLz4Block(
+      encoded,
+      expected,
+      MAX_BLOCK_UNCOMPRESSED_BYTES,
+      signal,
+    );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof BinaryResourceFailure)
