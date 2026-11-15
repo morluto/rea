@@ -501,6 +501,7 @@ const PATH_SCOPES = {
     "src/application/analysisView/**",
     "src/cli/analysisEvidenceDelivery.ts",
     "src/artifacts/**",
+    "src/resources/**",
     "scripts/verify-apk-signature.mjs",
     "tests/fixtures/apkSignature/**",
     "tests/acceptance/apkSignature*.test.ts",
