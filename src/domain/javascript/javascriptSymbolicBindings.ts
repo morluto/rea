@@ -1275,8 +1275,13 @@ export class JavaScriptSymbolicBindings {
     }
     if (binding.kind === "catch") return false;
     const invocation = this.#calleeInvocation(node);
+    // The walk visits a local's inline initializer, but a destructuring
+    // projection reads a member without a member expression to inspect.
     return (
-      this.#scopeContains(binding.scopeId, functionScopeId) ||
+      (this.#scopeContains(binding.scopeId, functionScopeId) &&
+        binding.initializers.every(
+          ({ projection }) => projection.length === 0,
+        )) ||
       this.#isLoaderFreeBinding(
         binding,
         invocation,
