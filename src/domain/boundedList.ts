@@ -42,3 +42,15 @@ export class BoundedListCollector<T> {
     return { items: [...this.#items], omitted: this.#omitted };
   }
 }
+
+/**
+ * The retained items joined by `separator`, then "and N more" for the omitted
+ * ones: `a; b; and 3 more`.
+ */
+export const describeBoundedList = (
+  list: BoundedList<string>,
+  separator: string,
+): string =>
+  list.omitted > 0
+    ? `${list.items.join(separator)}${separator}and ${String(list.omitted)} more`
+    : list.items.join(separator);

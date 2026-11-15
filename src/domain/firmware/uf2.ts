@@ -1,3 +1,4 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import type { Uf2Metadata } from "../artifactFormatMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
@@ -105,7 +106,7 @@ const familyText = (familyId: number | null): string => {
 
 /** At most NAMED_GROUPS descriptions, then a count of the rest. */
 const named = (items: readonly string[]): string =>
-  `${items.slice(0, NAMED_GROUPS).join("; ")}${items.length > NAMED_GROUPS ? `; and ${String(items.length - NAMED_GROUPS)} more` : ""}`;
+  describeBoundedList(boundedList(items, NAMED_GROUPS), "; ");
 
 /** Recognize a file only by a complete first block with all three magic numbers. */
 export const hasUf2Block = (prefix: Uint8Array): boolean =>
