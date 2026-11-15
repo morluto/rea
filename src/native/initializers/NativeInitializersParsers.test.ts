@@ -403,10 +403,10 @@ describe("ELF slot semantics", () => {
     expect(report.limitations.join("\n")).not.toContain("DT_SYMTAB");
   });
 
-  it("marks coverage incomplete when a relocation needs the missing DT_SYMTAB", async () => {
+  it("leaves coverage unknown when a relocation needs the missing DT_SYMTAB", async () => {
     const report = await read(sectionlessElf(false));
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "unknown",
       total_entries: null,
     });
     expect(report.limitations).toContain(
@@ -543,7 +543,7 @@ describe("ELF incomplete inputs", () => {
     expect(performance.now() - started).toBeLessThan(10_000);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "partial",
       total_entries: null,
     });
     expect(report.coverage.examined_entries).toBeLessThanOrEqual(
@@ -564,7 +564,7 @@ describe("ELF incomplete inputs", () => {
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "partial",
       examined_entries: MAX_NATIVE_INITIALIZER_ENTRIES,
       total_entries: null,
     });
@@ -617,7 +617,7 @@ describe("ELF incomplete inputs", () => {
     const beyond = await read(bytes, { offset: 100 });
     expect(beyond.entries).toHaveLength(0);
     expect(beyond.status).toBe("incomplete");
-    expect(beyond.coverage.status).toBe("incomplete");
+    expect(beyond.coverage.status).toBe("partial");
     expect(
       beyond.limitations.some((line) =>
         line.includes("exceeded the 1024-byte name budget"),
@@ -770,7 +770,7 @@ describe("Mach-O", () => {
     });
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "unknown",
       total_entries: null,
     });
     expect(report.limitations).toEqual(
@@ -1898,7 +1898,7 @@ describe("Initializer address mapping", () => {
     expect(many.indexes).toBeGreaterThan(0);
   });
 
-  it("reports a Mach-O bind name over the name budget as incomplete", async () => {
+  it("reports a Mach-O bind name over the name budget as partial coverage", async () => {
     const bytes = machoArm64Initializers();
     const name = `_${"b".repeat(1100)}`;
     // Rebuild the chained-fixups payload with one DYLD_CHAINED_IMPORT bound by flat lookup.
@@ -1927,6 +1927,11 @@ describe("Initializer address mapping", () => {
       symbol: null,
     });
     expect(report.status).toBe("incomplete");
+    // The withheld import name is a known gap, not undetermined coverage.
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      total_entries: null,
+    });
     expect(report.limitations).toContain(
       "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
     );
@@ -1942,7 +1947,7 @@ it("keeps a slot touched by an overrun section relocation unresolved", async () 
     offset: 0,
     limit: 64,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.entries.find((entry) => entry.kind === "init_array"),
   ).toMatchObject({ resolution: "unresolved", value_va: null });
@@ -1970,7 +1975,7 @@ it("retains unknown coverage when sparse bind lookups exhaust their allowance", 
     offset: 0,
     limit: 1,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(report.entries[0]).toMatchObject({
     resolution: "unresolved",
     value_va: null,
@@ -2007,7 +2012,7 @@ it("keeps a linked section-fallback slot unresolved when its load mapping disagr
     offset: 0,
     limit: 64,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.entries.find((entry) => entry.kind === "init_array"),
   ).toMatchObject({
