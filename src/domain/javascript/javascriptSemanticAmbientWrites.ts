@@ -14,7 +14,10 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { ambientEffectCovers } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientEffectCovers,
+  ambientPathMayObserveAt,
+} from "./javascriptSemanticEffectLog.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -41,6 +44,62 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+
+/**
+ * Own static methods of `Object` and `Reflect` in the language. A native one
+ * ignores its receiver; any other member, including one `Object` inherits
+ * from `Function.prototype`, may be user code that receives the constructor.
+ */
+const NATIVE_STATIC_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  [
+    [
+      "Object",
+      new Set([
+        "assign",
+        "create",
+        "defineProperties",
+        "defineProperty",
+        "entries",
+        "freeze",
+        "fromEntries",
+        "getOwnPropertyDescriptor",
+        "getOwnPropertyDescriptors",
+        "getOwnPropertyNames",
+        "getOwnPropertySymbols",
+        "getPrototypeOf",
+        "groupBy",
+        "hasOwn",
+        "is",
+        "isExtensible",
+        "isFrozen",
+        "isSealed",
+        "keys",
+        "preventExtensions",
+        "seal",
+        "setPrototypeOf",
+        "values",
+      ]),
+    ],
+    [
+      "Reflect",
+      new Set([
+        "apply",
+        "construct",
+        "defineProperty",
+        "deleteProperty",
+        "get",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "has",
+        "isExtensible",
+        "ownKeys",
+        "preventExtensions",
+        "set",
+        "setPrototypeOf",
+      ]),
+    ],
+  ],
+);
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -612,6 +671,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
+  // Object/Reflect static calls, settled once every ambient write is known.
+  const staticReceivers: {
+    node: t.Node;
+    target: t.Node;
+    method: readonly string[];
+  }[] = [];
   const stores = new WeakMap<
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
@@ -703,16 +768,23 @@ export function* indexJavaScriptAmbientWritesSteps(
           : undefined;
       if (
         !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) ||
-          t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       ) {
-        if (browserMethod !== undefined)
-          browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        const owner = invocation?.path[1];
+        const method =
+          invocation?.kind === "known" &&
+          invocation.path.length === 3 &&
+          owner !== undefined &&
+          NATIVE_STATIC_METHODS.get(owner)?.has(invocation.path[2] ?? "")
+            ? invocation.path.slice(1)
+            : undefined;
+        if (method !== undefined)
+          staticReceivers.push({ node, target: callee.object, method });
+        else {
+          if (browserMethod !== undefined)
+            browserReceiverMethods.add(browserMethod);
+          retainEscape(callee.object, browserMethod !== undefined);
+        }
       }
     },
   );
@@ -858,6 +930,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       continue;
     retainEscapeEffect(effect);
   }
+  // A native static method ignores its receiver. A source write or escape
+  // that may replace the method before this call makes it user code, which
+  // receives the constructor. (Its prototype chain is not consulted: the
+  // method is an own property.)
+  for (const { node, target, method } of staticReceivers)
+    if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
+      retainEscapeEffect({ node, target, browserReceiver: false });
+    else state.retainedGlobalCallReceivers.add(target);
   function retainEscapeEffect({
     node,
     target,

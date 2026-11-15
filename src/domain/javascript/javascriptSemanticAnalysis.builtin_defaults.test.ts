@@ -831,3 +831,14 @@ it.each([
     ).toEqual(keys);
   },
 );
+
+it.each(["constructor", "toString"])(
+  "analyzes a module named like an Object.prototype key: %s",
+  (specifier) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `const m=require("${specifier}"); m.has("x");`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);

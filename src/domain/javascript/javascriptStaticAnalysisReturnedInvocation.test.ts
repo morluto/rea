@@ -106,6 +106,34 @@ it.each([
     "patch(Function.prototype);const get=()=>module;get.call=()=>({});get.call(null)",
     false,
   ],
+  // A native static method does not expose its constructor receiver.
+  ["Object.freeze({});const get=()=>({});get.call(null)", false],
+  [
+    'Object.defineProperty(o,"a",{value:1});const get=()=>({});get.call(null)',
+    false,
+  ],
+  ["Reflect.ownKeys({});const get=()=>({});get.call(null)", false],
+  // A replaced static method is user code that receives the constructor.
+  [
+    'Object.defineProperty=custom;Object.defineProperty(o,"a",{value:1});const get=()=>({});get.call(null)',
+    true,
+  ],
+  [
+    "Object.custom=custom;Object.custom({});const get=()=>({});get.call(null)",
+    true,
+  ],
+  // A member Object inherits is user code that receives the constructor.
+  [
+    "Function.prototype.custom=custom;Object.custom();const get=()=>({});get.call(null)",
+    true,
+  ],
+  ["Object.custom();const get=()=>({});get.call(null)", true],
+  // An owner named like an Object.prototype key is looked up safely.
+  ["globalThis.constructor.keys({});const get=()=>({});get.call(null)", false],
+  [
+    "const get=()=>({});get.call(null);Object.defineProperty=custom;Object.defineProperty(o,'a',{})",
+    false,
+  ],
 ])(
   "retains inherited invocation uncertainty without revoking own slots: %s",
   (receiver, expected) => {
