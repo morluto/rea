@@ -224,6 +224,8 @@ it.each([
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,

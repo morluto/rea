@@ -38,7 +38,7 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,

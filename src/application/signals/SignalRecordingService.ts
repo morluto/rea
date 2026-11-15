@@ -1,12 +1,8 @@
 import {
   inspectSignalDecodersInputSchema,
   signalDecodersSchema,
-  type InspectSignalDecodersInput,
 } from "../../domain/signals/signalDecoders.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
-} from "../../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -14,7 +10,6 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   decodeSignalRecordingInputSchema,
   signalRecordingSchema,
-  type DecodeSignalRecordingInput,
 } from "../../domain/signals/signalRecording.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";

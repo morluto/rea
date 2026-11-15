@@ -1,12 +1,8 @@
 import {
   inspectPacketFieldsInputSchema,
   packetFieldsCatalogSchema,
-  type InspectPacketFieldsInput,
 } from "../../domain/captures/packetFields.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
-} from "../../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -14,7 +10,6 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPacketCaptureInputSchema,
   packetCaptureSchema,
-  type InspectPacketCaptureInput,
 } from "../../domain/captures/packetCapture.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
