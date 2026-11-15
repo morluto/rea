@@ -1,13 +1,12 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { isRecord } from "../domain/isRecord.js";
 
 export type UnknownRecord = Readonly<Record<string, unknown>>;
-
-const isRecord = (value: unknown): value is UnknownRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const recordValue = (value: unknown): UnknownRecord | undefined =>
   isRecord(value) ? value : undefined;
@@ -81,12 +80,11 @@ export const delayWithCancellation = async (
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<void> => {
-  const maximumTimerDelay = 2_147_483_647;
   let remaining = durationMs;
   while (remaining > 0) {
     if (signal?.aborted === true)
       throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    const delay = Math.min(remaining, maximumTimerDelay);
+    const delay = Math.min(remaining, MAX_NODE_TIMER_DELAY_MS);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);

@@ -19,13 +19,15 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
   CAPTURE_DECODER_SEMI_SPACE_MIB,
   MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+  DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+  MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+  MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
   MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
@@ -34,7 +36,6 @@ import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
   MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
@@ -57,10 +58,7 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
-import {
-  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
-  MAX_WASM_COMMAND_TIMEOUT_MS,
-} from "./wasm/wasmArtifact.js";
+import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -293,7 +291,7 @@ export const ANALYSIS_SETTINGS = {
     ...timer,
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",
     defaultValue: DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-    maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "regex",
     relatedProviders: ["ida", "hopper", "kuna"],
     operations: ["search_strings", "search_procedures"],
@@ -321,6 +319,17 @@ export const ANALYSIS_SETTINGS = {
     provider: "capture",
     operations: ["inspect_web_network_capture"],
   },
+  "capture.packet_json_expansion_bytes": {
+    updateMode: "runtime",
+    environment: "REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES",
+    defaultValue: DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    minimum: MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    maximum: MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "tshark-capture",
+    operations: ["inspect_packet_capture"],
+  },
   "javascript.analysis_timeout_ms": {
     updateMode: "runtime",
     ...timer,
@@ -344,7 +353,7 @@ export const ANALYSIS_SETTINGS = {
     updateMode: "runtime",
     ...timer,
     defaultValue: DEFAULT_WASM_COMMAND_TIMEOUT_MS,
-    maximum: MAX_WASM_COMMAND_TIMEOUT_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "wabt-artifact",
     operations: ["inspect_wasm_artifact"],
     parameter: "command_timeout_ms",
@@ -428,7 +437,7 @@ export const ANALYSIS_SETTINGS = {
     environment: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
     defaultValue: DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
     minimum: MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-    maximum: MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "gdb",
     relatedProviders: ["rizin"],
     operations: [

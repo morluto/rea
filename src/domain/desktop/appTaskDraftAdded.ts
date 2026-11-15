@@ -22,6 +22,7 @@ import {
 import { pairMembers } from "./memberPairing.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
+import { isRecord } from "../isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -67,11 +68,6 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
   readonly children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const attributesOf = (element: Element) =>
   isRecord(element.attributes) ? element.attributes : {};

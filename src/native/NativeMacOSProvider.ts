@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
@@ -79,7 +80,6 @@ import {
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   DEFAULT_NATIVE_UI_DEADLINE_MS,
-  MAX_NATIVE_TIMER_MS,
   readNativeDeadline,
 } from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -496,7 +496,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: deadline.reason,
               message: deadline.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         );
@@ -642,7 +642,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: timeout.reason,
               message: timeout.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         ),

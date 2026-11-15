@@ -87,7 +87,7 @@ const fixture = async (
       args: [],
       env: {},
       mode,
-      ...(protocol === undefined ? {} : { protocol }),
+      protocol: protocol ?? (mode === "attached" ? "legacy" : "modern"),
       timeoutMs,
       workspaceRoot: root,
     },
@@ -123,6 +123,7 @@ it.each([
         url: selected,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
       },
       target,
@@ -157,6 +158,7 @@ it.each([
         url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
       },
       target,
@@ -2323,6 +2325,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     url: "http://127.0.0.1:12345/mcp",
     headers: {},
     mode: "attached" as const,
+    protocol: "legacy" as const,
     timeoutMs: 30,
   };
   const client = new IdaSessionClient(

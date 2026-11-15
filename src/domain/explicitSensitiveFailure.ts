@@ -13,6 +13,7 @@ import {
   resourceConstraintRecovery,
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "./analysisErrorCore.js";
 import { redactExplicitText } from "./explicitSensitiveValues.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -223,14 +224,15 @@ const redactFailure = (
         : { contentIssues: error.contentIssues.map(issueProjection) }),
     });
   }
-  if (error instanceof AnalysisCancelledError)
-    return new AnalysisCancelledError(error.operation, {
-      ...context,
-      cause: error.cause,
+  if (error instanceof AnalysisCancelledError) {
+    const { cause: _redacted, ...cancellationContext } = context;
+    return cancelledBy(error.operation, error, {
+      ...cancellationContext,
       ...(error.userMessage === undefined
         ? {}
         : { userMessage: text(error.userMessage) }),
     });
+  }
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
       ...context,

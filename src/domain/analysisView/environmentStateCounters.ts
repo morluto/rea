@@ -1,10 +1,8 @@
 import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
+import { isRecord } from "../isRecord.js";
 
 type JsonObject = { [key: string]: JsonValue };
-
-const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** A list counter's member names: a top-level member's name not starting with `/`, else a pointer (`/pageInfo/totalRows`, `/~1total`). */
 export const counterPath = (counter: string): string[] =>
@@ -17,7 +15,7 @@ export const counterAt = (
 ): JsonValue | undefined =>
   counterPath(counter).reduce<JsonValue | undefined>(
     (value, name) =>
-      isObject(value) && Object.hasOwn(value, name) ? value[name] : undefined,
+      isRecord(value) && Object.hasOwn(value, name) ? value[name] : undefined,
     body,
   );
 
@@ -30,7 +28,7 @@ export const withCounter = (
   const set = (node: JsonValue, path: readonly string[]): JsonValue => {
     const [name, ...rest] = path;
     if (name === undefined) return value;
-    if (!isObject(node) || !Object.hasOwn(node, name)) return node;
+    if (!isRecord(node) || !Object.hasOwn(node, name)) return node;
     return { ...node, [name]: set(node[name]!, rest) };
   };
   return set(body, counterPath(counter));
