@@ -2100,23 +2100,30 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
   ): Promise<Result<null, ConfigurationError>> {
     if (this.#project !== undefined) return ok(null);
-    if (this.#acceptedProjectDeadline === undefined) {
+    let deadline = this.#acceptedProjectDeadline;
+    if (deadline === undefined) {
       const admitted = readRuntimeSetting(() =>
         kunaProjectDeadline(installation.configuration),
       );
       if (!admitted.ok) return admitted;
-      this.#acceptedProjectDeadline = admitted.value;
+      deadline = admitted.value;
+      this.#acceptedProjectDeadline = deadline;
     }
     // Concurrent first requests share one lookup, which verifies every
     // export file's digest on a fresh server.
-    this.#starting ??= this.#lookupOrBuild(installation).finally(() => {
-      this.#starting = undefined;
-    });
+    this.#starting ??= this.#lookupOrBuild(installation, deadline).finally(
+      () => {
+        this.#starting = undefined;
+      },
+    );
     await this.#starting;
     return ok(null);
   }
 
-  async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
+  async #lookupOrBuild(
+    installation: KunaInstallation,
+    deadline: KunaDeadline,
+  ): Promise<void> {
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
       targetBasename: basename(this.#target.path),
@@ -2145,9 +2152,7 @@ export class KunaSessionClient implements AnalysisClient {
         targetPath: this.#target.path,
         targetSha256: this.#target.sha256,
         signal: this.#session.signal,
-        ...(this.#acceptedProjectDeadline === undefined
-          ? {}
-          : { deadline: this.#acceptedProjectDeadline }),
+        deadline,
         onStatus: (status) => {
           this.#status = status;
           if (status.inventory !== null) listed(status.inventory);
