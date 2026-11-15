@@ -981,6 +981,16 @@ it.each([
   },
 );
 
+it("treats a value thrown uncaught at the top level as reaching host handlers", () => {
+  // `process.on("uncaughtException", ...)` may change the thrown module
+  // before the timer callback reads it.
+  expect(
+    analyzeCommonJsSemanticFixture(
+      `const fs=require('fs'); setTimeout(() => fs.readFileSync('later')); throw fs;`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual([]);
+});
+
 it.each(["constructor", "toString"])(
   "analyzes a module named like an Object.prototype key: %s",
   (specifier) => {

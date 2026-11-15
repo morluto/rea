@@ -1978,8 +1978,8 @@ export function* collectSemanticMemberMutationsSteps(
         }
     },
   });
-  // A value thrown out of its function reaches handlers the throw-to-catch
-  // index does not link to it.
+  // A value thrown out of its function or the program reaches handlers the
+  // throw-to-catch index does not link to it.
   for (const node of state.escapingThrows) markEscaped(node.argument, node);
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
