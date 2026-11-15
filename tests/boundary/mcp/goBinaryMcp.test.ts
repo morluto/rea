@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -113,7 +114,7 @@ mcpTest(
       const evidence = evidenceResultOf(goBinarySchema).parse(
         inspected.structuredContent,
       );
-      expect(evidence.subject?.architecture).toBe("mips");
+      expect(fileIdentity(evidence.subject).architecture).toBe("mips");
       expect(evidence.normalized_result).toMatchObject({
         architecture: "mips",
         bits: 32,

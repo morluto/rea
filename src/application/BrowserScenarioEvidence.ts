@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { isDeepStrictEqual } from "node:util";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
@@ -32,7 +33,7 @@ export const createBrowserScenarioEvidence = (
   provider: ProviderIdentity,
 ): Evidence => {
   const capture = report.facts;
-  return createEvidence(undefined, provider, {
+  return createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: "rea.browser-scenario-capture",
     operation: "capture_browser_scenario",
     parameters: browserScenarioParameters(scenario),

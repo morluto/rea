@@ -160,7 +160,7 @@ it.each([
     if (typeof result.parent_evidence_id !== "string")
       throw new Error("Missing parent reference");
     const parent = harness.session.evidenceById(result.parent_evidence_id);
-    if (parent === undefined || parent.subject === null)
+    if (parent === undefined || parent.subject.identity.kind !== "file")
       throw new Error("Missing retained artifact observation");
     const locations = [
       { kind: "artifact-path", path: parent.subject.local_path },

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -35,7 +36,7 @@ it.each(
   async ({ mode, profile }) => {
     const id = { id: "fixture", name: "Fixture", version: "1" };
     const original = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       id,
       {
         operation: "health",
@@ -174,7 +175,7 @@ it.each([false, true])(
   async (large) => {
     const provider = { id: "fixture", name: "Fixture", version: "1" };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       provider,
       {
         operation: "health",
@@ -283,7 +284,7 @@ it.each([false, true])(
 it("keeps a smaller sibling recovery when a later completed observation exceeds delivery", async () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     provider,
     {
       operation: "health",

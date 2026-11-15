@@ -1,4 +1,5 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -78,11 +79,11 @@ export class CutterBridgeService {
       );
       if (!receipt.ok)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             pending.failure,
             receipt.error,
             "cutter_command",
-          ).bindCleanupDependencies([pending.failure, receipt.error]),
+          ),
         );
       if (!receipt.value) return err(pending.failure);
       pending.release.confirm();
@@ -134,11 +135,11 @@ export class CutterBridgeService {
             );
       throw pending.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             pending.error,
             failure,
             "close_cutter",
-          ).bindCleanupDependencies([pending.error, failure]);
+          );
     }
     if (!pending.ok) throw pending.error;
   }
@@ -164,7 +165,7 @@ export class CutterBridgeService {
       });
       const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           ...CUTTER_PROVIDER_IDENTITY,
           version: output.cutterVersion,
@@ -191,9 +192,8 @@ export class CutterBridgeService {
             identity_status: output.identityStatus,
           },
           rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
           limitations: [
+            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",

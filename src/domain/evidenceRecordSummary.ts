@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceSchema,
+  type Evidence,
+} from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
 import { nativeValueFlowMetadataSchema } from "./native/nativeValueFlow.js";
 
@@ -139,7 +143,7 @@ function* matchingEvidenceRecords(
       (filters.operation !== undefined &&
         filters.operation !== evidence.operation) ||
       (filters.target_sha256 !== undefined &&
-        filters.target_sha256 !== evidence.subject?.digest.sha256) ||
+        filters.target_sha256 !== evidenceFileTarget(evidence)?.sha256) ||
       (filters.analysis_profile_digest !== undefined &&
         filters.analysis_profile_digest !== evidence.analysis_profile?.digest)
     )

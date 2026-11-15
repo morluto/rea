@@ -7,7 +7,6 @@ import {
 } from "../domain/artifactReaderLimits.js";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
@@ -17,9 +16,10 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
   readArtifactFileChunks,
+  abortIfNeeded,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,

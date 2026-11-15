@@ -48,9 +48,9 @@ the fixed Ghidra load segment `0x1000`, and the linear address convention are
 committed in the analysis profile. The handshake rejects language or compiler
 drift. Closing the session deletes the temporary project and snapshot.
 
-The profile also commits `function_body_evidence: complete-inclusive-ranges-v1`,
-so snapshots from older length-only Ghidra results do not satisfy the current
-profile.
+The profile also commits the REA release and a digest of the bridge scripts
+(`producer`), so snapshots from older Ghidra results, such as length-only
+function bodies, do not satisfy the current profile.
 
 ## Headerless COM images
 

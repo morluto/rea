@@ -30,7 +30,7 @@ this process is using. A rejected Windows ChangeTime launch value does not
 establish an accepted configuration, so that failure omits `pending_restart`.
 The other values reported here are in force, so `pending_restart` is false. Prose that only says to
 restart REA is marked `prose`. `mcp_server_restart_required` is a
-server-identity alignment state in `src/serverIdentity.ts`, not a setting field.
+server-identity alignment state in `src/process/ServerIdentity.ts`, not a setting field.
 
 Three numeric limits are absent from this tree and are being moved into the
 runtime system on their own PRs. This audit does not change them:

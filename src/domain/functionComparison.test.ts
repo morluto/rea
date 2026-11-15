@@ -6,7 +6,11 @@ import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import { functionDossierSchema } from "./native/functionDossier.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -124,14 +128,15 @@ const observe = (
       callees: { status: "complete" },
     },
   },
+  target: EvidenceSubjectTarget = {
+    path: `/tmp/function-${digit}`,
+    sha256: digit.repeat(64),
+    format: "mach-o",
+    architecture: "arm64",
+  },
 ): Evidence =>
   createEvidence(
-    {
-      path: `/tmp/function-${digit}`,
-      sha256: digit.repeat(64),
-      format: "mach-o",
-      architecture: "arm64",
-    },
+    target,
     { id: providerId, name: providerId, version: "1" },
     {
       operation: "analyze_function",
@@ -1051,6 +1056,34 @@ describe("function comparison normalization and provenance", () => {
         functionSnapshotFixture(right),
       ),
     ).toThrow(/identifier/u);
+  });
+
+  it("matches entries by address only within the same opened target", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/function.bin",
+      sha256: "9".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const at = (entryPoint: string, body: string) =>
+      functionSnapshotFixture(
+        observe(
+          "9",
+          dossier(body, "0x1000"),
+          "rea-workflow",
+          undefined,
+          raw(entryPoint),
+        ),
+      );
+    const left = at("0x0", "return 0;\n");
+    expect(
+      compareFunctions(left, at("0x0", "return 1;\n")).function_match,
+    ).toMatchObject({ status: "matched", method: "same-entry" });
+    // The same bytes opened at another entry point do not share coordinates.
+    expect(
+      compareFunctions(left, at("0x100", "return 1;\n")).function_match.method,
+    ).not.toBe("same-entry");
   });
 
   it("reports fully observed identical dossiers as unchanged", () => {

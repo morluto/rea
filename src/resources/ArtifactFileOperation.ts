@@ -23,6 +23,8 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
+import { ParseFailureError, type LimitRef } from "../domain/parseFailure.js";
 
 /** Artifact projection plus the exact descriptor owner and physical operation outcome. */
 export class ArtifactFileCleanupFailure<
@@ -242,6 +244,36 @@ export const assertArtifactReadActive = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
+};
+
+/**
+ * Project a failure raised by a domain byte parser over artifact bytes onto the
+ * reader's reasons: the caller's cancellation (`signal.reason`) becomes
+ * `cancelled`, malformed or truncated structure `format`, and a decode budget
+ * `limit` bounded by `limitBoundary`. Unsupported forms and every other cause
+ * pass through unchanged.
+ */
+export const artifactParseFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+  limitBoundary?: (limit: LimitRef) => ArtifactLimitBoundary | undefined,
+): unknown => {
+  if (signal?.aborted === true && Object.is(cause, signal.reason))
+    return new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+      cause,
+    });
+  if (!(cause instanceof ParseFailureError)) return cause;
+  const { failure } = cause;
+  if (failure.kind === "malformed" || failure.kind === "truncated")
+    return new ArtifactReaderFailure("format", cause.message, { cause });
+  if (failure.kind === "limit") {
+    const boundary = limitBoundary?.(failure.limit);
+    return new ArtifactReaderFailure("limit", cause.message, {
+      cause,
+      ...(boundary === undefined ? {} : { boundary }),
+    });
+  }
+  return cause;
 };
 
 /** Recognize only the originating caller's cancellation without discarding cleanup ownership. */

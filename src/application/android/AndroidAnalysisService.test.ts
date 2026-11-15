@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 import { AndroidAnalysisService } from "./AndroidAnalysisService.js";
 import type { AndroidAnalysisPort } from "../../ports/android/AndroidAnalysisPort.js";
@@ -67,7 +68,7 @@ it.each(["omitted", "null", "explicit"] as const)(
       status: "unknown",
       reason: "Calls were not inspected",
     } as const;
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "read_dex",
       parameters: {},
       result: { inventory: true },
@@ -122,7 +123,7 @@ it.each(["omitted", "null", "explicit"] as const)(
       expect(evidence).toMatchObject({
         subject:
           subjectKind === "null"
-            ? null
+            ? { identity: { kind: "unknown", reason: "not-observed" } }
             : { local_path: subjectKind === "omitted" ? path : explicit.path },
       });
     }

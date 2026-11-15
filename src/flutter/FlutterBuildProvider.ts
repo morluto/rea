@@ -7,8 +7,9 @@ import {
   AnalysisCleanupLeaseGroup,
   ArtifactReaderFailure,
   type ArtifactEntry,
+  ZipArtifactReader,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -50,7 +51,6 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
@@ -628,11 +628,7 @@ export class FlutterBuildProvider {
     cleanup: AnalysisError,
     operation: string,
   ): AnalysisError {
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
   }
 
   /** Stop admission and drain active snapshots before attempting retained cleanup. */

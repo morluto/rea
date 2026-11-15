@@ -6,6 +6,5 @@
   "src/domain/javascript/javascriptExportShapeComparisonSchemas.ts": 1,
   "src/domain/javascript/javascriptRouteInventory.ts": 1,
   "src/domain/javascript/javascriptStaticCoverage.ts": 1,
-  "src/domain/native/nativeInitializers.ts": 1,
   "src/domain/windows/ntfsMftAttributes.ts": 1
 }

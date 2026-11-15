@@ -76,7 +76,7 @@ describe("artifact archive safety", () => {
         ),
       ).toMatchObject({
         operation: "inventory_artifact",
-        subject: { format },
+        subject: { identity: { kind: "file", format } },
       });
     },
   );

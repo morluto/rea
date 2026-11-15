@@ -25,7 +25,7 @@ import {
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   malformedInput,
@@ -156,11 +156,11 @@ export const webArtifactReadError = (
       { cause, operation: context.operation },
     );
     bindArtifactFileCleanup(cause, cleanup);
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
   return primary;
 };

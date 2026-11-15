@@ -192,8 +192,7 @@ it("returns cancellation with the validated Evidence when the caller aborts afte
     parameters: input,
     subject: {
       local_path: artifact.path,
-      digest: { sha256: artifact.sha256 },
-      format: "javascript",
+      identity: { sha256: artifact.sha256, format: "javascript" },
     },
     confidence: "derived",
     authority: "shipped-artifact",

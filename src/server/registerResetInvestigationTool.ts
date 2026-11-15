@@ -3,7 +3,7 @@ import {
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -53,11 +53,11 @@ export const registerResetInvestigationTool = ({
           ]);
           if (!process.ok && !artifacts.ok)
             return err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 process.error,
                 artifacts.error,
                 contract.name,
-              ).bindCleanupDependencies([process.error, artifacts.error]),
+              ),
             );
           return process.ok ? artifacts : process;
         },

@@ -8,7 +8,6 @@ import type {
   UImageEntryMetadata,
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
@@ -18,6 +17,7 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
   ArtifactResourceScope,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";

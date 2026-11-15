@@ -38,9 +38,6 @@ export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
  */
 export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
-/** Version of the built-in read-only PE metadata interpretation in profiles. */
-export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v11";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;

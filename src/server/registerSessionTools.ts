@@ -33,9 +33,6 @@ import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
-import { registerInvestigationTools } from "./registerInvestigationTools.js";
-import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
@@ -347,9 +344,7 @@ export const registerSessionTools = (
   const exportContract = toolContract("export_evidence_bundle");
   const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
-  const compareContract = toolContract("compare_process_captures");
   const compareArtifactsContract = toolContract("compare_artifacts");
-  const compareFunctionsContract = toolContract("compare_functions");
   const compareBundlesContract = toolContract("compare_bundles");
   const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
@@ -469,14 +464,13 @@ export const registerSessionTools = (
       });
     }
   };
-  registerProcessComparisonTool(server, session, compareContract);
+  registerServiceTools(server, { sessionDerived: session }, { logger });
   registerArtifactComparisonTool(
     server,
     session,
     compareArtifactsContract,
     options.artifactResources,
   );
-  registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerNativeFunctionMatchingTool(
     server,
     session,
@@ -489,7 +483,6 @@ export const registerSessionTools = (
     compareBundlesContract,
     options.artifactResources,
   );
-  registerInvestigationTools(server, session);
   registerUnknownTools({ server, session });
   registerContextTools(server, session);
 };

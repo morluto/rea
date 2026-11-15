@@ -14,6 +14,8 @@ import {
   type ArtifactTraversalOptions,
   artifactReadCancelledBy,
   ArtifactResourceScope,
+  abortIfNeeded,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
@@ -24,8 +26,6 @@ import {
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,

@@ -10,6 +10,7 @@ import {
   analyzeWebBundleInputSchema,
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
+  webBundleHeapLimit,
   webBundleMemoryExhaustion,
   webBundleResultAdmissionFailure,
   webBundleScriptTimeoutRecovery,
@@ -177,6 +178,13 @@ it("names web-bundle exhaustion by the runtime that enforced it", () => {
   expect(webBundleHeapExhaustedRemediation(node)).toContain(
     "Increase max_heap_mb above 1024",
   );
+  expect(webBundleHeapExhaustedRemediation(node)).not.toContain("--");
+  expect(webBundleHeapLimit(node)).toMatchObject({
+    control_kind: "parameter",
+    parameter: "max_heap_mb",
+    effective_value: 1024,
+    unit: "MiB",
+  });
 
   const commitBytes = 1024 * 1024 * 1024 + 512 * 1024 * 1024;
   const windows = webBundleMemoryExhaustion({
@@ -216,6 +224,8 @@ it("names web-bundle exhaustion by the runtime that enforced it", () => {
   expect(webBundleHeapExhaustedRemediation(bun)).not.toContain(
     "Increase max_heap_mb",
   );
+  // Raising max_heap_mb does not change a Bun allocation exit.
+  expect(webBundleHeapLimit(bun)).toBeUndefined();
   expect(webBundleHeapExhaustedRemediation(bun)).toContain(
     "does not change this exit",
   );
