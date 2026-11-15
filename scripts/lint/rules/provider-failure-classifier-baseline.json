@@ -1,7 +1,6 @@
 {
   "owners": ["src/providers/classifyProviderFailure.ts"],
   "counts": {
-    "src/adb/AdbProvider.ts": 1,
     "src/android/AndroidMappingFile.ts": 3,
     "src/android/JadxConfiguration.ts": 1,
     "src/apkSignature/apkSignatureFailures.ts": 2,
