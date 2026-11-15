@@ -25,6 +25,7 @@ export const rizinCommand = (input: RizinInput): readonly string[] => [
 export const rizinCommandLimitations = (
   input: RizinInput,
 ): readonly string[] => [
+  "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
   "completion_status covers process completion and Rizin shell refusals only. A statement that ran can still fail while Rizin returns exit_code 0, so inspect stderr before treating an empty response as absence.",
   ...(input.asm_arch === undefined &&
   input.asm_bits === undefined &&

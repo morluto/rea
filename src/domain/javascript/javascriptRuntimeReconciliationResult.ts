@@ -1,6 +1,10 @@
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import {
+  reconciliationInputCoverage,
+  type ReconciliationInputStatus,
+} from "./javascriptRuntimeReconciliationGraph.js";
 import type { StaticLoadStateProjection } from "./javascriptRuntimeLoadState.js";
 import type { RuntimeMatchingProjection } from "./javascriptRuntimeReconciliationMatching.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -23,7 +27,8 @@ interface ReconciliationProjection {
 
 interface CompletionFlags {
   readonly outputTruncated: boolean;
-  readonly inputStatus: "complete" | "partial" | "truncated";
+  readonly inputStatus: ReconciliationInputStatus;
+  readonly inputTruncated: boolean;
 }
 
 /** Build and verify the deterministic caller-visible reconciliation result. */
@@ -144,44 +149,34 @@ const reconciliationCoverage = (
   completion: CompletionFlags,
 ): JavaScriptRuntimeReconciliationResult["coverage"] => ({
   status:
-    completion.outputTruncated || completion.inputStatus === "truncated"
-      ? "truncated"
-      : completion.inputStatus === "partial"
-        ? "partial"
-        : "complete-within-inputs",
-  truncated:
-    completion.outputTruncated || completion.inputStatus === "truncated",
+    completion.inputStatus === "unknown"
+      ? "unknown"
+      : completion.outputTruncated || completion.inputStatus === "truncated"
+        ? "truncated"
+        : completion.inputStatus === "partial"
+          ? "partial"
+          : "complete-within-inputs",
+  // A known input truncation stays visible even when the status is unknown.
+  truncated: completion.outputTruncated || completion.inputTruncated,
   omitted_runtime_entities: input.runtime.omittedEntities,
   omitted_reconciliation_items: input.matching.omittedItems,
   omitted_static_load_states: input.loadStates.omittedStates,
   omitted_graph_items: input.omittedGraphItems,
 });
 
-const completionFlags = (input: ReconciliationProjection): CompletionFlags => {
-  const inputTruncated =
-    input.layers.some(({ graph }) => graph.coverage.truncated) ||
-    input.captures.some(({ inspection }) =>
-      inspection.completeness.conditions.includes("truncated"),
-    );
-  const inputPartial =
-    input.layers.some(({ graph }) => graph.coverage.status !== "complete") ||
-    input.captures.some(
-      ({ inspection }) =>
-        inspection.completeness.status !== "complete_within_window",
-    );
-  return {
-    outputTruncated:
-      input.runtime.omittedEntities > 0 ||
-      input.matching.omittedItems > 0 ||
-      input.loadStates.omittedStates > 0 ||
-      input.omittedGraphItems > 0,
-    inputStatus: inputTruncated
-      ? "truncated"
-      : inputPartial
-        ? "partial"
-        : "complete",
-  };
+const inputCompletion = (input: ReconciliationProjection) => {
+  const { status, truncated } = reconciliationInputCoverage(input);
+  return { inputStatus: status, inputTruncated: truncated };
 };
+
+const completionFlags = (input: ReconciliationProjection): CompletionFlags => ({
+  outputTruncated:
+    input.runtime.omittedEntities > 0 ||
+    input.matching.omittedItems > 0 ||
+    input.loadStates.omittedStates > 0 ||
+    input.omittedGraphItems > 0,
+  ...inputCompletion(input),
+});
 
 const reconciliationLimitations = (completion: CompletionFlags): string[] =>
   uniqueSorted([
@@ -191,9 +186,13 @@ const reconciliationLimitations = (completion: CompletionFlags): string[] =>
     "Not-observed means absent from the bounded captures in scope, never globally unloaded.",
     "Caller-declared file and URL mappings are inference inputs and do not expand CDP origin or filesystem-root authority.",
     "Source-map authority remains separate from passive runtime authority.",
-    ...(completion.inputStatus !== "complete"
-      ? ["One or more static graphs or passive captures were incomplete."]
-      : []),
+    ...(completion.inputStatus === "unknown"
+      ? [
+          "One or more static graphs could not establish their coverage, so reconciliation coverage is unknown.",
+        ]
+      : completion.inputStatus !== "complete"
+        ? ["One or more static graphs or passive captures were incomplete."]
+        : []),
     ...(completion.outputTruncated
       ? [
           "Runtime reconciliation omitted entities or classifications during projection.",

@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { decode, Tokenizer, Type, type Token } from "cborg";
 import type {
@@ -7,7 +8,7 @@ import type {
 
 const PROFILE = "terminal-cbor-scalars-v1";
 const MAX_DEPTH = 64;
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const decodeOptions = {
   useMaps: true,
   allowBigInt: true,

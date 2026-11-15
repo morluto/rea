@@ -1,16 +1,23 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
 } from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import { isCdpSessionGoneRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { CdpDomainWith } from "./protocol/CdpCommands.js";
+import {
+  observedFrameUrl,
+  type CdpFrameTree,
+} from "./protocol/CdpFrameTree.js";
 import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
@@ -28,6 +35,110 @@ import {
 export interface CdpTargetSession {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
+}
+
+/** The committed document a target session selected: root frame, loader and URL. */
+export interface CdpDocumentIdentity {
+  readonly frameId: string;
+  /** Absent when CDP did not report the loader, which leaves the document unproven. */
+  readonly loaderId?: string | undefined;
+  /** The frame's complete URL, absent when CDP did not report a readable one. */
+  readonly url?: string | undefined;
+}
+
+/**
+ * How a later observation relates to the selected document. Only a different
+ * root frame or loader proves `changed`; a missing loader is `unknown`, never a
+ * change, and a known unchanged loader at another URL is a same-document
+ * navigation. Consumers decide what each outcome means for their evidence.
+ */
+export type CdpDocumentComparison =
+  | "same"
+  | "same_document_navigation"
+  | "changed"
+  | "unknown";
+
+const knownLoader = (loaderId: string | undefined): string | undefined =>
+  loaderId === "" ? undefined : loaderId;
+
+/** Compare two observations of the selected target's root document. */
+export const compareCdpDocuments = (
+  selected: CdpDocumentIdentity,
+  observed: CdpDocumentIdentity,
+): CdpDocumentComparison => {
+  if (selected.frameId !== observed.frameId) return "changed";
+  const before = knownLoader(selected.loaderId);
+  const after = knownLoader(observed.loaderId);
+  if (before === undefined || after === undefined) return "unknown";
+  if (before !== after) return "changed";
+  return selected.url === observed.url ? "same" : "same_document_navigation";
+};
+
+/** The reply root's document, or undefined when the reply cannot identify it. */
+export const cdpRootDocument = (
+  tree: CdpFrameTree,
+): CdpDocumentIdentity | undefined => {
+  const { frameId, identityIssue, parentRelation, loaderId, loaderIssue } =
+    tree.root.facts;
+  if (
+    frameId === null ||
+    identityIssue !== null ||
+    parentRelation !== "root" ||
+    loaderIssue !== null
+  )
+    return undefined;
+  return { frameId, loaderId, url: observedFrameUrl(tree.root.url) };
+};
+
+/** Coverage note for a document whose loader identity CDP did not report. */
+export const unverifiedDocumentLimitation = (
+  selected: CdpDocumentIdentity,
+): string =>
+  `The ${knownLoader(selected.loaderId) === undefined ? "initial" : "final"} document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.`;
+
+/**
+ * Tracks the selected document across observations. A change is sticky: once
+ * another document was observed, evidence gathered since selection may mix
+ * documents. The first identity stays as the evidence subject.
+ */
+export class CdpDocumentTracker {
+  readonly selected: CdpDocumentIdentity;
+  #current: CdpDocumentIdentity;
+  #changed = false;
+  #unknown = false;
+
+  constructor(selected: CdpDocumentIdentity) {
+    this.selected = selected;
+    this.#current = selected;
+  }
+
+  get current(): CdpDocumentIdentity {
+    return this.#current;
+  }
+
+  /** Another root frame or loader was observed since selection. */
+  get changed(): boolean {
+    return this.#changed;
+  }
+
+  /** Some observation lacked the loader needed to prove the document. */
+  get unknown(): boolean {
+    return this.#unknown;
+  }
+
+  observe(observed: CdpDocumentIdentity): CdpDocumentComparison {
+    const comparison = compareCdpDocuments(this.#current, observed);
+    if (comparison === "changed") this.#changed = true;
+    if (comparison === "unknown") this.#unknown = true;
+    // A missing loader does not forget the loader that proved this document.
+    this.#current = {
+      ...observed,
+      loaderId:
+        knownLoader(observed.loaderId) ??
+        (comparison === "changed" ? undefined : this.#current.loaderId),
+    };
+    return comparison;
+  }
 }
 
 /** Discovery for one caller-selected endpoint and the browser socket that read it. */
@@ -70,7 +181,7 @@ export const openCdpEndpoint = async (
   // The browser-socket handshake and discovery commands stay on the discovery
   // deadline. The selected command deadline starts only after discovery returns.
   const discoveryGuardTimeoutMs = Math.min(
-    MAX_BROWSER_DEADLINE_MS,
+    MAX_NODE_TIMER_DELAY_MS,
     discoveryTimeoutMs + 1_000,
   );
   const discoveryLimits = {
@@ -290,7 +401,10 @@ const cleanupCdpTargetCommands = async (
     signal === undefined
       ? cleanup.signal
       : AbortSignal.any([cleanup.signal, signal]);
-  const timeout = setTimeout(() => cleanup.abort(), 1_000);
+  const timeout = setTimeout(
+    () => cleanup.abort(OwnerCancellation.deadlineElapsed),
+    1_000,
+  );
   timeout.unref();
   try {
     if (signal?.aborted !== true) {
@@ -321,20 +435,12 @@ const cleanupCdpTargetCommands = async (
       );
       return true;
     } catch (cause: unknown) {
-      if (isAlreadyDetachedSessionRejection(cause)) return true;
+      if (isCdpSessionGoneRejection(cause)) return true;
       // If detachment is unconfirmed, transport close becomes the definitive boundary.
       return false;
     }
   } finally {
     clearTimeout(timeout);
-    cleanup.abort();
+    cleanup.abort(OwnerCancellation.noLongerNeeded);
   }
 };
-
-const isAlreadyDetachedSessionRejection = (cause: unknown): boolean =>
-  cause instanceof CdpCommandRejection &&
-  (cause.code === -32_001 ||
-    (cause.reportedMessage !== null &&
-      /no session with given id|session with given id not found/iu.test(
-        cause.reportedMessage,
-      )));

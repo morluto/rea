@@ -7,7 +7,7 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -127,11 +127,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const state = this.#entries.get(entry.adapterKey);
-      if (state === undefined || !sameArtifactEntry(entry, state.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "UnityFS entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        state?.entry,
+        "UnityFS entry does not match its owning inventory",
+      );
       // Validate carrier freshness even when a cached block or unavailable fact suffices.
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);

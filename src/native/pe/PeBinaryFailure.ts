@@ -3,6 +3,7 @@ import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
   projectStableArtifactFailure,
+  readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
@@ -13,13 +14,16 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   type ResourceConstraintRecovery,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceAllowance,
+} from "../metadata/BinaryContainer.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -29,7 +33,8 @@ interface PeBinaryFailureOptions<Limit extends string> {
   readonly operation: string;
   readonly providerId: string;
   readonly fileSizeRemediation: () => string;
-  readonly limit: (cause: BinaryResourceFailure) => Limit | null;
+  /** The allowances the parser names in its `BinaryResourceFailure`. */
+  readonly limits: readonly Limit[];
   readonly limitRecovery: (limit: Limit | null) => ResourceConstraintRecovery;
 }
 
@@ -47,22 +52,18 @@ const peBinaryFailurePrimary = <Limit extends string>(
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      operation,
-      input.path,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(operation, input.path, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (cause instanceof BinaryResourceFailure) {
-    const limit = options.limit(cause);
+    const limit = binaryResourceAllowance(cause, options.limits);
     return new AnalysisResourceConstraintError(
       operation,
       "capacity",

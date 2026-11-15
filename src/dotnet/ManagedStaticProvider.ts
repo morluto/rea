@@ -7,6 +7,7 @@ import {
   type ExecutionOptions,
   type ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
@@ -141,7 +142,7 @@ class ManagedStaticClient implements AnalysisClient {
       if (!admitted.ok) return admitted;
       const bytes = snapshot ?? observed.bytes;
       if (bytes === undefined)
-        throw new TypeError("Managed snapshot bytes are unavailable");
+        throw invariantViolation("Managed snapshot bytes are unavailable");
       this.#snapshotBytes = bytes;
       const result = inspectManagedOperation(
         operation,

@@ -136,6 +136,28 @@ it("rejects truncated marshal without partial success", () => {
 });
 
 it.each([
+  { type: 0x67, message: "Marshal stream ended inside a float." },
+  { type: 0x49, message: "Marshal stream ended inside a 64-bit integer." },
+])(
+  "reports a truncated 8-byte marshal value 0x$type as a malformed truncation",
+  ({ type, message }) => {
+    const bytes = Buffer.concat([
+      pythonPycHeader(3571),
+      Buffer.from([type, 0, 0, 0, 0]),
+    ]);
+    expect(() => parse(bytes)).toThrow(
+      expect.objectContaining({
+        message,
+        failure: expect.objectContaining({
+          kind: "malformed",
+          field: "truncated",
+        }),
+      }),
+    );
+  },
+);
+
+it.each([
   { magic: 3571, layout: "py311", version: "3.13" },
   { magic: 3627, layout: "py311", version: "3.14" },
   { magic: 3666, layout: "py311", version: "3.15" },

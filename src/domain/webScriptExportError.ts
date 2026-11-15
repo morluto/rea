@@ -4,7 +4,6 @@ import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
 /** Publication failure retaining its input/output target and cleanup state. */
 export class WebScriptExportError extends ArtifactOperationError {
   override readonly userMessage: string;
-  override cleanupIncomplete: boolean;
 
   constructor(
     reason: ArtifactOperationError["reason"],
@@ -22,7 +21,8 @@ export class WebScriptExportError extends ArtifactOperationError {
         ...(options.residualPaths ?? []),
       ]),
     ]);
-    this.cleanupIncomplete =
-      options.cleanup !== undefined || (options.residualPaths?.length ?? 0) > 0;
+    this.markCleanupIncomplete(
+      options.cleanup !== undefined || (options.residualPaths?.length ?? 0) > 0,
+    );
   }
 }

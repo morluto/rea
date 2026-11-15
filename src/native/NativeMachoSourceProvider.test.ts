@@ -463,7 +463,7 @@ it.each([
   ["truncated fixed fields", "Mach-O fixed command fields are truncated", 1],
   ["invalid string offset", "Mach-O command string offset is invalid", 2],
 ] as const)(
-  "reports malformed binary %s as output failure with its reason",
+  "reports malformed binary %s as invalid input with its reason",
   async (_case, reason, mode) => {
     const { machoImage, dylibCommand, LC } =
       await import("../artifacts/apple/MachoImage.fixture.js");
@@ -486,9 +486,16 @@ it.each([
     try {
       const result = await client.execute("inspect_macho", {});
       if (result.ok) throw new Error("Expected malformed input refusal");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { operation: "inspect_macho", reason },
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: "inspect_macho",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: ${reason}`,
+          },
+        ],
       });
     } finally {
       await client.close();

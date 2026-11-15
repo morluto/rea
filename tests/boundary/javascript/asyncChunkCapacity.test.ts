@@ -9,7 +9,7 @@ it("retains a wide factory's async keys before normalizing the registration", ()
   const { source, factory } = javascriptAsyncChunkCapacity(count);
   const result = analyzeJavaScriptStaticSource(source);
   expect(result.parse_status).toBe("partial");
-  expect(result.analysis_coverage?.syntax).toEqual({
+  expect(result.analysis_coverage.syntax).toEqual({
     status: "complete",
     error_count: 0,
   });

@@ -4,7 +4,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type { DoctorScopeReport } from "./DoctorScope.js";
 
 /** Free space agentenv's images need where Docker keeps them. */
@@ -153,7 +153,7 @@ export const desktopBuildChecks = (
   result("ps", facts.ps.found, facts.ps.detail, {
     classification: "missing_dependency",
     remediation:
-      "Install procps, whose ps REA's process supervisor runs: sudo apt install procps.",
+      "Install procps, whose ps REA's process supervisor runs from /bin/ps or /usr/bin/ps: sudo apt install procps.",
   }),
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),

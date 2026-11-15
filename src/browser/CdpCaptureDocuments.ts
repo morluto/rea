@@ -146,14 +146,6 @@ export const classifyCdpFrameUrl = (
   };
 };
 
-/** Read the complete identity only when the protocol established it. */
-export const cdpFrameUrl = (
-  frame: UnknownRecord | undefined,
-): string | undefined => {
-  const observed = observeCdpFrameUrl(frame);
-  return observed.kind === "observed" ? observed.url : undefined;
-};
-
 /** Normalize every allowed resource. */
 export const captureResources = (
   tree: CdpResourceTree,

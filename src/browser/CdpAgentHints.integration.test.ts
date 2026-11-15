@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
+import { fakeCdpEvents } from "../../tests/fixtures/fakeCdpEvents.js";
 import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import { inspectWebPage } from "../application/BrowserObservationService.js";
@@ -7,7 +8,7 @@ import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
-import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
+import type { CdpConnection } from "./CdpConnection.js";
 import { captureWebScreenshotInputSchema } from "../domain/webScreenshot.js";
 
 it.each(["", "h:"])(
@@ -96,16 +97,13 @@ it.each(["", "h:"])(
 it.each(["progress", "enable", "terminal", "complete"] as const)(
   "releases WebMCP subscriptions after %s settlement",
   async (stage) => {
-    const listeners = new Set<(event: CdpEvent) => void>();
+    const events = fakeCdpEvents();
     const failure = new Error("controlled discovery interruption");
     const unexpectedTerminal = new Error("terminal progress after failure");
     let interrupted = true;
     const progressUpdates: number[] = [];
     const connection = {
-      onEvent: (listener: (event: CdpEvent) => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
+      onEvent: events.onEvent,
       send: fakeCdpSend((method) => {
         if (method === "Page.getFrameTree")
           return {
@@ -165,7 +163,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
     if (stage === "complete")
       await expect(result).resolves.toMatchObject({ status: "available" });
     else await expect(result).rejects.toBe(failure);
-    expect(listeners.size).toBe(0);
+    expect(events.listenerCount()).toBe(0);
     expect(progressUpdates).toEqual(
       stage === "progress" || stage === "enable" ? [1] : [1, 2],
     );
@@ -173,7 +171,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
     await expect(discoverWebMcp(context)).resolves.toMatchObject({
       status: "available",
     });
-    expect(listeners.size).toBe(0);
+    expect(events.listenerCount()).toBe(0);
   },
 );
 
@@ -245,16 +243,18 @@ it.each(
                 observation_ms: 0,
               }),
             );
-      if (
-        change === "unchanged" ||
-        change === "unknown-loader" ||
-        change === "unknown-initial-loader"
-      ) {
+      // A missing loader leaves the document unproven: coverage is limited
+      // and the initial document stays the subject, never a protocol error.
+      if (change !== "frame" && change !== "loader") {
         if (!result.ok) throw result.error;
         const unknown = change !== "unchanged";
+        const finalOnly =
+          change === "missing-final-loader" || change === "empty-final-loader";
         expect(
           result.value.limitations.some((value) =>
-            value.includes("initial document loader identity was unavailable"),
+            value.includes(
+              `${finalOnly ? "final" : "initial"} document loader identity was unavailable`,
+            ),
           ),
         ).toBe(unknown);
         expect(result.value.completeness.attach_limited_sections).toEqual(
@@ -269,13 +269,7 @@ it.each(
       } else
         expect(result).toMatchObject({
           ok: false,
-          error: {
-            reason:
-              change === "missing-final-loader" ||
-              change === "empty-final-loader"
-                ? "protocol_error"
-                : "target_changed",
-          },
+          error: { reason: "target_changed" },
         });
     } finally {
       await provider.close?.();

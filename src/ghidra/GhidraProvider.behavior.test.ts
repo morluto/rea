@@ -23,7 +23,11 @@ import {
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
-import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
+import {
+  ProcessOutputTokenScanner,
+  type ProviderProcessOutputToken,
+} from "../process/ProcessOutputTokenScanner.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -105,6 +109,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   createFunctionCoordinateContext,
@@ -119,6 +124,7 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 const GHIDRA_ANNOTATIONS_RETAINED =
@@ -611,6 +617,35 @@ describe("Ghidra provider", () => {
   });
 });
 
+describe("Ghidra Xtensa ELF support", () => {
+  it("admits parsed Xtensa targets through profile selection", async () => {
+    const parsed = parseExecutableHeader(elf(1, 1, 94), "x64");
+    if (!parsed.ok) throw new Error("Expected valid Xtensa ELF target");
+    const target: BinaryTarget = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      ...parsed.value,
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "elf",
+          architecture: "xtensa",
+          loader: "auto-from-header",
+          language_id: "auto-from-header",
+          compiler_spec_id: "auto-default",
+        },
+      },
+    });
+  });
+});
+
 describe("Ghidra raw-binary profile", () => {
   it("admits raw 6502 on Windows and binds its 16-bit language without mutation authority", async () => {
     const ghidra = provider(installationHost("win32"));
@@ -743,6 +778,7 @@ describe("Ghidra Mach-O slice support", () => {
         "riscv",
         "powerpc",
         "hexagon",
+        "xtensa",
         "6502",
         "m68k",
       ]),
@@ -4728,6 +4764,42 @@ it.each([
   },
 );
 
+it("keeps a refused setting's configuration error through the provider boundary", async () => {
+  const refusal = new ConfigurationError("invalid bridge reply ceiling", {
+    settings: [
+      {
+        setting: "REA_BRIDGE_MAX_REPLY_BYTES",
+        constraint: "a positive decimal integer",
+      },
+    ],
+  });
+  const failure = new GhidraSessionError(
+    "admission",
+    refusal.message,
+    {},
+    { cause: refusal },
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => err(failure),
+    callTool: async () => err(failure),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected profile");
+
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+
+  expect(result.ok ? undefined : result.error).toBe(refusal);
+  expect(projectAnalysisError(refusal).code).toBe("configuration_invalid");
+});
+
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {
     setting: "ghidra.startup_timeout_ms",
@@ -4791,6 +4863,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
@@ -5010,7 +5098,7 @@ describe("Ghidra missing project program", () => {
 });
 
 describe("Ghidra changed project", () => {
-  const launchFailure = async (cause: unknown) => {
+  const launchFailure = async (cause: unknown, viaLauncher = true) => {
     const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
     onTestFinished(async () => {
       await rm(root, { recursive: true, force: true });
@@ -5022,9 +5110,9 @@ describe("Ghidra changed project", () => {
       "Ghidra headless launch failed",
       { failure_kind: "start" },
       {
-        cause: new GhidraLaunchError("Ghidra headless launch failed", {
-          cause,
-        }),
+        cause: viaLauncher
+          ? new GhidraLaunchError("Ghidra headless launch failed", { cause })
+          : cause,
       },
     );
     const ghidra = provider(
@@ -5078,6 +5166,28 @@ describe("Ghidra changed project", () => {
     );
     expect(error.cause).toBe(physical);
   });
+
+  it.each([true, false])(
+    "keeps the integrity check a changed artifact named (via launcher: %s)",
+    async (viaLauncher) => {
+      const { projected } = await launchFailure(
+        new AnalysisArtifactChangedError(
+          "open_binary",
+          "/projects/selected",
+          GHIDRA_PROJECT_PROFILE_MISMATCH,
+          { integrityCheck: "container-identity" },
+        ),
+        viaLauncher,
+      );
+      expect(projected).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          operation: "list_documents",
+          integrity_check: "container-identity",
+        },
+      });
+    },
+  );
 
   it("keeps the generic start failure for other launch failures", async () => {
     const { projected } = await launchFailure(new Error("spawn failed"));
@@ -5967,6 +6077,14 @@ const output = (text: string) => ({
   bytes: Buffer.byteLength(text),
   retained_bytes: Buffer.byteLength(text),
 });
+/** The memory area the supervisor's JVM runtime parses from a marker. */
+const runtimeExhaustionFacts = (
+  stream: "stdout" | "stderr",
+  marker: ProviderProcessOutputToken,
+) => {
+  const { area } = runtimeExhaustion("jvm", stream, marker);
+  return area === undefined ? {} : { area };
+};
 const failureOutput = (stdout = "", stderr = "") => ({
   stdout: output(stdout),
   stderr: output(stderr),
@@ -5985,6 +6103,7 @@ const failureOutput = (stdout = "", stderr = "") => ({
             offset: observed.offset,
             line: observed.line,
             truncated: observed.truncated,
+            ...runtimeExhaustionFacts(stream, observed),
           },
         ];
   }),
@@ -6223,6 +6342,7 @@ describe("Ghidra OOME beyond the retention budget", () => {
             stream: "stderr",
             offset: 9_000_000,
             line: "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space",
+            area: "heap",
           },
         ],
       },
@@ -6572,6 +6692,14 @@ it("refuses a changed installation before creating a target-bound native client"
         current_installation: { provider_version: "12.1.5" },
       },
     });
+    // The actionable reason reaches the caller, not only details.
+    const projected = projectAnalysisError(result.error);
+    expect(projected.message).toContain(
+      "installation version differs from the selected analysis profile",
+    );
+    expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).toContain("close_binary");
+    expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);
   } finally {
@@ -6757,6 +6885,7 @@ it.each([false, true])(
                   stream: "stderr",
                   offset: 0,
                   line: "java.lang.OutOfMemoryError: Metaspace",
+                  area: "metaspace",
                 },
               ]
             : []),
@@ -6831,7 +6960,7 @@ it("session-observation failure clears only its resolved cleanup dependency afte
       close: async () => {
         closes++;
         if (closes === 1) return err(retained);
-        retained.resolveCleanup();
+        releaseOwnedCleanup(retained);
         return ok(null);
       },
     }),
