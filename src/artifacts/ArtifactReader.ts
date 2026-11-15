@@ -29,7 +29,7 @@ import type {
  * not read the message: a member the reader did not produce, member metadata
  * that differs from inventory, a container or unpacked file whose identity
  * changed, short read coverage, bytes disagreeing with the declared size, or a
- * reader-owned snapshot or handle that is missing.
+ * read stream over a handle the reader does not own.
  */
 export type ArtifactIntegrityCheck =
   | "foreign-entry"

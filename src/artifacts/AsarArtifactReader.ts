@@ -471,11 +471,12 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   #snapshotPath(): string {
+    // Preparation captured a snapshot; only a close queued between preparation
+    // and this operation removes it, as `#assertInventoryActive` reports.
     if (this.#snapshot === undefined)
       throw new ArtifactReaderFailure(
-        "integrity",
-        "ASAR snapshot is not available",
-        { integrityCheck: "reader-ownership" },
+        "unavailable",
+        "ASAR snapshot was closed",
       );
     return this.#snapshot.path;
   }
