@@ -358,10 +358,7 @@ describe("tools/list cursor identity", () => {
     const resumed = paginateToolsList(whole, cursor, budget);
     expect(isToolsListReply(resumed)).toBe(true);
     if (!isToolsListReply(resumed)) return;
-    expect(resumed.result.tools.map((tool) => tool.name)).toEqual([
-      "b",
-      "c",
-    ]);
+    expect(resumed.result.tools.map((tool) => tool.name)).toEqual(["b", "c"]);
     expect(resumed.result.nextCursor).toBeUndefined();
   });
 });
