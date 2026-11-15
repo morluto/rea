@@ -278,7 +278,7 @@ export const projectNativeLoadImageView = (
           sections: "sections" in report ? report.sections.length : null,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
 
   const selected =
