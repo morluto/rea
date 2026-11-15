@@ -22,6 +22,7 @@ import {
   gdbOneShotCommandMayInvalidateDetachProof,
 } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import { LldbSessionManager } from "../lldb/LldbSessionManager.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -102,6 +103,10 @@ export const registerReverseEngineeringCommands = (
   ) => GdbSessionManager = (providerEnvironment) =>
     new GdbSessionManager({ environment: providerEnvironment }),
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
+  createLldbManager: (
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ) => LldbSessionManager = (providerEnvironment) =>
+    new LldbSessionManager({ environment: providerEnvironment }),
 ): void => {
   const service = createService(environment);
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
@@ -362,6 +367,49 @@ export const registerReverseEngineeringCommands = (
                 "Rizin fallback cleanup failed",
               );
             });
+          }
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.debugWithLldb, {
+    description:
+      "Run one unrestricted LLDB console command in an ephemeral session on macOS Apple Silicon",
+    args: z.object({
+      command: z
+        .string()
+        .min(1)
+        .describe("One unrestricted LLDB console command."),
+    }),
+    options: z.object({
+      path: z
+        .string()
+        .optional()
+        .describe("Optional target binary path to launch under LLDB."),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.debugWithLldb, async () => {
+          const manager = createLldbManager(environment);
+          let sessionId: string | undefined;
+          try {
+            const started = await manager.start(
+              signal,
+              options.path === undefined ? {} : { path: options.path },
+            );
+            if (!started.ok) return projectAnalysisError(started.error);
+            sessionId = started.value.session_id;
+            const executed = await manager.execute(
+              sessionId,
+              args.command,
+              signal,
+            );
+            return executed.ok
+              ? executed.value.evidence
+              : projectAnalysisError(executed.error);
+          } finally {
+            if (sessionId !== undefined) {
+              await manager.close(sessionId).catch(() => undefined);
+            }
           }
         }),
       ),

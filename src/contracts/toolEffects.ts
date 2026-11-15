@@ -115,6 +115,28 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
+  start_lldb_session: effects({
+    launchesProcess: true,
+    mutatesSession: true,
+    idempotent: false,
+  }),
+  lldb_command: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  lldb_session_status: effects(),
+  close_lldb_session: effects({
+    launchesProcess: true,
+    mutatesSession: true,
+    mutatesTarget: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
   execute_rizin_command: effects({
     mutatesTarget: true,
     mutatesSession: true,

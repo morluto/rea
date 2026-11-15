@@ -56,6 +56,7 @@ export const CLI_COMMANDS = Object.freeze({
   executeRizinCommand: "execute-rizin-command",
   debugWithGdb: "debug-with-gdb",
   debugWithRizin: "debug-with-rizin",
+  debugWithLldb: "debug-with-lldb",
 
   inspectGoBinary: "inspect-go-binary",
   inspectRustBinary: "inspect-rust-binary",
@@ -243,6 +244,9 @@ export const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "start_gdb_session",
   "gdb_session_status",
   "close_gdb_session",
+  "start_lldb_session",
+  "lldb_session_status",
+  "close_lldb_session",
   "start_rizin_debug_session",
   "rizin_debug_session_status",
   "close_rizin_debug_session",

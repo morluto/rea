@@ -21,6 +21,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
     "runs a caller-selected inspection tool, not target code",
   start_gdb_session:
     "starts a debugger session; execution is attributed to gdb_console",
+  start_lldb_session:
+    "starts a debugger session; execution is attributed to lldb_command",
   start_frida_session:
     "spawned targets remain suspended until resume_frida_session",
   inspect_native_load_image: "states that it does not execute the target",
@@ -138,12 +140,14 @@ describe("tool effects", () => {
       "capture_native_ui_scenario",
       "capture_process_scenario",
       "close_gdb_session",
+      "close_lldb_session",
       "close_rizin_debug_session",
       "cutter_command",
       "execute_rizin_command",
       "gdb_console",
       "install_adb_package",
       "instrument_with_frida",
+      "lldb_command",
       "load_frida_script",
       "observe_native_calls",
       "push_adb_file",

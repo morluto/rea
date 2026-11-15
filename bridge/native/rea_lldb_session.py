@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""Persistent interactive LLDB session daemon for REA on macOS Apple Silicon.
+
+Contributed by Hardik Shah <hardik05@gmail.com> (https://fuzzing.in, @hardik05).
+
+Owns an active LLDB SBDebugger instance and serves JSON-RPC line-delimited
+commands over standard input/output. Manages native Mach-O targets, ARM64/PAC
+register inspection, Objective-C/Swift expression evaluation, breakpoint
+trapping, and process lifecycle with strict timeout boundaries.
+"""
+
+import sys
+import os
+import json
+import threading
+import traceback
+
+# Ensure Xcode / Developer Tools LLDB Python bindings are discoverable
+XCODE_LLDB_PATHS = [
+    "/Volumes/MyData/Applications/Xcode-26.6.0.app/Contents/SharedFrameworks/LLDB.framework/Resources/Python",
+    "/Applications/Xcode.app/Contents/SharedFrameworks/LLDB.framework/Resources/Python",
+    "/Library/Developer/CommandLineTools/Library/PrivateFrameworks/LLDB.framework/Resources/Python",
+]
+
+for p in XCODE_LLDB_PATHS:
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
+        break
+
+try:
+    import lldb
+except ImportError:
+    # Allow fallback if invoked via python wrapper with PYTHONPATH already set
+    pass
+
+
+class ReaLldbSessionDaemon:
+    """Manages one persistent LLDB debugging session over stdio JSON-RPC."""
+
+    def __init__(self):
+        if "lldb" not in sys.modules or not hasattr(lldb, "SBDebugger"):
+            raise RuntimeError("LLDB Python framework is unavailable.")
+        lldb.SBDebugger.Initialize()
+        self.debugger = lldb.SBDebugger.Create()
+        self.debugger.SetAsync(False)
+        self.target = None
+        self.process = None
+
+    def _process_state_report(self) -> str:
+        """Safe human-readable process state description."""
+        try:
+            if not self.process or not self.process.IsValid():
+                return "no process"
+            state = lldb.SBDebugger.StateAsCString(self.process.GetState())
+            report = f"process {self.process.GetProcessID()} state: {state}"
+            if self.process.GetState() == lldb.eStateExited:
+                report += f" (exit status: {self.process.GetExitStatus()})"
+            return report
+        except Exception:
+            return "process state unavailable"
+
+    def execute_command(self, cmd_str: str, timeout_sec: float = 15.0) -> dict:
+        """Executes one LLDB command with thread timeout containment."""
+        if not self.debugger.IsValid():
+            return {
+                "command": cmd_str,
+                "output": "Error: Debugger is not valid",
+                "process_state": "unavailable",
+                "completion_status": "unknown",
+            }
+
+        cmd_str = cmd_str.strip()
+        res = lldb.SBCommandReturnObject()
+        result = {}
+
+        def _run():
+            self.debugger.GetCommandInterpreter().HandleCommand(cmd_str, res)
+            result["done"] = True
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=timeout_sec)
+
+        if not t.is_alive():
+            out = res.GetOutput() or ""
+            err = res.GetError() or ""
+            combined = f"{out}\n{err}".strip() if (err and out) else (out or err).strip()
+            state_desc = self._process_state_report()
+            return {
+                "command": cmd_str,
+                "output": combined,
+                "process_state": state_desc,
+                "completion_status": "complete",
+            }
+
+        # Timed out
+        if self.target and self.target.IsValid():
+            self.process = self.target.GetProcess()
+
+        return {
+            "command": cmd_str,
+            "output": f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}",
+            "process_state": self._process_state_report(),
+            "completion_status": "unknown",
+        }
+
+    def launch(
+        self,
+        target_path: str,
+        args: list = None,
+        env: dict = None,
+        stop_at_entry: bool = True,
+        disable_aslr: bool = True,
+        cwd: str = None,
+        stdin_file: str = None,
+        stdout_file: str = None,
+        breakpoints: list = None,
+    ) -> dict:
+        """Creates target, sets options, and launches inferior process."""
+        if not self.debugger.IsValid():
+            return {"error": "Debugger is not valid", "status": "failed"}
+
+        target_path = os.path.abspath(target_path)
+        if not os.path.exists(target_path):
+            return {"error": f"Binary not found: {target_path}", "status": "failed"}
+
+        # Configure ASLR
+        init_res = lldb.SBCommandReturnObject()
+        aslr_val = "true" if disable_aslr else "false"
+        self.debugger.GetCommandInterpreter().HandleCommand(
+            f"settings set target.disable-aslr {aslr_val}", init_res
+        )
+
+        error = lldb.SBError()
+        self.target = self.debugger.CreateTarget(target_path, None, None, True, error)
+        if not error.Success() or not self.target.IsValid():
+            return {"error": f"Failed to create target: {error.GetCString()}", "status": "failed"}
+
+        # Set initial breakpoints if provided
+        bp_reports = []
+        if breakpoints:
+            for bp in breakpoints:
+                if bp.startswith("0x") or bp.startswith("0X"):
+                    try:
+                        addr = int(bp, 16)
+                        b = self.target.BreakpointCreateByAddress(addr)
+                        bp_reports.append(f"Breakpoint at address {bp}: ID {b.GetID()}")
+                    except ValueError:
+                        pass
+                else:
+                    b = self.target.BreakpointCreateByName(bp)
+                    bp_reports.append(f"Breakpoint at {bp}: ID {b.GetID()} ({b.GetNumLocations()} locations)")
+
+        args_list = args or []
+        env_list = [f"{k}={v}" for k, v in (env or {}).items()]
+        working_dir = cwd or os.path.dirname(target_path)
+        stdin_path = stdin_file or None
+        out_path = stdout_file or None
+
+        launch_res = {}
+
+        def _do_launch():
+            err_obj = lldb.SBError()
+            proc = self.target.Launch(
+                self.debugger.GetListener(),
+                args_list,
+                env_list,
+                stdin_path,
+                out_path,
+                out_path,
+                working_dir,
+                0,
+                stop_at_entry,
+                err_obj,
+            )
+            launch_res["proc"] = proc
+            launch_res["err"] = err_obj
+
+        t = threading.Thread(target=_do_launch, daemon=True)
+        t.start()
+        t.join(timeout=10.0)
+
+        if t.is_alive():
+            return {
+                "error": "Target launch timed out after 10s (possible sync-mode event stall).",
+                "status": "timeout",
+            }
+
+        self.process = launch_res.get("proc")
+        launch_err = launch_res.get("err")
+
+        if not launch_err or not launch_err.Success() or not self.process or not self.process.IsValid():
+            err_msg = launch_err.GetCString() if launch_err else "unknown launch error"
+            return {"error": f"Launch failed: {err_msg}", "status": "failed"}
+
+        pid = self.process.GetProcessID()
+        state = lldb.SBDebugger.StateAsCString(self.process.GetState())
+
+        return {
+            "status": "launched",
+            "pid": pid,
+            "state": state,
+            "target": target_path,
+            "breakpoints": bp_reports,
+        }
+
+    def attach(self, pid: int = None, name: str = None) -> dict:
+        """Attaches to an active process by PID or image name."""
+        if not self.debugger.IsValid():
+            return {"error": "Debugger is not valid", "status": "failed"}
+
+        error = lldb.SBError()
+        listener = self.debugger.GetListener()
+
+        if pid is not None:
+            self.target = self.debugger.CreateTarget("", None, None, True, error)
+            self.process = self.target.AttachToProcessWithID(listener, int(pid), error)
+        elif name:
+            self.target = self.debugger.CreateTarget("", None, None, True, error)
+            self.process = self.target.AttachToProcessWithName(listener, str(name), False, error)
+        else:
+            return {"error": "Either pid or name must be provided to attach", "status": "failed"}
+
+        if not error.Success() or not self.process or not self.process.IsValid():
+            return {"error": f"Attach failed: {error.GetCString()}", "status": "failed"}
+
+        attached_pid = self.process.GetProcessID()
+        state = lldb.SBDebugger.StateAsCString(self.process.GetState())
+
+        return {
+            "status": "attached",
+            "pid": attached_pid,
+            "state": state,
+        }
+
+    def status(self) -> dict:
+        """Queries current process and debugger lifecycle state."""
+        if not self.debugger.IsValid():
+            return {"state": "closed", "process_state": "unavailable", "pid": None}
+
+        pid = None
+        state_str = "no_process"
+        if self.process and self.process.IsValid():
+            pid = self.process.GetProcessID()
+            state_str = lldb.SBDebugger.StateAsCString(self.process.GetState())
+
+        target_path = None
+        if self.target and self.target.IsValid():
+            exe = self.target.GetExecutable()
+            if exe and exe.IsValid():
+                target_path = exe.GetFilename()
+
+        return {
+            "state": "ready",
+            "process_state": state_str,
+            "pid": pid,
+            "target": target_path,
+        }
+
+    def close(self) -> dict:
+        """Terminates or detaches the inferior and destroys LLDB objects."""
+        target_state = "none_observed"
+        try:
+            if self.target and self.target.IsValid():
+                self.process = self.target.GetProcess()
+            if self.process and self.process.IsValid():
+                state = self.process.GetState()
+                if state not in (lldb.eStateExited, lldb.eStateDetached):
+                    self.process.Kill()
+                    target_state = "terminated"
+                else:
+                    target_state = "exited"
+        except Exception:
+            target_state = "unknown"
+
+        try:
+            if self.debugger.IsValid():
+                lldb.SBDebugger.Destroy(self.debugger)
+        except Exception:
+            pass
+
+        return {"status": "closed", "target_state": target_state}
+
+    def serve(self):
+        """Processes line-delimited JSON-RPC requests over stdin."""
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                msg = json.loads(line)
+            except Exception as e:
+                err_resp = {"jsonrpc": "2.0", "error": {"code": -32700, "message": f"Parse error: {e}"}}
+                sys.stdout.write(json.dumps(err_resp) + "\n")
+                sys.stdout.flush()
+                continue
+
+            req_id = msg.get("id")
+            method = msg.get("method")
+            params = msg.get("params", {})
+
+            try:
+                if method == "initialize":
+                    res = {
+                        "status": "ready",
+                        "version": self.debugger.GetVersionString(),
+                    }
+                elif method == "launch":
+                    res = self.launch(
+                        target_path=params.get("path"),
+                        args=params.get("args", []),
+                        env=params.get("env", {}),
+                        stop_at_entry=params.get("stop_at_entry", True),
+                        disable_aslr=params.get("disable_aslr", True),
+                        cwd=params.get("cwd"),
+                        stdin_file=params.get("stdin_file"),
+                        stdout_file=params.get("stdout_file"),
+                        breakpoints=params.get("breakpoints", []),
+                    )
+                elif method == "attach":
+                    res = self.attach(
+                        pid=params.get("pid"),
+                        name=params.get("name"),
+                    )
+                elif method == "command":
+                    timeout_val = float(params.get("timeout", 15.0))
+                    res = self.execute_command(
+                        cmd_str=params.get("command", ""),
+                        timeout_sec=timeout_val,
+                    )
+                elif method == "status":
+                    res = self.status()
+                elif method == "close":
+                    res = self.close()
+                    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": res}) + "\n")
+                    sys.stdout.flush()
+                    break
+                else:
+                    res = {"error": f"Unknown method: {method}"}
+
+                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": res}) + "\n")
+                sys.stdout.flush()
+            except Exception as e:
+                err_resp = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32603,
+                        "message": f"Internal error: {e}",
+                        "trace": traceback.format_exc(),
+                    },
+                }
+                sys.stdout.write(json.dumps(err_resp) + "\n")
+                sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    daemon = ReaLldbSessionDaemon()
+    daemon.serve()

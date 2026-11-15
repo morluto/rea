@@ -135,6 +135,8 @@ import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import { LldbSessionManager } from "../lldb/LldbSessionManager.js";
+import { registerLldbTools } from "./registerLldbTools.js";
 
 const TARGET_FREE_INSTRUCTIONS =
   "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations. An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
@@ -346,6 +348,9 @@ export const createServer = (
   const gdbSessions = new GdbSessionManager({
     environment: providerEnvironment,
   });
+  const lldbSessions = new LldbSessionManager({
+    environment: providerEnvironment,
+  });
   const rizinDebugSessions = new RizinDebugSessionManager(providerEnvironment);
   const android =
     options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
@@ -515,6 +520,16 @@ export const createServer = (
   registerRizinDebugTools(
     server,
     rizinDebugSessions,
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
+    session,
+  );
+  registerLldbTools(
+    server,
+    lldbSessions,
     toolLogger,
     delivery,
     session === undefined
