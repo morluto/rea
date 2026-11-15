@@ -51,7 +51,6 @@ import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
-import type { ExportWebScriptsInput } from "../domain/webScriptExport.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   contractServiceBindings,
@@ -409,13 +408,8 @@ const SERVICE_TOOL_BINDINGS = {
   webScripts: ((resources) => ({
     export_web_scripts: {
       admission: "sdk",
-      // SDK admission has parsed the input against the contract.
       run: (input, options) =>
-        exportWebScriptsValidated(
-          input as ExportWebScriptsInput,
-          resources,
-          options,
-        ),
+        exportWebScriptsValidated(input, resources, options),
     },
   })) satisfies Bind<ArtifactResourceScope>,
   javascriptRecovery: ((service) => ({

@@ -49,12 +49,22 @@ type EvidenceOperation<Input> = (
   options: ExecutionOptions,
 ) => Promise<Result<Evidence, AnalysisError>>;
 
-/** Run the contract's workflow on the raw request and deliver its Evidence. */
-interface EvidenceBinding {
-  readonly admission: ContractInputAdmission;
-  readonly run: EvidenceOperation<unknown>;
-  readonly summary?: never;
-}
+/**
+ * Run the contract's workflow and deliver its Evidence. After SDK admission
+ * the workflow receives the contract's parsed input; an application-admitted
+ * workflow receives the raw request and validates it itself.
+ */
+type EvidenceBinding<Input = unknown> =
+  | {
+      readonly admission: "sdk";
+      readonly run: EvidenceOperation<Input>;
+      readonly summary?: never;
+    }
+  | {
+      readonly admission: "application";
+      readonly run: EvidenceOperation<unknown>;
+      readonly summary?: never;
+    };
 
 /**
  * Admit `detail`/`view` in the adapter, run the workflow on the remaining
@@ -68,7 +78,7 @@ interface RetainedSummaryBinding<Input> {
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
 export type ContractToolBinding<Name extends CatalogToolName> =
-  | EvidenceBinding
+  | EvidenceBinding<ContractInput<Name>>
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
