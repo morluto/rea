@@ -1060,9 +1060,16 @@ describe("windows java resolution without JAVA_HOME", () => {
     return { root, javaDir };
   };
 
+  // The win32 platform option makes appendCallerPath join with backslashes,
+  // so translate its separator back to the host's before touching the real
+  // filesystem; the tests must pass on POSIX hosts as well. Host fixture
+  // directories never contain literal backslashes, and Windows accepts
+  // forward slashes, so the translation is safe on both.
+  const hostPath = (candidate: string) => candidate.replaceAll("\\", "/");
   const inspectionHost = {
-    readText: (path: string) => readFile(path, "utf8"),
-    executable: (path: string) => existsSync(path) && statSync(path).isFile(),
+    readText: (path: string) => readFile(hostPath(path), "utf8"),
+    executable: (path: string) =>
+      existsSync(hostPath(path)) && statSync(hostPath(path)).isFile(),
     probeJava: async (command: string) => {
       observedProbeCommands.push(command);
       return javaProbeOk({
