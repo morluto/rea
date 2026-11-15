@@ -1,3 +1,4 @@
+import type { HostPlatform } from "../platform/HostPlatform.js";
 import type {
   RetainedResourceScope,
   ProviderAvailability,
@@ -29,10 +30,12 @@ export const JADX_DOCTOR_SETTINGS = [
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
   resourceOwner: RetainedResourceScope,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;
   const availability = await inspectJadxAvailability(environment, {
+    host,
     resourceOwner,
     signal,
   });

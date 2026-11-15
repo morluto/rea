@@ -19,7 +19,7 @@ const exists = (path) =>
   );
 
 if (process.argv[1] === source && process.argv[2] === "owner") {
-  const root = await createJadxWorkspaceRoot();
+  const root = await createJadxWorkspaceRoot(process.platform);
   await writeFile(join(root.path, "synthetic.txt"), marker);
   process.stdout.write(JSON.stringify({ path: root.path }) + "\n");
   await new Promise(() => {});
@@ -82,8 +82,10 @@ const stop = async ({ child, exit, path }) => {
 };
 
 /** Two independent owners must never delete one another's private workspace. */
-export async function verifyWindowsGuardianIsolation() {
-  assert.equal(process.platform, "win32");
+export async function verifyWindowsGuardianIsolation(
+  platform = process.platform,
+) {
+  assert.equal(platform, "win32");
   const first = await launch();
   let second;
   try {

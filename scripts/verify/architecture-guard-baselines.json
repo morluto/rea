@@ -280,8 +280,6 @@
     "src/adb/AdbDeviceOutput.ts": 1,
     "src/adb/AdbHostFileName.ts": 1,
     "src/adb/AdbProvider.ts": 1,
-    "src/android/JadxConfiguration.ts": 10,
-    "src/android/JadxWorkspaceRoot.ts": 1,
     "src/apktool/ApktoolConfiguration.ts": 4,
     "src/apktool/ApktoolProvider.ts": 2,
     "src/application/BinaryTargetResolver.ts": 1,
@@ -359,11 +357,9 @@
     "src/server/registerSessionTools.ts": 3,
     "src/serverIdentity.ts": 1,
     "src/signals/SigrokRecordingProvider.ts": 1,
-    "src/wasm/WabtArtifactProvider.ts": 1,
-    "src/windows/WindowsNativeLoader.ts": 1
+    "src/wasm/WabtArtifactProvider.ts": 1
   },
   "ambient-host-architecture": {
-    "src/android/JadxConfiguration.ts": 4,
     "src/application/BinaryTargetResolver.ts": 1,
     "src/application/Doctor.ts": 1,
     "src/application/LinuxHopper.ts": 1,
@@ -371,8 +367,7 @@
     "src/evm/EvmoleInterfaceProvider.ts": 2,
     "src/javascript/recovery/WakaruCommand.ts": 1,
     "src/native/pwntools/PwntoolsDecoder.ts": 2,
-    "src/server/createServer.ts": 1,
-    "src/windows/WindowsNativeLoader.ts": 1
+    "src/server/createServer.ts": 1
   },
   "abort-without-reason": {},
   "completed-abort-reclassification": {
