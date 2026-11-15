@@ -5,7 +5,7 @@ import type {
 import type { Logger } from "pino";
 import type { z } from "zod";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,

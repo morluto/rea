@@ -27,7 +27,7 @@ import type {
   RetainedResourceScope,
   AnalysisProfileResolution,
 } from "../application/AnalysisProvider.js";
-import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 
 const resourceScope: RetainedResourceScope = {

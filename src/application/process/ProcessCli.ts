@@ -29,7 +29,7 @@ import {
   readProcessComparisonSource,
   unsupportedProcessCaptureProvider,
 } from "./ProcessComparisonService.js";
-import { createProgressReporter } from "../ProgressReporter.js";
+import { createProgressReporter } from "../../ports/ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";

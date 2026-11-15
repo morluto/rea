@@ -55,7 +55,7 @@ import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import { errorText } from "./DesktopBuildCommands.js";
 
 const MEASURE = "measure_build_task";

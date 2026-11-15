@@ -1,4 +1,4 @@
-import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
+import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
