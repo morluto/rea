@@ -242,9 +242,11 @@ describe("CDP connection response correlation", () => {
       const event = await eventPromise;
 
       expect(event.wireBytes).toBe(Buffer.byteLength(eventMessage, "utf8"));
-      expect(event.params).toEqual({
-        text: 'escaped quote: " slash: \\ unicode: 雪',
+      expect(event).toMatchObject({
+        sessionId: "session-1",
+        registered: undefined,
       });
+      expect(event).not.toHaveProperty("params");
       expect(deliveredEvents).toBe(1);
 
       const protocolFailure = new Promise((resolve) =>
@@ -296,8 +298,8 @@ describe("CDP connection event admission", () => {
         },
       });
       expect(right.registered).toBe(left.registered);
-      expect(left.params).toEqual(params);
-      expect(right.params).toBe(left.params);
+      expect(left).not.toHaveProperty("params");
+      expect(right).not.toHaveProperty("params");
     } finally {
       await connection.close();
     }
@@ -777,3 +779,63 @@ const startOversizedFrameServer = async (payloadBytes: number) => {
     },
   };
 };
+
+describe("CDP event subscriber failures", () => {
+  it("routes a throwing event listener to the connection's sessions as a protocol failure", async () => {
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Storage.getStorageKey",
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "observe_web_session",
+    );
+    const uncaught: unknown[] = [];
+    const onUncaught = (cause: unknown): void => {
+      uncaught.push(cause);
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const listenerFailure = new Error("listener rejected a malformed event");
+      const later = vi.fn();
+      connection.onEvent(() => {
+        throw listenerFailure;
+      });
+      connection.onEvent(later);
+      const protocolFailures: unknown[] = [];
+      connection.onProtocolFailure((error) => protocolFailures.push(error));
+      const pending = connection.send("Storage.getStorageKey", {}).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
+      browser.emitEvent({ method: "Target.targetCreated", params: {} });
+
+      const failure = await pending;
+      expect(failure).toMatchObject({
+        _tag: "BrowserObservationError",
+        reason: "protocol_error",
+        cause: listenerFailure,
+      });
+      expect(protocolFailures).toEqual([
+        expect.objectContaining({
+          reason: "protocol_error",
+          cause: listenerFailure,
+        }),
+      ]);
+      await expect(connection.send("Page.enable")).rejects.toMatchObject({
+        reason: "protocol_error",
+        cause: listenerFailure,
+      });
+      expect(later).not.toHaveBeenCalled();
+      expect(connection.isReusable()).toBe(false);
+      // The wire is sound: an owner can still restore what it changed.
+      connection.beginCleanupGrace(1_000);
+      await expect(connection.send("Page.enable")).resolves.toEqual({});
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      await connection.close();
+    }
+  });
+});
