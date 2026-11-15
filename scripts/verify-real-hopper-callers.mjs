@@ -1,4 +1,3 @@
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
@@ -61,12 +60,12 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
   cwd: root,
-  env: schemaVerifierEnvironment({
+  env: {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     REA_LOG_LEVEL: "silent",
     REA_HOPPER_CALLER_SCAN_BUDGET_MS: "5000",
-  }),
+  },
   stderr: "pipe",
 });
 let stderr = "";

@@ -47,7 +47,7 @@ async function fixture(eol = "\n") {
   const identity = async (count: number, digest: string) =>
     writeFile(
       join(root, "dist/catalogIdentity.js"),
-      `export const FULL_CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
+      `export const DEFAULT_CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
     );
   await identity(139, "a".repeat(64));
   const generate = (...args: string[]) =>

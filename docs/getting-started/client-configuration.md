@@ -62,26 +62,26 @@ the registration's file does not carry as a
 
 ## Setting launch variables in PowerShell
 
-Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+Shell examples that prefix a command with `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
 use POSIX shell syntax. In PowerShell, set the process environment before
 launching REA:
 
 ```powershell
-$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+$env:REA_MCP_OUTPUT_SCHEMA_PROFILE = "compact"
 rea mcp doctor --json
 ```
 
 The assignment applies to the current PowerShell process and commands it launches.
 Restore the previous value when finished, or use
-`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+`Remove-Item Env:REA_MCP_OUTPUT_SCHEMA_PROFILE` if it was previously unset. It does
 not update an already running MCP server or desktop client.
 
-To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+To select this profile for an agent, set `REA_MCP_OUTPUT_SCHEMA_PROFILE` in that
 client's existing REA registration `env` object (`environment` for OpenCode) and
 restart the client, preserving its other settings. A successful terminal doctor run does not verify the client's
 launch environment. See [launch-environment verification](../development/client-verification.md#launch-environment-verification)
 and the client-specific instructions below. REA setup forwards supported selections,
-including `REA_MCP_INPUT_SCHEMA_PROFILE`, from its environment into the registration;
+including `REA_MCP_OUTPUT_SCHEMA_PROFILE`, from its environment into the registration;
 it does not copy unrelated environment values. Restoring the shell's previous
 value does not undo a selection already saved by setup.
 
@@ -179,7 +179,6 @@ during `tools/list`, merge these settings into the **REA server process's**
 environment, then reconnect:
 
 ```text
-REA_MCP_INPUT_SCHEMA_PROFILE=compact
 REA_MCP_OUTPUT_SCHEMA_PROFILE=compact
 REA_MCP_TOOL_CATALOG_PROFILE=full
 ```
@@ -232,23 +231,20 @@ aligned configuration; doctor does not widen it to expose every REA tool. See
 [Copilot's MCP configuration](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
 for tool-selection settings.
 
-For GitHub Copilot CLI 1.0.95, `gpt-4.1` model metadata can block ordinary
-chat with REA's full input-schema profile before sending a model request
+For GitHub Copilot CLI 1.0.95, `gpt-4.1` model metadata blocked ordinary
+chat with REA's former full input-schema profile before sending a model request
 (`compaction_static_context_blocked`; [#1554](https://github.com/morluto/rea/issues/1554)).
-For the native offline OpenAI-compatible BYOK adapter, full-profile chat and
-analysis also passed with a distinct `COPILOT_PROVIDER_MODEL_ID` such as
+That profile was removed. For the native offline OpenAI-compatible BYOK adapter,
+chat and analysis with it also passed with a distinct `COPILOT_PROVIDER_MODEL_ID` such as
 `rea-gpt-4.1`, `COPILOT_PROVIDER_WIRE_MODEL=gpt-4.1`, and that distinct ID selected
 through `copilot --model rea-gpt-4.1`. The local fixture requested
 `COPILOT_PROVIDER_MAX_PROMPT_TOKENS=1000000`; configure the limit supported by
 your backend. This keeps every full schema and the actual wire model intact.
 It does not establish the effective client budget or fix the built-in-ID path.
-The existing compact profile passed native chat and analysis with the complete
-tool inventory on Linux using a loopback model fixture. After setup, add
-`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of the
-`mcpServers.rea` entry in Copilot's `mcp-config.json`, preserving its other
-settings, then restart the client. Compact advertisements can reduce nested
-schema constraints; REA still validates complete canonical inputs. Full-profile
-`gpt-5.4` metadata is also verified locally. Live model API acceptance and
+The compact input schemas passed native chat and analysis with the complete
+tool inventory on Linux using a loopback model fixture. Compact advertisements
+can reduce nested schema constraints; REA still validates complete canonical
+inputs. Live model API acceptance and
 Windows remain unverified; see [native client verification](../development/testing.md).
 
 ## Claude Desktop
@@ -354,11 +350,6 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
   to restore deferred loading. DeepSeek's Anthropic API guide does not list
   `tool_reference` among its supported content blocks, so this setting may cause
   its requests to fail.
-- To shrink the upfront catalog, add
-  `"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of the
-  `mcpServers.rea` entry in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`
-  when that variable is set), then restart Claude Code. Setup keeps this
-  override.
 - To remove entire tool families from the upfront catalog, run
   `rea setup --client claude_code --tool-families <ids>` with the families the
   workflow needs (see [the advertising scope contract](../reference/mcp-contracts.md#tool-family-advertising-scope)).
@@ -372,13 +363,9 @@ The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
 Output schemas are omitted by default (`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"`).
-If you selected `"full"` and a client's stdio reader rejects the complete
-catalog frame, return to the default or select `"compact"`, which bounds every
-advertised output schema, in REA's `env` object, then restart the client.
-Every profile keeps canonical result validation and complete structured
-results; `compact` keeps a widened root shape and `off` advertises nothing. On catalogs large
-enough that full input schemas alone approach the frame limit, also keep the
-input profile at its `compact` default. See [MCP output schema
+`"compact"` bounds every advertised output schema. Both profiles keep canonical
+result validation and complete structured results; `compact` keeps a widened
+root shape and `off` advertises nothing. See [MCP output schema
 profiles](../reference/mcp-contracts.md#output-schemas).
 
 ## Kimi Code
@@ -429,12 +416,10 @@ client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
-The server advertises compact input schemas by default, which avoids a Moonshot
-Kimi Code 2.2.0 failure observed with the full catalog: its request was rejected
+The server advertises compact input schemas, which avoids a Moonshot Kimi Code
+2.2.0 failure observed with uncompacted schemas: its request was rejected
 because a single tool schema exceeded the provider's size limit. The limit is
-provider-specific and not an MCP protocol limit. Setup preserves an explicit
-`REA_MCP_INPUT_SCHEMA_PROFILE` from the stored registration or the setup
-environment; an explicit `full` profile can still exceed Moonshot's limit.
+provider-specific and not an MCP protocol limit.
 Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
@@ -450,8 +435,7 @@ the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
 a file with comments, trailing commas, or a byte order mark without a backup
 or a write. The entry carries `command`, `args`, and `env`, and setup keeps
 every other server. Local models often have small context windows; the default
-compact input-schema profile applies unless the stored entry or the setup
-environment selects `REA_MCP_INPUT_SCHEMA_PROFILE` explicitly. LM Studio 0.4.26 on macOS loaded
+compact input schemas keep each advertised tool within a bounded size. LM Studio 0.4.26 on macOS loaded
 this registration, and a local model called an REA tool through it. Linux and
 Windows remain unverified.
 
@@ -640,8 +624,8 @@ workload needs more time. Devin honors `XDG_CONFIG_HOME` for its
 
 An older REA input containing acyclic local references was rejected by a
 Responses-compatible Kimi gateway as “infinite recursion”; expanding those
-references succeeded. A separate full-profile input failed the provider's
-schema-size limit. These are distinct reported failures, not proof that the
+references succeeded. A separate input under REA's former full input profile
+failed the provider's schema-size limit. These are distinct reported failures, not proof that the
 canonical schema is recursive. Current REA inputs are already self-contained;
 see [schema advertisement](../reference/mcp-contracts.md#schema-advertisement).
 
@@ -649,17 +633,10 @@ For this failure, inspect the active MCP launch command and refresh the REA
 installation that command actually runs. A configured package selector or the
 installed skill version alone does not identify a cached or still-running
 server. Follow [installation and update guidance](installation.md#diagnose-update-and-remove).
-Then merge this setting into the REA entry in `$CODEX_HOME/config.toml`
-(`~/.codex/config.toml` by default), preserving its launcher and other settings:
-
-```toml
-[mcp_servers.rea.env]
-REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
-```
-
-If that table already exists, add or update the key there. Restart/reconnect
-Codex so REA reads the new environment. Compact is now REA's default, but an
-explicit `full` override remains effective until changed. It preserves the
+REA advertises compact input schemas. A registration that still sets
+`REA_MCP_INPUT_SCHEMA_PROFILE = "full"` in `$CODEX_HOME/config.toml`
+(`~/.codex/config.toml` by default) fails at startup, so remove that key and
+restart/reconnect Codex. Compact advertisement preserves the
 tool inventory and canonical server validation while reducing advertised input
 detail. The probes in [#5160](https://github.com/morluto/rea/issues/5160) covered
 individual tools through one gateway, not the entire current catalog or a

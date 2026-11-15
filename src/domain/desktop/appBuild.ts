@@ -1,7 +1,6 @@
 import {
   BUILD_COMPUTER_SETTINGS,
   BUNDLE_SETTING_VARIABLE,
-  isBundleSettingVariable,
 } from "./buildComputerSettings.js";
 import { buildSecretHandleSchema } from "./buildSecrets.js";
 import { createHash } from "node:crypto";
@@ -9,6 +8,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { excludedValues } from "../schemaConstraints.js";
 import {
   appModuleFile,
   aptSources,
@@ -149,14 +149,11 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     ),
     settings: z
       .record(
-        z
-          .string()
-          .regex(BUNDLE_SETTING_VARIABLE)
-          .refine(
-            isBundleSettingVariable,
-            "Build host control names are reserved.",
-          )
-          .meta({ not: { enum: [...BUILD_COMPUTER_SETTINGS] } }),
+        excludedValues(
+          z.string().regex(BUNDLE_SETTING_VARIABLE),
+          BUILD_COMPUTER_SETTINGS,
+          "Build host control names are reserved.",
+        ),
         buildSecretHandleSchema,
       )
       .optional()
