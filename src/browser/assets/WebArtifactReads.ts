@@ -1,19 +1,17 @@
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
+  type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -27,7 +25,7 @@ import {
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   malformedInput,
@@ -158,11 +156,11 @@ export const webArtifactReadError = (
       { cause, operation: context.operation },
     );
     bindArtifactFileCleanup(cause, cleanup);
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
   return primary;
 };

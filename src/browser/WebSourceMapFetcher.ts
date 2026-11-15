@@ -1,7 +1,7 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import * as t from "@babel/types";
 import { createHash } from "node:crypto";
-import { decodeValidatedSourceMapLeaves } from "../javascript/sourceMaps/DecodedSourceMap.js";
+import { decodeValidatedSourceMapLeaves } from "../domain/decodedSourceMap.js";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
@@ -48,7 +48,7 @@ import {
   isSourceMapSectionOverlap,
   sourceMapLimitFailure,
   type SourceMapLeaf,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import {
   malformedInput,
   type ParseFailureError,

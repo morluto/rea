@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vitest";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";

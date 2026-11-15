@@ -4,11 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import { createCatalogIdentity } from "../dist/catalogIdentity.js";
-import {
-  parseMcpOutputSchemaProfile,
-  resolveMcpOutputSchemaProfile,
-} from "../dist/config/mcpOutputSchemaProfile.js";
+import { createCatalogIdentity } from "../dist/contracts/catalog/catalogIdentity.js";
+import { parseMcpOutputSchemaProfile } from "../dist/config/mcpOutputSchemaProfile.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -32,6 +29,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createAnthropicModelFixture } from "./verify/clients/anthropic-model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { resolveMcpOutputSchemaProfile } from "../dist/contracts/mcpSchemaPresentation.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;

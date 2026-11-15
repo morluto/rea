@@ -102,8 +102,6 @@ export type AnalysisControlLimit = {
   | {
       readonly control_kind: "parameter";
       readonly parameter: string;
-      /** CLI spelling of the same per-call parameter. */
-      readonly cli_flag: string;
       readonly applies_at: "next_call";
     }
   | {

@@ -1,5 +1,5 @@
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, parse, sep } from "node:path";
+import { dirname, join, parse } from "node:path";
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
@@ -310,19 +310,20 @@ cliTest(
     await writeFile(binary, image.bytes);
     await symlink("A", join(binary, "..", "..", "Current"));
     for (const { input, cwd, selected } of [
+      // The CLI drops `.` segments and keeps every `..` for the filesystem.
       { input: app, cwd: root, selected: app },
-      { input: `${app}/./`, cwd: root, selected: `${app}/./` },
-      { input: "Fixture.app/.", cwd: root, selected: `${app}/.` },
-      { input: ".", cwd: app, selected: `${app}${sep}.` },
+      { input: `${app}/./`, cwd: root, selected: `${app}/` },
+      { input: "Fixture.app/.", cwd: root, selected: `${app}/` },
+      { input: ".", cwd: app, selected: `${app}/` },
       {
         input: "..",
         cwd: join(app, "Contents"),
-        selected: `${app}${sep}Contents${sep}..`,
+        selected: `${app}/Contents/..`,
       },
       {
         input: ".././..",
         cwd: join(app, "Contents", "Frameworks"),
-        selected: `${app}${sep}Contents${sep}Frameworks${sep}.././..`,
+        selected: `${app}/Contents/Frameworks/../..`,
       },
     ]) {
       const result = await cli.run({
@@ -339,6 +340,7 @@ cliTest(
         format: "mach-o",
       });
       expect(evidence.subject?.local_path).toBe(binary);
+      expect(evidence.caller_input_path).toBe(input);
     }
 
     const empty = await cli.run({
@@ -346,9 +348,10 @@ cliTest(
       cwd: app,
     });
     expect(empty.exitCode, empty.stderr).toBe(1);
+    // Argv parsing refuses an empty path before the reader runs.
     expect(empty.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_electron_fuses" },
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "path" })],
     });
   },
 );

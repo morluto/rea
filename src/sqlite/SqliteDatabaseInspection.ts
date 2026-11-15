@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { Budget } from "../domain/budget.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import {
   SQLITE_ROW_LIMIT_DEFAULT,
@@ -80,26 +81,30 @@ type SelectedTableFacts = Pick<
   readonly orderKey?: RowKeyFacts;
 };
 
+const replyExhausted = (): SqliteInspectionFailure =>
+  new SqliteInspectionFailure(
+    "output-limit",
+    "Complete SQLite evidence exceeds the 16 MiB JSON reply budget; no partial success was returned.",
+  );
+
 class OutputBudget {
-  #bytes = 1024;
+  readonly #bytes = new Budget(SQLITE_DATABASE_LIMITS.outputBytes);
+  constructor() {
+    // The reply envelope's fixed cost.
+    this.#bytes.charge(1024, replyExhausted);
+  }
   retain(value: unknown): void {
     // Count bounded encoded parts, including escapes, without allocating a
     // document-sized string just to decide whether it fits the reply.
-    this.#bytes += 1;
-    for (const part of jsonParts(value)) {
-      this.#bytes += Buffer.byteLength(part);
-      if (this.#bytes > SQLITE_DATABASE_LIMITS.outputBytes)
-        throw new SqliteInspectionFailure(
-          "output-limit",
-          "Complete SQLite evidence exceeds the 16 MiB JSON reply budget; no partial success was returned.",
-        );
-    }
+    this.#bytes.charge(1, replyExhausted);
+    for (const part of jsonParts(value))
+      this.#bytes.charge(Buffer.byteLength(part), replyExhausted);
   }
   beforeDecode(row: z.output<typeof arrayRow>): void {
-    let minimumBytes = this.#bytes;
+    let minimumBytes = 0;
     for (const value of row)
       if (typeof value === "string") minimumBytes += Buffer.byteLength(value);
-    if (minimumBytes > SQLITE_DATABASE_LIMITS.outputBytes)
+    if (minimumBytes > this.#bytes.remaining)
       throw new SqliteInspectionFailure(
         "output-limit",
         "Selected cells exceed the 16 MiB reply budget before text/hex expansion.",
@@ -110,10 +115,7 @@ class OutputBudget {
       (total, length) => total + length * 2n,
       BigInt(lengths.length * 64),
     );
-    if (
-      encodedBytes + BigInt(this.#bytes) >
-      BigInt(SQLITE_DATABASE_LIMITS.outputBytes)
-    )
+    if (encodedBytes > BigInt(this.#bytes.remaining))
       throw new SqliteInspectionFailure(
         "output-limit",
         "Selected row byte lengths exceed the 16 MiB reply budget before hex projection.",

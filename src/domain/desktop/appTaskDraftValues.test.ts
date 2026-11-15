@@ -14,6 +14,15 @@ import { compactValue } from "./compactValue.js";
 import { resolvePointer } from "./viewPointer.js";
 import { zipEntry, zipView } from "./zipView.js";
 
+/** The expected preview: whole characters up to `limit`, then "…" when cut. */
+const wholeCut = (text: string, limit: number): string => {
+  if (text.length <= limit) return text;
+  const end = /[\uD800-\uDBFF]/u.test(text.charAt(limit - 1))
+    ? limit - 1
+    : limit;
+  return `${text.slice(0, Math.max(0, end))}…`;
+};
+
 it("cuts XML previews after escaping, including entity and surrogate boundaries", () => {
   const element = {
     name: "n",
@@ -32,9 +41,9 @@ it("cuts XML previews after escaping, including entity and surrogate boundaries"
     complete.length,
     complete.length + 1,
   ])
-    expect(compactValue(element, limit, "xml")).toBe(
-      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
-    );
+    expect(compactValue(element, limit, "xml")).toBe(wholeCut(complete, limit));
+  // A cut inside the emoji's surrogate pair drops the whole character.
+  expect(compactValue(element, 11, "xml")).toBe('<n value="…');
   expect(
     compactValue(
       { name: "n", attributes: { value: "&".repeat(1_000_000) }, children: [] },
@@ -48,9 +57,8 @@ it("cuts JSON previews after escaping keys and values", () => {
   const value = { '😀"\n': ["a\n😀\\\ud800"] };
   const complete = JSON.stringify(value);
   for (let limit = 0; limit <= complete.length + 1; limit += 1)
-    expect(compactValue(value, limit, "json")).toBe(
-      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
-    );
+    expect(compactValue(value, limit, "json")).toBe(wholeCut(complete, limit));
+  expect(compactValue(value, 3, "json")).toBe('{"…');
 });
 
 /** A household book: accounts, payees and categories by key, and operations naming them. */

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
@@ -28,6 +29,7 @@ import {
   FIRST_BOOK,
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 interface ToolSchemas {
   readonly name: string;
@@ -575,7 +577,12 @@ describe("MCP root input schemas", () => {
         const tool = advertised.get(name);
         if (contract === undefined || tool === undefined)
           throw new Error(`${name} was not advertised`);
-        const validate = ajv.compile(tool.inputSchema);
+        const validate = ajv.compile(
+          advertiseTool(
+            { inputSchema: tool.inputSchema },
+            advertisedToolPresentation("off"),
+          ).inputSchema ?? {},
+        );
         const base = {
           cdp_endpoint: "http://127.0.0.1:9222",
           target_id: "target",
@@ -591,7 +598,7 @@ describe("MCP root input schemas", () => {
             (name === "inspect_web_page" && flag === false);
           const parsed = contract.inputSchema.safeParse(input);
           expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
-          // The advertisement relaxes Boolean literals; the canonical parser
+          // The advertised dialect relaxes Boolean literals; the canonical parser
           // still rejects false when this operation requires script sources.
           expect(validate(input), `${name}: ${String(flag)}`).toBe(
             flag === undefined || typeof flag === "boolean",

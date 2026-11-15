@@ -11,7 +11,7 @@ import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

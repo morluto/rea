@@ -35,23 +35,25 @@ export interface ArtifactAdmissionLimit {
  * output tree used after commit or whose cleanup could not be verified,
  * or a verification traversal that did not reproduce every inventoried entry.
  */
-export type ArtifactIntegrityCheck =
-  | "foreign-entry"
-  | "entry-metadata"
-  | "container-identity"
-  | "unpacked-entry-identity"
-  | "member-identity"
-  | "image-checksum"
-  | "read-coverage"
-  | "declared-size"
-  | "reader-ownership"
-  | "declared-digest"
-  | "layout-consistency"
-  | "reconstruction"
-  | "inventory-node"
-  | "output-readback"
-  | "output-lifecycle"
-  | "traversal-coverage";
+export const ARTIFACT_INTEGRITY_CHECKS = [
+  "foreign-entry",
+  "entry-metadata",
+  "container-identity",
+  "unpacked-entry-identity",
+  "member-identity",
+  "image-checksum",
+  "read-coverage",
+  "declared-size",
+  "reader-ownership",
+  "declared-digest",
+  "layout-consistency",
+  "reconstruction",
+  "inventory-node",
+  "output-readback",
+  "output-lifecycle",
+  "traversal-coverage",
+] as const;
+export type ArtifactIntegrityCheck = (typeof ARTIFACT_INTEGRITY_CHECKS)[number];
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {

@@ -36,13 +36,14 @@ import { UnknownRegistryError } from "./unknownRegistryError.js";
 import {
   childFailureDiagnostics,
   projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
 } from "./analysisErrorProjection.js";
 import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
 } from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 import { analysisSettingLimit } from "./analysisSettingDefinitions.js";
 import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
@@ -1909,5 +1910,61 @@ describe("analysis error projection: composed failures for a caller lifetime", (
       message: "Only this request stopped.",
       remediation: { action: "Rerun with a longer launch deadline." },
     });
+  });
+});
+
+describe("analysis error projection: composite argument observations", () => {
+  const left = { kind: "retained-evidence", evidence_id: "left" } as const;
+  const right = { kind: "retained-evidence", evidence_id: "right" } as const;
+  const own = { kind: "retained-evidence", evidence_id: "comparison" } as const;
+
+  it("keeps each argument's observation beside the failure's own partial", () => {
+    const failure = new AnalysisCancelledError("compare_managed_members", {
+      partialObservation: own,
+    })
+      .retainArgumentObservation("left", left)
+      .retainArgumentObservation("right", right)
+      .retainArgumentObservation("left", right);
+
+    expect(projectAnalysisError(failure).details).toMatchObject({
+      partial_observation: own,
+      argument_observations: [
+        { argument: "left", observation: left },
+        { argument: "right", observation: right },
+      ],
+    });
+    expect(
+      projectAnalysisErrorWithoutPartialObservation(failure).details,
+    ).not.toHaveProperty("argument_observations");
+    expect(
+      projectAnalysisError(
+        new AnalysisCancelledError("compare_managed_members"),
+      ).details,
+    ).not.toHaveProperty("argument_observations");
+  });
+
+  it("reads an inner failure's argument observations through cleanup before and after it settles", () => {
+    const primary = new AnalysisInputError(
+      "compare_managed_members",
+    ).retainArgumentObservation("left", left);
+    const cleanup = new ProviderCleanupError("fixture", ["fixture-file"], {});
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+    ).bindCleanupDependencies([cleanup]);
+    const expected = [{ argument: "left", observation: left }];
+
+    expect(projectAnalysisError(composed).details).toMatchObject({
+      cleanup: "incomplete",
+      argument_observations: expected,
+    });
+    expect(
+      projectAnalysisErrorWithoutPartialObservation(composed).details,
+    ).not.toHaveProperty("argument_observations");
+
+    releaseOwnedCleanup(cleanup);
+    expect(
+      projectAnalysisError(composed).details?.argument_observations,
+    ).toEqual(expected);
   });
 });

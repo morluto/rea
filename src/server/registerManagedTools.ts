@@ -1,5 +1,5 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   isManagedToolName,

@@ -5,13 +5,13 @@ import type {
 import type { Logger } from "pino";
 import type { z } from "zod";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
@@ -29,6 +29,11 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
+import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
+import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Application service executing one named contract operation. */
 export interface ContractToolService<TOperation extends string> {
@@ -136,7 +141,10 @@ export const createRetainedSummaryToolHandler = <
   )(contract);
 };
 
-/** Bind a named Evidence-producing operation to shared logging and delivery. */
+/**
+ * Bind a named Evidence-producing operation to shared logging and delivery.
+ * The operation receives the request signal and its MCP progress reporter.
+ */
 export const createEvidenceToolHandler =
   (
     server: EvidenceMcpServer,
@@ -147,16 +155,105 @@ export const createEvidenceToolHandler =
     logger: Logger,
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
+    viewSource?: (input: unknown) => JsonValue | undefined,
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
     runEvidenceToolOperation(
-      { server, logger, recordEvidence, withAdmittedAnalysis },
+      { server, logger, recordEvidence, withAdmittedAnalysis, viewSource },
       contract,
       undefined,
       { input, context },
-      (selected, { signal }) => operation(selected, { signal }),
+      operation,
     );
+
+/** The MCP request a value-returning workflow runs for. */
+export interface ValueToolRequest {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+  /** The request itself, for workflows that report the client's own facts. */
+  readonly context: ServerContext;
+}
+
+/**
+ * Bind a named workflow returning a plain JSON value to shared logging and
+ * delivery. It records no Evidence and runs outside analysis admission.
+ */
+export const createValueToolHandler =
+  (
+    server: EvidenceMcpServer,
+    operation: (
+      input: unknown,
+      request: ValueToolRequest,
+    ) => Promise<Result<JsonValue, AnalysisError>>,
+    logger: Logger,
+  ) =>
+  (contract: ToolContract) =>
+  async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
+    server.delivery.toCallToolResult(
+      await logToolExecution(logger, contract.name, () =>
+        operation(input, {
+          signal: context.mcpReq.signal,
+          progress: mcpProgressReporter(context),
+          context,
+        }),
+      ),
+      contract,
+    );
+
+/**
+ * Derive Evidence from Evidence the session holds. The session owner admits
+ * the call, resolves its session-held inputs, retains the sources the
+ * derivation read and records the derived Evidence with its unknowns, so
+ * provenance is the same whichever tool derives it.
+ */
+export const createDerivedToolHandler =
+  (
+    server: EvidenceMcpServer,
+    session: BinarySessionPort,
+    derive: (
+      input: unknown,
+      evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"],
+      signal: AbortSignal,
+    ) => Result<InvestigationWorkflowExecution, AnalysisError>,
+    logger: Logger,
+  ) =>
+  (contract: ToolContract) => {
+    const admission = sessionAdmission({ kind: "session", session });
+    const evidenceForAnalysis = session.evidenceForAnalysis.bind(session);
+    return async (
+      input: unknown,
+      context: ServerContext,
+    ): Promise<CallToolResult> =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        contract.name,
+        context.mcpReq.signal,
+        async () =>
+          deliverInvestigationWorkflow(
+            server,
+            session,
+            contract,
+            await logToolExecution(logger, contract.name, () =>
+              runDerivedOperation(
+                context,
+                contract.name,
+                () => {
+                  const result = derive(
+                    input,
+                    evidenceForAnalysis,
+                    context.mcpReq.signal,
+                  );
+                  if (!result.ok) throw result.error;
+                  return result.value;
+                },
+                (value) => value,
+              ),
+            ),
+          ),
+      );
+  };
 
 /** One owner for optional-provider admission, execution, recording and delivery. */
 export const runEvidenceToolOperation = async <Input>(

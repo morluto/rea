@@ -21,7 +21,7 @@ import {
   type EnvironmentToolAnswer,
 } from "../../application/environment/environmentToolAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { transformAdvertisedInputJsonSchema } from "../../contracts/toolSchemaMetadata.js";
 import {
   advertisedEnvironmentTool,

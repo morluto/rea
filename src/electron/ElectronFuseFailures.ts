@@ -1,14 +1,14 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -57,11 +57,11 @@ export const electronFuseFailure = (
             ? undefined
             : cancelledBy(operation, carriedReason(cancellation.reason));
       if (primary !== undefined)
-        return analysisErrorWithCleanupFailure(
+        return analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           operation,
-        ).bindCleanupDependencies([primary, cleanup]);
+        );
     }
     return cleanup;
   }

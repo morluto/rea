@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
-import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";

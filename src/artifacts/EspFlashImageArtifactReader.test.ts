@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { EspFlashImageArtifactReader } from "./EspFlashImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as regionReads from "./EspFlashRegionReads.js";

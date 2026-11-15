@@ -6,13 +6,13 @@ import {
   DirectoryArtifactTraversalLimit,
   type DirectoryArtifactEntry,
 } from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactFileCompletion } from "./ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  artifactFileCompletion,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+  abortIfNeeded,
+} from "../resources/index.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
@@ -22,8 +22,8 @@ import {
   retainedTextBytes,
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
-import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { DesktopApplicationPort } from "../ports/artifacts/DesktopApplicationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   DesktopApplication,
   DesktopFact,

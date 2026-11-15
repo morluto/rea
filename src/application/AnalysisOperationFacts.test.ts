@@ -14,7 +14,7 @@ import { executeFact } from "./AnalysisOperationFacts.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 

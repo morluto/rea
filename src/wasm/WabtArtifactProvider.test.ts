@@ -10,7 +10,7 @@ import {
   WASM_RESOURCE_DEFAULTS,
 } from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -367,6 +367,8 @@ it("preserves physical validation rejection when its diagnostics contain malform
     expect(result.error.capturedOutput).toEqual({
       stdout: "",
       stderr: "invalid \ufffd",
+      stdout_bytes: 0,
+      stderr_bytes: 9,
       exit_code: 7,
       signal: null,
       truncated: false,
@@ -1029,6 +1031,16 @@ it("rejects configured WABT tools whose admitted releases disagree", async () =>
     expect(projected.message).toContain(
       "Configured WABT tools report different releases",
     );
+    // The rejected banner keeps what the process wrote, not only its text.
+    expect(result.error.capturedOutput).toEqual({
+      stdout: "1.0.44\n",
+      stderr: "",
+      stdout_bytes: 7,
+      stderr_bytes: 0,
+      exit_code: 0,
+      signal: null,
+      truncated: false,
+    });
   } finally {
     await provider.close();
   }
