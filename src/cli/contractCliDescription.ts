@@ -62,6 +62,10 @@ export interface CliFieldProjection {
   readonly alias?: string;
   /** CLI help, when it differs from the contract field's description. */
   readonly description?: string;
+}
+
+/** How one top-level contract field is spelled on the CLI. */
+export interface CliContractFieldProjection extends CliFieldProjection {
   /**
    * The value an omitted option takes on the CLI, for a contract field that
    * has no default, such as the input branch a bare command selects. The
@@ -147,7 +151,7 @@ export interface CliContractProjection<
   readonly flatten?: {
     readonly [Key in Field]?: Readonly<Record<string, CliFieldProjection>>;
   };
-  readonly fields?: { readonly [Key in Field]?: CliFieldProjection };
+  readonly fields?: { readonly [Key in Field]?: CliContractFieldProjection };
   /**
    * Optional fields this one-shot command does not expose, each with the
    * reason. The contract's own default applies.
@@ -878,8 +882,9 @@ const branchSelectingChoice = (
 
 /**
  * A field only some input branches declare, with one schema there. The CLI
- * takes it as an optional option; the selected branch's contract parse
- * refuses it when that branch does not declare it.
+ * takes it as an optional option without a parse-time default, so another
+ * branch never receives it; the selected branch's contract parse applies
+ * its default, or refuses the field when that branch does not declare it.
  */
 const branchOnlyField = (
   branches: readonly (z.ZodType | undefined)[],
@@ -894,11 +899,32 @@ const branchOnlyField = (
     declared.some((branch) => branch !== first)
   )
     return undefined;
-  if (admitsOmission(first)) return first;
+  if (admitsOmission(first)) return withoutDefault(first);
   const optional = first.optional();
   return first.description === undefined
     ? optional
     : optional.describe(first.description);
+};
+
+/**
+ * An option that must stay omitted when the caller omits it, because the
+ * input branch or route the caller selects applies its own default on
+ * admission. Help and `--schema` still state the default, in the
+ * description and as JSON Schema `default`.
+ */
+export const withoutDefault = (schema: z.ZodType): z.ZodType => {
+  if (!(schema instanceof z.ZodDefault)) return schema;
+  const value: unknown = schema.parse(undefined);
+  const omittable = (schema.removeDefault() as z.ZodType).optional();
+  const shown = typeof value === "string" ? value : JSON.stringify(value);
+  return omittable.meta({
+    ...schema.meta(),
+    description:
+      schema.description === undefined
+        ? `Default: ${shown}`
+        : `${schema.description} (default: ${shown})`,
+    default: value,
+  });
 };
 
 const inputFields = (
@@ -1511,7 +1537,7 @@ export const describeContractCommand = <
     projection.callerPaths ?? [],
   );
   const fieldProjections: Readonly<
-    Record<string, CliFieldProjection | undefined>
+    Record<string, CliContractFieldProjection | undefined>
   > = projection.fields ?? {};
   const jsonTextFields: ReadonlySet<string> = new Set(
     projection.jsonText ?? [],
