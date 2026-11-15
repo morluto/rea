@@ -24,7 +24,6 @@ import {
   isUnmodifiedCommonJsWrapperBinding,
   semanticBindingAtRead,
   semanticBindingHasPriorValueWrite,
-  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
@@ -45,6 +44,7 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  semanticEffectMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
@@ -122,8 +122,8 @@ const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  writesModuleRequire(state).some(
-    (write) => semanticEffectTiming(node, write.node, state) !== "after",
+  writesModuleRequire(state).some((write) =>
+    semanticEffectMayPrecede(state, node, write.node),
   );
 
 const commonJsLoaderAt = (
