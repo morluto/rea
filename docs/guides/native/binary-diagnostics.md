@@ -510,14 +510,5 @@ loader, or opening a disassembler:
 rea inspect-elf-dependencies ./program --json
 ```
 
-The complete Evidence identifies the stable artifact snapshot by path, byte
-count and SHA-256. It reports ordered `DT_NEEDED` names (duplicates preserved),
-`DT_SONAME`, `DT_RPATH` / `DT_RUNPATH` as written including `$ORIGIN` / `$LIB`
-/ `$PLATFORM` tokens, decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU
-version requirements and definitions, derived per-namespace version maxima,
-and undefined `.dynsym` imports joined to `library@version` when known. A
-missing `PT_DYNAMIC` is an observed empty inventory. Relocatable objects use
-`inspect_kernel_module`; core dumps use `inspect_recorded_crash`. Complete
-delivery remains the default. For a small initial MCP reply, select
-`detail: "summary"` and page `inspect_analysis_view` with `kind:
-"elf-dependencies"`. See [ELF dynamic dependencies](../../elf-dependencies.md).
+It reports needed libraries, search paths, symbol versions and versioned
+imports. See [ELF dynamic dependencies](../../elf-dependencies.md).

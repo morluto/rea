@@ -487,13 +487,7 @@ the image or invoking the dynamic loader:
 rea inspect-elf-dependencies /absolute/path/to/program --json
 ```
 
-The workflow reports ordered `DT_NEEDED` names, `DT_SONAME`, `DT_RPATH` /
-`DT_RUNPATH` as written (including `$ORIGIN` / `$LIB` / `$PLATFORM` tokens),
-decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU version requirements and
-definitions, derived per-namespace version maxima, and undefined `.dynsym`
-imports joined to `library@version` when known. A missing `PT_DYNAMIC` is an
-observed empty inventory. Relocatable objects use `inspect-kernel-module`;
-core dumps use `inspect-recorded-crash`. See
+The fields, coverage rules and delivery options are documented in
 [ELF dynamic dependencies](../elf-dependencies.md).
 
 List ELF and Mach-O initializer and finalizer functions without executing the
