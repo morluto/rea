@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../src/platform/HostPlatform.js";
 import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
@@ -49,6 +50,7 @@ afterEach(async () => {
 
 /** Keep Goose's system layer inside the temporary home. */
 const isolated = () => ({
+  platform: HOST_PLATFORM.platform,
   systemPaths: { gooseSystemConfig: join(home, "goose-system.yaml") },
 });
 
@@ -327,6 +329,7 @@ describe("registration ownership in maintenance", () => {
     );
     expect(
       await readClientRegistrationInspections(home, entryPoint, {
+        platform: HOST_PLATFORM.platform,
         environment: process.env,
       }),
     ).toEqual(
