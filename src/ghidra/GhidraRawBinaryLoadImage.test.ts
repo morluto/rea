@@ -5,6 +5,14 @@ import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 describe("raw-binary Ghidra language binding", () => {
+  it("passes a caller-named Ghidra language id through unchanged", () => {
+    expect(ghidraRawBinaryLanguage("8051:BE:16:default")).toEqual({
+      languageId: "8051:BE:16:default",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    });
+  });
+
   it("maps the big-endian m68k family to the default 68000 language", () => {
     expect(ghidraRawBinaryLanguage("m68k")).toEqual({
       languageId: "68000:BE:32:default",

@@ -1,4 +1,7 @@
-import type { RawBinaryAdmission } from "../domain/rawBinary.js";
+import {
+  GHIDRA_LANGUAGE_ID,
+  type RawBinaryAdmission,
+} from "../domain/rawBinary.js";
 
 /** Bound Ghidra language for a caller-supplied raw-binary architecture. */
 export interface GhidraRawBinaryLanguage {
@@ -17,6 +20,13 @@ export interface GhidraRawBinaryLanguage {
 export const ghidraRawBinaryLanguage = (
   architecture: RawBinaryAdmission["architecture"],
 ): GhidraRawBinaryLanguage => {
+  // A caller may name a Ghidra language id directly; hand it to Ghidra as-is.
+  if (GHIDRA_LANGUAGE_ID.test(architecture))
+    return {
+      languageId: architecture,
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    };
   switch (architecture) {
     case "6502":
       return {
