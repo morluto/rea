@@ -57,6 +57,7 @@ import {
 } from "./IdaAdmission.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Families IDA admits today. Every other family is refused, including families
@@ -183,7 +184,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         IDA_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { cause: cause instanceof Error ? cause.message : String(cause) },
+        { cause: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
       bindArtifactFileCleanup(cause, failure);

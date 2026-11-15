@@ -10,7 +10,10 @@ import type {
   RustAuditableMetadata,
   RustBinary,
 } from "../domain/rust/rustBinary.js";
-import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
+import {
+  DEFAULT_RUSTC_HASH_LIMIT,
+  rustcPartialCoverage,
+} from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
@@ -165,14 +168,12 @@ const rustcCommit = (
         hashes: retention.hashes,
         ...(retention.reason !== undefined
           ? {
-              coverage: {
-                status: "partial" as const,
-                reason: retention.reason,
-                effective_limit:
-                  retention.reason === "report_bytes"
-                    ? maxOutputBytes
-                    : maxHashes,
-              },
+              coverage: rustcPartialCoverage(
+                retention.reason,
+                retention.reason === "report_bytes"
+                  ? maxOutputBytes
+                  : maxHashes,
+              ),
             }
           : {}),
       };

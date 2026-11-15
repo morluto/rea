@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readImportSpecifiers } from "./import-specifiers.mjs";
 import { isLayerException } from "./module-layers.mjs";
 
-const PURE_LAYERS = new Set(["domain", "contracts"]);
+const PURE_LAYERS = new Set(["kernel", "domain", "contracts"]);
 const MIGRATED_PROVIDER_ROOTS = new Set([
   "sqlite",
   "evm",

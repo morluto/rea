@@ -23,6 +23,7 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
@@ -248,10 +249,7 @@ export const readIdaConfiguration = (
             carriedReason(cancellation.reason),
             {
               cleanup: {
-                reason:
-                  cause.cleanupCause instanceof Error
-                    ? cause.cleanupCause.message
-                    : String(cause.cleanupCause),
+                reason: errorMessage(cause.cleanupCause),
                 resources: [path],
               },
             },
@@ -275,15 +273,12 @@ export const readIdaConfiguration = (
               ? primary.message
               : primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
+                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
             : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           },
           settings: [

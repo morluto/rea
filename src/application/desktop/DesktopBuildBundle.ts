@@ -25,6 +25,7 @@ import {
   bindArtifactFileCleanup,
 } from "../../resources/index.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_computer";
 const MAX_KEY_BYTES = 1024 * 1024;
@@ -120,7 +121,7 @@ const writeBuildBundle = async (
       ]);
       const error = new ProviderAdapterError(AGENTENV_PROVIDER, START, {
         cause,
-        userMessage: cause instanceof Error ? cause.message : String(cause),
+        userMessage: errorMessage(cause),
         cleanup: cleanup.cleanup,
       });
       bindArtifactFileCleanup(cleanup, error);
@@ -161,7 +162,7 @@ export const seededLockFiles = async (
     if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
       unreadable.push({
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     return [];
   };

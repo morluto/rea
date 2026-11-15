@@ -21,6 +21,7 @@ import type {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
@@ -325,8 +326,8 @@ const finishExitedDebuggerSession = async (
       status: "incomplete",
       reason:
         platform === "win32"
-          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`
-          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${errorMessage(cause)}`
+          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${errorMessage(cause)}`,
     };
   }
   if (platform !== "win32") session.supervisor.unrefOutputStreams();
@@ -366,7 +367,7 @@ export const stopOwnedDebuggerProcess = async (
       } catch (cause: unknown) {
         return {
           status: "incomplete",
-          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${cause instanceof Error ? cause.message : String(cause)}`,
+          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${errorMessage(cause)}`,
         };
       }
     }
@@ -415,7 +416,7 @@ export const stopOwnedDebuggerProcess = async (
     } catch (cause: unknown) {
       return {
         status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `Owned ${debuggerName} inferior detach could not be verified: ${errorMessage(cause)}`,
       };
     }
   }

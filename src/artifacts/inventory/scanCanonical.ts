@@ -54,6 +54,7 @@ import {
 } from "./scanReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -242,7 +243,7 @@ const scanCanonical = async (
           cause.reason,
           rootFailure === undefined
             ? cause.message
-            : `${cause.message}; root observations could not be revalidated: ${rootFailure instanceof Error ? rootFailure.message : String(rootFailure)}`,
+            : `${cause.message}; root observations could not be revalidated: ${errorMessage(rootFailure)}`,
           {
             cause:
               rootFailure === undefined

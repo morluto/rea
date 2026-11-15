@@ -69,6 +69,7 @@ import {
   firmwarePhaseInterruption,
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {
@@ -293,7 +294,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -314,7 +315,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path, pending.tree?.tree.outputRoot ?? path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -335,7 +336,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -705,7 +706,7 @@ const finishFirmwareWorkspace = async (
           ? [request.input.output_directory]
           : []),
       ],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       {
         cause,
         operation: request.operation,

@@ -8,14 +8,14 @@ import {
 
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import { toolContract } from "../contracts/toolContracts.js";
 import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../tests/fixtures/binarySession.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
-import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
+import { registerServiceTools } from "./serviceToolBindings.js";
+import { silentLogger } from "../logger.js";
 
 it.each([false, true])(
   "retains the completed artifact comparison and source closure (terminal cancellation=%s)",
@@ -35,16 +35,15 @@ it.each([false, true])(
       delivery,
     );
     const registration = vi.spyOn(server, "registerTool");
-    registerArtifactComparisonTool(
+    registerServiceTools(
       server,
-      session,
-      toolContract("compare_artifacts"),
-      resources,
+      { sessionDerived: { session, resources } },
+      { logger: silentLogger },
     );
     // This named registration always has its contract's input schema.
-    const callback = registration.mock.calls[0]?.[2] as
-      | ToolCallback<StandardSchemaWithJSON>
-      | undefined;
+    const callback = registration.mock.calls.find(
+      ([name]) => name === "compare_artifacts",
+    )?.[2] as ToolCallback<StandardSchemaWithJSON> | undefined;
     if (callback === undefined)
       throw new Error("Comparison was not registered");
     const controller = new AbortController();

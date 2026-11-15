@@ -44,6 +44,23 @@ cliTest(
       omitted_fields: [],
     });
     expect(evidence.normalized_result.coverage.status).toBe("complete");
+    const omitted = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-modinfo-value-bytes",
+        "4096",
+        "--full-output",
+        "--json",
+      ],
+    });
+    expect(omitted.exitCode, omitted.stderr).toBe(0);
+    expect((omitted.json as { meta: unknown }).meta).toMatchObject({
+      cli_controls: {
+        max_modinfo_key_bytes: "--max-modinfo-key-bytes",
+        max_modinfo_value_bytes: "--max-modinfo-value-bytes",
+      },
+    });
   },
 );
 

@@ -28,6 +28,7 @@ import {
   scenarioQueryLength,
   uriComponentLength,
 } from "./BrowserScenarioSerialization.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -482,7 +483,7 @@ export const performScenarioRequest = async (input: {
       if (primaryFailure !== undefined)
         throw new AggregateError(
           [primaryFailure.cause, cause],
-          `Scenario request failed: ${primaryFailure.cause instanceof Error ? primaryFailure.cause.message : String(primaryFailure.cause)}; route cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `Scenario request failed: ${errorMessage(primaryFailure.cause)}; route cleanup failed: ${errorMessage(cause)}`,
           { cause: primaryFailure.cause },
         );
       throw cause;
@@ -684,7 +685,7 @@ export const awaitSavedResponse = (
     } catch (cause: unknown) {
       if (cause instanceof ScenarioRequestError) throw cause;
       throw new ScenarioRequestError(
-        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${errorMessage(cause)}`,
         { cause },
       );
     }
@@ -830,9 +831,7 @@ const saveValues = (
     try {
       secrets.save(`${stepId}.${name}`, name, value, secret);
     } catch (cause) {
-      throw new ScenarioRequestError(
-        `Step ${stepId}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw new ScenarioRequestError(`Step ${stepId}: ${errorMessage(cause)}`);
     }
   }
 };

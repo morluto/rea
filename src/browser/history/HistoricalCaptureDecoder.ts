@@ -74,6 +74,7 @@ import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js"
 
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { readHistoricalCaptureReply } from "./HistoricalCaptureReply.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -521,10 +522,7 @@ export class HistoricalCaptureDecoder {
         [cleanupFailure.owner.resource],
         {
           capture_path: input.capture_path,
-          reason:
-            cleanupFailure.cause instanceof Error
-              ? cleanupFailure.cause.message
-              : String(cleanupFailure.cause),
+          reason: errorMessage(cleanupFailure.cause),
         },
         {
           operation: OPERATION,

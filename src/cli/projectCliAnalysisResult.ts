@@ -1,3 +1,6 @@
+import type { z } from "zod";
+
+import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 
@@ -78,27 +81,145 @@ const renamedIssues = (
 };
 
 /**
- * The reported per-call control with the flag that sets it, or undefined
- * when the command takes no flag for it. A parameter control names it, and so
- * does a registered setting a request argument can also select. The longest
- * bound prefix of the parameter path names the flag: a flattened member
- * option, else the option of the whole field (such as `--producer-limits`
- * JSON).
+ * The request parameter a limit names, when a caller selects it per call: a
+ * parameter control, or a registered setting a request argument can also
+ * select.
  */
+const limitParameter = (limit: JsonValue | undefined): string | undefined =>
+  isObject(limit) &&
+  typeof limit.parameter === "string" &&
+  (limit.control_kind === "parameter" || typeof limit.setting === "string")
+    ? limit.parameter
+    : undefined;
+
+/**
+ * The option that sets a contract field or member on this command, or
+ * undefined when it takes no flag for it. The longest bound prefix of the
+ * parameter path names the flag: a flattened member option, else the option
+ * of the whole field (such as `--producer-limits` JSON).
+ */
+const cliFlagFor = (
+  parameter: string,
+  binding: CliInputFieldBinding,
+): string | undefined => {
+  const segments = parameter.split(".");
+  for (let length = segments.length; length > 0; length -= 1) {
+    const flag = binding.flags[segments.slice(0, length).join(".")];
+    if (flag !== undefined) return flag;
+  }
+  return undefined;
+};
+
+/** The reported per-call control with the flag that sets it. */
 const flaggedLimit = (
   limit: JsonValue | undefined,
   binding: CliInputFieldBinding,
 ): Record<string, JsonValue> | undefined => {
-  if (
-    !isObject(limit) ||
-    typeof limit.parameter !== "string" ||
-    (limit.control_kind !== "parameter" && typeof limit.setting !== "string")
-  )
-    return undefined;
-  const segments = limit.parameter.split(".");
-  for (let length = segments.length; length > 0; length -= 1) {
-    const flag = binding.flags[segments.slice(0, length).join(".")];
-    if (flag !== undefined) return { ...limit, cli_flag: flag };
+  const parameter = limitParameter(limit);
+  const flag =
+    parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+  return flag === undefined || !isObject(limit)
+    ? undefined
+    : { ...limit, cli_flag: flag };
+};
+
+/** Wrappers whose value is their inner schema's value. */
+const WRAPPER_TYPES = new Set([
+  "optional",
+  "nonoptional",
+  "nullable",
+  "default",
+  "prefault",
+  "readonly",
+  "catch",
+]);
+
+/**
+ * The schema nodes of a value, following the result schema: each position
+ * the schema declares a recorded control yields that value. Positions the
+ * schema leaves open (records, unknown JSON, lazy or custom types) are not
+ * entered, so captured content cannot supply a control.
+ */
+const recordedControlValues = (
+  output: unknown,
+  schema: z.ZodType,
+): unknown[] => {
+  const found: unknown[] = [];
+  const pending: [unknown, z.ZodType][] = [[output, schema]];
+  while (pending.length > 0) {
+    const [value, node] = pending.pop()!;
+    if (value === undefined) continue;
+    if (recordedControlSchemas.has(node)) {
+      if (node.safeParse(value).success) found.push(value);
+      continue;
+    }
+    const def = node._zod.def as unknown as Record<string, unknown> & {
+      readonly type: string;
+    };
+    if (WRAPPER_TYPES.has(def.type)) {
+      pending.push([value, def.innerType as z.ZodType]);
+    } else if (def.type === "pipe") {
+      pending.push([value, def.out as z.ZodType]);
+    } else if (def.type === "union") {
+      // The first option the value satisfies is the one the producer used.
+      const option = (def.options as z.ZodType[]).find(
+        (candidate) => candidate.safeParse(value).success,
+      );
+      if (option !== undefined) pending.push([value, option]);
+    } else if (def.type === "array" && Array.isArray(value)) {
+      for (const item of value) pending.push([item, def.element as z.ZodType]);
+    } else if (
+      def.type === "object" &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      const shape = def.shape as Record<string, z.ZodType>;
+      const record = value as Record<string, unknown>;
+      for (const [key, field] of Object.entries(shape))
+        if (Object.hasOwn(record, key)) pending.push([record[key], field]);
+    }
   }
-  return undefined;
+  return found;
+};
+
+/**
+ * A failure's partial observation, when it is Evidence of the command's own
+ * operation. The command's output schema describes that Evidence, so its
+ * declared control positions are read as a success result's are. A retained
+ * reference, or Evidence of a source step or another operation, is not read.
+ */
+export const failurePartialObservation = (
+  output: unknown,
+  operation: string,
+): Record<string, JsonValue> | undefined => {
+  const failure = output as JsonValue;
+  if (!isObject(failure) || !isObject(failure.details)) return undefined;
+  const partial = failure.details.partial_observation;
+  return isObject(partial) && partial.operation === operation
+    ? partial
+    : undefined;
+};
+
+/**
+ * Each per-call control a result records by contract field (a `limit` in a
+ * partial result's unknowns, coverage or retained Evidence), with the option
+ * that sets it on this command. Only positions the command's output schema
+ * declares as recorded controls count. The result is read, never changed:
+ * the CLI renders these flags in its own envelope.
+ */
+export const cliResultControlsIn = (
+  output: unknown,
+  schema: z.ZodType,
+  binding: CliInputFieldBinding,
+): Record<string, string> => {
+  const controls: Record<string, string> = {};
+  for (const value of recordedControlValues(output, schema)) {
+    const parameter = limitParameter(value as JsonValue);
+    const flag =
+      parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+    if (parameter !== undefined && flag !== undefined)
+      controls[parameter] = flag;
+  }
+  return controls;
 };

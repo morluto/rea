@@ -112,5 +112,11 @@ export type AnalysisControlLimit = {
     }
 );
 
+/** A per-call request parameter control, named by its contract field. */
+export type AnalysisParameterLimit = Extract<
+  AnalysisControlLimit,
+  { readonly control_kind: "parameter" }
+>;
+
 /** The limit an error binds: a registered setting, or a parameter or environment control. */
 export type AnalysisLimit = AnalysisSettingLimit | AnalysisControlLimit;

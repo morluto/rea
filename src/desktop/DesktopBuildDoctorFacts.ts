@@ -38,6 +38,7 @@ import {
   type BuildComputerSetting,
 } from "./BuildComputerEnvironment.js";
 import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
@@ -170,12 +171,7 @@ const attempt = async (
     const stderr = failure?.stderr.trim() ?? "";
     return {
       ok: false,
-      reason:
-        stderr === ""
-          ? cause instanceof Error
-            ? cause.message
-            : String(cause)
-          : stderr,
+      reason: stderr === "" ? errorMessage(cause) : stderr,
     };
   }
 };
@@ -266,7 +262,7 @@ const freeSpace = async (path: string): Promise<DesktopBuildFacts["disk"]> => {
       if (parent === candidate || !missingPath(cause))
         return {
           path,
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
         };
       candidate = parent;
     }
@@ -303,7 +299,7 @@ const archiveFact = async (
           path,
           source,
           status: "unknown",
-          detail: `REA could not inspect ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          detail: `REA could not inspect ${path}: ${errorMessage(cause)}`,
         };
   }
   if (source === "cache") return { path, source, status: "current" };
