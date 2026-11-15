@@ -2,10 +2,9 @@ import { readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { expect, it } from "vitest";
-import {
-  evmInterfaceFailure,
-  evmReplyBudgetFailure,
-} from "./EvmoleFailures.js";
+import { evmFailureDialect, evmReplyBudgetFailure } from "./EvmoleFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -16,6 +15,12 @@ import {
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+
+/** Classify a raw failure the way the provider does, through EVMole's dialect. */
+const evmInterfaceFailure = (
+  cause: unknown,
+  context: Parameters<typeof evmFailureDialect>[0],
+) => classifyProviderFailure(cause, evmFailureDialect(context));
 
 const snapshot: ProviderProcessSnapshot = {
   stdout: { text: "selected output", bytes: 15, observedBytes: 15 },
@@ -166,6 +171,31 @@ it("reports the selected carrier input allowance as a resource constraint", () =
   expect(projected.remediation.action).toContain("producer_limits.input_bytes");
   expect(projected.remediation.action).toContain("4194304");
   expect(projected.recovery).toBeUndefined();
+});
+
+it("names a selected carrier that is a directory as invalid input", () => {
+  const source = Object.assign(new Error("EISDIR: illegal operation"), {
+    code: "EISDIR",
+  });
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message:
+            "Selected bytecode carrier could not be read (EISDIR): /selected.",
+        },
+      ],
+    },
+  });
 });
 
 it.each([

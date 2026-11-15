@@ -1,22 +1,12 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
-import {
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import {
-  AnalysisError,
-  type AnalysisCapturedOutput,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
-  AnalysisArtifactChangedError,
-  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -24,9 +14,8 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import { providerOutcomeOf } from "../process/ProviderOutcome.js";
-import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
+import type { ProviderOutcome } from "../process/ProviderOutcome.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -42,6 +31,7 @@ import {
 } from "../domain/wasm/wasmArtifact.js";
 import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
+const OPERATION = "inspect_wasm_artifact";
 
 /** Recovery names the exhausted per-call byte owner, independently of deadlines. */
 const byteBudgetRecovery = (
@@ -124,39 +114,10 @@ const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {
     } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. max_input_bytes, max_tool_bytes and max_output_bytes are independent per-call controls; detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
   };
 };
-/** Preserve lifecycle failures and diagnostic bytes instead of returning partial success. */
-export const wabtFailure = (
-  cause: unknown,
-  phase: "configuration" | "artifact" | "producer",
-  path: string,
-  execution?: WabtFailureContext,
-): AnalysisError => {
-  const failure = classifyWabtFailure(cause, phase, path, execution);
-  bindArtifactFileCleanup(cause, failure);
-  return failure;
-};
-
-const classifyWabtFailure = (
-  cause: unknown,
-  phase: "configuration" | "artifact" | "producer",
-  path: string,
-  execution: WabtFailureContext | undefined,
-): AnalysisError => {
-  const versionProbe = execution?.versionProbe;
-  const limits = execution?.limits ?? WASM_RESOURCE_DEFAULTS;
-  const outputLimitReason = `WABT output exceeded the ${String(limits.outputBytes)}-byte output budget`;
-  if (cause instanceof AnalysisError) return cause;
-  const artifactCleanup =
-    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const artifactOptions = {
-    ...(artifactCleanup === undefined ? {} : { cleanup: artifactCleanup }),
-    ...(execution?.observedOutput === undefined
-      ? {}
-      : { capturedOutput: execution.observedOutput }),
-  };
-  const reason = cause instanceof Error ? cause.message : String(cause);
+/** The host refused to allocate an admitted acquisition buffer. */
+const allocationRefused = (cause: unknown): boolean => {
   const physical = artifactFilePrimaryFacts(cause).cause;
-  if (
+  return (
     physical instanceof Error &&
     (("code" in physical &&
       [
@@ -166,228 +127,232 @@ const classifyWabtFailure = (
       ].includes(String(physical.code))) ||
       (physical instanceof RangeError &&
         physical.message === "Array buffer allocation failed"))
-  )
-    return new AnalysisResourceConstraintError(
-      "inspect_wasm_artifact",
-      "memory",
-      "The host could not allocate the admitted WABT acquisition buffer",
-      { max_input_bytes: limits.inputBytes, max_tool_bytes: limits.toolBytes },
-      {
-        cause,
-        ...artifactOptions,
-        retryable: false,
-        remediationAction:
-          "Byte admission does not reserve host memory. Free host memory or select a suitable process with sufficient capacity, then retry after cleanup settles. Increasing byte budgets or command_timeout_ms does not repair this allocation failure; do not replace a correctly configured WABT installation for this reason.",
-      },
-    );
-  if (
-    (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-    (cause instanceof Error && cause.name === "AbortError")
-  )
-    return new AnalysisCancelledError("inspect_wasm_artifact", {
-      cause:
-        cause instanceof ArtifactReaderFailure
-          ? artifactFileCancellationCause(cause)
-          : cause,
-      ...artifactOptions,
-    });
-  const outcome = providerOutcomeOf(cause);
-  if (outcome !== undefined) {
-    const command = cause instanceof OwnedCommandFailure ? cause : undefined;
-    const capturedOutput = (snapshot: ProviderProcessSnapshot) =>
-      outcome.kind === "output-limit"
+  );
+};
+
+/**
+ * WABT's failure dialect for one phase: lifecycle failures and diagnostic
+ * bytes are preserved instead of returning partial success.
+ */
+export const wabtFailureDialect = (
+  phase: "configuration" | "artifact" | "producer",
+  path: string,
+  execution?: WabtFailureContext,
+): ProviderFailureDialect => {
+  const versionProbe = execution?.versionProbe;
+  const limits = execution?.limits ?? WASM_RESOURCE_DEFAULTS;
+  const outputLimitReason = `WABT output exceeded the ${String(limits.outputBytes)}-byte output budget`;
+  const observed =
+    execution?.observedOutput === undefined
+      ? {}
+      : { capturedOutput: execution.observedOutput };
+  const reasonOf = (cause: unknown) =>
+    cause instanceof Error ? cause.message : String(cause);
+  const capturedOutput =
+    (kind: ProviderOutcome["kind"]) => (snapshot: ProviderProcessSnapshot) =>
+      kind === "output-limit"
         ? outputLimitExcerpt(snapshot)
         : {
             stdout: snapshot.stdout.text,
             stderr: snapshot.stderr.text,
             truncated: snapshot.diagnosticTruncated ?? false,
           };
-    const cleanupFailure = command?.cleanupFailure ?? null;
-    const primary = classifyProviderOutcome(
-      // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
-      cleanupFailure === null ? outcome : { ...outcome, output: undefined },
-      {
-        operation: "inspect_wasm_artifact",
-        capturedOutput,
-        details:
-          versionProbe === undefined ? {} : { diagnostics: versionProbe },
-        timeout: wabtCommandTimeout(execution),
-        outputLimit: {
-          reason: outputLimitReason,
-          limits: { max_output_bytes: limits.outputBytes },
-          recovery: {
+  return {
+    providerId: WABT_PROVIDER_IDENTITY.id,
+    operation: OPERATION,
+    observedOutput: execution?.observedOutput,
+    recognise: (unknownCause, details) => {
+      if (allocationRefused(unknownCause))
+        return new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          "The host could not allocate the admitted WABT acquisition buffer",
+          {
+            max_input_bytes: limits.inputBytes,
+            max_tool_bytes: limits.toolBytes,
+          },
+          {
+            ...details,
+            cause: unknownCause,
+            ...observed,
             retryable: false,
+            remediationAction:
+              "Byte admission does not reserve host memory. Free host memory or select a suitable process with sufficient capacity, then retry after cleanup settles. Increasing byte budgets or command_timeout_ms does not repair this allocation failure; do not replace a correctly configured WABT installation for this reason.",
+          },
+        );
+      if (unknownCause instanceof Error && unknownCause.name === "AbortError")
+        return new AnalysisCancelledError(OPERATION, {
+          ...details,
+          cause: unknownCause,
+          ...observed,
+        });
+      if (unknownCause instanceof RuntimeControlUnavailableError)
+        return runtimeControlCapabilityError(
+          WABT_PROVIDER_IDENTITY.id,
+          OPERATION,
+          unknownCause,
+        );
+      if (
+        phase === "configuration" &&
+        unknownCause instanceof ArtifactReaderFailure &&
+        unknownCause.reason === "limit" &&
+        unknownCause.boundary === "file-size"
+      )
+        return new AnalysisCapabilityUnavailableError(
+          WABT_PROVIDER_IDENTITY.id,
+          OPERATION,
+          unknownCause.message,
+          {
+            ...details,
+            cause: unknownCause,
+            ...observed,
+            userMessage: `Configured WABT tools exceed the ${String(limits.toolBytes)}-byte tool allowance (max_tool_bytes).`,
             remediationAction: byteBudgetRecovery(
-              "max_output_bytes",
-              limits.outputBytes,
-              WASM_RESOURCE_MAXIMUMS.outputBytes,
+              "max_tool_bytes",
+              limits.toolBytes,
+              WASM_RESOURCE_MAXIMUMS.toolBytes,
             ),
           },
+        );
+      return undefined;
+    },
+    command: (outcome) => ({
+      operation: OPERATION,
+      capturedOutput: capturedOutput(outcome.kind),
+      details: versionProbe === undefined ? {} : { diagnostics: versionProbe },
+      timeout: wabtCommandTimeout(execution),
+      outputLimit: {
+        reason: outputLimitReason,
+        limits: { max_output_bytes: limits.outputBytes },
+        recovery: {
+          retryable: false,
+          remediationAction: byteBudgetRecovery(
+            "max_output_bytes",
+            limits.outputBytes,
+            WASM_RESOURCE_MAXIMUMS.outputBytes,
+          ),
         },
-        dialect: (exit, details) =>
-          // A tool that cannot start, or a version probe that exits or whose
-          // output cannot be collected, leaves the configured installation
-          // unusable for this call.
-          exit.kind === "launch-refused" || phase === "configuration"
-            ? new AnalysisCapabilityUnavailableError(
-                WABT_PROVIDER_IDENTITY.id,
-                "inspect_wasm_artifact",
-                reason,
+      },
+      dialect: (exit, details) =>
+        // A tool that cannot start, or a version probe that exits or whose
+        // output cannot be collected, leaves the configured installation
+        // unusable for this call.
+        exit.kind === "launch-refused" || phase === "configuration"
+          ? new AnalysisCapabilityUnavailableError(
+              WABT_PROVIDER_IDENTITY.id,
+              OPERATION,
+              exit.message,
+              {
+                ...details,
+                userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
+                remediationAction: wabtConfigurationRecoveryAction(exit.cause),
+              },
+            )
+          : new AnalysisOutputError(OPERATION, exit.message, details),
+    }),
+    commandCleanup: (command, primary, outcome) =>
+      new ProviderCleanupError(
+        WABT_PROVIDER_IDENTITY.id,
+        command.resources,
+        {
+          ...versionProbe,
+          reason: command.cleanupFailure,
+          previous_error:
+            primary instanceof AnalysisTimeoutError
+              ? projectAnalysisError(primary)
+              : outcome.kind === "output-limit"
+                ? {
+                    failure_kind: "output-limit",
+                    message: outputLimitReason,
+                    max_output_bytes: limits.outputBytes,
+                    remediation_action: byteBudgetRecovery(
+                      "max_output_bytes",
+                      limits.outputBytes,
+                      WASM_RESOURCE_MAXIMUMS.outputBytes,
+                    ),
+                  }
+                : outcome.message,
+          ...(outcome.output === undefined
+            ? {}
+            : {
+                captured_output: capturedOutput(outcome.kind)(
+                  outcome.output.snapshot,
+                ),
+              }),
+        },
+        { operation: OPERATION, cause: command },
+      ),
+    ...(phase === "artifact"
+      ? {
+          file: {
+            path,
+            description: "WebAssembly input",
+            field: execution?.inputField ?? ["path"],
+            fileSize: (limit, details) =>
+              new AnalysisResourceConstraintError(
+                OPERATION,
+                "file-size",
+                limit.message,
+                { maximum_input_bytes: limits.inputBytes },
                 {
                   ...details,
-                  userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
-                  remediationAction: wabtConfigurationRecoveryAction(cause),
-                },
-              )
-            : new AnalysisOutputError("inspect_wasm_artifact", reason, details),
-      },
-    );
-    if (command === undefined || cleanupFailure === null) return primary;
-    return new ProviderCleanupError(
-      WABT_PROVIDER_IDENTITY.id,
-      command.resources,
-      {
-        ...versionProbe,
-        reason: cleanupFailure,
-        previous_error:
-          primary instanceof AnalysisTimeoutError
-            ? projectAnalysisError(primary)
-            : outcome.kind === "output-limit"
-              ? {
-                  failure_kind: "output-limit",
-                  message: outputLimitReason,
-                  max_output_bytes: limits.outputBytes,
-                  remediation_action: byteBudgetRecovery(
-                    "max_output_bytes",
-                    limits.outputBytes,
-                    WASM_RESOURCE_MAXIMUMS.outputBytes,
+                  retryable: false,
+                  remediationAction: byteBudgetRecovery(
+                    "max_input_bytes",
+                    limits.inputBytes,
+                    WASM_RESOURCE_MAXIMUMS.inputBytes,
                   ),
-                }
-              : reason,
-        ...(outcome.output === undefined
-          ? {}
-          : { captured_output: capturedOutput(outcome.output.snapshot) }),
-      },
-      { operation: "inspect_wasm_artifact", cause },
-    );
-  }
-  if (cause instanceof RuntimeControlUnavailableError)
-    return runtimeControlCapabilityError(
-      WABT_PROVIDER_IDENTITY.id,
-      "inspect_wasm_artifact",
-      cause,
-    );
-  if (
-    phase === "configuration" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "limit" &&
-    cause.boundary === "file-size"
-  )
-    return new AnalysisCapabilityUnavailableError(
-      WABT_PROVIDER_IDENTITY.id,
-      "inspect_wasm_artifact",
-      cause.message,
-      {
-        cause,
-        ...artifactOptions,
-        userMessage: `Configured WABT tools exceed the ${String(limits.toolBytes)}-byte tool allowance (max_tool_bytes).`,
-        remediationAction: byteBudgetRecovery(
-          "max_tool_bytes",
-          limits.toolBytes,
-          WASM_RESOURCE_MAXIMUMS.toolBytes,
-        ),
-      },
-    );
-  if (phase === "configuration") {
-    const admission = cause instanceof WabtAdmissionError ? cause : undefined;
-    return new AnalysisCapabilityUnavailableError(
-      WABT_PROVIDER_IDENTITY.id,
-      "inspect_wasm_artifact",
-      admission?.code ?? reason,
-      {
-        cause,
-        ...artifactOptions,
-        ...(admission === undefined
-          ? {}
-          : {
-              diagnostics: {
-                code: admission.code,
-                ...admission.detail,
-              },
-            }),
-        userMessage:
-          admission === undefined
-            ? reason
-            : "WABT configuration cannot be used",
-        remediationAction: wabtConfigurationRecoveryAction(cause),
-      },
-    );
-  }
-  if (
-    phase === "artifact" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "limit" &&
-    cause.boundary === "file-size"
-  )
-    return new AnalysisResourceConstraintError(
-      "inspect_wasm_artifact",
-      "file-size",
-      reason,
-      { maximum_input_bytes: limits.inputBytes },
-      {
-        cause,
-        ...artifactOptions,
-        retryable: false,
-        remediationAction: byteBudgetRecovery(
-          "max_input_bytes",
-          limits.inputBytes,
-          WASM_RESOURCE_MAXIMUMS.inputBytes,
-        ),
-      },
-    );
-  if (
-    phase === "artifact" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      "inspect_wasm_artifact",
-      path,
-      reason,
-      { cause, ...artifactOptions },
-    );
-  if (
-    phase === "artifact" &&
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "EACCES" || cause.code === "EPERM")
-  )
-    return new AnalysisAccessDeniedError(
-      "inspect_wasm_artifact",
-      path,
-      cause.code,
-      { cause, ...artifactOptions },
-    );
-  if (phase === "artifact")
-    return new AnalysisInputError(
-      "inspect_wasm_artifact",
-      {
-        cause,
-        ...artifactOptions,
-        ...(cause instanceof ArtifactReaderFailure
-          ? stableArtifactInputRecovery(cause)
-          : {}),
-      },
-      [
-        {
-          path: [...(execution?.inputField ?? ["path"])],
-          reason: "invalid_value",
-          message: reason,
-        },
-      ],
-    );
-  return new AnalysisOutputError("inspect_wasm_artifact", reason, {
-    cause,
-    ...artifactOptions,
-  });
+                },
+              ),
+          },
+        }
+      : {}),
+    unclassified: (unrecognised, details) => {
+      const reason = reasonOf(unrecognised);
+      if (phase === "configuration") {
+        const admission =
+          unrecognised instanceof WabtAdmissionError ? unrecognised : undefined;
+        return new AnalysisCapabilityUnavailableError(
+          WABT_PROVIDER_IDENTITY.id,
+          OPERATION,
+          admission?.code ?? reason,
+          {
+            ...details,
+            cause: unrecognised,
+            ...observed,
+            ...(admission === undefined
+              ? {}
+              : {
+                  diagnostics: {
+                    code: admission.code,
+                    ...admission.detail,
+                  },
+                }),
+            userMessage:
+              admission === undefined
+                ? reason
+                : "WABT configuration cannot be used",
+            remediationAction: wabtConfigurationRecoveryAction(unrecognised),
+          },
+        );
+      }
+      if (phase === "artifact")
+        return new AnalysisInputError(
+          OPERATION,
+          { ...details, cause: unrecognised },
+          [
+            {
+              path: [...(execution?.inputField ?? ["path"])],
+              reason: "invalid_value",
+              message: reason,
+            },
+          ],
+        );
+      return new AnalysisOutputError(OPERATION, reason, {
+        ...details,
+        cause: unrecognised,
+        ...observed,
+      });
+    },
+  };
 };

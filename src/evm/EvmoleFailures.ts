@@ -1,32 +1,17 @@
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
-import {
-  artifactFileCancellationCause,
-  artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
-  AnalysisError,
-  type AnalysisCapturedOutput,
-  type AnalysisErrorOptions,
+import type {
+  AnalysisCapturedOutput,
+  AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import {
-  providerOutcomeOf,
-  type ProviderOutcome,
-} from "../process/ProviderOutcome.js";
-import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
+import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
   MAX_EVM_TIMEOUT_MS,
@@ -96,10 +81,10 @@ type ResolvedEvmFailureContext = Omit<
   readonly producerLimits: EvmProducerLimits;
 };
 
-export const evmInterfaceFailure = (
-  cause: unknown,
+/** EVMole's failure dialect for one phase of `inspect_evm_interface`. */
+export const evmFailureDialect = (
   context: EvmFailureContext,
-): AnalysisError => {
+): ProviderFailureDialect => {
   const resolved: ResolvedEvmFailureContext = {
     ...context,
     limiter: context.limiter ?? "/usr/bin/prlimit",
@@ -108,115 +93,77 @@ export const evmInterfaceFailure = (
       context.producerLimits ?? selectedEvmProducerLimits(undefined),
   };
   const { phase, path, producerLimits } = resolved;
-  const cleanup =
-    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const cleanupOptions = cleanup === undefined ? {} : { cleanup };
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null)
-    return new ProviderCleanupError(
-      EVMOLE_PROVIDER_IDENTITY.id,
-      cause.resources,
-      {
-        reason: cause.cleanupFailure,
-        ...(cause.snapshot === null
-          ? {}
-          : { captured_output: { ...capturedEvmOutput(cause.snapshot) } }),
-        previous_error: {
-          failure_kind: cause.reason,
-          message: cause.message,
-          exit_code: cause.snapshot?.exitCode ?? null,
-          signal: cause.snapshot?.signal ?? null,
-        },
-      },
-      { operation: OPERATION, cause },
-    );
-  const outcome = providerOutcomeOf(cause);
-  if (outcome !== undefined) return evmCommandFailure(outcome, resolved);
-  if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-        ...cleanupOptions,
-      });
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-        ...cleanupOptions,
-      });
-    if (
-      phase === "artifact-read" &&
-      cause.reason === "limit" &&
-      cause.boundary === "file-size"
-    )
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        `${cause.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
+  return {
+    providerId: EVMOLE_PROVIDER_IDENTITY.id,
+    operation: OPERATION,
+    command: () => evmCommandContext(resolved),
+    commandCleanup: (failure) =>
+      new ProviderCleanupError(
+        EVMOLE_PROVIDER_IDENTITY.id,
+        failure.resources,
         {
-          maximum_input_bytes: producerLimits.input_bytes,
-          parameter: "producer_limits.input_bytes",
-        },
-        {
-          cause,
-          ...cleanupOptions,
-          retryable: false,
-          remediationAction: evmProducerLimitRecovery(
-            producerLimits,
-            "input_bytes",
-          ),
-        },
-      );
-    if (phase === "artifact-read" && ["path", "format"].includes(cause.reason))
-      return new AnalysisInputError(
-        OPERATION,
-        {
-          cause,
-          ...cleanupOptions,
-          ...stableArtifactInputRecovery(cause),
-        },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
+          reason: failure.cleanupFailure,
+          ...(failure.snapshot === null
+            ? {}
+            : { captured_output: { ...capturedEvmOutput(failure.snapshot) } }),
+          previous_error: {
+            failure_kind: failure.reason,
+            message: failure.message,
+            exit_code: failure.snapshot?.exitCode ?? null,
+            signal: failure.snapshot?.signal ?? null,
           },
-        ],
-      );
-  }
-  if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-        ...cleanupOptions,
-      });
-    const pathErrno = artifactSelectedPathErrno(cause);
-    if (pathErrno !== undefined)
-      return new AnalysisInputError(OPERATION, { cause, ...cleanupOptions }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected bytecode carrier could not be read (${pathErrno}): ${path}.`,
         },
-      ]);
-  }
-  return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    ...cleanupOptions,
-    diagnostics: {
-      ...evmWorkerDiagnostics(context),
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
+        { operation: OPERATION, cause: failure },
+      ),
+    ...(phase === "artifact-read"
+      ? {
+          file: {
+            path,
+            description: "bytecode carrier",
+            retainCompletedIdentity: true,
+            fileSize: (limit, details) =>
+              new AnalysisResourceConstraintError(
+                OPERATION,
+                "file-size",
+                `${limit.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
+                {
+                  maximum_input_bytes: producerLimits.input_bytes,
+                  parameter: "producer_limits.input_bytes",
+                },
+                {
+                  ...details,
+                  retryable: false,
+                  remediationAction: evmProducerLimitRecovery(
+                    producerLimits,
+                    "input_bytes",
+                  ),
+                },
+              ),
+          },
+        }
+      : {}),
+    unclassified: (unrecognised, details) =>
+      new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
+        ...details,
+        cause: unrecognised,
+        diagnostics: {
+          ...evmWorkerDiagnostics(context),
+          reason:
+            unrecognised instanceof Error
+              ? unrecognised.message
+              : String(unrecognised),
+        },
+      }),
+  };
 };
 
 /** The EVMole worker's dialect: its prlimit launcher and its reserved EFBIG exit. */
-const evmCommandFailure = (
-  outcome: ProviderOutcome,
+const evmCommandContext = (
   context: ResolvedEvmFailureContext,
-): AnalysisError => {
+): ProviderOutcomeContext => {
   const { workerLimits, limiter, fileFailure, timeoutMs, producerLimits } =
     context;
-  return classifyProviderOutcome(outcome, {
+  return {
     operation: OPERATION,
     capturedOutput: capturedEvmOutput,
     timeout: {
@@ -302,7 +249,7 @@ const evmCommandFailure = (
         },
       });
     },
-  });
+  };
 };
 
 const evmWorkerDiagnostics = ({
