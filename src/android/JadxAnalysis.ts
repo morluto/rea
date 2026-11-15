@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
-import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
+import { androidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
 import {
   type AndroidMappingQuery,
   type AndroidMappingSource,
@@ -66,7 +66,7 @@ export interface JadxAnalysisContext {
 
 const observedPackageSchema =
   androidResultSchemas.inspect_android_package.extend({
-    components: observedAndroidManifestComponentsSchema,
+    components: androidManifestComponentsSchema,
   });
 
 const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
