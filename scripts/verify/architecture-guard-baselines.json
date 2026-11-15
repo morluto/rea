@@ -295,7 +295,6 @@
     "src/cutter/CutterBridgeService.ts": 1,
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
-    "src/desktop/ScreenJudgeProcess.ts": 1,
     "src/ida/IdaSessionClient.ts": 1,
     "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
     "src/kuna/KunaProjectCache.ts": 1,
