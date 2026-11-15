@@ -806,10 +806,27 @@ const verifierScripts = await Promise.all(
       ),
     })),
 );
+// The Windows native lane tests PrivateRuntimeRoot itself: it calls
+// PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
+// violation and asserts the typed refusal. That call is the subject under
+// test, not a verifier root, so exactly one occurrence of that expression is
+// exempt; any other allocation in the file, including a second copy of it,
+// still counts.
+const verifierRootSubjectsUnderTest = new Map([
+  [
+    "scripts/verify-windows-native.mjs",
+    "PrivateRuntimeRoot.create({ parent: sharingParent.observation.path })",
+  ],
+]);
 checkCounted(
   "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
   "verifier-fixture-root",
-  verifierScripts,
+  verifierScripts.map((file) => {
+    const subject = verifierRootSubjectsUnderTest.get(file.path);
+    return subject === undefined
+      ? file
+      : { ...file, content: file.content.replace(subject, "") };
+  }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );
