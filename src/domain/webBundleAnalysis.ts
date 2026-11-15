@@ -1,4 +1,5 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
@@ -519,6 +520,9 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The setting that bounded these scripts, and how to change it. */
+      limit: analysisSettingLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
     }),
   ),
   completeness: z.object({

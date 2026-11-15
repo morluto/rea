@@ -25,6 +25,7 @@ import {
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
+import { javaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 
 const origin = "https://app.example.test";
 const noSourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {
@@ -82,6 +83,48 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
     dimension: "javascript_analysis",
     reason: expect.stringContaining("deadline"),
     affected_script_keys: [captured.scripts.items[1]?.script_key],
+  });
+});
+
+it("keeps the selected allowance and its recovery for a refused script", async () => {
+  const captured = inspection(["fetch('/kept');", "fetch('/refused');"]);
+  const allowance = { aliasStates: 64, source: "runtime" } as const;
+  const refusal = javaScriptMemberMutationRefusal(
+    "analyze_web_bundle",
+    allowance,
+  );
+  const received: unknown[] = [];
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script, _timeout, _signal, _precision, selected) => {
+      received.push(selected);
+      return script.script_key === captured.scripts.items[1]?.script_key
+        ? err({ error: refusal, completed: null })
+        : ok(analyzeCapturedWebScript(script));
+    },
+    close: async () => {},
+  }));
+  expect((await analyzer.reserve()).ok).toBe(true);
+  const result = await analyzer.analyze(
+    captured,
+    noSourceMaps,
+    input,
+    undefined,
+    allowance,
+  );
+  analyzer.releaseReservation();
+  if (!result.ok) throw result.error;
+  expect(received).toEqual([allowance, allowance]);
+  expect(result.value.unknowns).toContainEqual({
+    dimension: "javascript_analysis",
+    reason: expect.stringContaining("resource_constraint"),
+    affected_script_keys: [captured.scripts.items[1]?.script_key],
+    limit: refusal.limit,
+    remediation: refusal.remediationAction,
+  });
+  expect(refusal.limit).toMatchObject({
+    setting: "javascript.member_mutation_alias_states",
+    effective_value: 64,
+    source: "runtime",
   });
 });
 

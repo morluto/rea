@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
+import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
 
 const observationsSchema = z.strictObject({
@@ -35,6 +36,9 @@ export const webBundleScriptAnalysisSchema = z
         "not_started",
       ]),
       detail: z.string().optional(),
+      /** The setting that bounded this script, when a setting refused it. */
+      limit: analysisSettingLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
     }),
   ])
   .superRefine((result, context) => {

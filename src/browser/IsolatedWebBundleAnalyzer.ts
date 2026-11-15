@@ -250,6 +250,16 @@ export class IsolatedWebBundleAnalyzer {
                 error.reportedLimits !== null
                   ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
                   : (error.userMessage ?? error.message),
+              // A setting-bound refusal keeps its structured recovery.
+              ...(error instanceof AnalysisResourceConstraintError &&
+              error.limit !== undefined
+                ? {
+                    limit: error.limit,
+                    ...(error.remediationAction === undefined
+                      ? {}
+                      : { remediation: error.remediationAction }),
+                  }
+                : {}),
             },
           );
           if (error.cleanupIncomplete) {

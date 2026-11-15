@@ -608,6 +608,23 @@ export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];
 export const analysisSettingIdSchema = z.enum(analysisSettingIds);
+
+/** Limit facts a result carries when it records a refusal as a value. */
+export const analysisSettingLimitSchema = z.strictObject({
+  setting: analysisSettingIdSchema,
+  effective_value: z.number().nullable(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  source: z.enum(["default", "setting", "runtime", "request"]).exactOptional(),
+  applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  agent_editable: z.literal(true),
+  scope: z.literal("rea-runtime"),
+  update_mode: z.enum(["runtime", "restart", "parameter"]),
+  pending_restart: z.literal(false),
+  required_value: z.number().exactOptional(),
+  parameter: z.string().exactOptional(),
+}) satisfies z.ZodType<AnalysisSettingLimit>;
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];

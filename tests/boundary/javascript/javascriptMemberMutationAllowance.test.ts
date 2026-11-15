@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
+import { MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES } from "../../../src/domain/analysisResourceLimits.js";
+import { javaScriptMemberMutationRefusal } from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 
@@ -74,16 +76,26 @@ it("applies the selected member-mutation allowance and reports it on refusal", a
       options,
     );
     if (!refused.ok) throw refused.error;
+    // Structured limit facts, and the recovery the owning formatter gives.
+    const owner = javaScriptMemberMutationRefusal(
+      "analyze_javascript_application",
+      { aliasStates: 8, source },
+    );
     expect(sourceFailure(refused.value), source).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      message:
-        "JavaScript member-mutation analysis scheduled more than 8 alias states for one source",
-      remediation: {
-        action: expect.stringContaining(
-          `javascript.member_mutation_alias_states value is 8 alias states (source ${source};`,
-        ),
+      details: {
+        limit: {
+          setting: "javascript.member_mutation_alias_states",
+          effective_value: 8,
+          source,
+          unit: "count",
+          minimum: 1,
+          maximum: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+          update_mode: "runtime",
+        },
       },
+      remediation: { action: owner.remediationAction },
     });
   }
   const raised = await analyzeJavaScriptApplication(

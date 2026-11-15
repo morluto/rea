@@ -325,10 +325,12 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
   ...(input.unavailableAnalyses.length === 0
     ? []
     : groupUnavailableAnalyses(input.unavailableAnalyses).map(
-        ({ reason, detail, affectedScriptKeys }) => ({
+        ({ reason, detail, limit, remediation, affectedScriptKeys }) => ({
           dimension: "javascript_analysis" as const,
           reason: analysisUnavailableReason(reason, detail),
           affected_script_keys: affectedScriptKeys,
+          ...(limit === undefined ? {} : { limit }),
+          ...(remediation === undefined ? {} : { remediation }),
         }),
       )),
   ...(input.widenedScripts.length === 0
@@ -399,29 +401,37 @@ const groupUnavailableAnalyses = (
 ): {
   readonly reason: (typeof unavailable)[number]["reason"];
   readonly detail: string | undefined;
+  readonly limit: (typeof unavailable)[number]["limit"];
+  readonly remediation: string | undefined;
   readonly affectedScriptKeys: string[];
 }[] => {
+  // Scripts share an unknown only when their structured recovery agrees too.
   const groups = new Map<
-    (typeof unavailable)[number]["reason"],
-    Map<string | undefined, string[]>
-  >();
-  for (const { reason, detail, script_key } of unavailable) {
-    let byDetail = groups.get(reason);
-    if (byDetail === undefined) {
-      byDetail = new Map();
-      groups.set(reason, byDetail);
+    string,
+    {
+      readonly entry: (typeof unavailable)[number];
+      readonly affectedScriptKeys: string[];
     }
-    const keys = byDetail.get(detail) ?? [];
-    keys.push(script_key);
-    byDetail.set(detail, keys);
+  >();
+  for (const entry of unavailable) {
+    const key = JSON.stringify([
+      entry.reason,
+      entry.detail ?? null,
+      entry.limit ?? null,
+      entry.remediation ?? null,
+    ]);
+    const group = groups.get(key);
+    if (group === undefined)
+      groups.set(key, { entry, affectedScriptKeys: [entry.script_key] });
+    else group.affectedScriptKeys.push(entry.script_key);
   }
-  return [...groups].flatMap(([reason, byDetail]) =>
-    [...byDetail].map(([detail, affectedScriptKeys]) => ({
-      reason,
-      detail,
-      affectedScriptKeys,
-    })),
-  );
+  return [...groups.values()].map(({ entry, affectedScriptKeys }) => ({
+    reason: entry.reason,
+    detail: entry.detail,
+    limit: entry.limit,
+    remediation: entry.remediation,
+    affectedScriptKeys,
+  }));
 };
 
 const analysisUnavailableReason = (

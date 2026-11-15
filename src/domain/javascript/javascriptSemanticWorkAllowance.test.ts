@@ -55,9 +55,6 @@ it("refuses member-mutation work beyond the default allowance and names its sett
     },
   });
   expect(refusal.fixedAllowance).toBeUndefined();
-  expect(refusal.remediationAction).toContain(
-    "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
-  );
 });
 
 it("applies the selected allowance and reports the selected value", () => {
@@ -94,7 +91,16 @@ it("does not advise raising an allowance already at its maximum", () => {
       source: "runtime",
     },
   );
-  expect(below.remediationAction).toContain("Raise it");
-  expect(capped.remediationAction).not.toContain("Raise it");
-  expect(capped.remediationAction).toContain("already at the maximum");
+  // Only an allowance below the maximum names the tools that raise it.
+  for (const tool of [
+    "update_analysis_settings",
+    "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
+  ]) {
+    expect(below.remediationAction).toContain(tool);
+    expect(capped.remediationAction).not.toContain(tool);
+  }
+  expect(capped.limit).toMatchObject({
+    effective_value: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    maximum: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+  });
 });
