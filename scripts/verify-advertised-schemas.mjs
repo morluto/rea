@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +6,12 @@ import {
   distinctAdvertisedSchemas,
   listAdvertisedCatalogs,
 } from "./lib/advertised-catalog.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { classifyLaunchFailure } from "../dist/process/launchFailure.js";
 
 // Compile every regular expression the packaged server advertises, in every
 // schema profile, with the engines clients and gateways actually run. One
@@ -28,56 +34,49 @@ for (const option of process.argv.slice(2))
     packageRoot = resolve(option.slice("--package-root=".length));
   else throw new Error(`Unknown advertised schema check option: ${option}`);
 const ENGINE_TIMEOUT_MS = 120_000;
+// Results carry one entry per refused value, so allow far more than one.
+const HELPER_OUTPUT_BYTES = 16 * 1024 * 1024;
 const SHOWN_SITES = 3;
 
-/** Run one engine helper with its request on stdin; never throws. */
-const runHelper = (engines, { command, args, environment = {} }, input) =>
-  new Promise((resolve) => {
-    const unavailable = (reason) =>
-      resolve(engines.map((engine) => ({ ...engine, unavailable: reason })));
-    const child = spawn(command, args, {
+/**
+ * Run one engine helper under the verifier command owner, which bounds it
+ * with a deadline and stops its whole process tree (`go run` starts the
+ * compiled program as a child). The request is a file argument; never throws.
+ */
+const runHelper = async (
+  engines,
+  { command, args, environment = {} },
+  requestPath,
+) => {
+  try {
+    const { stdout } = await commands.exec(command, [...args, requestPath], {
       env: { ...process.env, ...environment },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
+      timeout: ENGINE_TIMEOUT_MS,
+      maxBuffer: HELPER_OUTPUT_BYTES,
     });
-    const stdout = [];
-    let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), ENGINE_TIMEOUT_MS);
-    child.stdout.on("data", (chunk) => stdout.push(chunk));
-    child.stderr.on("data", (chunk) => {
-      if (stderr.length < 4096) stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      unavailable(`${command} could not start: ${error.message}`);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        // A helper that started but failed is a broken check, not a missing
-        // engine, so it fails even when engines are optional.
-        resolve(
-          engines.map((engine) => ({
-            ...engine,
-            broken: `${command} exited with ${signal ?? code}: ${stderr.trim()}`,
-          })),
-        );
-        return;
-      }
-      try {
-        resolve(JSON.parse(Buffer.concat(stdout).toString("utf8")).results);
-      } catch (error) {
-        resolve(
-          engines.map((engine) => ({
-            ...engine,
-            broken: `${command} wrote unreadable output: ${String(error)}`,
-          })),
-        );
-      }
-    });
-    child.stdin.on("error", () => {});
-    child.stdin.end(input);
-  });
+    try {
+      return JSON.parse(stdout).results;
+    } catch (error) {
+      return engines.map((engine) => ({
+        ...engine,
+        broken: `${command} wrote unreadable output: ${String(error)}`,
+      }));
+    }
+  } catch (error) {
+    const refusal = classifyLaunchFailure(error);
+    if (refusal !== undefined)
+      return engines.map((engine) => ({
+        ...engine,
+        unavailable: `${command} could not start (${refusal.code})`,
+      }));
+    // A helper that started but failed is a broken check, not a missing
+    // engine, so it fails even when engines are optional.
+    return engines.map((engine) => ({
+      ...engine,
+      broken: `${command} failed: ${error instanceof Error ? error.message.trim() : String(error)}`,
+    }));
+  }
+};
 
 const timed = async (run) => {
   const start = performance.now();
@@ -120,13 +119,12 @@ const patternSites = new Map();
 for (const { schema, sites } of advertised)
   for (const { path, pattern } of advertisedSchemaPatterns(schema)) {
     if (!patternSites.has(pattern)) patternSites.set(pattern, []);
-    patternSites
-      .get(pattern)
-      .push(
-        ...sites.map(
-          (site) => `${site.tool} ${site.kind} ${path} (${site.profile})`,
-        ),
-      );
+    patternSites.get(pattern).push(
+      ...sites.map((site) => ({
+        tool: site.tool,
+        text: `${site.tool} ${site.kind} ${path} (${site.profile})`,
+      })),
+    );
   }
 const patterns = [...patternSites.keys()];
 if (patterns.length === 0)
@@ -141,40 +139,50 @@ const checked = {
 };
 const input = JSON.stringify({ patterns });
 
-const results = (
-  await Promise.all([
-    timed(async () => v8Results(patterns)),
-    timed(() =>
-      runHelper(
-        [{ engine: "go regexp (RE2)", kind: "pattern" }],
-        {
-          command: "go",
-          args: ["run", join(directory, "regexp.go")],
-          // Use the installed toolchain; never download another one.
-          environment: { GOTOOLCHAIN: "local", GOFLAGS: "" },
-        },
-        input,
+const fixture = await VerifierFixture.open({
+  prefix: "rea-advertised-schemas-",
+});
+const commands = await createVerifierCommands();
+// The request stays until every helper's process tree is confirmed stopped.
+fixture.releaseAfter(() => commands.close());
+const results = await withVerifierFixture(fixture, async () => {
+  const requestPath = join(fixture.path, "request.json");
+  await writeFile(requestPath, input);
+  return (
+    await Promise.all([
+      timed(async () => v8Results(patterns)),
+      timed(() =>
+        runHelper(
+          [{ engine: "go regexp (RE2)", kind: "pattern" }],
+          {
+            command: "go",
+            args: ["run", join(directory, "regexp.go")],
+            // Use the installed toolchain; never download another one.
+            environment: { GOTOOLCHAIN: "local", GOFLAGS: "" },
+          },
+          requestPath,
+        ),
       ),
-    ),
-    timed(() =>
-      runHelper(
-        [
-          { engine: "python re", kind: "pattern" },
-          { engine: "re2 (C++)", kind: "pattern" },
-          { engine: "rust regex", kind: "pattern" },
-          { engine: "rust fancy-regex", kind: "pattern" },
-        ],
-        {
-          command:
-            process.env.REA_SCHEMA_ENGINES_PYTHON ??
-            (process.platform === "win32" ? "python" : "python3"),
-          args: ["-I", join(directory, "engines.py")],
-        },
-        input,
+      timed(() =>
+        runHelper(
+          [
+            { engine: "python re", kind: "pattern" },
+            { engine: "re2 (C++)", kind: "pattern" },
+            { engine: "rust regex", kind: "pattern" },
+            { engine: "rust fancy-regex", kind: "pattern" },
+          ],
+          {
+            command:
+              process.env.REA_SCHEMA_ENGINES_PYTHON ??
+              (process.platform === "win32" ? "python" : "python3"),
+            args: ["-I", join(directory, "engines.py")],
+          },
+          requestPath,
+        ),
       ),
-    ),
-  ])
-).flat();
+    ])
+  ).flat();
+});
 
 const problems = [];
 console.log(
@@ -197,22 +205,34 @@ for (const result of results) {
     `- ${result.engine} ${result.version}: ${String(values.length - result.failures.length)}/${String(values.length)} ${result.kind}s accepted (${String(result.elapsed)} ms)`,
   );
   // One entry per distinct refusal: a shared pattern fails many schemas.
+  // Engines such as the Rust crates name the refusal on the first line and
+  // explain it, with the failing schema position, on later lines; the entry
+  // keeps the first complete explanation.
   const refusals = new Map();
   for (const { index, error } of result.failures) {
-    // Engines such as the Rust crates explain on later lines; the first names it.
-    const reason = error.trim().split("\n")[0];
-    if (!refusals.has(reason)) refusals.set(reason, []);
-    refusals.get(reason).push(index);
+    const [reason, ...explanation] = error.trim().split("\n");
+    if (!refusals.has(reason))
+      refusals.set(reason, { explanation, indexes: [] });
+    refusals.get(reason).indexes.push(index);
   }
-  for (const [reason, indexes] of refusals) {
+  for (const [reason, { explanation, indexes }] of refusals) {
+    // Every affected tool, and the first few exact schema locations.
     const where = indexes.flatMap(sites);
-    const shown = where.slice(0, SHOWN_SITES).join("; ");
+    const tools = [...new Set(where.map(({ tool }) => tool))].sort();
+    const shown = where
+      .slice(0, SHOWN_SITES)
+      .map(({ text }) => text)
+      .join("; ");
     const more =
       where.length > SHOWN_SITES
         ? ` and ${String(where.length - SHOWN_SITES)} more`
         : "";
+    const detail = explanation
+      .filter((line) => line.trim() !== "")
+      .map((line) => `\n      ${line.trim()}`)
+      .join("");
     problems.push(
-      `${result.engine} refused ${describe(indexes)}: ${reason}\n    advertised at ${shown}${more}`,
+      `${result.engine} refused ${describe(indexes)}: ${reason}${detail}\n    advertised by ${String(tools.length)} tools: ${tools.join(", ")}\n    at ${shown}${more}`,
     );
   }
 }
