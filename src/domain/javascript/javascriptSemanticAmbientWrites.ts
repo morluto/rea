@@ -50,50 +50,56 @@ import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReference
  * ignores its receiver; any other member, including one `Object` inherits
  * from `Function.prototype`, may be user code that receives the constructor.
  */
-const NATIVE_STATIC_METHODS: Readonly<
-  Record<string, ReadonlySet<string> | undefined>
-> = {
-  Object: new Set([
-    "assign",
-    "create",
-    "defineProperties",
-    "defineProperty",
-    "entries",
-    "freeze",
-    "fromEntries",
-    "getOwnPropertyDescriptor",
-    "getOwnPropertyDescriptors",
-    "getOwnPropertyNames",
-    "getOwnPropertySymbols",
-    "getPrototypeOf",
-    "groupBy",
-    "hasOwn",
-    "is",
-    "isExtensible",
-    "isFrozen",
-    "isSealed",
-    "keys",
-    "preventExtensions",
-    "seal",
-    "setPrototypeOf",
-    "values",
-  ]),
-  Reflect: new Set([
-    "apply",
-    "construct",
-    "defineProperty",
-    "deleteProperty",
-    "get",
-    "getOwnPropertyDescriptor",
-    "getPrototypeOf",
-    "has",
-    "isExtensible",
-    "ownKeys",
-    "preventExtensions",
-    "set",
-    "setPrototypeOf",
-  ]),
-};
+const NATIVE_STATIC_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  [
+    [
+      "Object",
+      new Set([
+        "assign",
+        "create",
+        "defineProperties",
+        "defineProperty",
+        "entries",
+        "freeze",
+        "fromEntries",
+        "getOwnPropertyDescriptor",
+        "getOwnPropertyDescriptors",
+        "getOwnPropertyNames",
+        "getOwnPropertySymbols",
+        "getPrototypeOf",
+        "groupBy",
+        "hasOwn",
+        "is",
+        "isExtensible",
+        "isFrozen",
+        "isSealed",
+        "keys",
+        "preventExtensions",
+        "seal",
+        "setPrototypeOf",
+        "values",
+      ]),
+    ],
+    [
+      "Reflect",
+      new Set([
+        "apply",
+        "construct",
+        "defineProperty",
+        "deleteProperty",
+        "get",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "has",
+        "isExtensible",
+        "ownKeys",
+        "preventExtensions",
+        "set",
+        "setPrototypeOf",
+      ]),
+    ],
+  ],
+);
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -769,7 +775,7 @@ export function* indexJavaScriptAmbientWritesSteps(
           invocation?.kind === "known" &&
           invocation.path.length === 3 &&
           owner !== undefined &&
-          NATIVE_STATIC_METHODS[owner]?.has(invocation.path[2] ?? "")
+          NATIVE_STATIC_METHODS.get(owner)?.has(invocation.path[2] ?? "")
             ? invocation.path.slice(1)
             : undefined;
         if (method !== undefined)

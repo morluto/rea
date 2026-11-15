@@ -128,6 +128,8 @@ it.each([
     true,
   ],
   ["Object.custom();const get=()=>({});get.call(null)", true],
+  // An owner named like an Object.prototype key is looked up safely.
+  ["globalThis.constructor.keys({});const get=()=>({});get.call(null)", false],
   [
     "const get=()=>({});get.call(null);Object.defineProperty=custom;Object.defineProperty(o,'a',{})",
     false,
