@@ -25,6 +25,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -99,6 +101,29 @@ const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
   exit_code: snapshot.exitCode ?? null,
   signal: snapshot.signal ?? null,
 });
+/** WABT's per-call command deadline and the setting that changes it. */
+const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {
+  const timeoutMs =
+    execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+  const timeoutSource =
+    execution?.commandTimeoutMs === undefined
+      ? "default"
+      : execution.commandTimeoutSource;
+  return {
+    ms: timeoutMs,
+    limit: analysisSettingLimit(
+      "wasm.command_timeout_ms",
+      timeoutMs,
+      timeoutSource,
+    ),
+    userMessage: `A WABT command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms), not the whole-inspection or MCP client deadline.`,
+    remediationAction: `${
+      timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
+        ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
+        : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
+    } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. max_input_bytes, max_tool_bytes and max_output_bytes are independent per-call controls; detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
+  };
+};
 /** Preserve lifecycle failures and diagnostic bytes instead of returning partial success. */
 export const wabtFailure = (
   cause: unknown,
@@ -166,112 +191,85 @@ const classifyWabtFailure = (
           : cause,
       ...artifactOptions,
     });
-  if (cause instanceof OwnedCommandFailure) {
-    const capturedOutput =
-      cause.snapshot === null
-        ? undefined
-        : cause.reason === "output-limit"
-          ? outputLimitExcerpt(cause.snapshot)
-          : {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated: cause.snapshot.diagnosticTruncated ?? false,
-            };
-    const options = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-      ...(versionProbe === undefined ? {} : { diagnostics: versionProbe }),
-    };
-    // Classify once before cleanup takes precedence, so the primary remains actionable.
-    const timeoutMs =
-      execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
-    const timeoutSource =
-      execution?.commandTimeoutMs === undefined
-        ? "default"
-        : execution.commandTimeoutSource;
-    const timeout =
-      cause.reason === "timeout"
-        ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
-            limit: analysisSettingLimit(
-              "wasm.command_timeout_ms",
-              timeoutMs,
-              timeoutSource,
+  const outcome = providerOutcomeOf(cause);
+  if (outcome !== undefined) {
+    const command = cause instanceof OwnedCommandFailure ? cause : undefined;
+    const capturedOutput = (snapshot: ProviderProcessSnapshot) =>
+      outcome.kind === "output-limit"
+        ? outputLimitExcerpt(snapshot)
+        : {
+            stdout: snapshot.stdout.text,
+            stderr: snapshot.stderr.text,
+            truncated: snapshot.diagnosticTruncated ?? false,
+          };
+    const cleanupFailure = command?.cleanupFailure ?? null;
+    const primary = classifyProviderOutcome(
+      // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
+      cleanupFailure === null ? outcome : { ...outcome, output: undefined },
+      {
+        operation: "inspect_wasm_artifact",
+        capturedOutput,
+        details:
+          versionProbe === undefined ? {} : { diagnostics: versionProbe },
+        timeout: wabtCommandTimeout(execution),
+        outputLimit: {
+          reason: outputLimitReason,
+          limits: { max_output_bytes: limits.outputBytes },
+          recovery: {
+            retryable: false,
+            remediationAction: byteBudgetRecovery(
+              "max_output_bytes",
+              limits.outputBytes,
+              WASM_RESOURCE_MAXIMUMS.outputBytes,
             ),
-            ...options,
-            // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
-            capturedOutput:
-              cause.cleanupFailure === null ? capturedOutput : undefined,
-            userMessage: `A WABT command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms), not the whole-inspection or MCP client deadline.`,
-            remediationAction: `${
-              timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
-                ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
-                : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
-            } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. max_input_bytes, max_tool_bytes and max_output_bytes are independent per-call controls; detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
-          })
-        : undefined;
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
-        WABT_PROVIDER_IDENTITY.id,
-        cause.resources,
-        {
-          ...versionProbe,
-          reason: cause.cleanupFailure,
-          previous_error:
-            timeout !== undefined
-              ? projectAnalysisError(timeout)
-              : cause.reason === "output-limit"
-                ? {
-                    failure_kind: "output-limit",
-                    message: outputLimitReason,
-                    max_output_bytes: limits.outputBytes,
-                    remediation_action: byteBudgetRecovery(
-                      "max_output_bytes",
-                      limits.outputBytes,
-                      WASM_RESOURCE_MAXIMUMS.outputBytes,
-                    ),
-                  }
-                : reason,
-          ...(capturedOutput === undefined
-            ? {}
-            : { captured_output: capturedOutput }),
+          },
         },
-        { operation: "inspect_wasm_artifact", cause },
-      );
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_wasm_artifact", {
-        ...options,
-        cause:
-          cause.cancellation === undefined ? cause : cause.cancellation.reason,
-      });
-    if (timeout !== undefined) return timeout;
-    if (cause.reason === "output-limit")
-      return new AnalysisResourceConstraintError(
-        "inspect_wasm_artifact",
-        "memory",
-        outputLimitReason,
-        { max_output_bytes: limits.outputBytes },
-        {
-          ...options,
-          retryable: false,
-          remediationAction: byteBudgetRecovery(
-            "max_output_bytes",
-            limits.outputBytes,
-            WASM_RESOURCE_MAXIMUMS.outputBytes,
-          ),
-        },
-      );
-    if (phase === "configuration" && cause.reason === "process")
-      return new AnalysisCapabilityUnavailableError(
-        WABT_PROVIDER_IDENTITY.id,
-        "inspect_wasm_artifact",
-        reason,
-        {
-          ...options,
-          userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
-          remediationAction: wabtConfigurationRecoveryAction(cause),
-        },
-      );
-    return new AnalysisOutputError("inspect_wasm_artifact", reason, options);
+        dialect: (exit, details) =>
+          // A tool that cannot start, or a version probe that exits or whose
+          // output cannot be collected, leaves the configured installation
+          // unusable for this call.
+          exit.kind === "launch-refused" || phase === "configuration"
+            ? new AnalysisCapabilityUnavailableError(
+                WABT_PROVIDER_IDENTITY.id,
+                "inspect_wasm_artifact",
+                reason,
+                {
+                  ...details,
+                  userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
+                  remediationAction: wabtConfigurationRecoveryAction(cause),
+                },
+              )
+            : new AnalysisOutputError("inspect_wasm_artifact", reason, details),
+      },
+    );
+    if (command === undefined || cleanupFailure === null) return primary;
+    return new ProviderCleanupError(
+      WABT_PROVIDER_IDENTITY.id,
+      command.resources,
+      {
+        ...versionProbe,
+        reason: cleanupFailure,
+        previous_error:
+          primary instanceof AnalysisTimeoutError
+            ? projectAnalysisError(primary)
+            : outcome.kind === "output-limit"
+              ? {
+                  failure_kind: "output-limit",
+                  message: outputLimitReason,
+                  max_output_bytes: limits.outputBytes,
+                  remediation_action: byteBudgetRecovery(
+                    "max_output_bytes",
+                    limits.outputBytes,
+                    WASM_RESOURCE_MAXIMUMS.outputBytes,
+                  ),
+                }
+              : reason,
+        ...(outcome.output === undefined
+          ? {}
+          : { captured_output: capturedOutput(outcome.output.snapshot) }),
+      },
+      { operation: "inspect_wasm_artifact", cause },
+    );
   }
   if (cause instanceof RuntimeControlUnavailableError)
     return runtimeControlCapabilityError(
