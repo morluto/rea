@@ -36,10 +36,11 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
-  OwnedCommandFailure,
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   retainProcessInspectionCleanup,
@@ -452,12 +453,48 @@ export class AdbUiRunner {
       if (!received.ok) throw received.error;
       return received.value;
     } catch (cause) {
-      const transportFailure = this.#transportFailure(
-        cause,
-        operation,
-        timeoutMs,
-        signal,
-      );
+      const outcome = providerOutcomeOf(cause);
+      const transportFailure =
+        cause instanceof AnalysisError
+          ? cause
+          : (processInspectionCancellationError(cause, operation) ??
+            (signal?.aborted && cause === signal.reason
+              ? cancelledBy(operation, signal)
+              : outcome === undefined
+                ? new AnalysisProtocolError("ADB UI transport failed", {
+                    cause,
+                  })
+                : classifyProviderOutcome(outcome, {
+                    operation,
+                    capturedOutput: (snapshot) => ({
+                      stdout: snapshot.stdout.text,
+                      stderr: snapshot.stderr.text,
+                      truncated:
+                        snapshot.diagnosticTruncated === true ||
+                        snapshot.outputIncomplete === true ||
+                        snapshot.stdout.bytes < snapshot.stdout.observedBytes ||
+                        snapshot.stderr.bytes < snapshot.stderr.observedBytes,
+                    }),
+                    timeout: { ms: timeoutMs },
+                    outputLimit: {
+                      limits: { max_output_bytes: CAPTURE_BYTES },
+                      recovery: fixedAllowanceOptions(
+                        "ADB UI complete-output capture",
+                        "live",
+                        {
+                          limit: CAPTURE_BYTES,
+                          unit: "bytes",
+                          narrowing:
+                            "Narrow the UI observation and inspect current state before deciding whether to replay an action.",
+                        },
+                      ),
+                    },
+                    dialect: (_outcome, details) =>
+                      new AnalysisProtocolError(
+                        "ADB UI transport failed",
+                        details,
+                      ),
+                  })));
       const inspection = processInspectionFailure(cause);
       // Running command supervisors already belong to #commands. Adopt only
       // preparation owners here, never a second owner for that same process.
@@ -473,63 +510,6 @@ export class AdbUiRunner {
       if (primary.cleanupIncomplete) this.#trackCleanupError(primary);
       throw primary;
     }
-  }
-
-  #transportFailure(
-    cause: unknown,
-    operation: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    const inspectionCancellation = processInspectionCancellationError(
-      cause,
-      operation,
-    );
-    if (inspectionCancellation !== undefined) return inspectionCancellation;
-    const capturedOutput =
-      cause instanceof OwnedCommandFailure && cause.snapshot !== null
-        ? {
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
-            truncated:
-              cause.snapshot.stdout.bytes <
-                cause.snapshot.stdout.observedBytes ||
-              cause.snapshot.stderr.bytes < cause.snapshot.stderr.observedBytes,
-          }
-        : undefined;
-    const options = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    };
-    if (
-      (signal?.aborted && cause === signal.reason) ||
-      (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
-    )
-      return cancelledBy(
-        operation,
-        signal?.aborted ? signal : carriedReason(cause),
-        capturedOutput === undefined ? undefined : { capturedOutput },
-      );
-    if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-      return new AnalysisTimeoutError(operation, timeoutMs, options);
-    if (cause instanceof OwnedCommandFailure && cause.reason === "output-limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "transport",
-        "ADB UI output exceeded its complete-capture budget",
-        { max_output_bytes: CAPTURE_BYTES },
-        {
-          ...options,
-          ...fixedAllowanceOptions("ADB UI complete-output capture", "live", {
-            limit: CAPTURE_BYTES,
-            unit: "bytes",
-            narrowing:
-              "Narrow the UI observation and inspect current state before deciding whether to replay an action.",
-          }),
-        },
-      );
-    return new AnalysisProtocolError("ADB UI transport failed", options);
   }
 
   #readReply(

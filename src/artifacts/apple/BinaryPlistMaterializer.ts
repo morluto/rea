@@ -1,6 +1,10 @@
 import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
+import {
+  createPlistDuplicateKeyCollector,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
 import {
   binaryPlistObjectEnd,
@@ -72,6 +76,20 @@ const scalarOccurrence = (
     return copy;
   }
   return value;
+};
+
+/**
+ * Keys each stored dictionary declares more than once. The decoded value
+ * keeps one property per key, the last, so this reads the planned source keys.
+ */
+export const binaryPlistDuplicateKeys = (
+  plan: PlistDecodePreflight,
+): PlistDuplicateKeys => {
+  const duplicates = createPlistDuplicateKeyCollector();
+  for (const container of plan.binaryValuePlan?.containers ?? [])
+    if (container.kind === "dictionary" && container.keys !== undefined)
+      duplicates.dictionary(container.keys);
+  return duplicates.result();
 };
 
 /** Decode validated source containers without losing dictionary keys or alias occurrence identity. */

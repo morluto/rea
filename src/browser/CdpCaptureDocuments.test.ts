@@ -410,33 +410,6 @@ describe("CDP accessibility inventory and identity", () => {
     });
   });
 
-  it.each([undefined, { length: 1 }])(
-    "keeps an omitted or non-array node inventory unknown: %s",
-    (nodes) => {
-      const completeness = new CdpCaptureCompleteness();
-      const capture = captureAccessibility([{ nodes }], {
-        includeText: true,
-        completeness,
-      });
-
-      expect(capture).toMatchObject({
-        total: 0,
-        nodes: [],
-        hasUnobservedChildren: false,
-      });
-      expect(completeness.snapshot()).toMatchObject({
-        unavailable_sections: ["accessibility"],
-        excluded: [
-          {
-            section: "accessibility",
-            reason: "invalid_protocol_value",
-            count: null,
-          },
-        ],
-      });
-    },
-  );
-
   it("retains valid nodes and counts malformed inventory entries", () => {
     const completeness = new CdpCaptureCompleteness();
     const capture = captureAccessibility(

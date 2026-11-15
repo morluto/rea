@@ -262,6 +262,17 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means. The
+`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
+AnalysisError` functions out of `src/`; existing ones are counted in a baseline
+that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
@@ -459,7 +470,12 @@ failed request's physical, cancellation and cleanup facts.
   remain attached to their owning envelope while cleanup is pending and after
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
-  applies rather than duplicate close/finally handling.
+  applies rather than duplicate close/finally handling. It projects
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  which owns this precedence for owned work: a recorded failure stays primary,
+  cancellation before commit keeps the completed value as a partial
+  observation, cancellation after commit keeps the value, and unconfirmed
+  cleanup reports `cleanup_incomplete` while keeping the completed value.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
