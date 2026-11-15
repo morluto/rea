@@ -43,7 +43,12 @@ export type CdpRootNavigation =
 export class CdpTargetDocument {
   readonly #tracker: CdpDocumentTracker;
   readonly #listeners = new Set<(navigation: CdpRootNavigation) => void>();
-  /** Each subframe's document since it was first seen; replaced on a proven change. */
+  /**
+   * Each live subframe's document since it was first seen, by frame and
+   * loader only: subframe consumers need a proven change or an unknown
+   * loader, never the URL, so a long `data:` URL is not retained. Entries
+   * leave with `Page.frameDetached` and are replaced on a proven change.
+   */
   readonly #frames = new Map<string, CdpDocumentTracker>();
   readonly #frameListeners = new Set<(frameId: string) => void>();
   readonly #rootFrameBefore = new WeakMap<CdpReceivedEvent, string>();
@@ -126,7 +131,6 @@ export class CdpTargetDocument {
         new CdpDocumentTracker({
           frameId,
           loaderId: node.facts.loaderIssue === null ? loaderId : undefined,
-          url: observedFrameUrl(node.url),
         }),
       );
     }
@@ -200,13 +204,11 @@ export class CdpTargetDocument {
         this.#notify({ kind: "unidentified", frame });
       return;
     }
-    const url = observedFrameUrl(frame.url);
     if (identity.selection === "other" && !identity.isRootReplacement) {
       if (facts.kind === "navigated")
         this.#observeFrame({
           frameId: identity.frameId,
           loaderId: facts.loaderIssue === null ? facts.loaderId : undefined,
-          url,
         });
       // A same-document navigation keeps a known subframe's document. A
       // subframe first seen this way starts with an unknown loader, so a
@@ -214,10 +216,11 @@ export class CdpTargetDocument {
       else if (!this.#frames.has(identity.frameId))
         this.#frames.set(
           identity.frameId,
-          new CdpDocumentTracker({ frameId: identity.frameId, url }),
+          new CdpDocumentTracker({ frameId: identity.frameId }),
         );
       return;
     }
+    const url = observedFrameUrl(frame.url);
     if (facts.loaderIssue !== null) {
       // A malformed loader cannot prove the document, but another root frame
       // still proves a change, which every consumer reports as one.
