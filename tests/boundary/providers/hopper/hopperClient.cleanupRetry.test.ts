@@ -411,6 +411,56 @@ it("reports a launcher aggregate released by its own owner while session cleanup
   if (!first.ok) expect(first.error.cleanupResources).toEqual(["hopper-lease"]);
 });
 
+it("releases a session part on its own retry while the launcher part still fails", async () => {
+  const fixture = new RetryCleanupLauncher();
+  fixture.allowCleanup = true;
+  let leaseReleases = false;
+  let launcherReleases = false;
+  const launcher: BridgeLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      return ok({
+        ...launched.value,
+        releaseLease: async () => {
+          if (!leaseReleases) throw new Error("fixture lease release denial");
+        },
+      });
+    },
+    // An ownerless failure: only this client's retry can confirm it.
+    cleanup: async () =>
+      launcherReleases
+        ? ok(null)
+        : err(
+            new ProviderCleanupError("hopper", ["hopper-launcher"], {
+              reason: "fixture launcher cleanup denial",
+            }),
+          ),
+  };
+  const client = createClient({ launcher });
+  await expect(client.start()).resolves.toMatchObject({ ok: false });
+  const first = await client.close();
+  if (first.ok) throw new Error("expected both close parts to fail");
+  expect([...first.error.cleanupResources].sort()).toEqual([
+    "hopper-launcher",
+    "hopper-lease",
+  ]);
+
+  leaseReleases = true;
+  const second = await client.close();
+  expect(second).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true, cleanupResources: ["hopper-launcher"] },
+  });
+  // The session part succeeded: the first failure reports only the launcher.
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toEqual(["hopper-launcher"]);
+
+  launcherReleases = true;
+  await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+  expect(first.error.cleanupIncomplete).toBe(false);
+});
+
 it("preserves confirmed document shutdown while retrying owned process cleanup", async () => {
   const launcher = new RetryCleanupLauncher();
   const runtimeRoot = await PrivateRuntimeRoot.create();

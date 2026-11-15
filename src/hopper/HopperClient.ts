@@ -174,11 +174,14 @@ export class HopperClient {
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   /**
-   * Confirms every failure a close of this client reported: the next close
-   * retries the same retained session and launcher, so its success releases
-   * them all.
+   * Confirm the failures a close of this client reported, one release per
+   * part: the next close retries the same retained session and launcher, and
+   * each part's success releases only the failures that part reported.
    */
-  #closeRetry: AnalysisCleanupRelease | undefined;
+  readonly #closeRetries: {
+    session: AnalysisCleanupRelease | undefined;
+    launcher: AnalysisCleanupRelease | undefined;
+  } = { session: undefined, launcher: undefined };
   readonly #onSocketData = (chunk: Buffer): void => {
     try {
       this.#responses.push(chunk);
@@ -870,18 +873,26 @@ export class HopperClient {
             ),
           ),
         );
-      if (closed.ok && (launcherClosed === undefined || launcherClosed.ok)) {
-        this.#closeRetry?.confirm();
-        this.#closeRetry = undefined;
+      // Each part confirms its own earlier failures when it succeeds; an
+      // ownerless failed part binds to its part's retry before composing, so
+      // the composite reports only the parts still unreleased. A part that
+      // already follows its own owner keeps reading that owner.
+      const retries = this.#closeRetries;
+      if (closed.ok) {
+        retries.session?.confirm();
+        retries.session = undefined;
+      } else
+        (retries.session ??= new AnalysisCleanupRelease()).bindUnowned(
+          closed.error,
+        );
+      if (launcherClosed === undefined || launcherClosed.ok) {
+        retries.launcher?.confirm();
+        retries.launcher = undefined;
         return closed;
       }
-      // Bind each ownerless failed part to the retry before composing, so the
-      // composite completes when a later close of this client succeeds; a part
-      // that already follows its own owner keeps reading that owner.
-      const retry = (this.#closeRetry ??= new AnalysisCleanupRelease());
-      if (!closed.ok) retry.bindUnowned(closed.error);
-      if (launcherClosed === undefined || launcherClosed.ok) return closed;
-      retry.bindUnowned(launcherClosed.error);
+      (retries.launcher ??= new AnalysisCleanupRelease()).bindUnowned(
+        launcherClosed.error,
+      );
       return closed.ok
         ? launcherClosed
         : err(
