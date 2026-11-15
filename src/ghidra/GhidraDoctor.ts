@@ -5,7 +5,7 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import { admitGhidraInstallation } from "./GhidraAdmission.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
@@ -29,19 +29,16 @@ export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
   temporaryDirectory?: GhidraTemporaryDirectoryProbe,
 ): DoctorProviderInspection => {
+  const admission = admitGhidraInstallation(inspection);
+  // Native authority is reported once the installation itself is usable.
   const readiness =
-    inspection.status === "available" && inspection.platform === "win32"
-      ? inspectWindowsNativeReadiness(inspection.platform)
-      : undefined;
+    inspection.status === "available" ? admission.windowsNative : undefined;
   const windowsAuthorityUnavailable = readiness?.available === false;
   const temporaryDirectoryUnavailable = temporaryDirectory?.ok === false;
   return {
     id: "ghidra",
     configured: inspection.installDir !== null,
-    available:
-      inspection.status === "available" &&
-      !windowsAuthorityUnavailable &&
-      !temporaryDirectoryUnavailable,
+    available: admission.admitted && !temporaryDirectoryUnavailable,
     providerVersion: inspection.providerVersion,
     registrationEnvironment:
       inspection.status === "available"

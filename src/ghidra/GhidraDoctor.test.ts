@@ -18,6 +18,9 @@ import {
   inspectSystemGhidraProvider,
   projectGhidraDoctorInspection,
 } from "./GhidraDoctor.js";
+import { GhidraProvider } from "./GhidraProvider.js";
+import { parseConfig } from "../config/parseConfig.js";
+import { silentLogger } from "../logger.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -545,3 +548,61 @@ it("does not claim probe deletion failed when only descriptor cleanup remains", 
   expect(check?.detail).not.toContain("could not delete");
   expect(check?.detail).not.toContain("remains");
 });
+
+it.each([
+  {
+    name: "a usable Linux installation",
+    platform: "linux",
+    java: true,
+    native: undefined,
+  },
+  { name: "missing Java", platform: "linux", java: false, native: undefined },
+  {
+    name: "unavailable Windows native authority",
+    platform: "win32",
+    java: true,
+    native: {
+      available: false,
+      failureStage: "self-test",
+      retryable: true,
+      reason: "cleanup failed (145)",
+    },
+  },
+] as const)(
+  "doctor and provider readiness project one admission: $name",
+  async ({ platform, java, native }) => {
+    if (native !== undefined)
+      vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue(
+        native,
+      );
+    const overrides = java ? {} : { probeJava: () => missingJavaProbe };
+    const doctor = projectGhidraDoctorInspection(
+      await inspection({ installDir: INSTALL, platform }, overrides),
+    );
+    const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+    if (!config.ok) throw config.error;
+    const provider = new GhidraProvider(
+      config.value,
+      silentLogger,
+      {},
+      {
+        ...installationHost(overrides, platform),
+        platform,
+        architecture: "x64",
+      },
+    );
+    try {
+      const availability = await provider.inspectAvailability();
+      expect(doctor.available).toBe(availability.status === "available");
+      if (availability.status === "unavailable")
+        expect(doctor.checks).toContainEqual(
+          expect.objectContaining({
+            ok: false,
+            remediation: availability.remediation,
+          }),
+        );
+    } finally {
+      await provider.closeOwnedResources();
+    }
+  },
+);
