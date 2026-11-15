@@ -23,7 +23,11 @@ import {
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
-import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
+import {
+  ProcessOutputTokenScanner,
+  type ProviderProcessOutputToken,
+} from "../process/ProcessOutputTokenScanner.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -4792,6 +4796,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
@@ -5968,6 +5988,14 @@ const output = (text: string) => ({
   bytes: Buffer.byteLength(text),
   retained_bytes: Buffer.byteLength(text),
 });
+/** The memory area the supervisor's JVM runtime parses from a marker. */
+const runtimeExhaustionFacts = (
+  stream: "stdout" | "stderr",
+  marker: ProviderProcessOutputToken,
+) => {
+  const { area } = runtimeExhaustion("jvm", stream, marker);
+  return area === undefined ? {} : { area };
+};
 const failureOutput = (stdout = "", stderr = "") => ({
   stdout: output(stdout),
   stderr: output(stderr),
@@ -5986,6 +6014,7 @@ const failureOutput = (stdout = "", stderr = "") => ({
             offset: observed.offset,
             line: observed.line,
             truncated: observed.truncated,
+            ...runtimeExhaustionFacts(stream, observed),
           },
         ];
   }),
@@ -6224,6 +6253,7 @@ describe("Ghidra OOME beyond the retention budget", () => {
             stream: "stderr",
             offset: 9_000_000,
             line: "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space",
+            area: "heap",
           },
         ],
       },
@@ -6573,6 +6603,14 @@ it("refuses a changed installation before creating a target-bound native client"
         current_installation: { provider_version: "12.1.5" },
       },
     });
+    // The actionable reason reaches the caller, not only details.
+    const projected = projectAnalysisError(result.error);
+    expect(projected.message).toContain(
+      "installation version differs from the selected analysis profile",
+    );
+    expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).toContain("close_binary");
+    expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);
   } finally {
@@ -6758,6 +6796,7 @@ it.each([false, true])(
                   stream: "stderr",
                   offset: 0,
                   line: "java.lang.OutOfMemoryError: Metaspace",
+                  area: "metaspace",
                 },
               ]
             : []),

@@ -2,7 +2,10 @@ import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "./analysisErrorCore.js";
 import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
@@ -23,6 +26,14 @@ import {
   type ResidualUnknown,
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import {
+  admitEvidenceBundleFormat,
+  EVIDENCE_FORMAT_REVISION,
+  evidenceFormatSchema,
+  RECREATE_EVIDENCE_GUIDANCE,
+  isUnsupportedEvidenceFormat,
+  type UnsupportedEvidenceFormat,
+} from "./evidenceFormat.js";
 
 const artifactManifestBaseSchema = z.strictObject({
   digest: z.strictObject({ sha256: digestSchema }),
@@ -43,6 +54,7 @@ const captureManifestSchema = z.strictObject({
 });
 
 export const evidenceBundleSchema = z.strictObject({
+  evidence_format: evidenceFormatSchema,
   artifacts: z.array(artifactManifestSchema),
   providers: z.array(providerManifestSchema),
   environments: z.array(environmentManifestSchema),
@@ -109,6 +121,7 @@ export const createEvidenceBundle = (
     compareUnicodeCodePoints(left.evidence_id, right.evidence_id),
   );
   return {
+    evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: uniqueSorted(
       sortedRecords.flatMap(({ subject }) =>
         subject === null
@@ -257,6 +270,7 @@ export const referencedEvidenceIds = (
 ];
 
 type EvidenceBundleValidationFailure =
+  | UnsupportedEvidenceFormat
   | z.ZodError
   | DuplicateEvidenceRecordError
   | InvalidResidualUnknownGraphError
@@ -264,7 +278,7 @@ type EvidenceBundleValidationFailure =
 
 /** Expected source rejection, including authenticated standalone Evidence. */
 export type EvidenceBundleFailure = {
-  readonly kind: "single-record" | "invalid-bundle";
+  readonly kind: "single-record" | "unsupported-format" | "invalid-bundle";
   readonly message: string;
   readonly cause: EvidenceBundleValidationFailure;
 };
@@ -282,12 +296,16 @@ const describeEvidenceBundleFailure = (
     };
   } catch (recordFailure: unknown) {
     if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
+    // The format owner decides earlier bundles once; its message carries the
+    // recreate guidance instead of per-field schema failures.
+    if (isUnsupportedEvidenceFormat(cause))
+      return { kind: "unsupported-format", cause, message: cause.message };
     return {
       kind: "invalid-bundle",
       cause,
       message:
         cause instanceof z.ZodError
-          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA identity format. Recreate observations from earlier formats; re-exporting an old bundle does not update its identities.`
+          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA release. ${RECREATE_EVIDENCE_GUIDANCE}`
           : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`,
     };
   }
@@ -317,8 +335,23 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
     const owned = immutableBundles.get(input);
     if (owned !== undefined) return owned;
   }
+  admitEvidenceBundleFormat(input);
   return authenticateBundle(evidenceBundleSchema.parse(input), seal);
 };
+
+/**
+ * Refusal of one standalone Evidence record where a bundle is required; its
+ * `detected_kind` matches the file reader's `wrong-kind` fact.
+ */
+export const singleEvidenceRecordIssue = (
+  path: readonly (string | number)[],
+  message: string,
+): AnalysisInputIssue => ({
+  path,
+  reason: "invalid_value",
+  message,
+  observed: { detected_kind: "evidence-record" },
+});
 
 /** Read a source bundle while preserving unexpected implementation failures. */
 export const readEvidenceBundle = (
@@ -336,7 +369,7 @@ export const readEvidenceBundle = (
       new AnalysisInputError(
         context.operation,
         { cause, userMessage: message, remediationAction: message },
-        [{ path: context.path, reason: "invalid_value", message }],
+        [singleEvidenceRecordIssue(context.path, message)],
       ),
     );
   return err(
@@ -357,6 +390,7 @@ const readBundle = (
     );
   } catch (cause: unknown) {
     if (
+      !isUnsupportedEvidenceFormat(cause) &&
       !(cause instanceof z.ZodError) &&
       !(cause instanceof DuplicateEvidenceRecordError) &&
       !(cause instanceof InvalidResidualUnknownGraphError) &&

@@ -57,19 +57,7 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
 
 export const nativeExportsViewItemsSchema = z.union([
   z.array(peRow.partial().extend(sourceIndex)),
-  z.array(
-    elfRow.partial().extend({
-      ...sourceIndex,
-      // Historical defaults normalize complete source rows, never omitted columns.
-      name_bytes_base64: elfRow.shape.name_bytes_base64
-        .removeDefault()
-        .optional(),
-      name_utf8_decodable: elfRow.shape.name_utf8_decodable
-        .removeDefault()
-        .optional(),
-      visibility: elfRow.shape.visibility.removeDefault().optional(),
-    }),
-  ),
+  z.array(elfRow.partial().extend(sourceIndex)),
   z.array(issue.extend(sourceIndex)),
 ]);
 
@@ -194,21 +182,6 @@ export const projectNativeExportsView = (
               : [];
           }),
         );
-  if (
-    names !== undefined &&
-    names.size > 0 &&
-    report.format === "elf" &&
-    report.exports.some(
-      (row) =>
-        row.name_utf8_decodable === null ||
-        (row.name_utf8_decodable &&
-          row.name_bytes_base64 === null &&
-          !/^[\x00-\x7f]*$/u.test(row.name)),
-    )
-  )
-    shared.unknowns.push(
-      "Some ELF names lack retained encoding facts and cannot be matched by UTF-8 identity; select their source indices. A no-match page does not establish their absence.",
-    );
   // A projected decoded name still carries its exact bytes and encoding qualification.
   const columns = new Set<string>(fields);
   if (report.format === "elf" && columns.has("name")) {
@@ -244,7 +217,7 @@ export const projectNativeExportsView = (
                 ? row.name_utf8_decodable === true &&
                   (row.name_bytes_base64 !== null
                     ? encodedNames!.has(row.name_bytes_base64)
-                    : /^[\x00-\x7f]*$/u.test(row.name) && names.has(row.name))
+                    : names.has(row.name))
                 : row.name !== null && names.has(row.name))),
           projectRow,
         );

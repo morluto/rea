@@ -12,6 +12,7 @@ import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../isRecord.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -78,11 +79,6 @@ const parentBelowRoot = (pointer: string): string | undefined => {
 /** Whether the diff names an element by one of its attributes, as `[name=p][@xid=6]`, rather than by its tag alone or its position. */
 const namedByAttribute = (pointer: string) =>
   (pointer.split("/").at(-1) ?? "").includes("[@");
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** An element's attributes; none for any other value. */
 const attributesOf = (value: JsonValue | undefined) =>

@@ -36,6 +36,7 @@ import {
 } from "../filesystem/readStableFileBytes.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { xdgBase } from "./XdgBase.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** The most bytes a secret file of at most `characters` may hold: those in UTF-8 and a line break. */
 const maxFileBytes = (characters: number) => characters * 4 + 2;
@@ -179,7 +180,7 @@ export const readBuildSecretFile = async (
         );
         let text: string;
         try {
-          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          text = decodeStrictUtf8(bytes, "strip-signature");
         } catch {
           result = err(`${path} is not UTF-8 text.`);
           return;

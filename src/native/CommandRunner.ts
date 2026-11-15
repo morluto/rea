@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -173,7 +174,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
     private readonly launcher?: NativeCommandLauncher,
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   run(

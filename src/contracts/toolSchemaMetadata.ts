@@ -6,7 +6,10 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import {
+  presentInputJsonSchema,
+  presentOutputJsonSchema,
+} from "./inputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -14,7 +17,9 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { isRecord } from "../domain/isRecord.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -141,10 +146,14 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
-        const shared = project({
-          ...options,
-          libraryOptions: { reused: "ref", ...options.libraryOptions },
-        });
+        const shared = shareOutputDefinitions(
+          presentOutputJsonSchema(
+            project({
+              ...options,
+              libraryOptions: { reused: "ref", ...options.libraryOptions },
+            }),
+          ),
+        );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.
         if ("$id" in shared || hasRelativeSchemaReference(shared))
@@ -161,6 +170,20 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   );
 
 /**
+ * Return the canonical output JSON Schema registered on MCP for a target: the
+ * complete projection of the contract's output, which the full output profile
+ * lists. A client that validates a reply uses it whatever the selected profile
+ * advertises.
+ */
+export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+  target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
+): Record<string, unknown> =>
+  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
+    target,
+  }) as Record<string, unknown>;
+
+/**
  * Apply a wire-presentation transform to one schema's advertised input
  * projection. The wrapper preserves the schema's own parser and standard
  * metadata, so both Zod registrations and plain standard schemas keep their
@@ -171,9 +194,9 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
   transform: (projected: Record<string, unknown>) => Record<string, unknown>,
 ): Schema => {
   const standard = Reflect.get(schema as object, "~standard");
-  if (!isSchemaRecord(standard)) return schema;
+  if (!isRecord(standard)) return schema;
   const jsonSchema = Reflect.get(standard, "jsonSchema");
-  if (!isSchemaRecord(jsonSchema)) return schema;
+  if (!isRecord(jsonSchema)) return schema;
   const project = Reflect.get(jsonSchema, "input");
   if (typeof project !== "function") return schema;
   const byTarget = new Map<string, Record<string, unknown>>();
@@ -187,11 +210,8 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
       if (cached !== undefined) return cached;
     }
     const projected = (project as (options: unknown) => unknown)(options);
-    const transformed = isSchemaRecord(projected)
-      ? transform(projected)
-      : projected;
-    if (cacheable && isSchemaRecord(transformed))
-      byTarget.set(target, transformed);
+    const transformed = isRecord(projected) ? transform(projected) : projected;
+    if (cacheable && isRecord(transformed)) byTarget.set(target, transformed);
     return transformed;
   };
   return {
@@ -226,7 +246,7 @@ const hasRelativeSchemaReference = (
     if (current === null || typeof current !== "object") continue;
     const { position } = entry;
     const scope =
-      position !== "map" && isSchemaRecord(current)
+      position !== "map" && isRecord(current)
         ? references.enter(current, entry.scope)
         : entry.scope;
     if (scope === undefined) return true;
@@ -321,9 +341,6 @@ const memoizeByTarget = (
     return projected;
   };
 };
-
-const isSchemaRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const fallbackPropertyDescription = (property: string): string | undefined => {
   const explicit = Object.hasOwn(PROPERTY_DESCRIPTIONS, property)

@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
@@ -51,11 +52,10 @@ import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
-const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
+const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
 /** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
 const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
@@ -140,7 +140,8 @@ class NodeFileReader extends Reader<string> {
   ): Promise<Uint8Array> {
     await this.verify();
     const handle = this.#handle;
-    if (handle === undefined) throw new Error("ZIP reader is not initialized");
+    if (handle === undefined)
+      throw invariantViolation("ZIP reader is not initialized");
     const readBytes = Math.min(length, this.size - index);
     // A central-directory offset can point past EOF. Type that malformed ZIP
     // read before a negative size reaches Buffer.alloc and becomes an I/O error.
@@ -555,7 +556,7 @@ const extractStream = (
   // settlement before releasing the source descriptor.
   output.once("close", () => {
     signal?.removeEventListener("abort", onAbort);
-    controller.abort();
+    controller.abort(OwnerCancellation.noLongerNeeded);
   });
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {

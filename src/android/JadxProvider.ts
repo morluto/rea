@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -59,10 +60,13 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
+import {
+  JADX_BRIDGE_SOURCE_URL,
+  jadxBridgeIdentity,
+  type JadxBridgeIdentity,
+} from "./JadxRelease.js";
 
-const BRIDGE_SOURCE = fileURLToPath(
-  new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
-);
+const BRIDGE_SOURCE = fileURLToPath(JADX_BRIDGE_SOURCE_URL);
 type Outcome = Awaited<ReturnType<AndroidAnalysisPort["execute"]>>;
 
 const waitForTurn = (
@@ -278,6 +282,7 @@ interface RetainedSession {
   readonly snapshot: string;
   readonly jarHash: string;
   readonly bridgeHash: string;
+  readonly bridgeIdentity: JadxBridgeIdentity;
 }
 
 /** One serialized, immutable APK session per REA instance, retired on idle or shutdown. */
@@ -310,7 +315,10 @@ export class JadxProvider implements AndroidAnalysisPort {
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
   inspectAvailability(signal?: AbortSignal) {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     const pending = inspectJadxAvailability(environment, {
       operationTimeoutMs:
         this.settings?.().overrides["jadx.operation_timeout_ms"],
@@ -503,7 +511,10 @@ export class JadxProvider implements AndroidAnalysisPort {
     request: AndroidRequest,
     options: ExecutionOptions,
   ): Promise<Outcome> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     // Resolve the accepted operation's override before acquiring any resource.
     // An unusable launch value is refused without starting the engine.
     const timeoutMs = resolveJadxOperationTimeout(
@@ -558,6 +569,16 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal,
         retainFailedClose(BRIDGE_SOURCE),
       );
+      // Read before any child or workspace exists, so a malformed packaged
+      // bridge is refused without resources to clean up.
+      const identity = jadxBridgeIdentity();
+      if (!identity.ok)
+        throw new AnalysisCapabilityUnavailableError(
+          "jadx",
+          request.operation,
+          `${identity.error} (${BRIDGE_SOURCE}); reinstall REA to restore the packaged JADX bridge.`,
+        );
+      const bridgeIdentity = identity.value;
       let targetHash: string;
       try {
         targetHash = (
@@ -671,6 +692,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: engine.sha256,
           bridgeHash,
+          bridgeIdentity,
         };
       }
       root = retained.root;
@@ -687,6 +709,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: retained.jarHash,
           bridgeHash: retained.bridgeHash,
+          bridgeIdentity: retained.bridgeIdentity,
           signal: activeSignal,
           timeoutMs: timeoutMs.value,
           mapping: mapping.value,

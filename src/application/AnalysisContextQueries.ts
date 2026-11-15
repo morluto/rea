@@ -10,6 +10,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   omitUnretainedEvidenceFromError,
@@ -76,11 +78,7 @@ export const getNavigationContext = async (
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("get_navigation_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("get_navigation_context", signal));
   const document =
     input.document ??
     (await analysis.execute("current_document", {}, executionOptions(signal)));
@@ -95,11 +93,7 @@ export const getNavigationContext = async (
       ),
     );
   if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("get_navigation_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("get_navigation_context", signal));
   const documentArgs = parameters(documentName);
   const address = await analysis.execute(
     "current_address",
@@ -112,11 +106,7 @@ export const getNavigationContext = async (
       new AnalysisOutputError("current_address", "expected an address string"),
     );
   if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("get_navigation_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("get_navigation_context", signal));
   const procedure = await analysis.execute(
     "resolve_containing_procedure",
     parameters(documentName, address.value.result),
@@ -126,11 +116,7 @@ export const getNavigationContext = async (
   const resolution = parseContainingProcedureResolution(procedure.value.result);
   if (!resolution.ok) return resolution;
   if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("get_navigation_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("get_navigation_context", signal));
   return ok({
     document: documentName,
     address: address.value.result,
@@ -204,16 +190,14 @@ export const inspectAddressContext = async (
   const operations = ADDRESS_CONTEXT_FACET_OPERATIONS;
   const completed: Result<AnalysisExecution, AnalysisError>[] = [];
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError("inspect_address_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("inspect_address_context", signal));
   let signalCancellation: AnalysisCancelledError | undefined;
   const cancelled = () => {
-    signalCancellation = new AnalysisCancelledError("inspect_address_context", {
-      cause: signal?.reason,
-    });
+    // Registered only on the caller's signal, so this runs after it aborted.
+    signalCancellation = cancelledBy(
+      "inspect_address_context",
+      carriedReason(signal?.reason),
+    );
     completed.push(err(signalCancellation));
   };
   signal?.addEventListener("abort", cancelled, { once: true });

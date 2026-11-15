@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { keyedBy, uniqueKeyed } from "./keyedCollection.js";
+import {
+  allKeyed,
+  firstKeyed,
+  keyedBy,
+  lastKeyed,
+  uniqueKeyed,
+} from "./keyedCollection.js";
 
 const sections = [
   { name: "__text", id: 0 },
@@ -37,5 +43,28 @@ describe("keyed collections", () => {
       ok: false,
       error: { kind: "duplicate", key: "__text", ordinals: [0, 2] },
     });
+  });
+});
+
+describe("keyed precedence and repeated keys", () => {
+  const byType = keyedBy(
+    [
+      { type: 11, id: 0 },
+      { type: 2, id: 1 },
+      { type: 11, id: 2 },
+    ],
+    ({ type }) => type,
+  );
+
+  it("keys by a numeric tag and lists every declaration", () => {
+    expect(byType.duplicates).toEqual([11]);
+    expect(allKeyed(byType, 11).map(({ id }) => id)).toEqual([0, 2]);
+    expect(allKeyed(byType, 3)).toEqual([]);
+  });
+
+  it("chooses first or last only under a stated precedence rule", () => {
+    expect(firstKeyed(byType, 11, "the loader reads the first")?.id).toBe(0);
+    expect(lastKeyed(byType, 11, "the loader reads the last")?.id).toBe(2);
+    expect(() => firstKeyed(byType, 11, " ")).toThrow(TypeError);
   });
 });

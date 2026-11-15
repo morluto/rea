@@ -11,10 +11,12 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { kunaAddressFromJsonNumber } from "./KunaJson.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /**
  * stream-json 3's synchronous tokenizer behind `parser`, which its
@@ -135,7 +137,7 @@ const detached = (text: string): string =>
  */
 export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   readonly #hash = createHash("sha256");
-  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
+  readonly #decoder = strictUtf8Decoder("strip-signature");
   readonly #tokens = jsonParser({
     packKeys: false,
     packNumbers: false,
@@ -213,7 +215,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         this.#feed(this.#decoder.decode(chunk, { stream: true }));
       } catch (cause: unknown) {
         this.#reject(cause);
-        this.#rejection.abort();
+        this.#rejection.abort(OwnerCancellation.noLongerNeeded);
       }
     callback();
   }
@@ -254,7 +256,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         : cause instanceof KunaDocumentError
           ? new AnalysisOutputError(this.producer, cause.code, {
               cause,
-              diagnostics: { code: cause.code, ...cause.detail },
+              diagnostics: { code: cause.code, ...cause.facts },
               userMessage: `${this.label} cannot be used`,
             })
           : this.unusable(describe(cause));

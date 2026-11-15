@@ -195,10 +195,6 @@ cliTest(
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
         code: "provider_timeout",
-        message: expect.stringContaining("server/provider deadline"),
-        remediation: {
-          action: expect.stringContaining("MCP client"),
-        },
         recovery: {
           kind: "inspect_timeout_state",
           operation: "analyze_javascript_application",

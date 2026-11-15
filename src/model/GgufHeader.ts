@@ -1,5 +1,5 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { isUtf8 } from "node:buffer";
-import { TextDecoder } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {
@@ -82,7 +82,7 @@ export class GgufHeader {
         rejectModel("GGUF string is not valid UTF-8");
       return "";
     }
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const decoder = strictUtf8Decoder("preserve");
     let result = "";
     try {
       for (let left = length; left > 0;) {

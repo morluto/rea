@@ -14,10 +14,11 @@ import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -149,7 +150,7 @@ export const runSourceMapCommand = async (
     const primary = signal?.aborted
       ? analysisErrorWithCancellation(
           knownPhysical ? physical : undefined,
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+          cancelledBy(OPERATION, signal),
         )
       : physical;
     if (preparation?.cleanupFailure === undefined) return err(primary);
@@ -195,8 +196,7 @@ export const runSourceMapCommand = async (
     ? err(
         analysisErrorWithCancellation(
           result.ok ? undefined : result.error,
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
+          cancelledBy(OPERATION, options.signal, {
             partialObservation: observation,
           }),
         ),
@@ -396,9 +396,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       throw this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      throw cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       throw new AnalysisTimeoutError(
         OPERATION,
@@ -413,9 +411,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       return this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      return cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       return new AnalysisTimeoutError(
         OPERATION,

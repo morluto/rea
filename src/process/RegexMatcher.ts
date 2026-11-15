@@ -1,4 +1,5 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
@@ -10,10 +11,11 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -30,6 +32,7 @@ import {
   regexWorkerHeapRequestRecovery,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
+import { decodeStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
 /**
  * Node's Worker `resourceLimits.maxOldGenerationSizeMb` request.
  * `REA_REGEX_WORKER_HEAP_REQUEST_MIB` is that request (default 128 MiB). A positive
@@ -230,8 +233,9 @@ const nodeOptionsFromEnviron = (
       entry.subarray(0, nodeOptionsKey.length).equals(nodeOptionsKey)
     ) {
       try {
-        return new TextDecoder("utf-8", { fatal: true }).decode(
+        return decodeStrictUtf8(
           entry.subarray(nodeOptionsKey.length),
+          "strip-signature",
         );
       } catch {
         return "invalid";
@@ -248,8 +252,10 @@ const nodeOptionsFromEnviron = (
  * `process.env` is rewritten. Other platforms have no equivalent immutable
  * block, so the launch value stays unrecoverable there.
  */
-export const readLaunchNodeOptions = (): LaunchNodeOptions => {
-  if (process.platform !== "linux") return { kind: "unrecoverable" };
+export const readLaunchNodeOptions = (
+  platform: NodeJS.Platform,
+): LaunchNodeOptions => {
+  if (platform !== "linux") return { kind: "unrecoverable" };
   let raw: Buffer;
   try {
     raw = readFileSync("/proc/self/environ");
@@ -284,7 +290,7 @@ const commandLineTokens = (raw: Buffer): readonly string[] | "invalid" => {
   if (raw.length === 0) return "invalid";
   const end = raw[raw.length - 1] === 0 ? raw.length - 1 : raw.length;
   const tokens: string[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = strictUtf8Decoder("strip-signature");
   let offset = 0;
   while (offset < end) {
     const next = raw.indexOf(0, offset);
@@ -373,8 +379,10 @@ export const execArgvFromCommandLine = (raw: Buffer): LaunchExecArgv => {
  * that vector. Other platforms have no equivalent immutable block, so the
  * launch options stay unrecoverable there.
  */
-export const readLaunchExecArgv = (): LaunchExecArgv => {
-  if (process.platform !== "linux") return { kind: "unrecoverable" };
+export const readLaunchExecArgv = (
+  platform: NodeJS.Platform,
+): LaunchExecArgv => {
+  if (platform !== "linux") return { kind: "unrecoverable" };
   let raw: Buffer;
   try {
     raw = readFileSync("/proc/self/cmdline");
@@ -399,8 +407,8 @@ export const resolveLaunchRegexWorkerHeap = (
         request,
       );
 
-const launchExecArgv = readLaunchExecArgv();
-const launchNodeOptions = readLaunchNodeOptions();
+const launchExecArgv = readLaunchExecArgv(HOST_PLATFORM.platform);
+const launchNodeOptions = readLaunchNodeOptions(HOST_PLATFORM.platform);
 
 const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
   launchExecArgv,
@@ -622,11 +630,7 @@ export const matchRegexValues = async (input: {
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
   if (input.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(input.operation, {
-        cause: input.signal.reason,
-      }),
-    );
+    return err(cancelledBy(input.operation, input.signal));
   const admitted = snapshotRegexConfiguration(
     input.deadline,
     input.heapRequest,
@@ -664,9 +668,7 @@ export const matchRegexValues = async (input: {
       const onAbort = () =>
         finish(
           err(
-            new AnalysisCancelledError(input.operation, {
-              cause: input.signal?.reason,
-            }),
+            cancelledBy(input.operation, carriedReason(input.signal?.reason)),
           ),
         );
       const timer = setTimeout(

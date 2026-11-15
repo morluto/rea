@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
@@ -72,6 +73,15 @@ it.each([
       },
       exitCode,
       signal,
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const projected = analysisErrorProjectionSchema.parse(
       projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
@@ -91,6 +101,15 @@ it.each([
           observed_signal: signal,
         },
         captured_output: { stdout: "", stderr },
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
       },
     });
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
@@ -304,6 +323,38 @@ it("retains actual command status and both diagnostic streams when cleanup also 
   );
   expect(JSON.stringify(redacted)).not.toContain("private-marker");
   expect(redacted.code).toBe("cleanup_incomplete");
+});
+it("resolves the reported cleanup when the decoder's process lease confirms release", async () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = new OwnedCommandFailure(
+    "process",
+    "Observed command failure",
+    null,
+    "Observed cleanup failure",
+    undefined,
+    ["pid:42"],
+  );
+  let stopped = false;
+  const processLease = new AnalysisCleanupLease(async () => {
+    if (!stopped) throw new Error("decoder still running");
+  }, ["pid:42"]);
+  const error = historicalCaptureFailure(
+    input,
+    cause,
+    "decoder",
+    undefined,
+    DEFAULT_CAPTURE_DECODER_HEAP,
+    processLease,
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  await expect(processLease.release()).rejects.toThrow("decoder still running");
+  expect(error.cleanupIncomplete).toBe(true);
+  stopped = true;
+  await processLease.release();
+  expect(error.cleanupIncomplete).toBe(false);
 });
 it.each(["io", "unavailable"] as const)(
   "keeps %s read failures separate from malformed capture input",

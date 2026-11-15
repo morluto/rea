@@ -20,6 +20,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { schemaVerifierEnvironment } from "../../scripts/lib/mcp-verification-environment.mjs";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -122,11 +123,11 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, "mcp"],
-    env: {
+    env: schemaVerifierEnvironment({
       ...data.environment,
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "artifact,session",
-    },
+    }),
     stderr: "pipe",
   });
   const client = new Client({
