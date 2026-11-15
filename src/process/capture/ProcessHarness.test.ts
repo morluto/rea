@@ -1,4 +1,5 @@
 import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "../ProcessInspectionCancellation.js";
 import { expect, it, vi, onTestFinished } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -819,12 +820,12 @@ it("retains the root start identity once at launch and signals only with it", as
     "the identity is read at launch, before any signal",
   ).toHaveBeenCalledTimes(1);
   expect(
-    await signalRoot("SIGTERM"),
+    await signalRoot.signal("SIGTERM"),
     "a matching identity is signalled",
   ).toEqual({
     delivery: "signaled",
   });
-  await signalRoot("SIGKILL");
+  await signalRoot.signal("SIGKILL");
 
   expect(
     observe,
@@ -864,7 +865,7 @@ it.each([
     );
 
     expect(
-      await signalRoot("SIGTERM"),
+      await signalRoot.signal("SIGTERM"),
       "the delivery result is recorded",
     ).toEqual(delivery);
     expect(signal, "no identity means no signal at all").not.toHaveBeenCalled();
@@ -909,6 +910,37 @@ it.each([
   },
 );
 
+it("keeps the inspection failure of a delivery that settles after the caller stopped waiting", async () => {
+  const file = await failedInspectionDescriptor();
+  let rejectDelivery: (cause: unknown) => void = () => undefined;
+  const delivery = new Promise<never>((_resolve, reject) => {
+    rejectDelivery = reject;
+  });
+  // The signaller awaits it; this only keeps the early rejection handled.
+  delivery.catch(() => undefined);
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => ({
+      state: "readable",
+      identity: "id-launch",
+    })),
+    () => delivery,
+  );
+
+  void signalRoot.signal("SIGTERM");
+  const settled = signalRoot.settled();
+  rejectDelivery(file.failure);
+
+  expect(
+    await settled,
+    "the late identity-check failure is handed to the run, not dropped",
+  ).toHaveLength(1);
+  expect(
+    await signalRoot.settled(),
+    "each failure is handed over once",
+  ).toEqual([]);
+});
+
 it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
   "reports the identity-checked delivery result %s unchanged",
   async (delivery) => {
@@ -922,7 +954,7 @@ it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
     );
 
     expect(
-      await signalRoot("SIGKILL"),
+      await signalRoot.signal("SIGKILL"),
       "the signaller result is not coerced",
     ).toEqual(
       delivery === "unverified"
@@ -974,7 +1006,7 @@ it("keeps a non-empty reason when the identity inspection fails without a messag
     vi.fn(async () => "signaled" as const),
   );
 
-  const result = await signalRoot("SIGTERM");
+  const result = await signalRoot.signal("SIGTERM");
 
   expect(result.delivery, "the attempt is unverified").toBe("unverified");
   expect(
@@ -993,7 +1025,7 @@ it("keeps a non-empty reason when the identity diagnostic is empty", async () =>
     vi.fn(async () => "signaled" as const),
   );
 
-  const result = await signalRoot("SIGTERM");
+  const result = await signalRoot.signal("SIGTERM");
 
   expect(
     result.reason?.length,

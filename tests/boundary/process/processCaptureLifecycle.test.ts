@@ -1068,6 +1068,72 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
+  "fails the capture and keeps the descriptor a finalization signal's identity check could not close",
+  async () => {
+    const root = await createTestTempDirectory("rea-signal-identity-owner-");
+    const file = await failedInspectionDescriptor(root);
+    const finalizationHost: FinalizationHost = {
+      observe: async () => ({ state: "readable" as const, identity: "launch" }),
+      signal: async (pid, _identity, signal) => {
+        if (signal === "SIGTERM") throw file.failure;
+        process.kill(pid, signal);
+        return "signaled" as const;
+      },
+    };
+    const resources = new ProcessCaptureResourceScope();
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: [finalizationFixture, "ignoring", root],
+        working_directory: root,
+        idle_timeout_ms: 10_000,
+        timeout_ms: 300,
+        finalization_ms: 300,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      resources,
+      finalizationHost,
+    );
+
+    if (result.ok)
+      throw new Error("expected the unclosed signal descriptor to fail");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    expect(
+      result.error.cleanupResources,
+      "the failure names the descriptor the signal's identity check left open",
+    ).toContain(file.path);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(file.handle.fd, "the descriptor stays owned").not.toBe(-1);
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("capture" in partial))
+      throw new Error("expected the completed capture observations");
+    expect(
+      partial.capture.exit.finalization,
+      "the failed delivery stays recorded as unverified",
+    ).toMatchObject({
+      signals: [
+        {
+          signal: "SIGTERM",
+          delivery: "unverified",
+          reason: file.failure.message,
+        },
+        { signal: "SIGKILL", delivery: "signaled" },
+      ],
+    });
+    file.allow();
+    await resources.close();
+    expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
   "keeps the attempts when the escalation cannot be delivered through the retained identity",
   async () => {
     const calls: string[] = [];
