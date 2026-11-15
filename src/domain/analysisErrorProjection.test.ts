@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
 import { describe, expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
@@ -25,7 +26,6 @@ import {
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type DialogTimeoutRejection,
   type HopperStartupFailureDiagnostic,
@@ -998,7 +998,7 @@ describe("analysis error projection: Hopper startup failures", () => {
       value: "-5",
       source: "setting",
       minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
-      maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      maximum_ms: MAX_NODE_TIMER_DELAY_MS,
       default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
     } satisfies DialogTimeoutRejection;
     const projected = projectAnalysisError(

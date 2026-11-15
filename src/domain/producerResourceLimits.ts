@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { timerDurationMsSchema } from "./analysisResourceLimits.js";
 
 /** Per-call owned producer budgets. Each adapter advertises only consumed fields. */
 export const producerResourceLimitsSchema = z.strictObject({
   input_bytes: z.int().positive().optional(),
   output_bytes: z.int().positive().optional(),
   diagnostic_bytes: z.int().positive().optional(),
-  command_timeout_ms: z.int().min(1).max(MAX_NODE_TIMER_DELAY_MS).optional(),
+  command_timeout_ms: timerDurationMsSchema.optional(),
   address_space_bytes: z.int().positive().optional(),
   file_bytes: z.int().positive().optional(),
   cpu_seconds: z.int().positive().optional(),

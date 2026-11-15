@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -23,7 +24,6 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
 import { z } from "zod";
-import { MAX_FIRMWARE_TIMEOUT_MS } from "../domain/firmware/firmwareAnalysis.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 
 /** Fixed firmware allowance. analysis_timeout_ms does not raise it. */
@@ -122,7 +122,7 @@ const timeoutFailure = (
         }
       : {
           userMessage: `Firmware analysis exceeded its ${deadline.timeoutMs}ms wall-clock budget${operation === "extract_firmware" ? " before publication" : " during inspection or its final workspace cleanup"}.`,
-          remediationAction: `Retry the same operation and preserve the selected input and analysis question. ${deadline.timeoutMs < MAX_FIRMWARE_TIMEOUT_MS ? `Increase analysis_timeout_ms (--analysis-timeout-ms in the CLI), an integer from 1 to ${MAX_FIRMWARE_TIMEOUT_MS} (default 120000).` : `analysis_timeout_ms (--analysis-timeout-ms in the CLI) is already at the maximum ${MAX_FIRMWARE_TIMEOUT_MS}; do not increase it further.`} Set the client tool-call timeout above the analysis budget plus publication and cleanup headroom. publication_timeout_ms only controls the later publication phase and cannot repair this analysis timeout. Fixed per-process CPU, memory and byte limits are unchanged. If cleanup is incomplete, resolve the reported owned resources before retrying; no server restart is needed after confirmed cleanup.`,
+          remediationAction: `Retry the same operation and preserve the selected input and analysis question. ${deadline.timeoutMs < MAX_NODE_TIMER_DELAY_MS ? `Increase analysis_timeout_ms (--analysis-timeout-ms in the CLI), an integer from 1 to ${MAX_NODE_TIMER_DELAY_MS} (default 120000).` : `analysis_timeout_ms (--analysis-timeout-ms in the CLI) is already at the maximum ${MAX_NODE_TIMER_DELAY_MS}; do not increase it further.`} Set the client tool-call timeout above the analysis budget plus publication and cleanup headroom. publication_timeout_ms only controls the later publication phase and cannot repair this analysis timeout. Fixed per-process CPU, memory and byte limits are unchanged. If cleanup is incomplete, resolve the reported owned resources before retrying; no server restart is needed after confirmed cleanup.`,
         }),
   });
 
