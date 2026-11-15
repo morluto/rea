@@ -291,6 +291,7 @@ const ARGV_SATISFYING_RULES: Readonly<
   // The contract transforms the endpoint text it admits.
   "list-browser-targets": { endpoint: "http://127.0.0.1:9222" },
   "observe-web-session": { endpoint: "http://127.0.0.1:9222" },
+  "inspect-web-page": { endpoint: "http://127.0.0.1:9222" },
   "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
 };
