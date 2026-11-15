@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import { coverageStatusSchema } from "../coverage.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -300,7 +301,7 @@ const issueSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: coverageStatusSchema,
   reason: z.string().min(1).nullable(),
   examined_needed: uint,
   examined_versions: uint,

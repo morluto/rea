@@ -16,10 +16,12 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -30,7 +32,7 @@ if (!isAbsolute(process.env.REA_TSHARK_COMMAND ?? ""))
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-capture-verifier-",
 });
 const path = join(root.path, "network with spaces.pcap");
@@ -113,7 +115,10 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 
-await withVerifierCleanup(async () => {
+// The root is removed only after the client and transport confirm.
+root.releaseAfter(() => client.close());
+root.releaseAfter(() => transport.close());
+await withVerifierFixture(root, async () => {
   await writeFile(path, source);
   await writeFile(bluetooth, bluetoothSource);
   await client.connect(transport);
@@ -533,7 +538,7 @@ await withVerifierCleanup(async () => {
     "network with spaces.pcap",
     "paged.pcap",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+});
 console.log(
   JSON.stringify(
     {

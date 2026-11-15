@@ -207,7 +207,12 @@ export const importReferenceSource = async (
 
   const read = readResult.value;
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, exclusions, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
   if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 

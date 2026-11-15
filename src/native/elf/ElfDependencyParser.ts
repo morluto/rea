@@ -38,6 +38,7 @@ import {
 } from "../metadata/BinaryContainer.js";
 import type { FileMapping } from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
+import { Budget } from "../../domain/budget.js";
 
 const PT_LOAD = 1;
 const PT_DYNAMIC = 2;
@@ -288,24 +289,27 @@ const unreadString = (observed: Pick<CString, "limited">): string =>
  */
 class DynamicStrings {
   readonly #cache = new Map<number, CString>();
-  #scanned = 0;
-  #retained = 0;
+  readonly #scanned: Budget;
+  readonly #retained: Budget;
 
   constructor(
     readonly table: Buffer,
     readonly limit: number,
-  ) {}
+  ) {
+    this.#scanned = new Budget(limit);
+    this.#retained = new Budget(limit);
+  }
 
   #charge(field: "scanned" | "retained", bytes: number): void {
-    const used = field === "scanned" ? this.#scanned : this.#retained;
-    if (bytes > this.limit - used)
-      throw new ArtifactReaderFailure(
-        "limit",
-        `ELF dependency text exceeds the ${String(this.limit)}-byte budget fixed by the admitted image length.`,
-        { boundary: "memory" },
-      );
-    if (field === "scanned") this.#scanned += bytes;
-    else this.#retained += bytes;
+    (field === "scanned" ? this.#scanned : this.#retained).charge(
+      bytes,
+      () =>
+        new ArtifactReaderFailure(
+          "limit",
+          `ELF dependency text exceeds the ${String(this.limit)}-byte budget fixed by the admitted image length.`,
+          { boundary: "memory" },
+        ),
+    );
   }
 
   /** Charge text a report row repeats from an already decoded string. */
