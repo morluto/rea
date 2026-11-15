@@ -3,7 +3,7 @@ import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
-import type { CdpDocumentTracker } from "./CdpTargetSession.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 export interface CdpCaptureEventsState {
   readonly input: InspectWebPageInput;
@@ -36,6 +36,6 @@ export interface CdpCaptureEventsState {
   readonly completeness: CdpCaptureCompleteness;
   originViolation: boolean;
   unknownRootIdentity: boolean;
-  /** The selected main-frame document, tracked from authorization onward. */
-  document: CdpDocumentTracker | undefined;
+  /** The target session's page generation, followed from authorization onward. */
+  document: CdpTargetDocument | undefined;
 }

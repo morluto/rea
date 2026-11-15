@@ -4,7 +4,10 @@ import type { WebExecution } from "../../domain/webExecution.js";
 import type { CdpReceivedEvent } from "../CdpConnection.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import { selectCdpFrameIdentity } from "../CdpFrameIdentity.js";
+import type {
+  CdpRootNavigation,
+  CdpTargetDocument,
+} from "../CdpTargetDocument.js";
 import { cdpFrameEvent } from "../protocol/CdpEvents.js";
 
 type EndReason = WebExecution["window"]["end_reason"];
@@ -18,54 +21,53 @@ export class CdpExecutionWindow {
   #reject: ((error: AnalysisError) => void) | undefined;
   #failure: AnalysisError | undefined;
   #removeAbort: (() => void) | undefined;
+  readonly #removeNavigation: () => void;
   constructor(
     readonly session: Pick<CdpRuntimeSession, "operation" | "options"> & {
       readonly target: { readonly frame_id: string };
+      readonly document: Pick<CdpTargetDocument, "onNavigation">;
     },
-  ) {}
+  ) {
+    this.#removeNavigation = session.document.onNavigation((navigation) =>
+      this.#rootNavigation(navigation),
+    );
+  }
 
-  /** Collection ends on a main-document replacement, never follows source URLs into another context. */
-  ingest(event: CdpReceivedEvent): void {
-    if (event.method === "Target.detachedFromTarget") {
-      this.end("session_detached");
-      return;
-    }
-    if (event.method === "Inspector.targetCrashed") {
-      this.end("target_terminated");
-      return;
-    }
+  /**
+   * Collection ends when the target session's document owner reports another
+   * document, never follows source URLs into another context. A same-document
+   * navigation keeps the window; unreadable frame identity fails it.
+   */
+  #rootNavigation(navigation: CdpRootNavigation): void {
     if (!this.active) return;
-    if (event.method === "Runtime.executionContextsCleared")
-      this.end("document_changed");
-    const frame = cdpFrameEvent(event)?.facts;
-    if (frame?.kind === "navigated") {
-      const identity = selectCdpFrameIdentity(
-        frame,
-        this.session.target.frame_id,
-      );
-      if (identity.identityIssue !== null || identity.parentIssue !== null) {
-        this.fail(
-          new BrowserObservationError(this.session.operation, "protocol_error"),
-        );
-        return;
-      }
-      if (identity.selection === "main") {
-        this.end("document_changed");
-        return;
-      }
-      if (identity.parentRelation === "child") return;
-      if (
-        identity.selection === "other" &&
-        identity.parentRelation === "root"
-      ) {
-        this.end("document_changed");
-        return;
-      }
+    if (
+      navigation.kind === "unidentified" ||
+      navigation.kind === "unreadable_child"
+    ) {
       this.fail(
         new BrowserObservationError(this.session.operation, "protocol_error"),
       );
       return;
     }
+    if (navigation.kind === "navigated" && navigation.comparison !== "same")
+      this.end("document_changed");
+  }
+
+  /** Lifecycle facts other than navigation that end the document's window. */
+  ingest(event: CdpReceivedEvent): void {
+    const method = event.registered?.method;
+    if (method === "Target.detachedFromTarget") {
+      this.end("session_detached");
+      return;
+    }
+    if (method === "Inspector.targetCrashed") {
+      this.end("target_terminated");
+      return;
+    }
+    if (!this.active) return;
+    if (method === "Runtime.executionContextsCleared")
+      this.end("document_changed");
+    const frame = cdpFrameEvent(event)?.facts;
     if (
       frame?.kind === "detached" &&
       frame.frameId === this.session.target.frame_id
@@ -126,5 +128,6 @@ export class CdpExecutionWindow {
   dispose(): void {
     if (this.#timer !== undefined) clearTimeout(this.#timer);
     this.#removeAbort?.();
+    this.#removeNavigation();
   }
 }

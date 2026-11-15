@@ -58,6 +58,21 @@ export class VerifierFixture {
     );
   }
 
+  /**
+   * Allocate a directory a verifier keeps for the artifacts a reviewer reads
+   * after the run: receipts, transcripts, client profiles and Evidence. It is
+   * never removed. Allocation names it on stderr, so a run that fails before
+   * writing its receipt still reports where its artifacts are.
+   */
+  static async keepArtifacts({ prefix, parent } = {}) {
+    const { path } = await createCanonicalTemporaryDirectory(
+      prefix ?? "rea-verifier-artifacts-",
+      ...(parent === undefined ? [] : [parent]),
+    );
+    process.stderr.write(`Keeping verifier artifacts at ${path}\n`);
+    return Object.freeze({ path, kept: true });
+  }
+
   get path() {
     return this.#root.path;
   }
@@ -75,6 +90,18 @@ export class VerifierFixture {
       );
     this.#pending.push(cleanup);
     return cleanup;
+  }
+
+  /**
+   * Keep the root for good: something that may still use its files cannot be
+   * confirmed stopped and has no cleanup this fixture could retry (an owned
+   * command whose cleanup is incomplete). Every release then fails, naming
+   * `reason` and the root.
+   */
+  retain(reason) {
+    this.releaseAfter(() => {
+      throw new Error(reason);
+    });
   }
 
   /** Concurrent callers share one attempt; a failed attempt can be retried. */

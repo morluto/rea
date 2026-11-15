@@ -275,7 +275,14 @@ export const analysisClientFailureForOperation = (
       result = analysisErrorWithCancellation(result, secondary);
     else result.retainSecondaryFailure(secondary);
   }
+  // The attributed error reads its source's cleanup: live resources while it
+  // is pending, otherwise the source's completed release with the resources
+  // kept as history.
   return cause.cleanupIncomplete
     ? result.bindCleanupDependencies([cause])
-    : result.resolveCleanup();
+    : result.bindCleanupReleaseClaim({
+        get cleanupReleased() {
+          return !cause.cleanupIncomplete;
+        },
+      });
 };

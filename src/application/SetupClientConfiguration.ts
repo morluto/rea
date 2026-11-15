@@ -1269,7 +1269,10 @@ const privateProfileCurrent = async (
 ): Promise<boolean> =>
   client.privateProfile === undefined ||
   (original !== undefined &&
-    (await privateProfileModesCurrent(client.configPath)));
+    (await privateProfileModesCurrent(
+      client.configPath,
+      HOST_PLATFORM.platform,
+    )));
 
 const clientConfigurationDesired = async (
   client: SetupClient,

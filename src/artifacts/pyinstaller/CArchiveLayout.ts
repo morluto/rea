@@ -6,6 +6,7 @@ import {
   pyInstallerFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Magic at the start of a CArchive cookie. */
 const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
@@ -299,9 +300,7 @@ const libraryName = (
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
-    );
+    return ok(strictUtf8Decoder("preserve").decode(text));
   } catch {
     return err(
       pyInstallerFailure(
@@ -318,9 +317,7 @@ const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   if (text.length === 0)
     return err(pyInstallerFailure("format", "CArchive entry name is empty"));
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
-    );
+    return ok(strictUtf8Decoder("preserve").decode(text));
   } catch {
     return err(
       pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),

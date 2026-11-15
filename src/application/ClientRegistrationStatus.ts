@@ -1,4 +1,5 @@
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   inlineRegistrationOrigins,
@@ -165,7 +166,7 @@ export const readClientRegistrationInspections = async (
   const inspections: ClientRegistrationInspection[] = [];
   for (const client of await resolveSupportedClients(
     home,
-    options.platform,
+    options.platform ?? HOST_PLATFORM.platform,
     options.environment,
     options.systemPaths,
   )) {

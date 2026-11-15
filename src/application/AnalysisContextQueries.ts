@@ -19,7 +19,7 @@ import {
   unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -372,11 +372,11 @@ const contextFailure = (
       combined = analysisErrorWithCancellation(combined, failure);
     if (failure.cleanupIncomplete) {
       const previous = combined;
-      combined = analysisErrorWithCleanupFailure(
+      combined = analysisErrorWithCleanupDependencies(
         previous,
         failure,
         "inspect_address_context",
-      ).bindCleanupDependencies([previous, failure]);
+      );
     } else if (
       !(failure instanceof AnalysisCancelledError) &&
       (isRequestLevelFailure(failure) ||

@@ -101,6 +101,7 @@ export const processCaptureComparisonSchema = z
         code: "custom",
         message: "Process comparison status contradicts its dimensions",
         path: ["status"],
+        params: { constraint: "status-matches-dimensions" },
       });
   });
 export type ProcessCaptureComparison = z.infer<

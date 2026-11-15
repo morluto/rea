@@ -15,6 +15,7 @@ export class SafeOutputTreeCreationFailure extends ArtifactReaderFailure {
       primary.message,
       {
         cause: primary,
+        ...primary.primaryFacts(),
         cancellation: primary.cancellation,
         ...(primary.cleanup === undefined ? {} : { cleanup: primary.cleanup }),
         ...(primary.partialObservation === undefined

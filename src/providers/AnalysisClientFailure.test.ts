@@ -14,6 +14,7 @@ import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPa
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const observation: FileOffsetPartialObservation = {
   operation: "address_to_file_offset",
@@ -33,7 +34,7 @@ it.each([false, true])(
       { reason: "descriptor close failed" },
       { operation: "provider_mapping", completedObservation: observation },
     );
-    if (resolved) source.resolveCleanup();
+    if (resolved) releaseOwnedCleanup(source);
 
     const attributed = analysisClientFailureForOperation(
       source,
@@ -49,7 +50,7 @@ it.each([false, true])(
     expect(attributed.cleanupResources).toEqual(["snapshot descriptor"]);
 
     // Attribution must keep the source owner's later cleanup confirmation live.
-    source.resolveCleanup();
+    releaseOwnedCleanup(source);
     expect(attributed.cleanupIncomplete).toBe(false);
     if (!resolved) expect(attributed.cleanupResources).toEqual([]);
     expect(attributed.completedObservation).toBe(observation);
