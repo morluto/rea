@@ -37,7 +37,6 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
-import { executableLaunchRefusalOf } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -276,9 +275,6 @@ export const runPcapCommand = async (options: {
     const selectedLimiter =
       options.nativeBound?.limiter?.command.invocationPath;
     const launchedPath = selectedLimiter ?? command;
-    /** Only a launcher naming the launched path identifies who refused. */
-    const refusedByLaunchedPath = (refused: unknown): boolean =>
-      executableLaunchRefusalOf(refused)?.executable === launchedPath;
     const preparationFailure = (
       diagnostic: string,
       details: AnalysisErrorOptions,
@@ -316,7 +312,8 @@ export const runPcapCommand = async (options: {
       dialect: (failure, details) => {
         if (
           failure.kind === "launch-refused" &&
-          refusedByLaunchedPath(failure.cause)
+          // Only a launcher naming the launched path identifies who refused.
+          failure.refusal.executable === launchedPath
         ) {
           if (selectedLimiter !== undefined) {
             const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${failure.refusal.code}).`;

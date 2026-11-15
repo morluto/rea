@@ -1,4 +1,4 @@
-import { classifyLaunchFailure, type LaunchRefusal } from "./launchFailure.js";
+import { launcherRefusalOf, type LauncherRefusal } from "./launchFailure.js";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
@@ -30,7 +30,7 @@ export type ProviderOutcome =
   /** The operating system refused to start the selected executable. */
   | (ProviderOutcomeFacts & {
       readonly kind: "launch-refused";
-      readonly refusal: LaunchRefusal;
+      readonly refusal: LauncherRefusal;
     })
   /** The caller cancelled; `reason` is the caller's opaque abort reason. */
   | (ProviderOutcomeFacts & {
@@ -131,14 +131,6 @@ const ownedCommandOutcome = (failure: OwnedCommandFailure): ProviderOutcome => {
   };
 };
 
-const isSpawnFailure = (cause: Error): boolean => {
-  const syscall = Reflect.get(cause, "syscall");
-  return (
-    typeof syscall === "string" &&
-    (syscall === "spawn" || syscall.startsWith("spawn "))
-  );
-};
-
 /**
  * Read the outcome of an owned command from what `runOwnedCommand` threw.
  * Undefined when the value is neither a supervised command failure nor a
@@ -148,11 +140,9 @@ export function providerOutcomeOf(cause: OwnedCommandFailure): ProviderOutcome;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined {
   if (cause instanceof OwnedCommandFailure) return ownedCommandOutcome(cause);
-  // An errno from reading a file is not a launch refusal; Node names the
-  // spawn syscall (`spawn` or `spawn <path>`) on every start failure.
-  if (!(cause instanceof Error) || !isSpawnFailure(cause)) return undefined;
-  const refusal = classifyLaunchFailure(cause);
-  if (refusal === undefined) return undefined;
+  // Only a launcher's errno is a launch refusal; one from reading a file is not.
+  const refusal = launcherRefusalOf(cause);
+  if (refusal === undefined || !(cause instanceof Error)) return undefined;
   return {
     kind: "launch-refused",
     refusal,
