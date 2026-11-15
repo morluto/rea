@@ -53,7 +53,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;

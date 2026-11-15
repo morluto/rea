@@ -1,5 +1,5 @@
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -168,6 +168,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       Record<string, string | undefined>
     > = process.env,
     readonly launcher?: FirmwareLauncher,
+    /** The host the engines run on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Inspect regions or explicitly extract selected bytes without changing the source. */
@@ -350,7 +352,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     // Capture configuration after queue admission; later operations may select updates.
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
@@ -384,6 +386,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         engineName,
         request.operation,
         this.#files,
+        this.host.platform,
         signal,
       );
       root = await PrivateRuntimeRoot.create({ prefix: "rea-firmware-" });

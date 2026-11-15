@@ -20,7 +20,7 @@ import {
 } from "../../resources/index.js";
 import type { ArtifactIntegrityCheck } from "../../domain/artifactOperationError.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
-import { readMachoImage } from "./MachoLoadCommandReader.js";
+import { readMachoImage } from "../../domain/apple/machoLoadCommandReader.js";
 import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 
 /** One owner for dyld descriptor admission, physical identity and finalization. */

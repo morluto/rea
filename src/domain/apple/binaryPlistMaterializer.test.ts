@@ -1,16 +1,16 @@
 import { expect, it, vi } from "vitest";
 import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjectTable.js";
-import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
-import { projectPlistValue } from "../../domain/apple/plistValue.js";
-import { scanBinaryPlistScalars } from "./PlistScalars.js";
-import { plistUidValue } from "../../domain/apple/plistUid.js";
+import { createPlistNumberProjection } from "./plistNumbers.js";
+import { projectPlistValue } from "./plistValue.js";
+import { scanBinaryPlistScalars } from "./plistScalars.js";
+import { plistUidValue } from "./plistUid.js";
 import {
   decodeBinaryPlistText,
   decodeBinaryPlistValue,
-} from "./BinaryPlistMaterializer.js";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
-import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
-import { InternalInvariantError } from "../../domain/internalInvariant.js";
+} from "./binaryPlistMaterializer.js";
+import { estimateBinaryPlistExpansion } from "./propertyListDecodeBudget.js";
+import { parseXmlPropertyList } from "../propertyListKeys.js";
+import { InternalInvariantError } from "../internalInvariant.js";
 
 const source = (objects: readonly Buffer[]): Buffer => {
   const table =

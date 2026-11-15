@@ -6,6 +6,7 @@ import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedMetadataTokenSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -173,7 +174,7 @@ const comparisonSideSchema = z.strictObject({
   artifact_sha256: digestSchema,
   mvid: cliMetadataGuidSchema.nullable(),
   module_name: z.string().nullable(),
-  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  metadata_status: managedMetadataStatusSchema,
   methods_total: z.int().min(0),
   fields_total: z.int().min(0),
   resource_limits: z

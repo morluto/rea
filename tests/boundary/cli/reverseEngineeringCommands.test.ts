@@ -328,6 +328,22 @@ it("preserves an operation timeout and unknown partial Evidence after cleanup re
     expect(timeout).toBeInstanceOf(AnalysisTimeoutError);
     expect(timeout?.cleanupIncomplete).toBe(false);
     expect(owner.stop).toHaveBeenCalledOnce();
+    // The service names the contract field; the CLI adds the flag that sets it.
+    expect(timeout?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "command_timeout_ms",
+    });
+    expect(
+      JSON.stringify((result as { remediation?: unknown }).remediation),
+    ).not.toContain("--");
+    expect(result).toMatchObject({
+      details: {
+        limit: {
+          parameter: "command_timeout_ms",
+          cli_flag: "--command-timeout-ms",
+        },
+      },
+    });
   } finally {
     await service.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });

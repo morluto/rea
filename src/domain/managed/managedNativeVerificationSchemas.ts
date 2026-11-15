@@ -5,6 +5,7 @@ import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
@@ -165,7 +166,7 @@ export const managedNativeVerificationResultSchema = z
       artifact_sha256: digestSchema,
       artifact_path: z.string().min(1),
       mvid: cliMetadataGuidSchema.nullable(),
-      metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+      metadata_status: managedMetadataStatusSchema,
       pinvoke_imports_total: z.int().min(0),
       native_implementations_total: z.int().min(0),
       coverage_state: managedInspectionStateSchema,

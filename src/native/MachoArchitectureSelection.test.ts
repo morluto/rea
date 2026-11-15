@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { selectLipoArchitecture } from "./MachoArchitectureSelection.js";
-import type { LipoArchitecture } from "./parsers/lipo.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 const record = (
   name: string,

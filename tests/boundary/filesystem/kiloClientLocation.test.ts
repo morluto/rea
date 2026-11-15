@@ -1,3 +1,4 @@
+import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +7,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
   resolveSupportedClients,
@@ -234,7 +234,7 @@ it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async ()
     resources,
   );
   if (!selected.ok) throw selected.error;
-  const [outcome] = await registerMcpClients(
+  const [outcome] = await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,
@@ -394,7 +394,7 @@ it("registers Kilo through its table row in rea mcp add", async () => {
   expect(selected.value[0]?.inlineConfiguration?.origin).toBe(
     "KILO_CONFIG_CONTENT",
   );
-  const [outcome] = await registerMcpClients(
+  const [outcome] = await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,

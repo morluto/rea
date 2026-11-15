@@ -203,6 +203,8 @@ export interface PcapProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly launcher?: PcapCommandLauncher;
   readonly artifactReader?: typeof readStableArtifact;
+  /** The host the packet tools run on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /**
@@ -271,6 +273,7 @@ export class PcapProvider {
     string,
     ArtifactCommandPath & { readonly identity: WiresharkExecutableIdentity }
   >();
+  private readonly platform: NodeJS.Platform;
   private readonly snapshots = new Set<PcapSnapshot>();
   private readonly snapshotFailures = new Map<
     PcapSnapshot,
@@ -282,9 +285,10 @@ export class PcapProvider {
   >();
 
   constructor(options: PcapProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.environment = snapshotEnvironment(
       options.environment ?? process.env,
-      HOST_PLATFORM.platform,
+      this.platform,
     );
     this.launcher = options.launcher;
     this.#resources = createArtifactAnalysisResources(
@@ -359,6 +363,7 @@ export class PcapProvider {
       }
       output = await runPcapCommand({
         operation,
+        platform: this.platform,
         redactHttpTransportCredentials:
           stage === "tshark" && operation === "inspect_pcap_capture",
         command: selected?.invocationPath ?? command,
@@ -468,6 +473,7 @@ export class PcapProvider {
     signal?: AbortSignal,
   ): Promise<void> {
     const prepared = await preparePcapNativeBound(
+      this.platform,
       this.environment,
       this.#resources,
       async (selected, arguments_) => {
@@ -491,7 +497,7 @@ export class PcapProvider {
   }
 
   private async client(operation: PcapOperation, signal?: AbortSignal) {
-    const selection = resolvePcapTools(this.environment);
+    const selection = resolvePcapTools(this.environment, this.platform);
     this.wiresharkIdentities.clear();
     for (const [name, selected] of [
       ["tshark", selection.tshark],
@@ -602,7 +608,7 @@ export class PcapProvider {
   ): Promise<ProviderAvailability> {
     try {
       const { client } = await this.client("inspect_pcap_client", signal);
-      if (!pcapCaptureHostSupported(process.platform))
+      if (!pcapCaptureHostSupported(this.platform))
         return {
           status: "unavailable",
           code: "unsupported_host",

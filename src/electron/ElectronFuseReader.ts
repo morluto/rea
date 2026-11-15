@@ -7,13 +7,13 @@ import type { ResolvedElectronFuseFile } from "./ElectronFusePath.js";
 import { createHash } from "node:crypto";
 import { lstat, type FileHandle } from "node:fs/promises";
 
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   hasMachoMagic,
   readFatHeaderPrefix,
 } from "../domain/apple/machoContainer.js";
-import type { ReadAt } from "../artifacts/apple/MachoLoadCommandReader.js";
+import type { ReadAt } from "../domain/apple/machoLoadCommandReader.js";
 import {
   electronFuseName,
   electronFuseState,

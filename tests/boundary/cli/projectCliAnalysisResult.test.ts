@@ -15,6 +15,7 @@ import {
 const binding = {
   operation: "inspect_keyed_archive",
   fields: { path: "archive" },
+  flags: {},
 };
 
 it("projects bound input fields without changing canonical facts or nested identities", () => {

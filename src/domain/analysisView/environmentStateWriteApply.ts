@@ -1,3 +1,4 @@
+import { boundedList } from "../boundedList.js";
 import { ellipsisExcerpt } from "../excerpt.js";
 import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -101,11 +102,11 @@ const LISTED_NAME_CHARS = 120;
 /** Captured member names quoted, so a separator in one cannot read as another, and bounded in count and length. */
 const listed = (members: readonly string[]): string => {
   if (members.length === 0) return "none";
-  const shown = members
-    .slice(0, LISTED_MEMBERS)
+  const { items, omitted } = boundedList(members, LISTED_MEMBERS);
+  const shown = items
     .map((member) => JSON.stringify(ellipsisExcerpt(member, LISTED_NAME_CHARS)))
     .join(", ");
-  return members.length > LISTED_MEMBERS
+  return omitted > 0
     ? `${shown}, … (${String(members.length)} members; all in the state Evidence)`
     : shown;
 };
