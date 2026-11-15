@@ -185,25 +185,6 @@ describe("compact advertised input schema", () => {
     expect(guidance).toContain("When detail is provided, also provide target.");
   });
 
-  it("keeps pattern-admitted property names open in reduced schemas", () => {
-    const canonical = {
-      type: "object",
-      properties: { a: { type: "string", pattern: "x" } },
-      patternProperties: { "^b$": { type: "string" } },
-      additionalProperties: false,
-    };
-    const { schema, presentation } = compactAdvertisedInputSchema(
-      canonical,
-      10_000,
-    );
-    expect(presentation).toBe("reduced");
-    const compact = new Ajv2020({ strict: false }).compile(schema);
-    expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
-      true,
-    );
-    expect(compact({ b: "ok" })).toBe(true);
-  });
-
   it("keeps unconstrained JSON values accepting every value", () => {
     // The portable dialect has no any-value form; the reduced presentation
     // keeps such properties unconstrained rather than narrow them.
@@ -243,6 +224,25 @@ describe("compact advertised input schema", () => {
     expect(validate({ query: "abc" })).toBe(true);
     expect(validate({ query: "abcdef" })).toBe(false);
   });
+});
+
+it("keeps pattern-admitted property names open in reduced schemas", () => {
+  const canonical = {
+    type: "object",
+    properties: { a: { type: "string", pattern: "x" } },
+    patternProperties: { "^b$": { type: "string" } },
+    additionalProperties: false,
+  };
+  const { schema, presentation } = compactAdvertisedInputSchema(
+    canonical,
+    10_000,
+  );
+  expect(presentation).toBe("reduced");
+  const compact = new Ajv2020({ strict: false }).compile(schema);
+  expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
+    true,
+  );
+  expect(compact({ b: "ok" })).toBe(true);
 });
 
 it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
