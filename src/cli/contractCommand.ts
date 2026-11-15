@@ -3,7 +3,10 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -20,6 +23,8 @@ import {
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
@@ -34,11 +39,15 @@ import {
   type CliOptionShape,
   type CliOptionValues,
   type ContractCliDescription,
+  type ContractCliEvidenceTargets,
   type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
 } from "./contractCliDescription.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  projectCliAnalysisResult,
+  projectCliInputFields,
+} from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
 
 /**
@@ -64,16 +73,35 @@ export interface ContractCommandContext<
    */
   readonly sessionTarget: string | undefined;
   /**
-   * The session target's opening fields the caller selected, in the opening
-   * contract's spelling; empty without `sessionTarget.open`.
+   * The source contract and each Evidence target as the caller spelled it,
+   * in argv order, for a projection with `evidenceTargets`; undefined
+   * otherwise.
+   */
+  readonly evidenceTargets: CliEvidenceTargetSelection | undefined;
+  /**
+   * The session target's opening fields, or the Evidence targets' source
+   * fields, the caller selected, in that contract's spelling; empty when the
+   * projection declares none.
    */
   readonly opening: Readonly<Record<string, unknown>>;
-  /** Contract fields the CLI spells differently, for input issue paths. */
-  readonly inputBinding: ContractCliDescription["inputBinding"];
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
+}
+
+/** The Evidence targets one invocation selected. */
+export interface CliEvidenceTargetSelection {
+  /** The source contract each target runs. */
+  readonly source: string;
+  readonly targets: readonly {
+    /** The contract field the target's source Evidence supplies. */
+    readonly field: string;
+    /** The target's positional key. */
+    readonly key: string;
+    /** The target as the caller spelled it. */
+    readonly target: string;
+  }[];
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -136,15 +164,13 @@ export const inspectWithService =
 /**
  * Open the session target as an MCP session would hold it, with the opening
  * fields the caller selected, and run the contract operation on the
- * remaining input. Input issues name renamed fields by their CLI key; a
- * projection with `evidenceDelivery` delivers complete Evidence or a summary
- * beside its bundle.
+ * remaining input. A projection with `evidenceDelivery` delivers complete
+ * Evidence or a summary beside its bundle.
  */
 export const runOnSessionTarget =
   (
     runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
     logger: Logger,
-    providerId?: string,
   ) =>
   async (input: object, context: ContractCommandContext) => {
     const { sessionTarget, operation, signal, delivery, opening } = context;
@@ -167,15 +193,10 @@ export const runOnSessionTarget =
           values,
           logger,
           signal,
-          undefined,
           openBinaryTargetSelection(opening),
         ));
-    if (delivery === undefined)
-      return projectCliAnalysisResult(result, context.inputBinding);
-    if (providerId === undefined)
-      throw new Error(`${operation} delivers Evidence without a provider`);
+    if (delivery === undefined) return projectCliAnalysisResult(result);
     return publishCliAnalysisEvidence(result, {
-      providerId,
       operation,
       signal,
       detail: delivery.detail,
@@ -244,8 +265,7 @@ export const runDirectOnTarget =
           : { includeEvidenceSources: true }),
       },
     );
-    if (delivery === undefined)
-      return projectCliAnalysisResult(result, context.inputBinding);
+    if (delivery === undefined) return projectCliAnalysisResult(result);
     if (
       options.requireSourceEvidence === true &&
       result.ok &&
@@ -259,12 +279,95 @@ export const runDirectOnTarget =
         ).retainPartialObservation(result.value),
       );
     return publishCliAnalysisEvidence(result, {
-      providerId: "auto",
       operation,
       signal,
       detail: delivery.detail,
       evidenceOutput,
     });
+  };
+
+/**
+ * Run the source contract on each Evidence target in argv order with the
+ * source fields the caller selected, then compose the contract from that
+ * Evidence. A target's failure names its positional; any failure retains
+ * each completed target's Evidence under its contract field beside the
+ * failure's own partial observation.
+ */
+export const runOnEvidenceTargets =
+  (
+    runSource: (
+      target: string,
+      parameters: Readonly<Record<string, JsonValue>>,
+      signal: AbortSignal,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+    compose: (
+      input: Readonly<Record<string, unknown>>,
+      context: ContractCommandContext & {
+        readonly evidenceTargets: CliEvidenceTargetSelection;
+      },
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ) =>
+  async (input: object, context: ContractCommandContext) => {
+    const { evidenceTargets, operation, signal } = context;
+    if (evidenceTargets === undefined)
+      throw new Error(`${operation} declares no Evidence targets`);
+    // Argv values are decoded text, and absent options are left out.
+    const parameters = context.opening as Readonly<Record<string, JsonValue>>;
+    const sources: Record<string, Evidence> = {};
+    const retainSources = (failure: AnalysisError) => {
+      for (const [field, evidence] of Object.entries(sources))
+        failure.retainArgumentObservation(field, evidence);
+      return failure;
+    };
+    for (const { field, key, target } of evidenceTargets.targets) {
+      const source = await runSource(target, parameters, signal);
+      if (!source.ok)
+        return projectCliInputFields(
+          {
+            error: "Analysis failed",
+            ...projectAnalysisError(retainSources(source.error), "invocation"),
+          },
+          { operation: evidenceTargets.source, fields: { path: key } },
+        );
+      sources[field] = source.value;
+    }
+    // A cancellation that arrives as the composition settles keeps its
+    // most complete Evidence. The composition owns no resource of its own,
+    // so its close only lets queued interrupts reach the signal first.
+    const result = finalizedResult(
+      await runOwned(
+        async (): Promise<Result<Evidence, AnalysisError>> => {
+          try {
+            return await compose(
+              { ...input, ...sources },
+              { ...context, evidenceTargets },
+            );
+          } catch (cause: unknown) {
+            // The completed source Evidence outlives a defect in the composition.
+            return {
+              ok: false,
+              error: new AnalysisOutputError(
+                operation,
+                `${operation} produced invalid output`,
+                { cause },
+              ),
+            };
+          }
+        },
+        {
+          providerId: evidenceTargets.source,
+          operation,
+          signal,
+          close: dispatchQueuedInterrupts,
+          partial: (value) => value,
+        },
+      ),
+    );
+    if (result.ok) return result.value;
+    return {
+      error: "Analysis failed",
+      ...projectAnalysisError(retainSources(result.error), "invocation"),
+    };
   };
 
 /**
@@ -315,17 +418,37 @@ export const deliverWithService =
     });
   };
 
-/** The session target's opening fields, when the command declares any. */
+/**
+ * The session target's opening fields, or the Evidence targets' source
+ * fields, when the command declares any.
+ */
 const admitOpening = (
   description: {
     readonly contract: { readonly name: string };
     readonly sessionTarget: ContractCliSessionTarget | undefined;
+    readonly evidenceTargets?: ContractCliEvidenceTargets | undefined;
   },
   values: Readonly<Record<string, unknown>>,
 ): Result<Readonly<Record<string, unknown>>, AnalysisError> =>
-  description.sessionTarget === undefined
-    ? { ok: true, value: {} }
-    : description.sessionTarget.admitOpening(description.contract.name, values);
+  description.sessionTarget !== undefined
+    ? description.sessionTarget.admitOpening(description.contract.name, values)
+    : description.evidenceTargets !== undefined
+      ? description.evidenceTargets.admitSource(
+          description.contract.name,
+          values,
+        )
+      : { ok: true, value: {} };
+
+/** Target positionals, then the contract's own, in argv order. */
+const commandPositionals = (
+  description: ContractCliDescription,
+): readonly { readonly key: string; readonly schema: z.ZodType }[] => [
+  ...(description.sessionTarget === undefined
+    ? []
+    : [description.sessionTarget]),
+  ...(description.evidenceTargets?.targets ?? []),
+  ...description.parameters.filter(({ positional }) => positional),
+];
 
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
@@ -340,9 +463,10 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
       ...description.parameters
         .filter(({ positional }) => !positional)
         .map(({ key, schema }) => [key, schema] as const),
-      ...(description.sessionTarget?.options ?? []).map(
-        ({ key, schema }) => [key, schema] as const,
-      ),
+      ...[
+        ...(description.sessionTarget?.options ?? []),
+        ...(description.evidenceTargets?.options ?? []),
+      ].map(({ key, schema }) => [key, schema] as const),
       ...description.cliOnlyOptions.map(
         ({ key, schema }) => [key, schema] as const,
       ),
@@ -386,12 +510,7 @@ export const registerContractCommand = <
 ): void => {
   const description = describeContractCommand(contract, projection);
   const chosen = describeOperationChoices(description, projection);
-  const positionals = [
-    ...(description.sessionTarget === undefined
-      ? []
-      : [description.sessionTarget]),
-    ...description.parameters.filter(({ positional }) => positional),
-  ];
+  const positionals = commandPositionals(description);
   const alias = Object.fromEntries(
     description.parameters.flatMap(({ key, alias: short, positional }) =>
       short === undefined || positional ? [] : [[key, short]],
@@ -436,21 +555,40 @@ export const registerContractCommand = <
           if (!admitted.ok) return projectAnalysisError(admitted.error);
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
-            signal,
-            operation: selected.contract.name,
-            callerInputs: selected.callerInputs(values),
-            sessionTarget:
-              description.sessionTarget === undefined
-                ? undefined
-                : (values[description.sessionTarget.key] as string),
-            opening: opening.value,
-            inputBinding: selected.inputBinding,
-            delivery: admitted.value.delivery,
-            cliOptions: selected.cliOptionValues(
-              values,
-            ) as CliOptionValues<CliOptions>,
-          });
+          // Every handler's input issues name renamed fields by their CLI key.
+          return projectCliInputFields(
+            await run(
+              admitted.value.input as z.input<Contract["inputSchema"]>,
+              {
+                signal,
+                operation: selected.contract.name,
+                callerInputs: selected.callerInputs(values),
+                sessionTarget:
+                  description.sessionTarget === undefined
+                    ? undefined
+                    : (values[description.sessionTarget.key] as string),
+                evidenceTargets:
+                  description.evidenceTargets === undefined
+                    ? undefined
+                    : {
+                        source: description.evidenceTargets.source,
+                        targets: description.evidenceTargets.targets.map(
+                          ({ field, key }) => ({
+                            field,
+                            key,
+                            target: values[key] as string,
+                          }),
+                        ),
+                      },
+                opening: opening.value,
+                delivery: admitted.value.delivery,
+                cliOptions: selected.cliOptionValues(
+                  values,
+                ) as CliOptionValues<CliOptions>,
+              },
+            ),
+            selected.inputBinding,
+          );
         }),
       );
     },
@@ -459,6 +597,236 @@ export const registerContractCommand = <
   registered.push(description);
   descriptions.set(cli, registered);
 };
+
+/** One contract a target-routed command runs, with the targets it takes. */
+export interface CliTargetRoute {
+  readonly description: ContractCliDescription;
+  /**
+   * Whether this route takes the target. Only a route that owns every
+   * option the caller gave is asked; the last route takes every other target.
+   */
+  readonly takesTarget: ((target: string) => Promise<boolean>) | undefined;
+  /** What this route's own options need, named when another route refuses them. */
+  readonly requirement: string;
+  readonly run: (
+    input: unknown,
+    context: ContractCommandContext,
+  ) => Promise<unknown>;
+}
+
+/** Describe one route of a target-routed command from its contract. */
+export const targetRoute = <
+  Contract extends ProjectedContract,
+  CliOptions extends CliOptionShape = Record<never, z.ZodType>,
+>(
+  contract: Contract,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
+  run: (
+    input: z.input<Contract["inputSchema"]>,
+    context: ContractCommandContext<CliOptionValues<CliOptions>>,
+  ) => Promise<unknown>,
+  route: {
+    readonly takesTarget?: (target: string) => Promise<boolean>;
+    readonly requirement: string;
+  },
+): CliTargetRoute => {
+  if (projection.operationBy !== undefined)
+    throw new Error(`${contract.name} routes by target and by an option`);
+  return {
+    description: describeContractCommand(contract, projection),
+    takesTarget: route.takesTarget,
+    requirement: route.requirement,
+    run: run as CliTargetRoute["run"],
+  };
+};
+
+/** The argv arguments and options one description takes, keyed by CLI key. */
+const commandShape = (description: ContractCliDescription) => ({
+  args: commandPositionals(description).map(
+    ({ key, schema }) => [key, schema] as const,
+  ),
+  // Routed descriptions declare no object-level rules, so this is the object.
+  options: Object.fromEntries(
+    Object.entries(
+      (incurOptions(description) as z.ZodObject).shape as Readonly<
+        Record<string, z.ZodType>
+      >,
+    ).map(([key, schema]) => [key, withoutDefault(schema)]),
+  ),
+});
+
+/**
+ * An omitted option must stay omitted, since a given option routes the
+ * target; the chosen contract applies its own default on admission. Help and
+ * `--schema` keep the option's metadata.
+ */
+const withoutDefault = (schema: z.ZodType): z.ZodType => {
+  if (!(schema instanceof z.ZodDefault)) return schema;
+  const omittable = (schema.removeDefault() as z.ZodType).optional();
+  const metadata = schema.meta();
+  return metadata === undefined ? omittable : omittable.meta(metadata);
+};
+
+const schemaSignature = (schema: z.ZodType): string =>
+  JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
+
+const routedDescriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
+
+/** Route descriptions of commands registered through `registerTargetRoutedCommand`. */
+export const targetRoutedCommandDescriptions = (
+  cli: CliInstance,
+): readonly ContractCliDescription[] => routedDescriptions.get(cli) ?? [];
+
+/**
+ * Register one CLI command whose target chooses the contract it runs, such
+ * as `analyze` running static JavaScript analysis on an application archive
+ * and the binary overview on a program. Each route is projected from its own
+ * contract; the command takes the union of their options, which must agree
+ * on every shared key. The first route that owns every given option and
+ * takes the target runs; an option the chosen route does not own is refused
+ * naming its CLI key and the route that takes it.
+ */
+export const registerTargetRoutedCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  command: { readonly command: string; readonly description: string },
+  routes: readonly [...CliTargetRoute[], CliTargetRoute],
+): void => {
+  const shapes = routes.map(({ description }) => {
+    if (
+      description.command !== command.command ||
+      description.optionConstraints !== undefined ||
+      description.checkOptions !== undefined ||
+      description.evidenceTargets !== undefined ||
+      description.parameters.some(
+        ({ selectorOption }) => selectorOption !== undefined,
+      )
+    )
+      throw new Error(
+        `${description.contract.name} cannot be routed by ${command.command}`,
+      );
+    return commandShape(description);
+  });
+  const args = shapes[0]!.args;
+  const options = new Map<string, z.ZodType>();
+  const owners = new Map<string, CliTargetRoute>();
+  for (const [index, shape] of shapes.entries()) {
+    if (
+      shape.args.length !== args.length ||
+      shape.args.some(
+        ([key, schema], position) =>
+          key !== args[position]![0] ||
+          schemaSignature(schema) !== schemaSignature(args[position]![1]),
+      )
+    )
+      throw new Error(`${command.command} routes take different arguments`);
+    for (const [key, schema] of Object.entries(shape.options)) {
+      const shared = options.get(key);
+      if (
+        shared !== undefined &&
+        schemaSignature(shared) !== schemaSignature(schema)
+      )
+        throw new Error(`${command.command} routes disagree on --${key}`);
+      options.set(key, schema);
+      owners.set(key, routes[index]!);
+    }
+  }
+  const owns = (route: CliTargetRoute, key: string): boolean =>
+    args.some(([argument]) => argument === key) ||
+    Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
+  const [targetKey] = args[0] ?? [];
+  if (targetKey === undefined)
+    throw new Error(`${command.command} routes take no target`);
+  cli.command(command.command, {
+    description: command.description,
+    args: z.object(Object.fromEntries(args)),
+    options: z.object(Object.fromEntries(options)),
+    run: ({
+      args: given,
+      options: chosen,
+    }: {
+      readonly args: Readonly<Record<string, unknown>>;
+      readonly options: Readonly<Record<string, unknown>>;
+    }) => {
+      const values: Record<string, unknown> = { ...chosen, ...given };
+      const supplied = Object.keys(values).filter(
+        (key) => values[key] !== undefined,
+      );
+      return withCommandCancellation((signal) =>
+        logCliCommand(logger, command.command, async () => {
+          const target = values[targetKey] as string;
+          let route = routes.at(-1)!;
+          for (const candidate of routes)
+            if (
+              candidate.takesTarget !== undefined &&
+              supplied.every((key) => owns(candidate, key)) &&
+              (await candidate.takesTarget(target))
+            ) {
+              route = candidate;
+              break;
+            }
+          const { description } = route;
+          const refused = supplied.filter((key) => !owns(route, key));
+          if (refused.length > 0)
+            return projectAnalysisError(
+              new AnalysisInputError(
+                description.contract.name,
+                undefined,
+                refused.map((key) => ({
+                  path: [key],
+                  reason: "invalid_value" as const,
+                  message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; this target runs ${description.contract.name}, which does not take it.`,
+                })),
+              ),
+            );
+          const admitted = description.admit(values);
+          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          const opening = admitOpening(description, values);
+          if (!opening.ok) return projectAnalysisError(opening.error);
+          return projectCliInputFields(
+            await route.run(admitted.value.input, {
+              signal,
+              operation: description.contract.name,
+              callerInputs: description.callerInputs(values),
+              sessionTarget:
+                description.sessionTarget === undefined ? undefined : target,
+              evidenceTargets: undefined,
+              opening: opening.value,
+              delivery: admitted.value.delivery,
+              cliOptions: description.cliOptionValues(
+                withCliOnlyDefaults(description, values),
+              ),
+            }),
+            description.inputBinding,
+          );
+        }),
+      );
+    },
+  } as never);
+  const registered = routedDescriptions.get(cli) ?? [];
+  registered.push(...routes.map(({ description }) => description));
+  routedDescriptions.set(cli, registered);
+};
+
+/**
+ * Routing saw CLI-only options without their defaults; the chosen route's
+ * handler receives each omitted one's default, which no contract parse
+ * would otherwise restore.
+ */
+const withCliOnlyDefaults = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => ({
+  ...values,
+  ...Object.fromEntries(
+    description.cliOnlyOptions.flatMap(({ key, schema }) =>
+      values[key] === undefined ? [[key, schema.parse(undefined)]] : [],
+    ),
+  ),
+});
+
+const kebabCase = (key: string): string =>
+  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 /** What a JSON-document command's handler receives besides the document. */
 export interface ContractDocumentContext<

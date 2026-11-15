@@ -74,10 +74,10 @@ it.each(["fail", "record-and-continue"] as const)(
       details: {
         issues: [
           {
-            path: ["integrity_policy"],
+            path: ["integrityPolicy"],
             reason: "invalid_value",
             message: expect.stringMatching(
-              /integrity policy.*static JavaScript ASAR\/directory.*binary_overview.*no input/iu,
+              /--integrity-policy.*static JavaScript ASAR\/directory.*binary_overview.*does not take it/u,
             ),
           },
         ],

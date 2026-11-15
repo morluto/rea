@@ -83,7 +83,6 @@ export const registerBrowserScenarioCommands = (
       if (!result.ok)
         return { error: "Browser scenario capture failed", ...result.error };
       return publishCliAnalysisEvidence(result, {
-        providerId: PROVIDER_ID,
         operation,
         signal,
         detail: delivery.detail,
