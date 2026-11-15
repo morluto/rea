@@ -592,7 +592,7 @@ const PATH_SCOPES = {
     "src/composition/webRuntime.ts",
     "src/contracts/webRuntimeToolContracts.ts",
     "src/contracts/toolEffects.ts",
-    "src/server/registerWebRuntimeTools.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webRuntimeCommands.ts",
     "src/cli/commandCancellation.ts",
