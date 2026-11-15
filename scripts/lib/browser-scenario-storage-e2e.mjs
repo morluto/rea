@@ -318,15 +318,16 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
 
 const assertStorageKeyPartition = async (connection, origin) => {
   const attachedSessions = new Set();
-  const unsubscribe = connection.onEvent((event) => {
-    const registered = event.registered;
-    if (
-      registered?.method === "Target.attachedToTarget" &&
-      registered.payload.sessionId !== undefined &&
-      registered.payload.targetType === "iframe"
-    )
-      attachedSessions.add(registered.payload.sessionId);
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Target.attachedToTarget",
+    (registered) => {
+      if (
+        registered.payload.sessionId !== undefined &&
+        registered.payload.targetType === "iframe"
+      )
+        attachedSessions.add(registered.payload.sessionId);
+    },
+  );
   await connection.send("Page.enable");
   await connection.send("Target.setAutoAttach", {
     autoAttach: true,
@@ -437,15 +438,21 @@ const verifyCallerDebuggerPause = async (caller, origin, scenario) => {
       resolve(callFrameId);
     };
   });
-  // CdpConnection hands subscribers only the registered parse of each event.
-  const unsubscribe = caller.onEvent(({ registered }) => {
-    if (registered?.method === "Debugger.scriptParsed") {
+  // CdpConnection refuses an unregistered event name at subscription and
+  // hands each listener only the registered parse of its event.
+  const unsubscribeParsed = caller.onRegisteredEvent(
+    "Debugger.scriptParsed",
+    (registered) => {
       const { scriptId, url } = registered.payload.facts;
       if (scriptId !== undefined && url !== undefined)
         scripts.set(scriptId, url);
       if (url?.includes("storage") === true)
         protocolTrace.push({ method: registered.method, url });
-    } else if (registered?.method === "Debugger.paused") {
+    },
+  );
+  const unsubscribePaused = caller.onRegisteredEvent(
+    "Debugger.paused",
+    (registered) => {
       const frame = registered.payload.success
         ? registered.payload.data.callFrames[0]
         : undefined;
@@ -460,8 +467,12 @@ const verifyCallerDebuggerPause = async (caller, origin, scenario) => {
         scripts.get(frame.location.scriptId) === debuggerUrl
       )
         resolvePaused(frame.callFrameId);
-    }
-  });
+    },
+  );
+  const unsubscribe = () => {
+    unsubscribeParsed();
+    unsubscribePaused();
+  };
   const debuggerScenario = browserScenarioSchema.parse({
     ...scenario,
     start_url: { url: debuggerUrl },
@@ -652,16 +663,18 @@ const restoreTarget = async (connection, url) => {
   const load = new Promise((resolve) => {
     resolveLoaded = resolve;
   });
-  const unsubscribe = connection.onEvent(({ registered }) => {
-    if (
-      registered?.method !== "Page.lifecycleEvent" ||
-      registered.payload.name !== "load" ||
-      registered.payload.loaderId === undefined
-    )
-      return;
-    loaded.add(registered.payload.loaderId);
-    if (registered.payload.loaderId === loaderId) resolveLoaded();
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Page.lifecycleEvent",
+    (registered) => {
+      if (
+        registered.payload.name !== "load" ||
+        registered.payload.loaderId === undefined
+      )
+        return;
+      loaded.add(registered.payload.loaderId);
+      if (registered.payload.loaderId === loaderId) resolveLoaded();
+    },
+  );
   try {
     await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });
     const navigation = await connection.send("Page.navigate", { url });

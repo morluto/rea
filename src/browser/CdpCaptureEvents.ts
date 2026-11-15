@@ -9,10 +9,7 @@ import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import {
-  CdpDocumentTracker,
-  type CdpDocumentIdentity,
-} from "./CdpTargetSession.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -57,7 +54,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   ]);
   originViolation = false;
   unknownRootIdentity = false;
-  document: CdpDocumentTracker | undefined = undefined;
+  document: CdpTargetDocument | undefined = undefined;
 
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -67,8 +64,16 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.allowedOrigins = allowedOrigins;
   }
 
-  beginAuthorizedFrame(document: CdpDocumentIdentity): void {
-    this.document = new CdpDocumentTracker(document);
+  /**
+   * Start capture for the authorized document. Root navigations reach the
+   * capture through the target session's document owner, not as raw events.
+   */
+  beginAuthorizedFrame(document: CdpTargetDocument): void {
+    this.document?.close();
+    this.document = document;
+    document.onNavigation((navigation) =>
+      handlers.handleRootNavigation(this, navigation),
+    );
     this.#coverageStarts.clear();
     this.originViolation = false;
     this.unknownRootIdentity = false;
@@ -143,9 +148,6 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     }
     const registered = event.registered;
     switch (registered?.method) {
-      case "Page.frameNavigated":
-        handlers.handleFrameNavigated(this, registered.payload);
-        return;
       case "Runtime.executionContextCreated":
         handlers.handleExecutionContextCreated(this, registered.payload.facts);
         return;

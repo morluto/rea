@@ -4,12 +4,14 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   admitCdpReply,
+  assertCdpCommand,
   type CdpCommand,
   type CdpCommandParams,
   type CdpCommandResult,
   type CdpProtocolMethod,
 } from "./protocol/CdpCommands.js";
 import {
+  assertCdpEvent,
   registeredCdpEvent,
   type CdpEventName,
   type CdpRegisteredEventOf,
@@ -49,6 +51,7 @@ const registeredSession = (
   return {
     send: async (method, params) => {
       if (failure !== undefined) throw failure;
+      assertCdpCommand(method, operation);
       return admitCdpReply(
         method,
         // Playwright types each reply by an unchecked cast; the schema decides it.
@@ -57,6 +60,7 @@ const registeredSession = (
       );
     },
     on: (event, listener) => {
+      assertCdpEvent(event, operation);
       const receive = (params: unknown): void => {
         if (failure !== undefined) return;
         const registered = registeredCdpEvent(event, params);

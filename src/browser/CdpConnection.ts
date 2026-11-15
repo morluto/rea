@@ -7,13 +7,17 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
   admitCdpReply,
+  assertCdpCommand,
   type CdpCommand,
   type CdpCommandParams,
   type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import {
+  assertCdpEvent,
   registeredCdpEvent,
+  type CdpEventName,
   type CdpRegisteredEvent,
+  type CdpRegisteredEventOf,
 } from "./protocol/CdpEvents.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
@@ -628,6 +632,25 @@ export class CdpConnection {
     return this.core.onEvent(listener);
   }
 
+  /**
+   * Subscribe to one registered event. An unregistered name is refused here,
+   * before subscribing, because no event of that name could reach the
+   * listener: JavaScript verifiers name events the compiler cannot check.
+   */
+  onRegisteredEvent<E extends CdpEventName>(
+    method: E,
+    listener: (
+      registered: CdpRegisteredEventOf<E>,
+      event: CdpTransportEvent,
+    ) => void,
+  ): () => void {
+    assertCdpEvent(method, this.operation);
+    return this.core.onEvent((event) => {
+      if (event.registered?.method === method)
+        listener(event.registered as CdpRegisteredEventOf<E>, event);
+    });
+  }
+
   /** Subscribe to an unexpected transport loss while an operation is active. */
   onDisconnect(listener: (error: BrowserObservationError) => void): () => void {
     return this.core.onDisconnect(this.operation, listener);
@@ -667,6 +690,7 @@ export class CdpConnection {
     sessionId?: string,
     signal?: AbortSignal,
   ): Promise<CdpCommandResult<M>> {
+    assertCdpCommand(method, this.operation);
     const reply = await this.core.send(
       method,
       params ?? {},

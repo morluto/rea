@@ -13,6 +13,7 @@ import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import {
   cdpRootDocument,
   unverifiedDocumentLimitation,
@@ -129,6 +130,7 @@ export const capturePage = async (
     throw cause;
   } finally {
     removeListener();
+    events.document?.close();
   }
 };
 
@@ -248,10 +250,9 @@ const assertCompletedDocument = async (state: CaptureState): Promise<void> => {
     context.sessionId,
     context.signal,
   );
-  const document = cdpRootDocument(completed);
-  if (document !== undefined) events.document?.observe(document);
+  const comparison = events.document?.observeTree(completed);
   assertObservedCaptureValid(state);
-  if (document === undefined)
+  if (comparison === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   await authorizedMainFrame({
     connection: context.connection,
@@ -362,7 +363,7 @@ const authorizeObservationWindow = async (
   const document = cdpRootDocument(initialFrameResult);
   if (mainFrame === undefined || document === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  events.beginAuthorizedFrame(document);
+  events.beginAuthorizedFrame(CdpTargetDocument.watch(context, document));
   await enableObservationDomains(state);
   await report(context.progress, 2, "Observing page events");
   await delayWithCancellation(

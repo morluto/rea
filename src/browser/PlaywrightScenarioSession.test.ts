@@ -49,6 +49,7 @@ vi.mock("./CdpTargetSession.js", () => ({
       send: mocks.policySend,
       onEvent: events.onEvent,
       onProtocolFailure: () => () => undefined,
+      onDisconnect: () => () => undefined,
       close: mocks.policyTransportClose,
       beginCleanupGrace: mocks.policyBeginCleanupGrace,
     } as unknown as import("./CdpConnection.js").CdpConnection;
@@ -1225,6 +1226,39 @@ it("retains a detached policy connection until the main realm is restored", asyn
   ).toHaveLength(1);
   expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+// The policy owner records its lost connection when CDP reports it; the next
+// step must report that before acting, since its documents would be
+// unprotected.
+it("refuses the next step after the policy session detaches", async () => {
+  const { page } = fixture();
+  const attached = browserScenarioSchema.parse({
+    ...connectedScenario("block"),
+    actions: [
+      {
+        step_id: "navigate",
+        action: "goto",
+        destination: { url: "https://other.example.test/" },
+        wait_until: "load",
+      },
+    ],
+  });
+  const session = await PlaywrightScenarioSession.open(attached, {}, {});
+  const [action] = attached.actions;
+  if (action === undefined) throw new Error("Expected a scenario action");
+  const navigations = page.goto.mock.calls.length;
+  mocks.policyEvent?.({
+    method: "Target.detachedFromTarget",
+    params: { sessionId: "policy-session" },
+  });
+
+  await expect(session.perform(action)).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "target_session_detached",
+  });
+  expect(page.goto).toHaveBeenCalledTimes(navigations);
+  await session.close().catch(() => undefined);
 });
 
 it("finishes initialization cleanup independently of request cancellation", async () => {
