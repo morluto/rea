@@ -336,14 +336,14 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
-checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
+// Cleanup completion is recorded by the owner and read by errors when asked.
+// No production owner pushes it with resolveCleanup() any more; composing
+// dependency sets with bindCleanupDependencies() is being replaced, so it may
+// not spread.
+check(
+  "resolveCleanup() push outside the error base (confirm the owner's AnalysisCleanupRelease or release its AnalysisCleanupLease; errors read it)",
   files,
-  /\.resolveCleanup\(/gu,
+  /\.resolveCleanup\(/u,
   ["src/domain/analysisErrorBase.ts"],
 );
 checkCounted(
