@@ -1305,8 +1305,9 @@ a different `rea` entry with higher precedence. On Windows, registration refuses
 to write a Claude Desktop MSIX configuration the running app could overwrite,
 or any file this process's MSIX AppData redirection would divert.
 fx registration follows `FX_HOME` and fails without writing when fx would
-refuse its value. MCPorter registration writes the file named by
-`MCPORTER_CONFIG`; otherwise it uses the first existing home file under an
+refuse its value or when it contains `.` or `..` segments, which could name the
+home folder. MCPorter registration writes the file named by `MCPORTER_CONFIG`,
+resolved as MCPorter resolves it; otherwise it uses the first existing home file under an
 absolute `XDG_CONFIG_HOME/mcporter`, then `~/.mcporter`, as MCPorter loads them.
 
 `--no-global` writes only project-level settings. A selection containing Amp or

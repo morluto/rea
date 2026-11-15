@@ -565,11 +565,12 @@ const resolveWith = async (
   try {
     const result = await resolveMcpRegistrationClients(
       {
-        agents: [agent],
+        agents: agent === "" ? [] : [agent],
         global: true,
         cwd: home,
         home,
-        platform: "linux",
+        // Real temporary paths need the host's path rules.
+        platform: process.platform,
         environment: Object.fromEntries(
           Object.entries(environment).map(([key, value]) => [
             key,
@@ -601,16 +602,21 @@ it.each([
   },
 );
 
-it.each(["relative/fx", "/", "<home>", "<home>/"])(
-  "refuses an FX_HOME of %s that fx itself refuses",
-  async (value) => {
-    const { result } = await resolveWith("fx", { FX_HOME: value });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("FX_HOME") },
-    });
-  },
-);
+it.each([
+  "relative/fx",
+  "/",
+  "<home>",
+  "<home>/",
+  // Aliases of the home folder would give it the profile's private mode.
+  "<home>/.",
+  "<home>/profile/..",
+])("refuses an FX_HOME of %s that fx itself refuses", async (value) => {
+  const { result } = await resolveWith("fx", { FX_HOME: value });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("FX_HOME") },
+  });
+});
 
 it.each([
   {
@@ -649,6 +655,12 @@ it.each([
     existing: [".mcporter/mcporter.json"],
     path: "selected.json",
   },
+  {
+    name: "MCPORTER_CONFIG resolved lexically like path.resolve",
+    env: { MCPORTER_CONFIG: "<home>/missing/../selected.json" },
+    existing: [],
+    path: "selected.json",
+  },
 ])(
   "registers MCPorter in the home file it loads ($name)",
   async ({ env, existing, path }) => {
@@ -666,3 +678,19 @@ it.each([
     expect(result.value[0]?.configPath).toBe(join(home, path));
   },
 );
+
+it("detects MCPorter from the file MCPORTER_CONFIG selects in default registration", async () => {
+  const { home, result } = await resolveWith(
+    "",
+    { MCPORTER_CONFIG: "<home>/elsewhere/mcporter.json" },
+    async (root) => {
+      await mkdir(join(root, ".cursor"), { recursive: true });
+      await mkdir(join(root, "elsewhere"), { recursive: true });
+      await writeFile(join(root, "elsewhere", "mcporter.json"), "{}\n");
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.find((client) => client.id === "mcporter")?.configPath,
+  ).toBe(join(home, "elsewhere", "mcporter.json"));
+});

@@ -176,11 +176,14 @@ export const mcporterLocation = async (
   const pathApi = context.platform === "win32" ? win32 : posix;
   const legacy = join(context.home, ".mcporter");
   const selected = context.environment.MCPORTER_CONFIG?.trim();
-  if (selected)
-    return location(
-      selectedPath(expandHome(selected, context.home), context),
-      legacy,
+  if (selected) {
+    // MCPorter applies path.resolve: `..` collapses lexically, not through links.
+    const configPath = pathApi.resolve(
+      context.cwd,
+      expandHome(selected, context.home),
     );
+    return { configPath, markers: [configPath, legacy] };
+  }
   const configHome = expandHome(
     context.environment.XDG_CONFIG_HOME?.trim() ?? "",
     context.home,
@@ -213,13 +216,21 @@ export const fxLocation = async (
   if (!value) return location(join(context.home, ".fx", "mcp.json"));
   const pathApi = context.platform === "win32" ? win32 : posix;
   const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
   if (
     !pathApi.isAbsolute(value) ||
     trimmed.length === 0 ||
-    trimmed === context.home.replace(/\/+$/u, "")
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === context.home.replace(/[\\/]+$/u, "")
   )
     throw new ConfigurationError(
-      "FX_HOME must be an absolute path other than the root and home folders, as fx requires. Repair FX_HOME before registering; no settings were written.",
+      "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before registering; no settings were written.",
     );
-  return location(join(trimmed, "mcp.json"));
+  return location(pathApi.join(trimmed, "mcp.json"));
 };
