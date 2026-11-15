@@ -56,6 +56,10 @@ cliTest(
                 status: "partial",
                 reason: "max_rustc_hashes",
                 effective_limit: 64,
+                limit: expect.objectContaining({
+                  parameter: "max_rustc_hashes",
+                  effective_value: 64,
+                }),
               },
             }
           : {}),

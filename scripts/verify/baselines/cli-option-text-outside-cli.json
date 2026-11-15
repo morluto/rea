@@ -12,6 +12,5 @@
   "src/kuna/KunaProjectReader.ts": 1,
   "src/native/NativePlistSource.ts": 1,
   "src/native/elf/KernelModuleParser.ts": 1,
-  "src/rust/RustBinaryProvider.ts": 3,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }
