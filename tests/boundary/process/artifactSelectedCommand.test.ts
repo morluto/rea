@@ -7,6 +7,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { createArtifactAnalysisResources } from "../../../src/providers/artifactResourceFailure.js";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -456,7 +457,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(replacement, script, { mode: 0o755 });
     await symlink(physical, selected);
     await writeFile(`${selected}.role`, "limiter");
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
       readStableArtifact,

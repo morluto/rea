@@ -57,14 +57,12 @@
     "src/native/pe/PeImportsProvider.ts": 1,
     "src/native/pe/PeLoadConfigProvider.ts": 1,
     "src/native/windows/WindowsShortcutProvider.ts": 1,
-    "src/process/ArtifactAnalysisResources.ts": 3,
     "src/process/capture/ProcessTerminalObservation.ts": 2,
     "src/process/privateWorkspaceFailure.ts": 1,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/providers/OwnedCommandCleanup.ts": 2,
     "src/providers/runOwned.ts": 1,
     "src/rust/RustBinaryProvider.ts": 1,
-    "src/sqlite/SqliteDatabaseFailures.ts": 1,
-    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
+    "src/sqlite/SqliteDatabaseFailures.ts": 1
   }
 }

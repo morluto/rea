@@ -3,25 +3,18 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import {
-  ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
 } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
   cancelledBy,
@@ -33,7 +26,6 @@ import {
   fixedAllowanceOptions,
   fixedProducerInputAllowance,
 } from "../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
@@ -63,7 +55,8 @@ export type ArtifactAnalysisRuntime = Pick<
   "path" | "close"
 >;
 
-interface SelectedArtifactRead {
+/** A selected input one resource-owned read admits. */
+export interface SelectedArtifactRead {
   readonly path: string;
   readonly maximumBytes: number;
   readonly allowanceName: string;
@@ -71,6 +64,32 @@ interface SelectedArtifactRead {
   readonly signal?: AbortSignal | undefined;
   readonly budgetParameter?: "producer_limits.input_bytes";
 }
+
+/** What a resource-owned read was doing when it failed. */
+export type ArtifactResourceFailureContext =
+  | {
+      readonly kind: "selected-input";
+      readonly operation: string;
+      readonly input: SelectedArtifactRead;
+    }
+  | {
+      readonly kind: "integrity";
+      readonly operation: string;
+      readonly path: string;
+      readonly capturedOutput: AnalysisCapturedOutput | undefined;
+    }
+  | { readonly kind: "resources"; readonly operation: string };
+
+/**
+ * Classifies a raw failure these resources observed. The provider layer owns
+ * raw-failure classification, so the consumer supplies it; the resources
+ * supply the typed pieces (`selectedFileSize`, `integrityChanged`,
+ * `readCleanupFailure`) its dialect is built from.
+ */
+export type ArtifactResourceClassifier = (
+  cause: unknown,
+  context: ArtifactResourceFailureContext,
+) => AnalysisError;
 
 export const artifactCommandOutput = (
   snapshot: ProviderProcessSnapshot,
@@ -109,6 +128,7 @@ export class ArtifactAnalysisResources {
       readonly message: string;
       readonly details: Readonly<Record<string, JsonValue>>;
     },
+    readonly classify: ArtifactResourceClassifier,
   ) {
     this.#artifacts = { scope: new ArtifactResourceScope(), operation };
   }
@@ -151,7 +171,14 @@ export class ArtifactAnalysisResources {
           return work();
         }),
       )
-      .catch((cause: unknown) => err(this.#artifactFailure(cause)))
+      .catch((cause: unknown) =>
+        err(
+          this.classify(cause, {
+            kind: "resources",
+            operation: this.#artifacts.operation,
+          }),
+        ),
+      )
       .finally(() => {
         this.#busy = false;
       });
@@ -178,79 +205,30 @@ export class ArtifactAnalysisResources {
     try {
       return await this.read(input.path, input.maximumBytes, input.signal);
     } catch (cause: unknown) {
-      throw this.#selectedArtifactFailure(cause, input, operation);
+      throw this.classify(cause, { kind: "selected-input", operation, input });
     }
   }
 
-  #selectedArtifactFailure(
-    cause: unknown,
-    input: SelectedArtifactRead,
-    operation: string,
-  ): AnalysisError {
-    const { path, maximumBytes, allowanceName, observedOutput } = input;
-    if (cause instanceof AnalysisError) return cause;
-    const observation = completedStableArtifactObservation(cause, path);
-    if (cause instanceof ArtifactReaderFailure && observation !== undefined)
-      cause.retainPartialObservation(observation);
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) => this.#selectedArtifactFailure(primary, input, operation),
-        observedOutput,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-        {
-          ...(observedOutput === undefined
-            ? {}
-            : { capturedOutput: observedOutput }),
-          ...(cause.partialObservation === undefined
-            ? {}
-            : { partialObservation: cause.partialObservation }),
-        },
-      );
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+  /** The read budget and recovery for a selected input larger than it admits. */
+  selectedFileSize(input: SelectedArtifactRead, operation: string) {
+    const { maximumBytes, allowanceName, budgetParameter } = input;
+    return (cause: ArtifactReaderFailure, details: AnalysisErrorOptions) =>
+      new AnalysisResourceConstraintError(
         operation,
         "file-size",
-        reason,
+        cause.message,
         { input_bytes: maximumBytes },
         {
+          ...details,
           cause,
-          ...(input.budgetParameter === undefined
+          ...(budgetParameter === undefined
             ? fixedProducerInputAllowance(maximumBytes, allowanceName)
             : {
                 retryable: false,
-                remediationAction: `Increase ${input.budgetParameter} above ${String(maximumBytes)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
+                remediationAction: `Increase ${budgetParameter} above ${String(maximumBytes)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
               }),
         },
       );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, reason, {
-        cause,
-      });
-    if (
-      cause instanceof Error &&
-      "code" in cause &&
-      (cause.code === "EACCES" || cause.code === "EPERM")
-    )
-      return new AnalysisAccessDeniedError(operation, path, cause.code, {
-        cause,
-      });
-    return new AnalysisInputError(
-      operation,
-      {
-        cause,
-        ...(cause instanceof ArtifactReaderFailure
-          ? stableArtifactInputRecovery(cause)
-          : {}),
-      },
-      [{ path: ["path"], reason: "invalid_value", message: reason }],
-    );
   }
 
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {
@@ -268,7 +246,12 @@ export class ArtifactAnalysisResources {
       try {
         return await this.read(path, 64 * 1024 * 1024);
       } catch (cause: unknown) {
-        throw this.integrityFailure(cause, path, capturedOutput, operation);
+        throw this.classify(cause, {
+          kind: "integrity",
+          operation,
+          path,
+          capturedOutput,
+        });
       }
     };
     const current = await read(command);
@@ -283,45 +266,21 @@ export class ArtifactAnalysisResources {
     return current;
   }
 
-  integrityFailure(
-    cause: unknown,
+  /** A post-run identity read whose failure shows the file changed. */
+  integrityChanged(
+    cause: ArtifactReaderFailure,
     path: string,
-    capturedOutput?: AnalysisCapturedOutput,
-    operation = this.operation,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) =>
-          this.integrityFailure(primary, path, capturedOutput, operation),
-        capturedOutput,
-        operation,
-      );
-    const detailWithoutCause =
-      capturedOutput === undefined ? {} : { capturedOutput };
-    const detail = { cause, ...detailWithoutCause };
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-        detailWithoutCause,
-      );
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (
-      cause instanceof ArtifactReaderFailure &&
-      ["limit", "integrity", "path"].includes(cause.reason)
-    )
-      return new AnalysisArtifactChangedError(
-        operation,
-        path,
-        `Post-run identity verification failed for ${path}: ${reason}`,
-        detail,
-      );
-    return new ProviderAdapterError(this.providerId, operation, {
-      ...detail,
-      diagnostics: { stage: "integrity", resource_path: path, reason },
-    });
+    details: AnalysisErrorOptions,
+    operation: string,
+  ): AnalysisArtifactChangedError | undefined {
+    return ["limit", "integrity", "path"].includes(cause.reason)
+      ? new AnalysisArtifactChangedError(
+          operation,
+          path,
+          `Post-run identity verification failed for ${path}: ${cause.message}`,
+          details,
+        )
+      : undefined;
   }
 
   retain(
@@ -441,45 +400,6 @@ export class ArtifactAnalysisResources {
       );
     await root.close();
     this.#pending.delete(root);
-  }
-
-  cleanupFailure(
-    cause: ArtifactReaderFailure,
-    classifyPrimary: (cause: unknown) => AnalysisError,
-    capturedOutput?: AnalysisCapturedOutput,
-    operation = this.operation,
-  ): AnalysisError {
-    if (cause.cleanup === undefined) return classifyPrimary(cause);
-    let primary: AnalysisError | undefined;
-    if (cause instanceof ArtifactFileCleanupFailure) {
-      const physical = cause.fileCleanupFailure;
-      if (physical.outcome.kind === "failed")
-        primary = classifyPrimary(physical.outcome.cause);
-      else if (physical.completionCancellation !== undefined)
-        primary = cancelledBy(
-          operation,
-          carriedReason(physical.completionCancellation.reason),
-          {
-            ...(capturedOutput === undefined ? {} : { capturedOutput }),
-            partialObservation: cause.partialObservation,
-          },
-        );
-    } else if (cause.reason === "cancelled") {
-      primary = cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-        {
-          ...(capturedOutput === undefined ? {} : { capturedOutput }),
-          partialObservation: cause.partialObservation,
-        },
-      );
-    }
-    return this.readCleanupFailure(
-      cause as CleanupFailedRead,
-      primary,
-      capturedOutput,
-      operation,
-    );
   }
 
   /**
@@ -613,7 +533,10 @@ export class ArtifactAnalysisResources {
     try {
       await this.#artifacts.scope.close();
     } catch (cause: unknown) {
-      descriptorFailure = this.#artifactFailure(cause);
+      descriptorFailure = this.classify(cause, {
+        kind: "resources",
+        operation: this.#artifacts.operation,
+      });
     }
     try {
       await this.release();
@@ -627,28 +550,5 @@ export class ArtifactAnalysisResources {
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;
-  }
-
-  #artifactFailure(
-    cause: unknown,
-    operation = this.#artifacts.operation,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) => this.#artifactFailure(primary, operation),
-        undefined,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
-    return new ProviderAdapterError(this.providerId, operation, {
-      cause,
-      diagnostics: { stage: "artifact-resources", reason: String(cause) },
-    });
   }
 }
