@@ -120,6 +120,15 @@ it.each(["/selected.db", "./Database files/another.db"])(
       },
       exitCode: null,
       signal: "SIGABRT",
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const failure = sqliteDatabaseFailure(cause, path, "worker");
     expect(failure.cause).toBe(cause);
@@ -129,7 +138,17 @@ it.each(["/selected.db", "./Database files/another.db"])(
         operation: "inspect_sqlite_database",
         resource: "memory",
         reported_limits: { javascript_heap_bytes: 256 * 1024 * 1024 },
-        diagnostics: { selected_path: path },
+        diagnostics: {
+          selected_path: path,
+          // The runtime's report survives even when retention dropped it.
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
         captured_output: { stderr },
       },
     });

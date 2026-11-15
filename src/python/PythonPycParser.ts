@@ -15,8 +15,9 @@ import {
   type PythonPycCodeObject,
   type PythonPycConst,
 } from "../domain/python/pythonPyc.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import {
-  PythonPycFormatFailure,
+  PYTHON_PYC_FORMAT,
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
 import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
@@ -179,7 +180,7 @@ type NameTable = {
 };
 
 const malformed = (message: string): never => {
-  throw new PythonPycFormatFailure("malformed", message);
+  throw malformedInput(PYTHON_PYC_FORMAT, message);
 };
 
 /** Locals CPython's 3.11+ validator counts toward `co_varnames`. */
@@ -193,7 +194,7 @@ const fastLocalCount = (kinds: Buffer): number => {
 };
 
 const unsupported = (message: string): never => {
-  throw new PythonPycFormatFailure("unsupported", message);
+  throw unsupportedInput(PYTHON_PYC_FORMAT, message);
 };
 
 const digests = new WeakMap<Buffer, string>();

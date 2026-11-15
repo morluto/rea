@@ -39,6 +39,9 @@ type Il2cppBinaryFormatReason = Exclude<
   Il2cppBinaryCapacityReason
 >;
 
+/** What a native-link budget counts, so its maximum is reported with its unit. */
+export type NativeBudgetUnit = "entries" | "bytes" | "frames";
+
 /** The ParseFailure format of a native image linked against IL2CPP metadata. */
 export const IL2CPP_BINARY_FORMAT = "il2cpp-binary";
 
@@ -55,16 +58,20 @@ const isUnsupported = (reason: Il2cppBinaryFormatReason) =>
 export class Il2cppBinaryFormatFailure extends ParseFailureError<
   "malformed" | "unsupported" | "limit"
 > {
+  /** What the exceeded maximum counts; set only for a capacity reason. */
+  readonly unit: NativeBudgetUnit | undefined;
   constructor(reason: Il2cppBinaryFormatReason, message: string);
   constructor(
     reason: Il2cppBinaryCapacityReason,
     message: string,
     maximum: number,
+    unit: NativeBudgetUnit,
   );
   constructor(
     readonly reason: Il2cppBinaryFailureReason,
     message: string,
     maximum?: number,
+    unit?: NativeBudgetUnit,
   ) {
     const detail = `${reason}: ${message}`;
     super(
@@ -84,6 +91,7 @@ export class Il2cppBinaryFormatFailure extends ParseFailureError<
             }
           : { kind: "malformed", format: IL2CPP_BINARY_FORMAT, detail },
     );
+    this.unit = unit;
     this.name = "Il2cppBinaryFormatFailure";
   }
 }

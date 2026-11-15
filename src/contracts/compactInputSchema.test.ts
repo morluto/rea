@@ -359,7 +359,7 @@ describe("portable dialect unions", () => {
       );
   });
 
-  it("reduces mixed-type union items instead of selecting one branch type", () => {
+  it("reduces mixed-type union items to typed branches instead of selecting one branch type", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
@@ -372,17 +372,69 @@ describe("portable dialect unions", () => {
       },
       13 * 1024,
     );
-    expect(presentation).toBe("reduced");
     const values = (
       schema.properties as Record<string, Record<string, unknown>>
     ).values;
     if (values === undefined) throw new Error("Missing values property");
-    expect(values.type).toBe("array");
-    expect(values.items).toMatchObject({
-      type: expect.arrayContaining(["string", "object"]),
+    expect(presentation).toBe("reduced");
+    expect(values).toEqual({
+      type: "array",
+      items: { anyOf: [{ type: "string" }, { type: "object" }] },
     });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate({ values: ["text", {}] })).toBe(true);
+  });
+
+  it("never trades a typed union for a type list the dialect rejects", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: { anyOf: [{ type: "string" }, { type: "number" }] },
+      },
+      required: ["value"],
+      additionalProperties: false,
+    };
+    const { schema } = compactAdvertisedInputSchema(canonical, 13 * 1024);
+    expect(schema.properties).toEqual({
+      value: { anyOf: [{ type: "string" }, { type: "number" }] },
+    });
+    expect(
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema })
+        .map(({ detail }) => detail)
+        .filter((detail) => detail === "type-list"),
+    ).toEqual([]);
+    // A budget that forces reduction states each union as typed branches.
+    const reduced = compactAdvertisedInputSchema(
+      {
+        ...canonical,
+        description: "x".repeat(400),
+        properties: {
+          ...canonical.properties,
+          label: { anyOf: [{ type: "string" }, { type: "null" }] },
+          nested: {
+            type: "object",
+            properties: Object.fromEntries(
+              Array.from({ length: 40 }, (_, index) => [
+                `field_${String(index)}`,
+                { type: "string", minLength: 1 },
+              ]),
+            ),
+          },
+        },
+      },
+      1024,
+    );
+    expect(reduced.presentation).toBe("reduced");
+    expect(reduced.schema.properties).toMatchObject({
+      value: { anyOf: [{ type: "string" }, { type: "number" }] },
+      label: { anyOf: [{ type: "string" }, { type: "null" }] },
+    });
+    expect(
+      advertisedInputDialectViolations({
+        name: "probe",
+        inputSchema: reduced.schema,
+      }).filter(({ detail }) => detail === "type-list"),
+    ).toEqual([]);
   });
 });
 
@@ -887,7 +939,10 @@ const reducedArrayCases = [
       type: "array",
       items: { anyOf: [{ type: "string" }, { type: "object" }] },
     },
-    { type: "array", items: { type: ["string", "object"] } },
+    {
+      type: "array",
+      items: { anyOf: [{ type: "string" }, { type: "object" }] },
+    },
     [["text", {}]],
   ],
   [

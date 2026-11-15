@@ -62,38 +62,49 @@ export const nameSpawnedExecutable = (
   return cause;
 };
 
-/** A launch refusal together with the executable the launcher named. */
-export interface ExecutableLaunchRefusal extends LaunchRefusal {
-  readonly executable: string;
+/**
+ * A launch refusal a launcher raised; `executable` when the launcher named the
+ * executable it refused, undefined when it did not (Node's bare `spawn`).
+ */
+export interface LauncherRefusal extends LaunchRefusal {
+  readonly executable: string | undefined;
 }
 
 /**
- * The executable a launcher named when it failed to start it: Node's
- * `spawn <path>` error or the Windows native launcher's executable-launch
- * constraint. Undefined when the error does not identify a launch.
+ * Whether a launcher raised this error while starting a process, and the
+ * executable it named: Node's `spawn` or `spawn <path>` error, or the Windows
+ * native launcher's executable-launch constraint. Undefined when no launcher
+ * raised it, such as an errno from reading a file or preparing ownership.
  */
-const launchedExecutableOf = (cause: Error): string | undefined => {
-  const path = Reflect.get(cause, "path");
-  if (
-    typeof path === "string" &&
-    Reflect.get(cause, "syscall") === `spawn ${path}`
-  )
-    return path;
-  return windowsExecutableLaunchPath(cause);
+const launcherIdentityOf = (
+  cause: Error,
+): { readonly executable: string | undefined } | undefined => {
+  const syscall = Reflect.get(cause, "syscall");
+  if (typeof syscall === "string" && /^spawn(?: |$)/u.test(syscall)) {
+    const path = Reflect.get(cause, "path");
+    return {
+      executable:
+        typeof path === "string" && syscall === `spawn ${path}`
+          ? path
+          : undefined,
+    };
+  }
+  const requestedPath = windowsExecutableLaunchPath(cause);
+  return requestedPath === undefined
+    ? undefined
+    : { executable: requestedPath };
 };
 
 /**
- * Classify a failure to start a named executable. Undefined when the errno is
- * not a launch refusal or the error does not identify the executable a
- * launcher refused, such as an errno from reading a file or preparing
- * ownership.
+ * Classify a launcher's refusal to start an executable. Undefined when the
+ * errno is not a launch refusal or no launcher raised the error.
  */
-export const executableLaunchRefusalOf = (
+export const launcherRefusalOf = (
   cause: unknown,
-): ExecutableLaunchRefusal | undefined => {
+): LauncherRefusal | undefined => {
   if (!(cause instanceof Error)) return undefined;
-  const executable = launchedExecutableOf(cause);
-  if (executable === undefined) return undefined;
+  const identity = launcherIdentityOf(cause);
+  if (identity === undefined) return undefined;
   const refusal = classifyLaunchFailure(cause);
-  return refusal === undefined ? undefined : { ...refusal, executable };
+  return refusal === undefined ? undefined : { ...refusal, ...identity };
 };

@@ -225,6 +225,18 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
+// a wall-clock sum moves with clock changes and has no finalize phase. The
+// remaining copy converts a monotonic budget for a browser page, which can
+// only read its own wall clock.
+checkCounted(
+  "wall-clock deadline computation (use Deadline from src/domain/deadline)",
+  "wall-clock-deadline",
+  files,
+  /Date\.now\(\)\s*\+/gu,
+  [],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
@@ -322,6 +334,24 @@ checkCounted(
   files,
   /instanceof RangeError/gu,
   ["src/domain/parseFailure.ts"],
+);
+
+// Cleanup completion is recorded by the owning lease and read by errors when
+// asked. Pushing it with resolveCleanup() and composing dependency sets with
+// bindCleanupDependencies() are being replaced, so neither may spread.
+checkCounted(
+  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
+  "cleanup-resolve-push",
+  files,
+  /\.resolveCleanup\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+checkCounted(
+  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "cleanup-dependency-binding",
+  files,
+  /\.bindCleanupDependencies\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
 );
 
 if (baselinesShrunk) {
