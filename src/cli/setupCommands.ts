@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "incur";
 
@@ -204,9 +205,10 @@ const registerMaintenanceCommands = (
           return runUninstall(
             options.purgeData,
             systemUninstallHost(
-              homeDirectoryFromEnvironment(environment, process.platform),
+              homeDirectoryFromEnvironment(environment, HOST_PLATFORM.platform),
               undefined,
               environment,
+              HOST_PLATFORM.platform,
             ),
           );
         },
@@ -227,7 +229,12 @@ const registerMaintenanceCommands = (
           ]);
           return runUpdate(
             PRODUCT_IDENTITY.packageVersion,
-            systemUpdateHost(undefined, undefined, environment),
+            systemUpdateHost(
+              undefined,
+              undefined,
+              environment,
+              HOST_PLATFORM.platform,
+            ),
             formatExplicit ? "structured" : "human",
           );
         },

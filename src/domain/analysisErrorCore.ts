@@ -1,6 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
+import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -486,6 +487,20 @@ export const cancelledBy = (
     cause: cancellationCause(reason),
   });
 
+/**
+ * A provider's recovery for its elapsed deadline: which deadline elapsed, the
+ * setting or action that changes it, the accepted setting, and the facts that
+ * explain it.
+ */
+export interface AnalysisTimeoutRecovery {
+  /** Provider-specific explanation of which deadline elapsed. */
+  readonly userMessage?: string;
+  /** Provider-specific setting or action that changes that deadline. */
+  readonly remediationAction?: string;
+  readonly limit?: AnalysisErrorOptions["limit"];
+  readonly diagnostics?: AnalysisErrorOptions["diagnostics"];
+}
+
 /** Provider-neutral operation exceeded its declared execution deadline. */
 export class AnalysisTimeoutError extends AnalysisError {
   readonly _tag = "AnalysisTimeoutError";
@@ -495,12 +510,7 @@ export class AnalysisTimeoutError extends AnalysisError {
   constructor(
     readonly operation: string,
     readonly timeoutMs: number,
-    options?: AnalysisErrorOptions & {
-      /** Provider-specific explanation of which deadline elapsed. */
-      readonly userMessage?: string;
-      /** Provider-specific setting or action that changes that deadline. */
-      readonly remediationAction?: string;
-    },
+    options?: AnalysisErrorOptions & AnalysisTimeoutRecovery,
   ) {
     super(
       `Analysis operation timed out after ${String(timeoutMs)}ms: ${operation}`,
@@ -530,12 +540,17 @@ export class AnalysisAccessDeniedError extends AnalysisError {
 /** Selected artifact acquisition observed a change, so no stable identity can be reported. */
 export class AnalysisArtifactChangedError extends AnalysisError {
   readonly _tag = "AnalysisArtifactChangedError";
+  /** The consistency check the producing reader named, when it named one. */
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
+    },
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
+    this.integrityCheck = options?.integrityCheck;
   }
 }

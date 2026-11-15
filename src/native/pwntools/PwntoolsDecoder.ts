@@ -1,6 +1,7 @@
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
@@ -733,7 +734,7 @@ export class PwntoolsDecoder<
     // A runtime is registered before either decoder stage may acquire a process.
     const pending = this.#pendingCleanup;
     if (pending === undefined)
-      throw new Error("Decoder command requires an owned runtime.");
+      throw invariantViolation("Decoder command requires an owned runtime.");
     let outcome: Result<ProviderProcessSnapshot, unknown>;
     try {
       outcome = ok(

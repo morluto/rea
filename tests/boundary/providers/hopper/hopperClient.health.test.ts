@@ -1,3 +1,7 @@
+import {
+  transportReplyContracts,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
@@ -11,7 +15,6 @@ import type {
   BridgeSession,
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
 class ObservedProcess extends EventEmitter {
@@ -57,7 +60,11 @@ class LifecycleLauncher implements BridgeLauncher {
 
 const start = async (owned: boolean) => {
   const launcher = new LifecycleLauncher(owned);
-  const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 10_000,
+  });
   onTestFinished(async () => {
     await client.close();
     for (const child of launcher.fixture.processes) child.kill();
@@ -77,6 +84,7 @@ it("reports launch work until the first authenticated handshake completes", asyn
     releaseLaunch = resolve;
   });
   const client = new HopperClient({
+    replyContracts: transportReplyContracts,
     startupTimeoutMs: 10_000,
     launcher: {
       async launch(session) {

@@ -18,6 +18,7 @@ import {
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
+  readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import {
   primaryAnalysisError,
@@ -25,7 +26,6 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -83,9 +83,7 @@ const readFailure = (
         carriedReason(artifactFileCancellationCause(cause)),
       );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,

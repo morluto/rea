@@ -26,7 +26,7 @@ import {
   type WebNetworkCapture,
 } from "../domain/webNetworkCapture.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -115,11 +115,11 @@ export class WebNetworkCaptureService {
         partialFailure.retainSecondaryFailure(loaded.error);
         return failure(
           loaded.error.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
+            ? analysisErrorWithCleanupDependencies(
                 partialFailure,
                 loaded.error,
                 OPERATION,
-              ).bindCleanupDependencies([partialFailure, loaded.error])
+              )
             : partialFailure,
         );
       }

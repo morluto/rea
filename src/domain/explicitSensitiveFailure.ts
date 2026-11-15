@@ -259,7 +259,7 @@ const redactFailure = (
       error.operation,
       text(error.path),
       text(error.reason),
-      context,
+      { ...context, integrityCheck: error.integrityCheck },
     );
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
