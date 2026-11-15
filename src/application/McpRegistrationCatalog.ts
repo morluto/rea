@@ -281,7 +281,11 @@ export interface McpRegistrationClient {
   readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
   readonly scope: "global" | "project";
   readonly format: ClientConfigurationFormat;
-  readonly privateProfile?: true;
+  /**
+   * fx keeps a profile only its owner may read. `home` is the caller's home
+   * folder, which the private folder mode must never reach through a link.
+   */
+  readonly privateProfile?: { readonly home: string };
   /**
    * The table row resolved for this user-scope registration. Its read-scope
    * facts (Gemini settings policy, MSIX package storage) govern the write.
@@ -373,7 +377,7 @@ const globalTarget = async (
       ...(resolved.inlineConfiguration === undefined
         ? {}
         : { inlineConfiguration: resolved.inlineConfiguration }),
-      ...(id === "fx" ? { privateProfile: true } : {}),
+      ...(id === "fx" ? { privateProfile: { home: context.home } } : {}),
       ...(setupClient === undefined ? {} : { setupClient }),
     },
     markers: resolved.markers.map((marker) => selectedPath(marker, context)),
