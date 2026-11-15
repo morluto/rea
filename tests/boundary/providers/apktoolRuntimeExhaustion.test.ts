@@ -49,6 +49,24 @@ it("reports the decoder JVM's heap exhaustion as memory, not a target refusal", 
   expect(projected.remediation.action).toContain("-Xmx");
 });
 
+it.each([
+  ["Metaspace", "MaxMetaspaceSize"],
+  ["Requested array size exceeds VM limit", "smaller APK"],
+])(
+  "advises the limit that governs a %s report rather than the heap",
+  async (detail, advice) => {
+    const projected = await failingDecode(
+      `printf 'Exception in thread "main" java.lang.OutOfMemoryError: ${detail}\\n' >&2`,
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: { resource: "memory" },
+    });
+    expect(projected.remediation.action).toContain(advice);
+    expect(projected.remediation.action).not.toMatch(/Raise the maximum heap/u);
+  },
+);
+
 it("observes the heap report while output streams, even past the capture allowance", async () => {
   // A stack trace longer than the 4 MiB capture allowance follows the report.
   const projected = await failingDecode(
