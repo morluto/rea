@@ -12,10 +12,8 @@ import { join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
