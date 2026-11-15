@@ -1,8 +1,8 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
-  opaqueCodeMayReachBindingReference,
+  applySemanticBindingReferenceEffects,
   opaqueCodeMayRebindBinding,
-} from "./javascriptSemanticOpaqueEffects.js";
+} from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";
@@ -14,8 +14,6 @@ import {
 
 import {
   semanticCapturePosition,
-  semanticEscapeFollowsCapture,
-  semanticBindingEffectFollowsCapture,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -24,11 +22,6 @@ import {
   semanticSlotAtPath,
   semanticContainer,
 } from "./javascriptSemanticSlots.js";
-
-import {
-  invalidateSemanticEscapedPath,
-  invalidateSemanticMutationPaths,
-} from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
 import type {
@@ -548,49 +541,12 @@ const evaluateBinding = (
       ? callerDependence
       : Math.min(callerDependence, context.dependence.lowest);
   }
-  let projected = invalidateSemanticMutationPaths(
+  const projected = applySemanticBindingReferenceEffects(
     value,
-    binding.memberWrites
-      .filter(
-        ({ node }) =>
-          context.capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            context.capturePoint,
-            node,
-            context.state.parentsByNode,
-          ),
-      )
-      .map(({ path }) => path),
+    binding,
+    context.state,
+    context.capturePoint,
   );
-  for (const escape of binding.escapedPaths) {
-    // Escapes only invalidate object references; other lattice values survive.
-    if (projected.status !== "object" && projected.status !== "array") break;
-    if (
-      context.capturePoint !== undefined &&
-      semanticEscapeFollowsCapture(
-        binding,
-        context.capturePoint,
-        escape.node,
-        context.state.parentsByNode,
-      )
-    )
-      continue;
-    projected = invalidateSemanticEscapedPath(projected, escape.path);
-  }
-  if (
-    (projected.status === "object" || projected.status === "array") &&
-    opaqueCodeMayReachBindingReference(
-      binding,
-      context.state,
-      context.capturePoint,
-    )
-  )
-    projected = {
-      status: "unknown",
-      reason: "Direct eval may have mutated this object reference.",
-    };
   if (
     callerIndependent &&
     independent !== undefined &&

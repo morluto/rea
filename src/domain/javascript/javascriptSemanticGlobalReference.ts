@@ -3,7 +3,7 @@ import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
 
 export const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 

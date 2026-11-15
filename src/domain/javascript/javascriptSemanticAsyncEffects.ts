@@ -23,7 +23,7 @@ import {
   isIntrinsicGlobalReference,
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
-import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
