@@ -1,6 +1,6 @@
 import { scheduler } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { GPU_OBJECT_BYTES, rejectGpu } from "./GpuSource.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { GPU_OBJECT_BYTES, rejectGpu } from "../gpu/GpuSource.js";
 import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 /** Raw LZ4 blocks used by CUDA's 0x2000 mode; not an LZ4 frame decoder. */
 export const decodeLz4Block = async (
