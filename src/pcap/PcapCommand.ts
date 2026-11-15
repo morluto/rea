@@ -37,6 +37,7 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
+import { executableLaunchRefusalOf } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -275,13 +276,9 @@ export const runPcapCommand = async (options: {
     const selectedLimiter =
       options.nativeBound?.limiter?.command.invocationPath;
     const launchedPath = selectedLimiter ?? command;
-    /** Only a spawn error naming the launched path identifies who refused. */
+    /** Only a launcher naming the launched path identifies who refused. */
     const refusedByLaunchedPath = (refused: unknown): boolean =>
-      refused instanceof Error &&
-      "syscall" in refused &&
-      refused.syscall === `spawn ${launchedPath}` &&
-      "path" in refused &&
-      refused.path === launchedPath;
+      executableLaunchRefusalOf(refused)?.executable === launchedPath;
     const preparationFailure = (
       diagnostic: string,
       details: AnalysisErrorOptions,
