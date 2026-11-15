@@ -3,7 +3,11 @@ import type {
   ObserveWebSessionInput,
   WebObservationSession,
 } from "../domain/browserSession.js";
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -766,7 +770,7 @@ const waitForWindow = async (
     const settle = (complete: () => void): void => {
       if (settled) return;
       settled = true;
-      timerController.abort();
+      timerController.abort(OwnerCancellation.noLongerNeeded);
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
       removeProtocolFailure();

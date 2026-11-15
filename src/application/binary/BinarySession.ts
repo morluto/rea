@@ -21,6 +21,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -1752,7 +1753,7 @@ export class BinarySession
   ): Promise<T> {
     if (options.abortPrompts !== false)
       for (const controller of this.#promptCompletionControllers)
-        controller.abort();
+        controller.abort(OwnerCancellation.noLongerNeeded);
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;

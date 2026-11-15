@@ -79,7 +79,7 @@
     "src/application/releaseExposure/ReleaseExposureService.ts": 3,
     "src/application/reverse/ReverseEngineeringService.ts": 12,
     "src/application/wasm/WasmInterfaceComparisonService.ts": 2,
-    "src/gdb/GdbSessionManager.ts": 14,
+    "src/gdb/GdbSessionManager.ts": 13,
     "src/native/AppleDispatchMetadata.ts": 3,
     "src/native/LldbCallTracer.ts": 4,
     "src/native/NativeCallObservation.ts": 2,
@@ -326,15 +326,11 @@
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
     "src/desktop/ScreenJudgeProcess.ts": 1,
-    "src/ghidra/GhidraCheckpoint.ts": 1,
-    "src/ghidra/GhidraClient.ts": 1,
     "src/ida/IdaSessionClient.ts": 1,
     "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/process/DarwinHelperCache.ts": 1,
-    "src/process/DarwinProcessRunTokenReader.ts": 1,
     "src/process/OwnedDebuggerSessionRegistry.ts": 1,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/server/environment/serveEnvironment.ts": 1,
@@ -445,8 +441,7 @@
     "src/pcap/PcapProvider.ts": 7,
     "src/pcap/PcapSnapshot.ts": 1,
     "src/process/ArtifactAnalysisResources.ts": 4,
-    "src/process/DarwinHelperCache.ts": 1,
-    "src/process/DarwinProcessRunTokenReader.ts": 3,
+    "src/process/DarwinProcessRunTokenReader.ts": 2,
     "src/process/capture/FilesystemSnapshot.ts": 1,
     "src/process/capture/ProcessCaptureError.ts": 3,
     "src/process/capture/ProcessCaptureLifecycle.ts": 1,
@@ -467,5 +462,6 @@
     "src/domain/apkSignature/apkV1SignatureBlock.ts": 1,
     "src/native/MachoArchitectureSelection.ts": 2,
     "src/native/NativeMachoInspection.ts": 1
-  }
+  },
+  "abort-without-reason": {}
 }

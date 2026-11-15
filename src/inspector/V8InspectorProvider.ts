@@ -21,6 +21,7 @@ import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -794,7 +795,7 @@ const waitForCapture = async (
     ]);
   } finally {
     // Cancel only this wait's timer. The caller owns and retains its signal.
-    timerOwner.abort();
+    timerOwner.abort(OwnerCancellation.noLongerNeeded);
     removeDisconnect();
     removeProtocolFailure();
   }

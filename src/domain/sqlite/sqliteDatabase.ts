@@ -150,11 +150,9 @@ export const sqliteDatabaseSchema = z
       name: z.literal("SQLite"),
       version: z.string().min(1),
     }),
-    worker_timeout_ms: timerDurationMsSchema
-      .exactOptional()
-      .describe(
-        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
-      ),
+    worker_timeout_ms: timerDurationMsSchema.describe(
+      "Actual parent-supervised worker deadline in milliseconds.",
+    ),
     database_encoding: encoding,
     schema: z.strictObject({
       scope: z.enum(["inventory", "selected_table", "database"]),

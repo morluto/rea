@@ -1,4 +1,5 @@
 import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import { machoRuntimeSymbolName } from "../../../../src/domain/native/machoSymbolName.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
@@ -66,6 +67,7 @@ const nativeEvidenceWithExports = (
           ...macho.exports,
           items: names.map((name, index) => ({
             name,
+            runtime_name: machoRuntimeSymbolName(name),
             address: `0x${(0x1000 + index).toString(16)}`,
             weak: false,
             reexport: false,
