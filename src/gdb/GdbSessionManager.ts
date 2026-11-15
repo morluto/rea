@@ -1623,7 +1623,8 @@ export class GdbSessionManager {
 
   async #drainStartsAndCloseSessions(): Promise<void> {
     const active = [...this.#activeStarts.entries()];
-    for (const [controller] of active) controller.abort();
+    for (const [controller] of active)
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.allSettled(active.map(([, start]) => start));
     await Promise.all(
       [...this.#sessions.values()].map((session) => session.commandTail),

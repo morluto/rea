@@ -339,7 +339,27 @@ export type OwnerCancellationKind =
    * a startup signal's reason with this one to tell owner closure from a
    * caller's cancellation, so only that startup's owner may abort with it.
    */
-  | "startup-owner-closed";
+  | "startup-owner-closed"
+  /**
+   * A bound REA set on its own work elapsed. The owner that set it reports the
+   * timeout; this reason only ends the bounded wait or request.
+   */
+  | "deadline-elapsed"
+  /**
+   * REA stopped work whose result nobody will consume: its wait settled, its
+   * consumer closed, the last waiter left, or a sibling already failed.
+   */
+  | "no-longer-needed";
+
+const OWNER_CANCELLATION_MESSAGES: Readonly<
+  Record<OwnerCancellationKind, string>
+> = {
+  "owner-closed": "REA closed the owner of this operation before it completed",
+  "startup-owner-closed":
+    "REA closed the owner of this operation before it completed",
+  "deadline-elapsed": "An internal REA bound on this operation elapsed",
+  "no-longer-needed": "REA stopped work whose result is no longer needed",
+};
 
 /**
  * A cancellation REA initiated itself, such as a provider closing. It stands
@@ -348,7 +368,7 @@ export type OwnerCancellationKind =
 export class OwnerCancellation extends Error {
   override readonly name = "OwnerCancellation";
   private constructor(readonly kind: OwnerCancellationKind) {
-    super("REA closed the owner of this operation before it completed");
+    super(OWNER_CANCELLATION_MESSAGES[kind]);
   }
 
   /**
@@ -361,6 +381,12 @@ export class OwnerCancellation extends Error {
   static readonly startupOwnerClosed = new OwnerCancellation(
     "startup-owner-closed",
   );
+
+  /** An internal bound elapsed; see its kind. */
+  static readonly deadlineElapsed = new OwnerCancellation("deadline-elapsed");
+
+  /** Work nobody will consume was stopped; see its kind. */
+  static readonly noLongerNeeded = new OwnerCancellation("no-longer-needed");
 }
 
 /** How the caller ended work, as the CLI, MCP or HTTP adapter observed it. */

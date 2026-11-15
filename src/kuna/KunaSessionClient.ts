@@ -1694,7 +1694,7 @@ export class KunaSessionClient implements AnalysisClient {
       ? slot
       : Promise.race([slot, exported]));
     if (admitted !== EXPORT_READY) return admitted;
-    yielded.abort();
+    yielded.abort(OwnerCancellation.noLongerNeeded);
     // A slot granted in the same turn is returned rather than leaked.
     void slot.then((release) => release?.());
     return EXPORT_READY;

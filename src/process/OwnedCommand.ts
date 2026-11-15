@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import type { ProcessInspectionFailure } from "./ProcessInspectionCleanup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -371,7 +372,7 @@ const collectOwnedCommand = async (
               processError,
               collectionFailure: true,
             };
-          abandoned.abort();
+          abandoned.abort(OwnerCancellation.noLongerNeeded);
         })
       : Promise.resolve();
   let failure: OwnedCommandFailure | undefined;
@@ -482,7 +483,7 @@ const collectOwnedCommand = async (
           );
   }
   // A finished sink ignores this; an unfinished one is destroyed.
-  abandoned.abort();
+  abandoned.abort(OwnerCancellation.noLongerNeeded);
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.
