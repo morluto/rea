@@ -8,7 +8,7 @@ import {
   isWindowsBatchFile,
   windowsBatchCommand,
 } from "../process/WindowsBatchCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   ProviderProcessSupervisor,
   type ProviderProcessSnapshot,

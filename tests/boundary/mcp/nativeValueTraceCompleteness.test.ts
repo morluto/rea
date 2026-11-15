@@ -4,7 +4,7 @@ import {
   valueTraceDiamond,
   valueTraceUnboundArguments,
 } from "../../../src/application/native/NativeValueTrace.fixture.js";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";

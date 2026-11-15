@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { AdbProvider } from "../../../src/adb/AdbProvider.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";

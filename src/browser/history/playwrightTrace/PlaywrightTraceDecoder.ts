@@ -1,14 +1,14 @@
 import type { StableRegularFileDescriptor } from "../../../filesystem/RegularFile.js";
-import type { PlaywrightTracePort } from "../../../application/playwrightTrace/PlaywrightTracePort.js";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
+import type { PlaywrightTracePort } from "../../../ports/playwrightTrace/PlaywrightTracePort.js";
 import {
+  ArtifactResourceScope,
+  type ArtifactEntry,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../../../artifacts/ArtifactFileOperation.js";
-import { projectStableArtifactFailure } from "../../../artifacts/StableArtifactFailure.js";
+  projectStableArtifactFailure,
+} from "../../../resources/index.js";
+import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
 import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
 import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
 import {

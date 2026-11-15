@@ -13,13 +13,12 @@ import type {
   Session,
 } from "frida";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
-import { FridaScriptLoadCancelledError } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import type {
   FridaInstrumentationPort,
   FridaScriptObservation,
-} from "../../../src/application/frida/FridaInstrumentationPort.js";
+} from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
@@ -44,27 +43,9 @@ import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
-
-const gate = () => {
-  let markEntered = () => {};
-  let release = () => {};
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return {
-    entered,
-    release,
-    async wait() {
-      markEntered();
-      await released;
-    },
-  };
-};
 
 const nativeFixture = () => {
   const created: string[] = [];
@@ -320,9 +301,9 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
   "preserves observed detachment through resume settlement: %s",
   async (timing) => {
     const fixture = await connectedFixture();
-    const held = gate();
-    onTestFinished(held.release);
-    fixture.controls.resume = held.wait;
+    const held = phaseGate();
+    onTestFinished(() => held.release());
+    fixture.controls.resume = () => held.hold();
     const id = await fixture.start();
     const state = async () => {
       const result = await fixture.client.callTool({
@@ -339,11 +320,7 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
       name: "resume_frida_session",
       arguments: { session_id: id },
     });
-    await awaitAcknowledgement(
-      held.entered,
-      resuming,
-      "Frida operation admission",
-    );
+    await held.reached(resuming, "Frida operation admission");
     if (timing === "during-resume") fixture.markDetached();
     expect(await state()).toBe(
       timing === "during-resume" ? "detached" : "paused",
@@ -432,9 +409,9 @@ it.each([
   "classifies server completion after final detach (cancel=$cancel, detachFails=$detachFails)",
   async ({ cancel, detachFails }) => {
     const fixture = await connectedFixture();
-    const held = gate();
-    onTestFinished(held.release);
-    fixture.controls.detach = held.wait;
+    const held = phaseGate();
+    onTestFinished(() => held.release());
+    fixture.controls.detach = () => held.hold();
     fixture.controls.detachFailures = detachFails ? 1 : 0;
     let serverSignal: AbortSignal | undefined;
     const load = fixture.manager.loadScript.bind(fixture.manager);
@@ -477,11 +454,7 @@ it.each([
         (value) => ({ kind: "result" as const, value }),
         (cause: unknown) => ({ kind: "rejected" as const, cause }),
       );
-    await awaitAcknowledgement(
-      held.entered,
-      pending,
-      "Frida operation admission",
-    );
+    await held.reached(pending, "Frida operation admission");
     expect(fixture.unloaded).toEqual(["completed-before-detach"]);
     if (cancel) {
       controller.abort(new Error("cancel during final detach"));
@@ -589,10 +562,10 @@ it.each([
 
 it("preserves the native resume failure after MCP cancellation reaches the server", async () => {
   const fixture = await connectedFixture();
-  const held = gate();
-  onTestFinished(held.release);
+  const held = phaseGate();
+  onTestFinished(() => held.release());
   fixture.controls.resume = async () => {
-    await held.wait();
+    await held.hold();
     fixture.controls.resume = async () => {};
     throw new Error("native resume rejected");
   };
@@ -624,11 +597,7 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
       { signal: controller.signal },
     )
     .catch((cause: unknown) => cause);
-  await awaitAcknowledgement(
-    held.entered,
-    pending,
-    "Frida operation admission",
-  );
+  await held.reached(pending, "Frida operation admission");
   controller.abort(new Error("cancel pending resume"));
   await fixture.client.ping();
   expect(serverSignal?.aborted).toBe(true);
@@ -924,9 +893,9 @@ const scriptLoadFixture = async (stage: "create" | "load" = "load") => {
   const fixture = await connectedFixture();
   const id = await fixture.start();
   const original = await fixture.load(id, "original");
-  const held = gate();
-  onTestFinished(held.release);
-  fixture.controls[stage] = held.wait;
+  const held = phaseGate();
+  onTestFinished(() => held.release());
+  fixture.controls[stage] = () => held.hold();
   return { fixture, id, original, held };
 };
 
@@ -1055,11 +1024,7 @@ it.each(["load", "resume", "unload"] as const)(
       original.structuredContent,
     ).normalized_result.script_id;
     const first = fixture.load(id, "blocking");
-    await awaitAcknowledgement(
-      held.entered,
-      first,
-      "Frida operation admission",
-    );
+    await held.reached(first, "Frida operation admission");
     const controller = new AbortController();
     const cancelled =
       operation === "load"
@@ -1103,11 +1068,7 @@ it.each(["create", "load"] as const)(
     const rejected = expect(cancelled).rejects.toThrow(
       "cancel native operation",
     );
-    await awaitAcknowledgement(
-      held.entered,
-      cancelled,
-      "Frida operation admission",
-    );
+    await held.reached(cancelled, "Frida operation admission");
     controller.abort(new Error("cancel native operation"));
     await fixture.client.ping();
     await rejected;
@@ -1142,18 +1103,14 @@ it.each(["create", "load"] as const)(
 it("retains cancellation source facts without claiming native creation when no script handle returns", async () => {
   const { fixture, id, held } = await scriptLoadFixture("create");
   fixture.controls.create = async () => {
-    await held.wait();
+    await held.hold();
     throw new Error("native create rejected");
   };
   const controller = new AbortController();
   const loading = fixture
     .load(id, "no-returned-handle", controller.signal)
     .catch((cause: unknown) => cause);
-  await awaitAcknowledgement(
-    held.entered,
-    loading,
-    "Frida operation admission",
-  );
+  await held.reached(loading, "Frida operation admission");
   controller.abort(new Error("cancel while creating"));
   await fixture.client.ping();
   held.release();
@@ -1199,11 +1156,7 @@ it("retains original malformed file identity and decoded representation through 
       { signal: controller.signal },
     )
     .catch((cause: unknown) => cause);
-  await awaitAcknowledgement(
-    held.entered,
-    loading,
-    "Frida operation admission",
-  );
+  await held.reached(loading, "Frida operation admission");
   controller.abort(new Error("cancel file load"));
   await fixture.client.ping();
   held.release();
@@ -1272,11 +1225,7 @@ it.each([
       (value) => ({ kind: "result" as const, value }),
       (cause: unknown) => ({ kind: "rejected" as const, cause }),
     );
-    await awaitAcknowledgement(
-      held.entered,
-      loading,
-      "Frida operation admission",
-    );
+    await held.reached(loading, "Frida operation admission");
     if (cancel) {
       controller.abort(new Error("cancel before native rejection"));
       await fixture.client.ping();
@@ -1335,9 +1284,9 @@ it.each([
 
 it("awaits an admitted attach on server shutdown and retries failed native cleanup", async () => {
   const fixture = await connectedFixture();
-  const held = gate();
-  onTestFinished(held.release);
-  fixture.controls.attach = held.wait;
+  const held = phaseGate();
+  onTestFinished(() => held.release());
+  fixture.controls.attach = () => held.hold();
   fixture.controls.detachFailures = 1;
   const starting = fixture.client
     .callTool({
@@ -1349,11 +1298,7 @@ it("awaits an admitted attach on server shutdown and retries failed native clean
       },
     })
     .catch(() => undefined);
-  await awaitAcknowledgement(
-    held.entered,
-    starting,
-    "Frida operation admission",
-  );
+  await held.reached(starting, "Frida operation admission");
   const { closing } = await pendingShutdown(fixture.server);
   expect(fixture.controls.detachCalls).toBe(0);
   held.release();
@@ -1376,9 +1321,9 @@ it("awaits an admitted attach on server shutdown and retries failed native clean
 
 it("drains remote discovery before shutdown and retains failed connection cleanup", async () => {
   const fixture = await connectedFixture();
-  const held = gate();
-  onTestFinished(held.release);
-  fixture.controls.discover = held.wait;
+  const held = phaseGate();
+  onTestFinished(() => held.release());
+  fixture.controls.discover = () => held.hold();
   fixture.controls.removalFailures = 2;
   const discovering = fixture.client
     .callTool({
@@ -1388,11 +1333,7 @@ it("drains remote discovery before shutdown and retains failed connection cleanu
       },
     })
     .catch(() => undefined);
-  await awaitAcknowledgement(
-    held.entered,
-    discovering,
-    "Frida operation admission",
-  );
+  await held.reached(discovering, "Frida operation admission");
   const { closing } = await pendingShutdown(fixture.server);
   held.release();
   expect(await closing).toBeInstanceOf(AggregateError);
@@ -1412,11 +1353,7 @@ it.each(["create", "load"] as const)(
     const rejected = expect(cancelled).rejects.toThrow(
       "cancel retained script",
     );
-    await awaitAcknowledgement(
-      held.entered,
-      cancelled,
-      "Frida operation admission",
-    );
+    await held.reached(cancelled, "Frida operation admission");
     controller.abort(new Error("cancel retained script"));
     await fixture.client.ping();
     await rejected;
@@ -1469,11 +1406,7 @@ it.each([0, 1])(
     const rejected = expect(loading).rejects.toThrow(
       "cancel before queued resume",
     );
-    await awaitAcknowledgement(
-      held.entered,
-      loading,
-      "Frida operation admission",
-    );
+    await held.reached(loading, "Frida operation admission");
     const resume = () =>
       fixture.client.callTool({
         name: "resume_frida_session",
@@ -1531,7 +1464,7 @@ it.each([0, 1, 2, 3, 4, 8])(
     };
     const loading = fixture.load(id, "settling-native", controller.signal);
     const observed = loading.catch(() => undefined);
-    await awaitAcknowledgement(held.entered, loading, "Frida script load");
+    await held.reached(loading, "Frida script load");
     const resuming = fixture.client.callTool({
       name: "resume_frida_session",
       arguments: { session_id: id },

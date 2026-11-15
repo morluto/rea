@@ -5,13 +5,13 @@ import type {
 import type { Logger } from "pino";
 import type { z } from "zod";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
@@ -159,6 +159,40 @@ export const createEvidenceToolHandler =
       undefined,
       { input, context },
       operation,
+    );
+
+/** The MCP request a value-returning workflow runs for. */
+export interface ValueToolRequest {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+  /** The request itself, for workflows that report the client's own facts. */
+  readonly context: ServerContext;
+}
+
+/**
+ * Bind a named workflow returning a plain JSON value to shared logging and
+ * delivery. It records no Evidence and runs outside analysis admission.
+ */
+export const createValueToolHandler =
+  (
+    server: EvidenceMcpServer,
+    operation: (
+      input: unknown,
+      request: ValueToolRequest,
+    ) => Promise<Result<JsonValue, AnalysisError>>,
+    logger: Logger,
+  ) =>
+  (contract: ToolContract) =>
+  async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
+    server.delivery.toCallToolResult(
+      await logToolExecution(logger, contract.name, () =>
+        operation(input, {
+          signal: context.mcpReq.signal,
+          progress: mcpProgressReporter(context),
+          context,
+        }),
+      ),
+      contract,
     );
 
 /** One owner for optional-provider admission, execution, recording and delivery. */

@@ -34,7 +34,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import { createServer } from "../../src/server/createServer.js";
 import { silentLogger } from "../../src/logger.js";

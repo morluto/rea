@@ -13,7 +13,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";

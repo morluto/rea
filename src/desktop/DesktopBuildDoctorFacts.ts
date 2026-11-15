@@ -8,7 +8,7 @@ import type {
   DesktopBuildCommand,
   DesktopBuildFacts,
   DesktopBuildFactsInput,
-} from "../application/DesktopBuildDoctor.js";
+} from "../ports/DesktopBuildHost.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -18,17 +18,17 @@ import { safeParseJson } from "../domain/safeJson.js";
 import {
   readRegularFileText,
   RetainedRegularFileCleanupFailure,
-} from "../application/RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactFileCleanupFailure,
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,

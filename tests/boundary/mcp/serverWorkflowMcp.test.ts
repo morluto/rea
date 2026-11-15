@@ -12,7 +12,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";

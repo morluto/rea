@@ -6,13 +6,13 @@ import { basename, dirname, isAbsolute } from "node:path";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+} from "../../resources/index.js";
 import {
+  SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   SafeOutputTreeDestinationRefusal,
-} from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";

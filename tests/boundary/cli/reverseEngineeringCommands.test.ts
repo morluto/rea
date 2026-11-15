@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -99,7 +99,7 @@ const runObjdump = async (
     undefined,
     () => service as ReverseEngineeringService,
   );
-  const command = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const command = commands.get(cliCommandFor("inspect_with_objdump"));
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
@@ -204,7 +204,7 @@ it("lists objdump architectures without inventing an artifact path", async () =>
     { operation: "architectures" },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
-  const artifactCommand = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  const artifactCommand = commands.get(cliCommandFor("inspect_with_objdump"));
   expect(
     artifactCommand?.args?.safeParse({
       path: "/tmp/sample",
@@ -328,6 +328,22 @@ it("preserves an operation timeout and unknown partial Evidence after cleanup re
     expect(timeout).toBeInstanceOf(AnalysisTimeoutError);
     expect(timeout?.cleanupIncomplete).toBe(false);
     expect(owner.stop).toHaveBeenCalledOnce();
+    // The service names the contract field; the CLI adds the flag that sets it.
+    expect(timeout?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "command_timeout_ms",
+    });
+    expect(
+      JSON.stringify((result as { remediation?: unknown }).remediation),
+    ).not.toContain("--");
+    expect(result).toMatchObject({
+      details: {
+        limit: {
+          parameter: "command_timeout_ms",
+          cli_flag: "--command-timeout-ms",
+        },
+      },
+    });
   } finally {
     await service.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });

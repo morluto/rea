@@ -5,11 +5,11 @@ import {
   childNodes,
   isManifestElement,
 } from "./AndroidManifestXml.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
-  type AndroidCoverage,
   type AndroidManifestComponent,
   type AndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
@@ -150,7 +150,7 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: AndroidCoverage,
+  coverage: KnownCoverageStatus,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
 ): AndroidManifestComponentInventory => {

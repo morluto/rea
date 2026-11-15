@@ -4,7 +4,7 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
+import { normalizeArtifactPath } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
 import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
@@ -21,11 +21,11 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+  artifactReadCancelledBy,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
-import { artifactReadCancelledBy } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,

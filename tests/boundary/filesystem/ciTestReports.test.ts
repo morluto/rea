@@ -9,8 +9,6 @@ import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
-import { planTestSelection } from "../../../scripts/ci/test-selection.mjs";
-
 import { parseTestDurations } from "../../ciTestSequencer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workflowGit } from "../../support/workflowGit.js";
@@ -102,9 +100,6 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
   }
   expect(steps[upload]?.with?.path).toContain("test-timings.json");
   expect(steps[upload]?.with).toMatchObject({ "include-hidden-files": true });
-  expect(steps[upload]?.with?.path).toContain(
-    ".cache/ci-test-selection/report.json",
-  );
   const summary = steps.find((step) =>
     step.run?.includes("scripts/ci/test-report.mjs"),
   );
@@ -212,8 +207,9 @@ it("collects either fast test group while keeping full reports tied to full shar
   );
   expect(summary?.env?.SHARD_RESULT).toBe("${{ needs.test-shard.result }}");
   expect(summary?.env?.SOURCE_RESULT).toBe("${{ needs.test-source.result }}");
+  // A selected PR subset runs its source tests in the selected test jobs.
   expect(summary?.env?.SOURCE_REQUIRED).toBe(
-    "${{ needs.changes.outputs.tier == 'fast' }}",
+    "${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}",
   );
 });
 
@@ -660,77 +656,78 @@ it("recovers complete module costs from real blob reports without executing test
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("records failed omissions from full reports without treating partial or unhandled outcomes as parity", async () => {
+it("verifies exactly the selected subset and never publishes it as timing history", async () => {
   const root = await createTestTempDirectory("rea-ci-selection-report-");
   await workflowGit(root, ["init"]);
   const paths = [
-    "src/sqlite/provider.test.ts",
-    "src/evm/provider.test.ts",
-    "tests/boundary/mcp/workflow.test.ts",
+    "src/a.test.ts",
+    "tests/b.test.ts",
+    "tests/unselected.test.ts",
   ];
   for (const path of paths) {
     await mkdir(join(root, path, ".."), { recursive: true });
     await writeFile(join(root, path), "// fixture\n");
   }
   await workflowGit(root, ["add", "src", "tests"]);
-  const timing = {
-    version: 1,
-    success: false,
-    reason: "failed",
-    unhandledErrors: 0,
-    files: paths.map((name, index) => ({
-      name,
-      durationMs: 10,
-      state: index === 1 ? "failed" : "passed",
-    })),
+  const selection = {
+    version: 2,
+    mode: "selected",
+    reason: "Affected tests: 2 changed",
+    groups: [["src/a.test.ts"], ["tests/b.test.ts"]],
   };
-  const run = async (report: unknown, source = "failure") => {
-    await writeFile(join(root, "test-timings.json"), JSON.stringify(report));
-    await executeTimingReport(root, {
-      SHARD_RESULT: "failure",
-      SOURCE_REQUIRED: "true",
-      SOURCE_RESULT: source,
-      MERGE_RESULT: "failure",
+  const run = async (names: readonly string[], plan: unknown = selection) => {
+    await writeFile(
+      join(root, "test-timings.json"),
+      JSON.stringify({
+        version: 1,
+        success: true,
+        files: names.map((name) => ({ name, durationMs: 1, state: "passed" })),
+      }),
+    );
+    return executeTimingReport(root, {
       CI_VERIFY_TEST_INVENTORY: "true",
-      CI_TEST_SELECTION: JSON.stringify(
-        planTestSelection(["src/sqlite/Provider.ts"], "pull_request", "fast"),
-      ),
-      GITHUB_SHA: "merge-sha",
-      CI_PR_HEAD_SHA: "pr-head-sha",
+      CI_TEST_SELECTION: JSON.stringify(plan),
     });
-    return JSON.parse(
-      await readFile(
-        join(root, ".cache/ci-test-selection/report.json"),
-        "utf8",
-      ),
-    ) as unknown;
   };
-  expect(await run(timing)).toMatchObject({
-    observational: true,
-    complete: true,
-    selected: [paths[0], paths[2]],
-    omitted: [paths[1]],
-    missedFailures: [paths[1]],
-    executionSha: "merge-sha",
-    prHeadSha: "pr-head-sha",
-  });
-  for (const report of [
-    { ...timing, files: timing.files.slice(0, 1) },
-    { ...timing, unhandledErrors: 1 },
-    { ...timing, reason: "interrupted" },
-  ])
-    expect(await run(report)).toMatchObject({ complete: false });
-  for (const source of ["skipped", "cancelled", ""])
-    expect(await run(timing, source)).toMatchObject({ complete: false });
-  await expect(run({ ...timing, files: "invalid" })).rejects.toMatchObject({
-    code: 1,
-  });
-  await expect(
-    readFile(join(root, ".cache/ci-test-selection/report.json")),
-  ).rejects.toMatchObject({ code: "ENOENT" });
+  const passed = await run(["src/a.test.ts", "tests/b.test.ts"]);
+  expect(passed.summary).toContain("Portable tests: 2 selected files.");
+  expect(passed.summary).toContain("is not a successful timing baseline");
+  expect(passed.summary).not.toContain("Successful timing history");
+  // A subset is not a complete-suite timing baseline.
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+  // Missing, unplanned (even if tracked) and duplicate files fail.
+  for (const names of [
+    ["src/a.test.ts"],
+    ["src/a.test.ts", "tests/b.test.ts", "tests/unselected.test.ts"],
+    ["src/a.test.ts", "src/a.test.ts", "tests/b.test.ts"],
+  ])
+    await expect(run(names)).rejects.toMatchObject({
+      stderr: expect.stringContaining("Incomplete selected test inventory"),
+    });
+  // A full plan keeps the complete tracked inventory and its history.
+  const full = { version: 2, mode: "full", reason: "Shared", groups: [] };
+  await expect(
+    run(["src/a.test.ts", "tests/b.test.ts"], full),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Incomplete portable test inventory"),
+  });
+  await run(paths, full);
+  await expect(
+    readFile(join(root, ".cache/ci-test-history/test-results.json"), "utf8"),
+  ).resolves.toContain("tests/unselected.test.ts");
+  // An unreadable plan fails closed.
+  for (const plan of [
+    { ...selection, version: 1 },
+    { ...selection, groups: [] },
+    { ...selection, groups: [["../escape.test.ts"]] },
+    { ...selection, groups: [["src/a.test.ts"], ["src/a.test.ts"]] },
+    { ...full, groups: [["src/a.test.ts"]] },
+  ])
+    await expect(run(["src/a.test.ts"], plan)).rejects.toMatchObject({
+      stderr: expect.stringContaining("Invalid portable test selection plan"),
+    });
 });
 
 it("requires executed Python analysis-efficiency cases while allowing optional skips", async () => {

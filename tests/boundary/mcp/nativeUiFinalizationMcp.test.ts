@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import * as runtimes from "../../../src/native/NativeUiHelperRuntime.js";
 import { NativeMacOSProvider } from "../../../src/native/NativeMacOSProvider.js";
 import { createServer } from "../../../src/server/createServer.js";

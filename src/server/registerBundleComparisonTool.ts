@@ -11,7 +11,7 @@ import { BUNDLE_COMPARISON_PROVIDER } from "../domain/investigationProviders.js"
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 /** Register canonical Evidence bundle comparison. */
 export const registerBundleComparisonTool = (

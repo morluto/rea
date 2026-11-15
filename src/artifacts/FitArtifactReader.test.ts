@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
 import * as fileChunks from "../filesystem/readFileHandleChunks.js";
@@ -22,7 +22,7 @@ import {
 import {
   cells,
   devicetreeFixture,
-} from "../firmware/devicetree/Devicetree.fixture.js";
+} from "../domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";

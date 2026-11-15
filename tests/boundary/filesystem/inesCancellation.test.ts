@@ -9,15 +9,15 @@ import { hashStableRootArtifactHandle } from "../../../src/artifacts/inventory/h
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { inesFixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/process/RegularFileRead.js";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 

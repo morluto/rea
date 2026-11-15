@@ -7,14 +7,14 @@ import { join } from "node:path";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({

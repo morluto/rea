@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { dirname } from "node:path";
 
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -40,7 +42,7 @@ import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import {
   readRegularFileText,
   readRegularFileTextSnapshot,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 export interface McpClientRegistrationReceipt {
   readonly status: "configured" | "unchanged";
@@ -84,6 +86,8 @@ export const registerMcpClients = async (
   launcher: ClientRegistrationCommand,
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
+  /** The host the clients were resolved for; it decides document semantics. */
+  platform: NodeJS.Platform,
 ): Promise<readonly McpClientRegistrationOutcome[]> => {
   const outcomes: McpClientRegistrationOutcome[] = [];
   let cancelled = false;
@@ -97,7 +101,13 @@ export const registerMcpClients = async (
       outcomes.push({ ...labels, status: "not_started" });
       continue;
     }
-    const result = await registerMcpClient(client, launcher, signal, resources);
+    const result = await registerMcpClient(
+      client,
+      launcher,
+      signal,
+      resources,
+      platform,
+    );
     outcomes.push({ ...labels, status: "completed", result });
     cancelled =
       signal?.aborted === true ||
@@ -115,6 +125,7 @@ export const registerMcpClient = async (
   launcher: ClientRegistrationCommand,
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<McpClientRegistrationReceipt, McpClientRegistrationFailure>
 > => {
@@ -146,7 +157,12 @@ export const registerMcpClient = async (
       );
     return await withClientConfigurationTransaction(path, async () => {
       checkCancellation();
-      const prepared = await prepareRegistration(path, client, launcher);
+      const prepared = await prepareRegistration(
+        path,
+        client,
+        launcher,
+        platform,
+      );
       const { snapshot, original, contents } = prepared;
       checkCancellation();
       const unchanged = await unchangedRegistration(

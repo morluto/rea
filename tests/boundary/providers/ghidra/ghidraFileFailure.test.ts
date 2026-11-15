@@ -7,12 +7,12 @@ import {
   ArtifactFileCleanupFailure,
   mapArtifactFileFailure,
   withArtifactRegularFile,
-} from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../../src/resources/AnalysisCleanupLease.js";
 import { OwnedRegularFileOperationFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {

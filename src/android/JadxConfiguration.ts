@@ -36,21 +36,21 @@ import {
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import type { DoctorProviderCheck } from "../application/Doctor.js";
+import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,

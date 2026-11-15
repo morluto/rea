@@ -1,11 +1,11 @@
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
+import { normalizeArtifactPath } from "../resources/index.js";
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,
   ArtifactTraversalOmission,
   ArtifactTraversalSink,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 
 /** A reader whose traversal reports through a sink; its format names it in limitations. */
 interface TraversableArtifactReader<Entry, Options> {

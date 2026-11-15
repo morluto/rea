@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";

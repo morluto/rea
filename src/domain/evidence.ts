@@ -105,7 +105,7 @@ const evidenceBaseSchema = z
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
     parameters: jsonObjectSchema,
-    /** Verbatim selected path for a direct request; absent on older records. */
+    /** Verbatim selected path; present only when the request selected one directly. */
     caller_input_path: nulFreeStringSchema
       .exactOptional()
       .describe("Verbatim direct-request path; not part of semantic identity."),

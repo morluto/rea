@@ -1,6 +1,24 @@
 graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
+    %% Layers, innermost first: domain, contracts, foundation, ports (src/ports/:
+    %% interfaces providers implement), providerCore (src/providers/: the shared
+    %% provider core), providers, application, composition, adapters. An import may point to the same or an
+    %% inner layer. scripts/lib/module-layers.mjs declares the layer of every
+    %% top-level src/ directory and root file; verify:module-boundaries fails on
+    %% an undeclared unit and ratchets the recorded outward imports and mutual
+    %% imports in scripts/lib/module-layers.baseline.json.
+    %% Provider boundary: a provider folder (src/ghidra/, src/native/, ...)
+    %% imports inner layers, including the shared provider core (src/providers/,
+    %% which may not import a provider folder), and its own files. Importing another provider folder is recorded debt
+    %% unless PROVIDER_DEPENDENCIES declares the file (inspector -> browser CDP
+    %% client, browser -> electron fuse reader); shared pieces belong in
+    %% ports, foundation or the provider core. Application, composition and
+    %% adapters reach a provider through the entry files it declares in
+    %% scripts/lib/module-layers.mjs (ENTRY_FILES; no per-provider barrel).
+    %% Every unit reaches the shared provider toolkit (src/resources/) through
+    %% src/resources/index.ts.
+    %% The baseline counts both kinds of import per unit pair; both only shrink.
     subgraph "Entry Points"
         CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation<br/>cliLoader: recorded registrar per command, complete CLI otherwise"]
         MAIN["src/main.ts + src/main/<br/>MCP server adapter: stdio default, streamable HTTP opt-in<br/>config, session, process lifetime"]
@@ -67,11 +85,13 @@ graph TD
         WINDOWS["src/windows/<br/>Windows host boundary adapters<br/>package loader, opaque handles, owned jobs and private runtimes"]
         WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS/ReFS admission, protected DACLs and atomic Job Object assignment"]
         FILESYSTEM["src/filesystem/<br/>owned file and directory handles<br/>stable reads, staged output, caller paths"]
+        HOPPER_PATHS["src/hopperPaths/<br/>Hopper install paths and launcher discovery<br/>read by the Hopper provider, doctor and setup"]
+        RESOURCES["src/resources/<br/>shared analysis resource owners<br/>cleanup leases, artifact reader contract, resource scope, owned file operations, stable reads, atomic text writes"]
     end
 
     subgraph "Contracts Layer"
         CONTRACTS["src/contracts/<br/>Caller-visible schemas for analysis, reverse engineering, managed, browser, Electron, application, and session tools"]
-        ERRORS["src/contracts/errorSchemas.ts<br/>Shared analysis error schemas<br/>CLI diagnostics, generated error catalog"]
+        ERRORS["src/contracts/errorSchemas.ts<br/>CLI error envelope and published error JSON Schema<br/>projection schema owned by src/domain/analysisErrorProjectionSchema.ts"]
     end
 
     subgraph "Domain Layer"
@@ -206,5 +226,9 @@ graph TD
     COMPOSITION --> RUNTIME
     RUNTIME --> DOMAIN
     PROCESS --> FILESYSTEM
+    PROCESS --> RESOURCES
+    HOPPER --> HOPPER_PATHS
+    APP --> HOPPER_PATHS
+    HOPPER_PATHS --> FILESYSTEM
     AUX --> FILESYSTEM
     APP --> FILESYSTEM

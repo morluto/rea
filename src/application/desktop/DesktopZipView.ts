@@ -9,7 +9,7 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   decodeZipEntryText,
   ZIP_READER_OPTIONS,

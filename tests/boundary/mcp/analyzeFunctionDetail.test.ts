@@ -6,7 +6,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerEnhancedTools } from "../../../src/server/registerEnhancedTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import {
   createEvidence,
   parseEvidence,

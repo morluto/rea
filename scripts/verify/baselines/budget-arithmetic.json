@@ -1,3 +1,6 @@
 {
-  "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 4
+  "src/artifacts/AsarHeader.ts": 1,
+  "src/kuna/KunaJsonStream.ts": 1,
+  "src/process/BoundedOutputExcerpt.ts": 1,
+  "src/process/ProviderProcess.ts": 1
 }

@@ -7,13 +7,15 @@ import {
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
-import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactResourceScope,
+} from "../../../resources/index.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,

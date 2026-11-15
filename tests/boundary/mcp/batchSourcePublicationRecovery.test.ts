@@ -4,7 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";

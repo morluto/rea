@@ -16,8 +16,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../../../src/application/javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../../../src/ports/javascript/ElectronObservationPort.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";

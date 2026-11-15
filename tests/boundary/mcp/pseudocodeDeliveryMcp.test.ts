@@ -2,7 +2,7 @@ import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mj
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";

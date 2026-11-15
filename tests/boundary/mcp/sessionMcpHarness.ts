@@ -13,8 +13,8 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import type {
   ProviderAvailability,
   AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import {

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { afterEach, expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 
 import {
   resolveXcrunTool,
@@ -57,10 +57,7 @@ afterEach(() => {
 });
 
 it("keeps a realpath I/O failure primary when cancellation is observed before rejection", async () => {
-  let realpathStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    realpathStarted = resolve;
-  });
+  const realpathStart = phaseArrival();
   let rejectRealpath: ((cause: unknown) => void) | undefined;
   realpathState.resolve = () =>
     new Promise<string>((_resolve, reject) => {
@@ -69,13 +66,13 @@ it("keeps a realpath I/O failure primary when cancellation is observed before re
         return;
       }
       rejectRealpath = reject;
-      realpathStarted();
+      realpathStart.arrive();
     });
   const controller = new AbortController();
   const cancellationReason = { source: "caller", phase: "tool resolution" };
   const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
   try {
-    await awaitAcknowledgement(started, pending, "native tool realpath");
+    await realpathStart.reached(pending, "native tool realpath");
     controller.abort(cancellationReason);
     const ioFailure = Object.assign(new Error("fixture realpath failure"), {
       code: "EACCES",
@@ -99,10 +96,7 @@ it("keeps a realpath I/O failure primary when cancellation is observed before re
 
 it("retains exact cancellation observed after successful tool path resolution", async () => {
   let finishRealpath: (() => void) | undefined;
-  let realpathStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    realpathStarted = resolve;
-  });
+  const realpathStart = phaseArrival();
   realpathState.resolve = () =>
     new Promise<string>((resolve, reject) => {
       if (controller.signal.aborted) {
@@ -110,13 +104,13 @@ it("retains exact cancellation observed after successful tool path resolution", 
         return;
       }
       finishRealpath = () => resolve("/controlled/physical-tool");
-      realpathStarted();
+      realpathStart.arrive();
     });
   const controller = new AbortController();
   const cancellationReason = { source: "caller", phase: "tool selection" };
   const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
   try {
-    await awaitAcknowledgement(started, pending, "native tool realpath");
+    await realpathStart.reached(pending, "native tool realpath");
     controller.abort(cancellationReason);
     finishRealpath?.();
 
@@ -142,10 +136,7 @@ it.skipIf(process.platform === "win32")(
   "uses the AbortError cause as the exact tool-hash cancellation fact",
   async () => {
     let finishRealpath: (() => void) | undefined;
-    let realpathStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      realpathStarted = resolve;
-    });
+    const realpathStart = phaseArrival();
     realpathState.resolve = () =>
       new Promise<string>((resolve, reject) => {
         if (controller.signal.aborted) {
@@ -153,17 +144,13 @@ it.skipIf(process.platform === "win32")(
           return;
         }
         finishRealpath = () => resolve("/dev/zero");
-        realpathStarted();
+        realpathStart.arrive();
       });
     const controller = new AbortController();
     const cancellationReason = { source: "caller", phase: "tool hash" };
     const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
     try {
-      await awaitAcknowledgement(
-        started,
-        pending,
-        "native tool hash selection",
-      );
+      await realpathStart.reached(pending, "native tool hash selection");
       finishRealpath?.();
       setImmediate(() => controller.abort(cancellationReason));
 

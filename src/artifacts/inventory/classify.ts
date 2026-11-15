@@ -1,4 +1,7 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   nesContainerFormat,
   parseInesLayout,
@@ -48,7 +51,6 @@ import {
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
 import {
   hashStableRootArtifactHandle,

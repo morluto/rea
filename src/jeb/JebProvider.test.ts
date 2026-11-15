@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
@@ -537,10 +537,7 @@ it.each(["list_jeb_units", "decompile_jeb_item"] as const)(
 
 it("forwards in-flight cancellation to the MCP call", async () => {
   const controller = new AbortController();
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const jebCall = phaseArrival();
   const provider = providerWith({
     sessionGeneration: 1,
     async connect() {
@@ -551,7 +548,7 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     },
     async close() {},
     async call(_name, _args, signal) {
-      entered();
+      jebCall.arrive();
       if (signal!.aborted)
         throw new AnalysisCancelledError(_name, { cause: signal!.reason });
       await new Promise<void>((_resolve, reject) =>
@@ -572,7 +569,7 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     { signal: controller.signal },
   );
   try {
-    await awaitAcknowledgement(started, pending, "JEB MCP call");
+    await jebCall.reached(pending, "JEB MCP call");
     controller.abort();
     const result = await pending;
     expect(result.ok).toBe(false);

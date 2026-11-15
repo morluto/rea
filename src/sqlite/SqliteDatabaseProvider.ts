@@ -2,12 +2,14 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import type { SqliteDatabasePort } from "../ports/sqlite/SqliteDatabasePort.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,

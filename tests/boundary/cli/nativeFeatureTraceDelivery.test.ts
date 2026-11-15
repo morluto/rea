@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
