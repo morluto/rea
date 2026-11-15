@@ -7,6 +7,7 @@ import {
   MODEL_HEADER_BYTES,
   rejectModel,
 } from "./ModelFormat.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Sequential prefix reader. Read-ahead is permitted only inside a parser-proven header extent. */
 export class ModelHeaderReader {
@@ -26,7 +27,7 @@ export class ModelHeaderReader {
   /** Safetensors declares JSON bytes separately from its fixed length prefix. */
   excludeSafetensorsLengthPrefix(): void {
     if (this.position !== 8)
-      throw new TypeError(
+      throw invariantViolation(
         "Safetensors header budget must follow its eight-byte length prefix",
       );
     this.#headerPrefixBytes = 8;

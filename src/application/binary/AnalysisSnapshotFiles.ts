@@ -14,6 +14,7 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
@@ -163,7 +164,8 @@ export const writeAnalysisSnapshot = async (
 const snapshotValidationMessage = (cause: unknown): string => {
   if (cause instanceof z.ZodError)
     return `Analysis snapshot validation failed ${describeValidationFailure(cause)}`;
-  return cause instanceof TypeError
+  // The Evidence format owner's refusal carries the recreate guidance.
+  return cause instanceof TypeError || isUnsupportedEvidenceFormat(cause)
     ? cause.message
     : "Analysis snapshot validation failed";
 };

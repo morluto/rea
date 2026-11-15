@@ -1,5 +1,6 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -272,7 +273,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   private get target(): BinaryTarget {
     if (this.activeTarget === undefined)
-      throw new Error("This provider client has no executable target");
+      throw invariantViolation("This provider client has no executable target");
     return this.activeTarget;
   }
 
@@ -1442,7 +1443,9 @@ class NativeMacOSClient implements AnalysisClient {
               );
               if (size !== null) {
                 if (selected === undefined)
-                  throw new TypeError("Selected Mach-O slice is unavailable");
+                  throw invariantViolation(
+                    "Selected Mach-O slice is unavailable",
+                  );
                 assertSelectedMachoSlice(source, selected, binary);
               }
               return binary;
