@@ -179,12 +179,10 @@
     "src/wasm/WabtFailures.ts": 2
   },
   "cdp-raw-event-params": {
-    "src/browser/CdpCaptureEvents.ts": 1,
     "src/browser/CdpObservationSession.ts": 1,
     "src/browser/CdpTargetEvents.ts": 1,
     "src/browser/CdpWebMcpDiscovery.ts": 1,
-    "src/browser/PlaywrightScenarioServiceWorkers.ts": 2,
-    "src/browser/execution/CdpRuntimeRequests.ts": 1
+    "src/browser/PlaywrightScenarioServiceWorkers.ts": 2
   },
   "parser-format-failure-class": {
     "src/browser/assets/WebArtifactReads.ts": 1,

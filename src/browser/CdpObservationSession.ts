@@ -23,14 +23,15 @@ import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
-import { cdpFrameEvent, type CdpFrameEvent } from "./protocol/CdpEvents.js";
+import {
+  cdpFrameEvent,
+  type CdpEventPayload,
+  type CdpFrameEvent,
+} from "./protocol/CdpEvents.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 import {
-  readCdpRequestWillBeSent,
   scopeCdpResponse,
-  readCdpLoadingFailed,
-  readCdpLoadingFinished,
   type CdpRequestWillBeSentFacts,
 } from "./CdpNetworkEventFacts.js";
 
@@ -247,19 +248,22 @@ class TimelineCapture {
       return this.#navigationCommitted(frame, params, contextOnly);
     if (frame?.facts.kind === "within_document")
       return this.#sameDocument(frame, params, contextOnly);
-    switch (event.method) {
+    const registered = event.registered;
+    switch (registered?.method) {
       case "Network.requestWillBeSent": {
-        const facts = readCdpRequestWillBeSent(params);
+        const { facts } = registered.payload;
         this.#requestStarted(facts);
         this.#redirect(facts, bufferedBeforeArm);
-        break;
+        return;
       }
       case "Network.loadingFailed":
-        this.#loadingFailed(readCdpLoadingFailed(params), bufferedBeforeArm);
-        break;
+        this.#loadingFailed(registered.payload, bufferedBeforeArm);
+        return;
       case "Network.loadingFinished":
-        this.#forgetRequest(readCdpLoadingFinished(params).requestId);
-        break;
+        this.#forgetRequest(registered.payload.requestId);
+        return;
+    }
+    switch (event.method) {
       case "Page.lifecycleEvent":
         this.#lifecycle(params);
         break;
@@ -605,7 +609,7 @@ class TimelineCapture {
   }
 
   #loadingFailed(
-    facts: ReturnType<typeof readCdpLoadingFailed>,
+    facts: CdpEventPayload<"Network.loadingFailed">,
     bufferedBeforeArm: boolean,
   ): void {
     const requestId = facts.requestId;

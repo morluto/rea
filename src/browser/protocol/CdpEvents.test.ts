@@ -166,7 +166,45 @@ describe("registered Runtime and Debugger event payloads", () => {
       type: "log",
     });
   });
+});
 
+describe("registered Network event payloads", () => {
+  it("keeps a partial request for passive capture while the runtime refuses it", () => {
+    const event = receiveCdpEvent({
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "request-1",
+        frameId: "main",
+        request: { url: "https://app.test/", method: "GET" },
+      },
+    });
+    if (event.registered?.method !== "Network.requestWillBeSent")
+      throw new TypeError("expected a registered request event");
+    expect(event.registered.payload.facts).toMatchObject({
+      requestId: "request-1",
+      frameId: "main",
+      timestamp: undefined,
+      redirect: { kind: "missing" },
+    });
+    expect(event.registered.payload.runtime.success).toBe(false);
+  });
+
+  it("reads a WebSocket frame's identity, opcode and payload without policy", () => {
+    const event = receiveCdpEvent({
+      method: "Network.webSocketFrameReceived",
+      params: {
+        requestId: "socket-1",
+        response: { opcode: 99, payloadData: 7 },
+      },
+    });
+    expect(event.registered).toEqual({
+      method: "Network.webSocketFrameReceived",
+      payload: { requestId: "socket-1", opcode: 99, payloadData: undefined },
+    });
+  });
+});
+
+describe("unregistered CDP events", () => {
   it("leaves an unregistered event unparsed", () => {
     const event = receiveCdpEvent({
       method: "Network.dataReceived",
