@@ -315,6 +315,12 @@ export interface ContractDocumentContext<
   readonly operation: string;
   /** The document as decoded, before its caller paths were resolved. */
   readonly spelled: unknown;
+  /**
+   * The document's transport frame as `--schema` advertises it. A handler
+   * that reads other inputs first, such as an Evidence bundle, admits the
+   * document with it beforehand; Evidence carriers stay with their owner.
+   */
+  readonly frame: z.ZodType;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
@@ -431,6 +437,7 @@ export const registerContractDocumentCommand = <
               signal,
               operation: contract.name,
               spelled: decoded.value,
+              frame: description.content,
               delivery: delivery.value,
               sessionTarget:
                 description.sessionTarget === undefined
