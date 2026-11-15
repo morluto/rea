@@ -87,6 +87,11 @@ it("reads a regular expression after a control head as a statement", () => {
   // A call's closing parenthesis still ends an operand, so `/` divides.
   expect(count("const half = size(a) / 2; /* items.slice(0, MAX) */")).toBe(0);
   expect(count("const r = f(a) / g(b); items.slice(0, MAX);")).toBe(1);
+  // A keyword-named member call is a call: its `)` ends an operand.
+  for (const call of ["policy.if(ready)", "policy?.for(ready)"])
+    expect(count(`const r = ${call} / (w.n); /* items.slice(0, MAX) */`)).toBe(
+      0,
+    );
 });
 
 it("loads without installed dependencies, as CI runs it before npm ci", async () => {

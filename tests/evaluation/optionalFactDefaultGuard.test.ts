@@ -113,6 +113,12 @@ it("tracks template substitutions and division", () => {
       "const r = total / 2; const n = report.count ?? 0; // /",
     ),
   ).toBe(1);
+  // A keyword-named member call's `)` ends an operand, so `/` divides.
+  expect(
+    optionalFactDefaultCount(
+      "const ratio = policy.if(ready) / (report.count ?? 0);",
+    ),
+  ).toBe(1);
   expect(optionalFactDefaultCount("const n = (report.count ?? 0) + 1;")).toBe(
     1,
   );

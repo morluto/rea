@@ -156,8 +156,15 @@ export const tokenize = (source) => {
       at = start + token.text.length;
       if (token.text === "(") {
         const previous = tokens.at(-1);
+        // `x.if(…)` and `x?.for(…)` are member calls, not control heads.
+        const member = tokens.at(-2);
         parens.push(
-          previous?.kind === "id" && controlKeywords.has(previous.text),
+          previous?.kind === "id" &&
+            controlKeywords.has(previous.text) &&
+            !(
+              member?.kind === "punct" &&
+              (member.text === "." || member.text === "?.")
+            ),
         );
       } else if (token.text === ")" && parens.pop() === true)
         token.controlHead = true;
