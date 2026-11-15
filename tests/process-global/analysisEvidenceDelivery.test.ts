@@ -77,5 +77,9 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
     sourceEvidence: [mutableSource],
   });
 
-  expect(output).toMatchObject({ code: "resource_constraint" });
+  // The refused publication keeps the completed parent's facts.
+  expect(output).toMatchObject({
+    code: "resource_constraint",
+    details: { partial_observation: { evidence_id: evidence.evidence_id } },
+  });
 });
