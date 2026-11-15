@@ -53,10 +53,9 @@ it("retains a completed V8 code cache observation when the caller cancels as the
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
-    operation: "inspect_v8_code_cache",
-    normalized_result: { artifact: report.artifact },
-  });
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.operation).toBe("inspect_v8_code_cache");
+  expect(evidence.normalized_result).toEqual(report);
 });
 
 it.each([0, 9])(
