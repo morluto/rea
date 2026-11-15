@@ -438,8 +438,9 @@ unsupported protocol has `unsupported` scope. Outside-policy and unsupported
 responses mark the timeline as policy-filtered with `disallowed_origin` or
 `unsupported_url`. Missing status remains null rather than zero. A supplied
 non-numeric status is also null and records `invalid_protocol_value` coverage;
-the other valid response facts remain available. Historical rows may omit this
-field; omission does not establish that no prior response existed. Response
+the other valid response facts remain available. A redirect row without this
+field is malformed and refused; recreate such observations with the current
+release. Response
 headers and bodies are discarded. The row timestamp belongs to the next request,
 not an exact prior response time. The pre-arm timeline buffer is bounded
 by original CDP message bytes. If clock sampling completes after that budget is
