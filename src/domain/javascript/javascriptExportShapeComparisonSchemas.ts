@@ -5,6 +5,7 @@ import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { evidenceSchema } from "../evidence.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
+import { applicationCoverageStatusSchema } from "./javascriptApplicationEvidenceSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const graphIdSchema = prefixedDigestSchema("jag");
@@ -283,19 +284,18 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
   }),
   changes: z.array(javaScriptExportShapeComparisonChangeSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
-    left_graph_status: z.enum([
-      "complete",
+    /**
+     * `unknown` when either source graph's coverage is unknown or
+     * unavailable; `truncated` and `partial` are known gaps.
+     */
+    status: z.enum([
+      "complete-within-inputs",
       "partial",
+      "truncated",
       "unknown",
-      "unavailable",
     ]),
-    right_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
-      "unavailable",
-    ]),
+    left_graph_status: applicationCoverageStatusSchema,
+    right_graph_status: applicationCoverageStatusSchema,
     paired_variants: z.int().min(0),
     unpaired_left_variants: z.int().min(0),
     unpaired_right_variants: z.int().min(0),

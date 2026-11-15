@@ -301,6 +301,37 @@ describe("JavaScript export return-shape value uncertainty", () => {
   });
 });
 
+describe("JavaScript export comparison source-graph coverage", () => {
+  it.each(["unknown", "unavailable"] as const)(
+    "reports unknown, not partial, when a source graph's coverage is %s",
+    async (status) => {
+      const [left, right] = await analyzeSources({
+        left: 'export default () => ({kind:"result"});',
+        right: 'export default () => ({kind:"result",total:1});',
+      });
+      expect(compare(left, right).coverage.status).toBe(
+        "complete-within-inputs",
+      );
+      const { graph_id: _graphId, ...input } = right.graph;
+      const graph = createJavaScriptApplicationGraph({
+        ...input,
+        coverage: { status, truncated: false, omitted_count: null, limits: [] },
+        limitations: ["Fixture graph coverage cannot be established."],
+      });
+      const result = javaScriptExportShapeComparisonResultSchema.parse(
+        compare(left, { ...right, graph }),
+      );
+      expect(result.coverage).toMatchObject({
+        status: "unknown",
+        right_graph_status: status,
+      });
+      expect(result.limitations).toContain(
+        "At least one source graph's coverage is unknown or unavailable, so the comparison's coverage is unknown.",
+      );
+    },
+  );
+});
+
 describe("JavaScript export return-shape pairing limits", () => {
   it("does not pair an inline discriminant with absent or unknown presence", async () => {
     const rows = [

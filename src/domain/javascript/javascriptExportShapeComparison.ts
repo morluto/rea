@@ -2,6 +2,8 @@ import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
   type JavaScriptExportShapeComparisonChange,
@@ -133,12 +135,21 @@ const comparisonCoverage = (context: CoverageInput) => {
     context.right.selection.omitted_candidates;
   const truncated = comparisonTruncated(context, omittedCandidates);
   const partial = comparisonPartial(context);
+  // A source graph that cannot tell its coverage makes the comparison
+  // unknown, even beside a known gap.
+  const graphs = joinCoverageStatus([
+    applicationCoverageKnowledge(context.input.left.graph.coverage.status),
+    applicationCoverageKnowledge(context.input.right.graph.coverage.status),
+  ]);
   return {
-    status: truncated
-      ? ("truncated" as const)
-      : partial
-        ? ("partial" as const)
-        : ("complete-within-inputs" as const),
+    status:
+      graphs === "unknown"
+        ? ("unknown" as const)
+        : truncated
+          ? ("truncated" as const)
+          : partial
+            ? ("partial" as const)
+            : ("complete-within-inputs" as const),
     left_graph_status: context.input.left.graph.coverage.status,
     right_graph_status: context.input.right.graph.coverage.status,
     paired_variants: context.pairing.pairs.length,
@@ -206,7 +217,7 @@ const selectionPartial = (selection: SelectedJavaScriptExport): boolean => {
 const comparisonLimitations = (
   left: SelectedJavaScriptExport,
   right: SelectedJavaScriptExport,
-  status: "complete-within-inputs" | "partial" | "truncated",
+  status: JavaScriptExportShapeComparisonResult["coverage"]["status"],
 ): string[] =>
   uniqueSorted([
     "Return shapes are inferred from inert syntax and do not prove runtime behavior.",
@@ -223,6 +234,11 @@ const comparisonLimitations = (
     ...(status === "partial"
       ? [
           "At least one selector, graph, return shape, or property boundary is incomplete.",
+        ]
+      : []),
+    ...(status === "unknown"
+      ? [
+          "At least one source graph's coverage is unknown or unavailable, so the comparison's coverage is unknown.",
         ]
       : []),
   ]);
