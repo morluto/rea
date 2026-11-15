@@ -12,7 +12,10 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
-/** Register Cutter discovery and command tools against their named contracts. */
+/**
+ * Register the Cutter command tool against its named contract. Session
+ * discovery is bound through the shared service binding table.
+ */
 export const registerCutterTools = (
   server: McpServer,
   service: CutterBridgeService,
@@ -21,25 +24,7 @@ export const registerCutterTools = (
   recordEvidence?: EvidenceWriter["recordEvidence"],
   session?: ExternalMutationAdmission,
 ): void => {
-  const list = toolContract("list_cutter_sessions");
   const command = toolContract("cutter_command");
-  server.registerTool(
-    list.name,
-    toolRegistrationOptions(list),
-    async (_input, context) => {
-      const result = await logToolExecution(logger, list.name, () =>
-        service.listSessions({ signal: context.mcpReq.signal }),
-      );
-      if (!result.ok) return delivery.toCallToolResult(result, list);
-      return delivery.toCallToolResult(
-        {
-          ok: true,
-          value: { ...result.value, sessions: [...result.value.sessions] },
-        },
-        list,
-      );
-    },
-  );
   server.registerTool(
     command.name,
     toolRegistrationOptions(command),

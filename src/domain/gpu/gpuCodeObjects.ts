@@ -1,11 +1,17 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { digestSchema } from "../digests.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/**
+ * GPU inventories report known coverage: discovery, note and payload
+ * producers derive `partial` from the gaps they recorded, so they never
+ * report `unknown`.
+ */
 export const gpuLocationSchema = z.strictObject({
   container_id: z.string().nullable(),
   offset: count,
@@ -40,11 +46,9 @@ export const gpuObjectSchema = z.strictObject({
       flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
       processor: z.string().nullable(),
       header_location: gpuLocationSchema,
-      note_coverage: z
-        .enum(["complete", "partial"])
-        .describe(
-          "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
-        ),
+      note_coverage: knownCoverageStatusSchema.describe(
+        "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
+      ),
       notes: z.array(
         z.strictObject({
           target: z.string().nullable(),
@@ -175,8 +179,8 @@ export const gpuCodeObjectsObjectSchema = z.strictObject({
     discovery_scope: z.literal(
       "supported-section-names-and-standalone-formats",
     ),
-    discovery: z.enum(["complete", "partial"]),
-    payloads: z.enum(["not-requested", "complete", "partial"]),
+    discovery: knownCoverageStatusSchema,
+    payloads: z.enum(["not-requested", ...knownCoverageStatusSchema.options]),
     examined_sections: count,
     unknown_section_names: count,
   }),
@@ -361,7 +365,10 @@ export const gpuTargetSchema = z.strictObject({
     .string()
     .regex(/^(?:0|[1-9][0-9]*)$/u)
     .nullable(),
-  kernel_coverage: z.enum(["not-requested", "complete", "partial"]),
+  kernel_coverage: z.enum([
+    "not-requested",
+    ...knownCoverageStatusSchema.options,
+  ]),
   by_kind: z.strictObject({
     ptx: count,
     cubin: count,

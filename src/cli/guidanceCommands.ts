@@ -1,5 +1,5 @@
 import { z } from "incur";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -9,7 +9,7 @@ import {
   searchGuidanceLimitSchema,
   searchGuidanceInputSchema,
 } from "../contracts/guidanceContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";

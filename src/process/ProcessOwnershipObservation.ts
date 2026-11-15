@@ -1,6 +1,8 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
+  PROCESS_INVENTORY_PS_ARGUMENTS,
   LINUX_SYSTEM_PS_LOCATIONS,
   resolveSystemPs,
   type SystemPs,
@@ -755,7 +757,7 @@ const identityFact = (
   };
 
 const readIdentityFacts = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
@@ -808,7 +810,7 @@ export const readNativeProcessIdentityMap = async (
  * A deadline, unavailable read or changed generation remains explicit evidence.
  */
 export const settleExitingProcessIdentities = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   initial: ReadonlyMap<number, ProcessIdentityObservation>,
   signal?: AbortSignal,
@@ -862,7 +864,7 @@ export const settleVanishedTokenFacts = async (
   budget: ProcessExitSettlementBudget,
   signal?: AbortSignal,
 ): Promise<readonly ProcessOwnershipFact[]> => {
-  if ((host.platform ?? process.platform) !== "linux") return facts;
+  if ((host.platform ?? HOST_PLATFORM.platform) !== "linux") return facts;
   let pending = facts
     .filter(
       ({ token, identityAfter }) =>
@@ -985,7 +987,7 @@ export const readProcessOwnershipFacts = async (
   // missing procfs entry with signal-zero ESRCH. Keep the previous live
   // observation if the refresh is unreadable; PID reuse remains a mismatch.
   let finalObservedAfter = observedAfter;
-  if ((host.platform ?? process.platform) === "linux") {
+  if ((host.platform ?? HOST_PLATFORM.platform) === "linux") {
     const disappearing = processes.filter(({ pid }) => {
       const token = tokens.get(pid);
       return (
@@ -1180,7 +1182,7 @@ export const reobserveUnavailableTokenFacts = async (
 
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   hostEnvironment: NodeJS.ProcessEnv = process.env,
   options: {
     /** Override the compiler executable used by the Darwin native reader. */
@@ -1239,7 +1241,7 @@ export const createSystemProcessOwnershipHost = (
     try {
       ({ stdout } = await execFileOutput(
         ps.command,
-        ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+        PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
@@ -1709,7 +1711,9 @@ export const createSystemProcessOwnershipHost = (
   };
 };
 
-export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
+export const systemProcessOwnershipHost = createSystemProcessOwnershipHost(
+  HOST_PLATFORM.platform,
+);
 
 /**
  * Observe a live PID's start identity, optionally binding it to an owned run.
@@ -1723,14 +1727,13 @@ export const observeProcessStartIdentity = async (
 ): Promise<ProcessIdentityObservation | undefined> => {
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
-  const identity: ProcessIdentityObservation = (
-    await host.processIdentities([{ pid }])
-  ).get(pid) ?? {
-    state: "unavailable",
-    reason: "process identity was not returned",
-  };
-  if (identity.state === "absent" || processIdentityHasExited(identity))
-    return undefined;
+  const identity = liveProcessIdentity(
+    (await host.processIdentities([{ pid }])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    },
+  );
+  if (identity === undefined) return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
   const process = (await host.listProcesses()).find(
@@ -1769,10 +1772,19 @@ export const observeProcessStartIdentity = async (
       };
 };
 
+/** An absent or exited identity has no live process; others stay as observed. */
+const liveProcessIdentity = (
+  identity: ProcessIdentityObservation,
+): ProcessIdentityObservation | undefined =>
+  identity.state === "absent" || processIdentityHasExited(identity)
+    ? undefined
+    : identity;
+
 /**
  * Confirm whether the process that held an authenticated bridge has exited.
  * `exiting` is a positively observed native exit in progress (Linux
- * PF_EXITING before state Z); like `present`, it does not confirm exit.
+ * PF_EXITING before state Z) that outlasted the cleanup grace; like
+ * `present`, it does not confirm exit.
  */
 export const observeProcessStartIdentityExit = async (
   pid: number,
@@ -1780,7 +1792,25 @@ export const observeProcessStartIdentityExit = async (
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
-    const observed = await observeProcessStartIdentity(pid, host);
+    let observed = await observeProcessStartIdentity(pid, host);
+    // An exiting process closes its sockets before it becomes a zombie, so a
+    // caller that reacts to the closed transport can observe the same
+    // generation mid-exit. The shared settlement waits only for that
+    // positively observed state of the same identity.
+    if (
+      observed?.state === "readable" &&
+      observed.identity === expectedIdentity
+    ) {
+      const settled = (
+        await settleExitingProcessIdentities(
+          [{ pid }],
+          host,
+          new Map([[pid, observed]]),
+        )
+      ).get(pid);
+      observed =
+        settled === undefined ? observed : liveProcessIdentity(settled);
+    }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
     if (observed.identity !== expectedIdentity) return "exited";
@@ -1904,7 +1934,7 @@ export const DARWIN_PROCESS_OWNERSHIP_REMEDIATION =
 export const processOwnershipAdmissionRecovery = (
   code: string,
   platform: NodeJS.Platform = systemProcessOwnershipHost.platform ??
-    process.platform,
+    HOST_PLATFORM.platform,
   systemCode?: string,
 ): string => {
   if (code === "identity_snapshot_unavailable")

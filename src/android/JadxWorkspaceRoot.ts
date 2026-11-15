@@ -220,7 +220,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
 }
 
 /** POSIX retains its in-process root; Windows keeps a detached native owner. */
-export const createJadxWorkspaceRoot = (): Promise<JadxWorkspaceRoot> =>
-  process.platform === "win32"
+export const createJadxWorkspaceRoot = (
+  platform: NodeJS.Platform,
+): Promise<JadxWorkspaceRoot> =>
+  platform === "win32"
     ? WindowsJadxWorkspaceRoot.create()
     : PrivateRuntimeRoot.create({ prefix: "rea-android-" });

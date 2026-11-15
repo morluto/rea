@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { GpuInventory } from "./GpuInventory.js";
 import { GpuBufferSource } from "./GpuSource.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   ccobFixture,
   cubinFixture,

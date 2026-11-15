@@ -10,6 +10,10 @@ import {
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 import { localPathStringSchema } from "./localPath.js";
+import {
+  sameTargetIdentity,
+  type FileTargetIdentity,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -20,6 +24,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -103,41 +108,57 @@ const targetIdentitySchema = z.object({
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
 });
-const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
-    format: z.enum(
-      formatSchema.options.filter(
-        (format) =>
-          format !== "raw-binary" &&
-          format !== "gamecube-dol" &&
-          format !== "esp-flash-image",
+const targetSchema = z
+  .discriminatedUnion("format", [
+    targetIdentitySchema.extend({
+      format: z.enum(
+        formatSchema.options.filter(
+          (format) =>
+            format !== "raw-binary" &&
+            format !== "gamecube-dol" &&
+            format !== "esp-flash-image",
+        ),
       ),
-    ),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("gamecube-dol"),
-    kind: z.literal("executable"),
-    architecture: z.literal("powerpc"),
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
-    format: z.literal("esp-flash-image"),
-    kind: z.literal("archive"),
-    architecture: z.null(),
-    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-  }),
-]);
+      architecture: architectureSchema
+        .exclude([...RAW_ONLY_ARCHITECTURES])
+        .nullable(),
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("raw-binary"),
+      kind: z.literal("executable"),
+      architecture: binaryArchitectureSchema,
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("gamecube-dol"),
+      kind: z.literal("executable"),
+      architecture: z.literal("powerpc"),
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    // The caller's inputs select how the dump is read, so they are identity.
+    targetIdentitySchema.extend({
+      format: z.literal("esp-flash-image"),
+      kind: z.literal("archive"),
+      architecture: z.null(),
+      flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
+      partition_table_offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(0xffff_ffff)
+        .nullable(),
+    }),
+  ])
+  .superRefine((target, context) => {
+    // Query IDs commit to the kind, so a kind the format cannot have would
+    // admit entries that no live lookup or export of this target can reach.
+    if (target.kind !== BINARY_TARGET_FORMAT_KINDS[target.format])
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: `Snapshot target kind ${target.kind} does not match format ${target.format}`,
+      });
+  });
 const bindingSchema = z
   .object({
     provider: committedProviderSchema,
@@ -277,6 +298,27 @@ const snapshotFileHeaderSchema = z.object({
   evidence_bundle: z.unknown(),
 });
 
+/**
+ * The bundle is validated on its own, so locate its schema issues within the
+ * snapshot document, as entry issues are.
+ */
+const parseSnapshotBundle = <Bundle>(
+  value: unknown,
+  parse: (value: unknown) => Bundle,
+): Bundle => {
+  try {
+    return parse(value);
+  } catch (cause: unknown) {
+    if (!(cause instanceof z.ZodError)) throw cause;
+    throw new z.ZodError(
+      cause.issues.map((issue) => ({
+        ...issue,
+        path: ["evidence_bundle", ...issue.path],
+      })),
+    );
+  }
+};
+
 /** Reconstruct file entries only from fully authenticated matching Evidence. */
 export const parsePreparedAnalysisSnapshot = (
   input: unknown,
@@ -284,7 +326,10 @@ export const parsePreparedAnalysisSnapshot = (
   workflowEntries: readonly PreparedSnapshotEntry[],
 ): AnalysisSnapshot => {
   const header = snapshotFileHeaderSchema.parse(input);
-  const bundle = parseImmutableEvidenceBundle(header.evidence_bundle);
+  const bundle = parseSnapshotBundle(
+    header.evidence_bundle,
+    parseImmutableEvidenceBundle,
+  );
   const providerRows = entries.map((handle) => {
     const row = preparedEntries.get(handle);
     if (row?.kind !== "provider")
@@ -451,26 +496,35 @@ export const snapshotBinding = (
     analysis_profile: profile,
   });
 
+/** The target identity a persisted snapshot target names. */
+export const snapshotTargetIdentity = (
+  target: AnalysisSnapshotTarget,
+): FileTargetIdentity => ({
+  kind: "file",
+  sha256: target.sha256,
+  format: target.format,
+  architecture: target.architecture,
+  selection:
+    target.format === "raw-binary" || target.format === "gamecube-dol"
+      ? { kind: "entry-point", entry_point: target.entry_point }
+      : target.format === "esp-flash-image"
+        ? {
+            kind: "esp-flash",
+            flash_offset: target.flash_offset,
+            partition_table_offset: target.partition_table_offset,
+          }
+        : null,
+});
+
 /** Compare an open binary with the immutable target identity in a snapshot. */
 export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  snapshot.sha256 === target.sha256 &&
-  snapshot.kind === target.kind &&
-  snapshot.format === target.format &&
-  snapshot.architecture === (target.architecture ?? null) &&
-  (snapshot.format !== "raw-binary" ||
-    (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "gamecube-dol" ||
-    (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "esp-flash-image" ||
-    (target.format === "esp-flash-image" &&
-      snapshot.flash_offset === target.espFlash.flashOffset &&
-      snapshot.partition_table_offset ===
-        target.espFlash.partitionTableOffset));
+  sameTargetIdentity(
+    snapshotTargetIdentity(snapshot),
+    snapshotTargetIdentity(snapshotTarget(target)),
+  );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -712,7 +766,7 @@ const authenticateSnapshot = (
   const parsed = analysisSnapshotSchema.parse(input);
   const restored = restoreSnapshot(
     parsed,
-    parseEvidenceBundle(parsed.evidence_bundle),
+    parseSnapshotBundle(parsed.evidence_bundle, parseEvidenceBundle),
     parsed.entries.map((entry) => ({
       kind: "provider",
       entry,

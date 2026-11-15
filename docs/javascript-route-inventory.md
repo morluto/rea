@@ -34,8 +34,8 @@ reopened with `inspect-evidence-bundle`; its `records` contain the complete
 Evidence. `inspect_analysis_view`'s `evidence-file` source accepts either one
 Evidence record or an exported bundle with the selected `evidence_id`.
 Views do not reopen source files or
-reconnect to a browser. Historical Evidence without `route_inventory` is
-unmeasured, rather than an empty route set.
+reconnect to a browser. A parent without `route_inventory` is unmeasured,
+rather than an empty route set.
 
 ## Page captured endpoint observations and inferences
 

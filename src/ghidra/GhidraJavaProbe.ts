@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import {
@@ -12,9 +13,9 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
@@ -318,11 +319,11 @@ const observeGhidraJava = async (
       primary = probeFailureError(failed, cause);
     }
     for (const cleanup of cleanups)
-      primary = analysisErrorWithCleanupFailure(
+      primary = analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "ghidra:java",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     return err(
       bindProcessInspectionCancellations(cause, primary, "ghidra:java"),
     );
@@ -336,7 +337,7 @@ const systemCode = (cause: unknown): string | undefined =>
 const probeFailureError = (
   failure: GhidraJavaProbeFailure,
   cause: unknown,
-): AnalysisError => {
+): ProviderAdapterError => {
   const { output, ...facts } = failure;
   return new ProviderAdapterError("ghidra", "ghidra:java", {
     cause,
@@ -396,10 +397,10 @@ export const parseGhidraJavaOutput = (
       ? {}
       : { unparsedBits: reportedBits }),
     runtime: executablePath(
-      (process.platform === "win32" ? win32 : posix).join(
+      (HOST_PLATFORM.platform === "win32" ? win32 : posix).join(
         home,
         "bin",
-        process.platform === "win32" ? "javac.exe" : "javac",
+        HOST_PLATFORM.platform === "win32" ? "javac.exe" : "javac",
       ),
     )
       ? "jdk"

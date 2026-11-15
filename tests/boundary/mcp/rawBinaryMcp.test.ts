@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +9,7 @@ import { z } from "zod";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -242,9 +243,8 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     response: CallToolResult,
   ) => {
     const tool = tools.find((candidate) => candidate.name === name);
-    if (tool?.outputSchema === undefined)
-      throw new Error(`missing ${name} output schema`);
-    const schema = z.record(z.string(), z.unknown()).parse(tool.outputSchema);
+    if (tool === undefined) throw new Error(`missing ${name} output schema`);
+    const schema = canonicalOutputSchema(tool.name);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,

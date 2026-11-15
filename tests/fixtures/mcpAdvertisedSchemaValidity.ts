@@ -5,10 +5,7 @@ import {
   schemaChildren as schemaChildKeywords,
   schemaMaps as schemaMapKeywords,
 } from "../../src/contracts/jsonSchemaKeywords.js";
-import {
-  arrayItemSchemaError,
-  unsupportedInputLiteralSchemaError,
-} from "./mcpClientSchemaConstraints.js";
+import { arrayItemSchemaError } from "./mcpClientSchemaConstraints.js";
 
 /** Advertised schema pair as a client receives it from `tools/list`. */
 interface AdvertisedToolSchemas {
@@ -18,11 +15,12 @@ interface AdvertisedToolSchemas {
 }
 
 /**
- * Validate advertised schemas as clients receive them: Ajv's declared-dialect
- * meta-schema and reference resolution, then the constraints a real client
- * enforces. Compiling catches a compact projection that drops a referenced
- * definition or leaves a local `$ref` without its target, which a byte-budget
- * assertion alone would not.
+ * Validate registered schemas: Ajv's declared-dialect meta-schema and
+ * reference resolution, then array `items`. Compiling catches a projection
+ * that drops a referenced definition or leaves a local `$ref` without its
+ * target, which a byte-budget assertion alone would not. Literal portability
+ * belongs to the advertised dialect projection, so it is checked on the
+ * schemas a served catalog lists, not here.
  */
 export function advertisedSchemaErrors(
   tools: readonly AdvertisedToolSchemas[],
@@ -52,13 +50,6 @@ export function advertisedSchemaErrors(
           `${tool.name}.${kind}`,
         );
         if (clientError !== undefined) return [clientError];
-        if (kind === "inputSchema") {
-          const literalError = unsupportedInputLiteralSchemaError(
-            schema,
-            `${tool.name}.${kind}`,
-          );
-          if (literalError !== undefined) return [literalError];
-        }
         return [];
       } catch (cause: unknown) {
         return [

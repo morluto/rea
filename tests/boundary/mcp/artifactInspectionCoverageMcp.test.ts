@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -50,8 +51,10 @@ const connect = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  expect(definition?.outputSchema).toBeDefined();
-  const outputSchema: Record<string, unknown> = definition!.outputSchema!;
+  expect(definition).toBeDefined();
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition!.name,
+  );
   return { client, outputSchema };
 };
 

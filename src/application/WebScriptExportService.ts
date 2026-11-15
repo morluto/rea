@@ -1,13 +1,15 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
 import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
 import {
@@ -31,19 +33,18 @@ import {
   type ExportWebScriptsInput,
 } from "../domain/webScriptExport.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "../domain/investigationProviders.js";
 import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -396,10 +397,7 @@ const parseCapture = (
   closeFailure?: { readonly cause: unknown },
 ): Result<ReturnType<typeof selectScriptCapture>, AnalysisError> => {
   try {
-    const text = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes);
+    const text = decodeStrictUtf8(bytes, "preserve");
     const json = safeParseJson(text);
     if (!json.ok) throw new TypeError(json.error);
     return ok(selectScriptCapture(json.value));

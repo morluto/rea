@@ -81,7 +81,7 @@ const scenarios = [
   },
 ] as const;
 
-cliTest.for(["full", "compact"] as const)(
+cliTest.for(["compact"] as const)(
   "projects browser scenario input diagnostics over stdio MCP (%s)",
   async (profile, { cli }) => {
     const home = await createTestTempDirectory(

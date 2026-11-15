@@ -68,7 +68,7 @@ describe.skipIf(process.platform !== "darwin")(
             operation: "inspect_plist",
             issues: [
               {
-                path: ["path"],
+                path: ["relativePath"],
                 reason: "invalid_value",
                 message: expect.stringContaining(
                   `Cannot inspect ${join(app, selected)}: ${reason}`,
@@ -233,31 +233,45 @@ describe.skipIf(process.platform !== "darwin")(
         "plist can only include one object",
       ],
     ] as const)(
-      "classifies the selected malformed plist as input: %s",
+      "names the input that selected the malformed plist: %s",
       async ([source, diagnostic], { cli }) => {
         const root = await createTestTempDirectory("rea-plist-target-input-");
         const path = join(root, "chosen.plist");
         await writeFile(path, source);
-        for (const args of [[], ["--relative-path", path]]) {
-          const result = await cli.run({
-            arguments: ["inspect-plist", path, ...args, "--json"],
-            environment,
-          });
-          expect(result.exitCode).toBe(1);
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            details: {
-              issues: [
-                {
-                  path: ["path"],
-                  message: expect.stringContaining(diagnostic),
-                },
-              ],
-              captured_output: { exit_code: 1 },
-            },
-          });
-          expect(capturedDiagnostic(result.json)).toContain(diagnostic);
-        }
+        // The target alone selects the plist, so the target is what failed.
+        const direct = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(direct.exitCode).toBe(1);
+        expect(direct.json).toMatchObject({
+          code: "target_unavailable",
+          details: {
+            path,
+            reason: expect.stringContaining(diagnostic),
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(direct.json).not.toHaveProperty("details.issues");
+        expect(capturedDiagnostic(direct.json)).toContain(diagnostic);
+        const selected = await cli.run({
+          arguments: ["inspect-plist", path, "--relative-path", path, "--json"],
+          environment,
+        });
+        expect(selected.exitCode).toBe(1);
+        expect(selected.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["relativePath"],
+                message: expect.stringContaining(diagnostic),
+              },
+            ],
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(capturedDiagnostic(selected.json)).toContain(diagnostic);
         expect(await readFile(path, "utf8")).toBe(source);
       },
     );

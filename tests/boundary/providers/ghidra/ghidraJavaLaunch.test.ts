@@ -13,8 +13,8 @@ import { existsSync, statSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   GhidraLaunchSupportError,
   ghidraJavaLaunch,
@@ -48,7 +48,7 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../../../src/logger.js";

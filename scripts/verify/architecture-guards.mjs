@@ -1,14 +1,16 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  reconcileBaselineFile,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
+import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -61,14 +63,45 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
+
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
-  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  "provider-owned inspection lifetime (use src/ports/ProviderInspectionScope)",
   files,
   /providers\/ProviderInspectionScope\.js/,
 );
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
+
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
+// compiler keeps readers on its questions, and only the log and its record
+// module read the recorded sites. A method read on an intrinsic
+// instance asks one owner, which checks the method, the instance's prototype
+// link and the intrinsic prototypes.
+check(
+  "reader-side read of recorded opaque effects (ask javascriptSemanticEffectLog.ts or the javascriptSemanticEffectRecord.ts accessors)",
+  files,
+  /\.opaqueEffects\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticEffectRecord.ts",
+  ],
+);
+
+check(
+  "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
+  files,
+  /mayObserve\([^;]*\["__proto__"\]/u,
+  ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
+);
 
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
@@ -257,15 +290,31 @@ check(
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
-// raises them) so the next removal cannot be undone silently.
-const baselinePath = join(
-  root,
-  "scripts/verify/architecture-guard-baselines.json",
+// raises them) so the next removal cannot be undone silently. Each guard's
+// baseline is its own file, scripts/verify/baselines/<key>.json, so changes
+// to different guards never edit the same file.
+const baselineDirectory = join(root, "scripts/verify/baselines");
+const baselineTexts = new Map();
+for (const name of await readdir(baselineDirectory)) {
+  if (!name.endsWith(".json")) {
+    failures.push(
+      `${relative(root, join(baselineDirectory, name))} is not a guard baseline; only <guard-key>.json files belong in ${relative(root, baselineDirectory)}.`,
+    );
+    continue;
+  }
+  baselineTexts.set(
+    name.slice(0, -".json".length),
+    await readFile(join(baselineDirectory, name), "utf8"),
+  );
+}
+const baselines = Object.fromEntries(
+  [...baselineTexts].map(([key, text]) => [key, JSON.parse(text)]),
 );
-const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const checkedBaselineKeys = new Set();
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
+  checkedBaselineKeys.add(key);
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
@@ -298,6 +347,40 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Recorded effects belong to the effect log. A reader that reads an effect
+// index itself decides on its own which effect kinds and proofs apply; new
+// readers ask the log instead, and each migrated reader lowers this count.
+checkCounted(
+  "read of a JavaScript effect index outside the effect log (ask javascriptSemanticEffectLog.ts)",
+  "javascript-effect-index-read",
+  files,
+  /\.(?:bindingWrites|memberWrites|escapedPaths|ambientWriteEffects|ambientEscapeEffects|ambientBindingWrites|ambientWrites|ambientEscapes)\b/gu,
+  ["src/domain/javascript/javascriptSemanticEffectLog.ts"],
+);
+
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  localCompletenessEnumCount,
+  ["src/domain/coverage.ts"],
+);
+
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
 checkCounted(
@@ -306,6 +389,55 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
+// src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
+// class on plain Error hides the limit's name and maximum from both; a limit
+// subclass of BinaryResourceFailure keeps a second limit field beside the
+// allowance its LimitRef already names. The environment-state extraction's private retention stop is control flow that
+// its own entry point catches and turns into `null`; it is never reported.
+checkCounted(
+  "local limit class (use decodeLimit from src/domain/parseFailure, a named BinaryResourceFailure allowance, or an AnalysisRefusal)",
+  "local-limit-error-class",
+  files,
+  localLimitErrorClassCount,
+  ["src/domain/analysisView/EnvironmentStateExtraction.ts"],
+);
+
+// A resource allowance is charged and refunded through `Budget` in
+// src/domain/budget, which refuses malformed or oversized charges without
+// changing the remainder. Hand-written `remaining -=` / `retained +=`
+// arithmetic repeats that admission and drifts (charge-then-check, no
+// safe-integer check).
+checkCounted(
+  "hand-written budget arithmetic (use Budget from src/domain/budget)",
+  "budget-arithmetic",
+  files,
+  budgetArithmeticCount,
+  ["src/domain/budget.ts"],
+);
+
+// A slice to a named maximum drops items; boundedList in src/domain/boundedList
+// keeps the count of what it dropped beside the retained items, so a consumer
+// can say that more exist and how many.
+checkCounted(
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "constant-maximum-slice",
+  files,
+  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  ["src/domain/boundedList.ts"],
+);
+
+// Display text cut with an appended ellipsis comes from ellipsisExcerpt in
+// src/domain/excerpt, which never splits a surrogate pair and marks the result
+// as excerpt text. A hand-written `${text.slice(0, n)}…` does neither.
+checkCounted(
+  "hand-written ellipsis excerpt (use ellipsisExcerpt from src/domain/excerpt)",
+  "ad-hoc-ellipsis",
+  files,
+  /\.slice\(\s*0\s*,[^)]*\)\)?\}(?:…|\.\.\.)/gu,
+  ["src/domain/excerpt.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
@@ -328,6 +460,19 @@ checkCounted(
   files,
   /\b_source\s*\.\s*layers\b/gu,
   ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
 );
 
 // Turning a completed result into a cancellation after cleanup is the
@@ -364,8 +509,34 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
+// Services name the contract field they refuse or ask the caller to change;
+// the CLI layer owns option spellings (each command's field binding renames
+// issue paths to CLI keys). A `--flag` written outside src/cli copies that
+// mapping and goes stale when the command renames the option.
+checkCounted(
+  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "cli-option-text-outside-cli",
+  files.filter(
+    ({ path }) =>
+      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
+  ),
+  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  [],
+);
+
+// A runtime setting view throws the ConfigurationError of a malformed launch
+// seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
+// as a Result. Catching it by hand mixes it into each site's own failures.
+checkCounted(
+  "hand-caught ConfigurationError (read runtime settings with readRuntimeSetting from src/config/runtimeAnalysisSettings)",
+  "hand-caught-configuration-error",
+  files,
+  /\bcause instanceof ConfigurationError\b/gu,
+  ["src/config/runtimeAnalysisSettings.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
-// kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
+// kind belong to BinaryReader (src/domain/binaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
 const PARSER_FOLDERS = [
   "src/android/",
@@ -415,21 +586,38 @@ const parserFiles = files.filter((file) =>
 // An unchecked Buffer or DataView read throws a bare RangeError past the end,
 // which a catch site cannot tell from a host stack or string limit.
 checkCounted(
-  "raw Buffer or DataView numeric read (use BinaryReader from src/native/metadata/BinaryContainer)",
+  "raw Buffer or DataView numeric read (use BinaryReader from src/domain/binaryContainer)",
   "raw-buffer-read",
   files,
   /\.(?:read(?:Big)?U?Int(?:8|16|32|64)?(?:LE|BE)?|readBigUint64(?:LE|BE)|readUint(?:8|16|32)(?:LE|BE)?|read(?:Float|Double)(?:LE|BE)|get(?:Big)?(?:Uint|Int)(?:8|16|32|64)|getFloat(?:32|64))\(/gu,
-  ["src/native/metadata/BinaryContainer.ts"],
+  ["src/domain/binaryContainer.ts"],
 );
 
 // An input fault is a ParseFailureError; a broken internal assumption is a
 // defect, not an input fault, and throws invariantViolation from
 // src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 
@@ -474,6 +662,20 @@ checkCounted(
   [],
 );
 
+// Raw JSON Schema keywords and `x-rea-*` markers in `.meta()` bypass the
+// canonical Zod checks and reach every JSON Schema projection, including the
+// advertised one. Presentation facts are typed annotations
+// (src/domain/schemaAnnotations); constraints belong in Zod checks, or in a
+// src/domain/schemaConstraints helper that adds the check and its keyword
+// together.
+checkCounted(
+  "raw JSON Schema keyword or x-rea marker in Zod .meta() (use a typed annotation from src/domain/schemaAnnotations, a Zod check, or a src/domain/schemaConstraints helper)",
+  "raw-json-schema-meta",
+  files,
+  /\.meta\(\s*\{\s*"?(?:x-rea-[\w-]+|\$ref|not|allOf|anyOf|oneOf|if|then|else|dependentRequired|dependentSchemas|dependencies|uniqueItems|(?:min|max)(?:Length|Items|Properties|imum)|exclusive(?:Min|Max)imum|multipleOf|type|const|enum|format|pattern|patternProperties|properties|required|additionalProperties|items|prefixItems|contains|content(?:MediaType|Encoding|Schema)|propertyNames)"?\s*:/gu,
+  ["src/domain/schemaConstraints.ts"],
+);
+
 // A RangeError can mean a stack overflow, a host string or buffer limit, a
 // raw read or write past a buffer, or whatever its thrower intended. Only
 // known host limits are classified; parsers throw a ParseFailureError.
@@ -485,23 +687,17 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
+// Cleanup completion is recorded by the owner and read by errors when asked;
+// AnalysisError has no push API. Composing dependency sets with
+// bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
-  files,
-  /\.resolveCleanup\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
-);
-checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies, analysisErrorWithCloseRejection(s) for close rejections whose completion may be unknown, or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/domain/analysisErrorCleanup.ts"],
 );
+
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
 // callers choose only how they probe each candidate.
@@ -517,19 +713,59 @@ checkCounted(
 // takes it from there and passes the platform or architecture on as a
 // required parameter. An ambient read elsewhere mixes the host REA runs on
 // with the host a caller asked about, and cannot be selected by a test.
+// Named imports from node:process or node:os and os.platform()/os.arch() are
+// the same read under another spelling.
+const ambientHostRead = (property, osFunction) =>
+  new RegExp(
+    String.raw`\bprocess\.${property}\b|\bos\.${osFunction}\(\)|\bimport\s*(?:type\s*)?\{[^}]*\b(?:${property}|${osFunction})\b[^}]*\}\s*from\s*["'](?:node:)?(?:process|os)["']`,
+    "gu",
+  );
 checkCounted(
   "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
   "ambient-host-platform",
   files,
-  /\bprocess\.platform\b/gu,
+  ambientHostRead("platform", "platform"),
   ["src/platform/HostPlatform.ts"],
 );
 checkCounted(
   "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
   "ambient-host-architecture",
   files,
-  /\bprocess\.arch\b/gu,
+  ambientHostRead("arch", "arch"),
   ["src/platform/HostPlatform.ts"],
+);
+
+// Tests select a platform or architecture by injecting it (a parameter, a
+// `host` option, or a mock of src/platform/HostPlatform). Redefining
+// process.platform or process.arch stops exercising its branch once the module
+// under test takes the host from HostPlatform, and still passes. Each module
+// migration switches its tests to injection and lowers this baseline.
+const listTestFiles = async (dir) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) output.push(...(await listTestFiles(path)));
+    else if (/\.(?:test|spec|fixture)\.ts$/u.test(entry.name))
+      output.push(path);
+  }
+  return output;
+};
+const testFiles = await Promise.all(
+  [
+    ...(await listTestFiles(join(root, "src"))),
+    ...(await listFiles(join(root, "tests"))),
+    ...(await listTestFiles(join(root, "tests"))),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+checkCounted(
+  "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
+  "test-host-platform-stub",
+  testFiles,
+  /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
 );
 
 // `find` on a parsed section, program-header or load-command table silently
@@ -577,50 +813,59 @@ const verifierScripts = await Promise.all(
       ),
     })),
 );
+// The Windows native lane tests PrivateRuntimeRoot itself: it calls
+// PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
+// violation and asserts the typed refusal. That call is the subject under
+// test, not a verifier root, so exactly one occurrence of that expression is
+// exempt; any other allocation in the file, including a second copy of it,
+// still counts.
+const verifierRootSubjectsUnderTest = new Map([
+  [
+    "scripts/verify-windows-native.mjs",
+    "PrivateRuntimeRoot.create({ parent: sharingParent.observation.path })",
+  ],
+]);
 checkCounted(
   "verifier fixture root allocated outside VerifierFixture (use scripts/lib/verifier-fixture.mjs)",
   "verifier-fixture-root",
-  verifierScripts,
+  verifierScripts.map((file) => {
+    const subject = verifierRootSubjectsUnderTest.get(file.path);
+    return subject === undefined
+      ? file
+      : { ...file, content: file.content.replace(subject, "") };
+  }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );
 
-if (baselinesShrunk) {
-  const sorted = Object.fromEntries(
-    Object.entries(baselines).map(([key, counts]) => [
-      key,
-      Object.fromEntries(
-        Object.entries(counts).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ]),
+for (const key of baselineTexts.keys())
+  if (!checkedBaselineKeys.has(key))
+    failures.push(
+      `${relative(root, join(baselineDirectory, `${key}.json`))} names no counted guard; delete it or restore its guard.`,
+    );
+for (const key of checkedBaselineKeys) {
+  const path = join(baselineDirectory, `${key}.json`);
+  const shown = relative(root, path);
+  const baselineFile = reconcileBaselineFile(
+    baselineTexts.get(key),
+    baselines[key],
+    shrinkBaselines,
   );
-  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
+  if (baselineFile.action === "write") {
+    await writeFile(path, baselineFile.text);
+    console.log(`Rewrote ${shown}.`);
+  } else if (baselineFile.action === "delete") {
+    await rm(path);
+    console.log(`Removed ${shown}; its guard has no remaining copies.`);
+  } else if (baselineFile.action === "reject")
+    failures.push(
+      `${shown} is not in its written form (paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+    );
 }
+if (baselinesShrunk) console.log("Lowered counted baselines.");
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
-}
-// CI runs this file before `npm ci`. The numeric-limit parser needs
-// typescript6, so that check waits until dependencies exist. `npm run lint`
-// runs it after install.
-const typescript6 = new URL(
-  "../../node_modules/typescript6/package.json",
-  import.meta.url,
-);
-if (!existsSync(typescript6)) {
-  console.log(
-    "Numeric REA_ limit check waits until dependencies are installed.",
-  );
-} else {
-  const numericLimits = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
-    { stdio: "inherit" },
-  );
-  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);

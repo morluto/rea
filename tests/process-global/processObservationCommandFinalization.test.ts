@@ -160,12 +160,6 @@ it.skipIf(process.platform === "win32")(
     const donePath = join(directory, "done");
     const psPath = join(directory, "ps");
     const originalPath = process.env.PATH;
-    const platformDescriptor = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    );
-    if (platformDescriptor === undefined)
-      throw new Error("process.platform descriptor is unavailable");
 
     let stopSampler: (() => Promise<unknown>) | undefined;
     let restoreProcessGlobals = (): void => {};
@@ -192,17 +186,12 @@ it.skipIf(process.platform === "win32")(
     await chmod(psPath, 0o755);
 
     process.env.PATH = `${directory}${originalPath === undefined ? "" : `:${originalPath}`}`;
-    // macOS runs /bin/ps; another ps platform keeps the fixture on PATH.
-    Object.defineProperty(process, "platform", {
-      ...platformDescriptor,
-      value: "freebsd",
-    });
     restoreProcessGlobals = () => {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
-      Object.defineProperty(process, "platform", platformDescriptor);
     };
 
+    // macOS runs /bin/ps; another ps platform keeps the fixture on PATH.
     stopSampler = startProcessSampler({
       platform: "freebsd",
       resourceScope: createTestProcessCaptureResourceScope(),

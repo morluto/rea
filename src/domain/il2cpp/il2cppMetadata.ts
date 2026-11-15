@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requirePresence } from "../schemaConstraints.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
@@ -106,8 +107,8 @@ const optionalIndex = z.number().int().min(-1);
 const indexWidth = z.union([z.literal(1), z.literal(2), z.literal(4)]);
 
 /** One explicit local file; detail selects delivery, never decoding coverage. */
-export const inspectIl2cppMetadataInputSchema = z
-  .strictObject({
+export const inspectIl2cppMetadataInputSchema = requirePresence(
+  z.strictObject({
     path: absoluteLocalPathStringSchema.describe(
       "Absolute filesystem path to a Unity IL2CPP global-metadata.dat file",
     ),
@@ -134,30 +135,21 @@ export const inspectIl2cppMetadataInputSchema = z
       .describe(
         "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
       ),
-  })
-  .superRefine((input, context) => {
-    if (input.binary_path !== undefined) return;
-    if (input.binary_architecture !== undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["binary_architecture"],
-        message: "binary_architecture selects a slice of binary_path.",
-      });
-    if (input.generic_instances === true)
-      context.addIssue({
-        code: "custom",
-        path: ["generic_instances"],
-        message: "generic_instances links generic methods in binary_path.",
-      });
-  })
-  .meta({
-    dependentRequired: { binary_architecture: ["binary_path"] },
-    if: {
-      properties: { generic_instances: { const: true } },
-      required: ["generic_instances"],
+  }),
+  [
+    {
+      when: "binary_architecture",
+      requires: "binary_path",
+      message: "binary_architecture selects a slice of binary_path.",
     },
-    then: { required: ["binary_path"] },
-  });
+    {
+      when: "generic_instances",
+      equals: true,
+      requires: "binary_path",
+      message: "generic_instances links generic methods in binary_path.",
+    },
+  ],
+);
 
 export type IL2cppMetadataSectionName = z.infer<
   typeof il2cppMetadataSectionSchema

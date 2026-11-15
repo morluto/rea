@@ -1,5 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
@@ -8,13 +8,13 @@ import {
   type NativeInitializerInspection,
   type NativeInitializerKind,
 } from "../../domain/native/nativeInitializers.js";
-import type { ElfPointerWrite } from "../metadata/ElfPointerRelocations.js";
+import type { ElfPointerWrite } from "../../domain/native/elfPointerRelocations.js";
 import {
   ElfPointerRelocationFailure,
   elfRelativeRelocationType,
   readElfRelocationWritesSteps,
-} from "../metadata/ElfPointerRelocations.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+} from "../../domain/native/elfPointerRelocations.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -22,9 +22,9 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   type FileMappingIndex,
-} from "../metadata/BinaryContainer.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/binaryContainer.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
   elfInitializerSlotKey,

@@ -239,6 +239,7 @@ export const parseMemberRefs = (
   layout: ManagedMetadataLayout,
   {
     typeName,
+    isResolvedTypeSpec,
     signatureTypeName,
     displayTypeName,
     declarationTypeName,
@@ -246,6 +247,9 @@ export const parseMemberRefs = (
     readonly typeName: (
       reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
     ) => string | null;
+    readonly isResolvedTypeSpec: (
+      reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
+    ) => boolean;
     readonly signatureTypeName: SignatureTypeName;
     readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
@@ -309,6 +313,12 @@ export const parseMemberRefs = (
         declaringType: parentName,
         kind: decoded.kind,
         genericArity: signatureGenericArity(decoded),
+        rowResolved:
+          parent.kind === "valid" &&
+          parent.table === 27 &&
+          isResolvedTypeSpec(parent) &&
+          decoded.parse_status === "decoded" &&
+          decoded.resolved_sha256 !== null,
         identitySha256: memberTargetIdentity(
           name,
           parent.kind === "valid" ? parent : null,
@@ -618,6 +628,9 @@ export const edges = (
       if (!isManagedMemberReferenceInstruction(anchor)) continue;
       const { operand } = anchor;
       const target = namedTarget(members, anchor.operand_kind, operand);
+      const targetRowResolved =
+        target !== undefined &&
+        (target.identitySha256 != null || target.rowResolved === true);
       if (anchor.operand_kind === "method") {
         // Each derived record is admitted before the graph grows further.
         callEdges.push(
@@ -626,6 +639,7 @@ export const edges = (
               caller_token: method.token,
               il_offset: instruction.offset,
               target_identity_sha256: target?.identitySha256 ?? null,
+              target_row_resolved: targetRowResolved,
               caller,
               opcode: anchor.opcode,
               target_token: operand,
@@ -644,6 +658,7 @@ export const edges = (
               method_token: method.token,
               il_offset: instruction.offset,
               target_identity_sha256: target?.identitySha256 ?? null,
+              target_row_resolved: targetRowResolved,
               method: caller,
               opcode: anchor.opcode,
               field_token: operand,

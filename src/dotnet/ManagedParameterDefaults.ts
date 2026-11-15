@@ -2,7 +2,7 @@ import type {
   ManagedMemberInspection,
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import {

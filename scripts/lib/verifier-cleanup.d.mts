@@ -8,3 +8,6 @@ export function withVerifierCleanup<T>(
   operation: () => T | Promise<T>,
   cleanupTasks: readonly (() => void | Promise<void>)[],
 ): Promise<T>;
+
+/** The leaf reasons of a verifier failure, through nested AggregateErrors. */
+export function verifierFailureReasons(cause: unknown): string[];

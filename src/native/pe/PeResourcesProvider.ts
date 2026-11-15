@@ -1,4 +1,4 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -6,20 +6,16 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
@@ -36,7 +32,7 @@ import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeResources,
   PE_RESOURCE_METADATA_BYTES,
-} from "./PeResourceParser.js";
+} from "../../artifacts/pe/PeResourceParser.js";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {

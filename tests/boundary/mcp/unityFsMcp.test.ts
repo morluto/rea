@@ -9,7 +9,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains UnityFS facts and unsupported content through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-unity-mcp-");

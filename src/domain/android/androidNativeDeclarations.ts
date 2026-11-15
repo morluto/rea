@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { dexDescriptorSchema } from "./dexTypes.js";
 
@@ -33,7 +34,7 @@ export const androidNativeDeclarationsSchema = z.strictObject({
   scope: z.literal("apk-root-dex-declarations"),
   methods: z.array(androidNativeDeclarationSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial", "unknown"]),
+    status: coverageStatusSchema,
     dex_entries: count,
     examined_dex_entries: count,
     examined_classes: count,

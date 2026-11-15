@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -411,7 +412,7 @@ const assertSuccessfulTraceParity = async (
   const advertised = tools.find(
     ({ name }) => name === "trace_javascript_semantics",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Semantic trace SDK output schema is missing");
   const ajv = new Ajv2020({
     strict: false,
@@ -419,7 +420,9 @@ const assertSuccessfulTraceParity = async (
     inlineRefs: false,
     code: { optimize: false },
   });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(outputSchema, mcpResponse.structuredContent)).toBe(true);
   const mcpEvidence = toolContract(

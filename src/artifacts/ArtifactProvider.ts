@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import {
   resolveArtifactReaderLimits,
@@ -6,7 +7,12 @@ import {
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
-import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  withArtifactTargetIdentity,
+} from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -18,14 +24,13 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   inspectBundleKeyedArchive,
   inspectStandaloneKeyedArchive,
 } from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
 import { dirname } from "node:path";
-import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -47,8 +52,6 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -58,8 +61,10 @@ import {
   createArtifactInspection,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
-import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import type {
+  ResolvedAppBundleResourceRoot,
+  BundleResourceRoot,
+} from "../domain/apple/bundleResourceRoot.js";
 import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../application/binary/BundleResourceSession.js";
 
 /** Read-only inventory and exclusively owned extraction provider. */
@@ -70,7 +75,8 @@ export class ArtifactProvider implements AnalysisProvider {
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
-    platform: NodeJS.Platform = process.platform,
+    /** The host whose readers run; tests select another host's rules. */
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     private readonly settings?: AnalysisSettingsReader,
   ) {
     this.environment = snapshotEnvironment(environment, platform);

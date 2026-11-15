@@ -2,17 +2,17 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import {
   BROWSER_SCENARIO_START_STEP_ID,
@@ -475,11 +475,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
       );
       this.#bindCleanup(cleanup, retained);
       return err(
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          OPERATION,
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
       );
     }
   }

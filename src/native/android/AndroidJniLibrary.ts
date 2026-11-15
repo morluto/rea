@@ -9,20 +9,20 @@ import type {
   AndroidJniTableSlot,
 } from "../../domain/android/androidJniLibraryFacts.js";
 import { parseNativeExportsSteps } from "../exports/NativeExportParser.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
   createFileMappingIndex,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   readElfPointerRelocationsSteps,
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
-} from "../metadata/ElfPointerRelocations.js";
+} from "../../domain/native/elfPointerRelocations.js";
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;
@@ -303,11 +303,11 @@ export const inspectAndroidJniLibrary = async (
         if (cause instanceof BinaryMappingFailure) {
           if (cause.reason !== "unmapped") throw cause;
           stringWork += scanned ? allowance + 1 : 1;
-        } else if (cause instanceof BinaryStringReadLimitFailure) {
+        } else if (isBinaryStringReadLimit(cause)) {
           stringWork += allowance + 1;
           tablesStatus = "partial";
           unknowns.add(
-            `Some JNI candidate strings exceeded the ${cause.maximumBytes}-byte NUL-termination read allowance; omitted entries remain unknown`,
+            `Some JNI candidate strings exceeded the ${String(cause.failure.limit.maximum)}-byte NUL-termination read allowance; omitted entries remain unknown`,
           );
         } else if (cause instanceof BinaryFormatFailure) {
           // Unterminated source bytes also consume their actual scan allowance.

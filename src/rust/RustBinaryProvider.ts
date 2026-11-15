@@ -4,24 +4,20 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
+  readerIntegrityFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { RustBinaryPort } from "../ports/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -40,7 +36,7 @@ import {
   readRustBinaryImage,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
-import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
+import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 
@@ -404,9 +400,7 @@ const artifactReaderFailure = (
   limits: RustProducerLimits,
 ): AnalysisError => {
   if (cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
+    return readerIntegrityFailure(OPERATION, path, cause);
   if (cause.reason === "cancelled")
     return cancelledBy(
       OPERATION,

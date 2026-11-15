@@ -9,7 +9,7 @@ import {
   gpuCodeObjectsSchema,
 } from "../../src/domain/gpu/gpuCodeObjects.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import { amdFixture, cudaFixture } from "../fixtures/gpu/codeObjects.js";
 type ReadFile = (
   buffer: Buffer,
@@ -208,13 +208,7 @@ it("preserves completed observations when caller cancellation arrives during fin
 
 it("joins an admitted file read during shutdown and rejects overlapping work", async () => {
   const { path, prototype, provider } = await fixture();
-  let entered!: () => void, release!: () => void;
-  const admitted = new Promise<void>((resolve) => {
-      entered = resolve;
-    }),
-    barrier = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+  const fileRead = phaseGate();
   const read = prototype.read;
   let blocked = false;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
@@ -223,8 +217,7 @@ it("joins an admitted file read during shutdown and rejects overlapping work", a
   ) {
     if (!blocked) {
       blocked = true;
-      entered();
-      await barrier;
+      await fileRead.hold();
     }
     return read.apply(this, args);
   });
@@ -232,7 +225,7 @@ it("joins an admitted file read during shutdown and rejects overlapping work", a
   let closing: Promise<void> | undefined;
   try {
     active = provider.inspect({ path, analysis: "kernels" });
-    await awaitAcknowledgement(admitted, active, "GPU file read admission");
+    await fileRead.reached(active, "GPU file read admission");
     let closed = false;
     closing = provider.close().then(() => {
       closed = true;
@@ -243,13 +236,13 @@ it("joins an admitted file read during shutdown and rejects overlapping work", a
       error: { _tag: "AnalysisResourceConstraintError" },
     });
     expect(closed).toBe(false);
-    release();
+    fileRead.release();
     const result = await active;
     expect(result.ok).toBe(true);
     await closing;
     expect(closed).toBe(true);
   } finally {
-    release();
+    fileRead.release();
     try {
       try {
         await active;

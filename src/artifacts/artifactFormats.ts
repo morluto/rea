@@ -13,7 +13,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
@@ -299,6 +299,7 @@ const NON_ZIP_FORMATS = {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES inventory requires its admitted source descriptor",
+          { integrityCheck: "inventory-node" },
         );
       return new InesArtifactReader(path, source);
     },

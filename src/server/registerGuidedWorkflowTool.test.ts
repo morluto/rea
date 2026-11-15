@@ -1,13 +1,13 @@
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, vi } from "vitest";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
 import {
   mcpTest as it,
   type TestMcp,
 } from "../../tests/support/mcp/mcpFixture.js";
 import { PROMPT_CONTRACTS } from "../contracts/promptContracts.js";
-import { createCatalogDigests } from "../catalogIdentity.js";
+import { createCatalogDigests } from "../contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS, toolContract } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
@@ -28,7 +28,7 @@ const fixture = async (mcp: TestMcp, families?: ReadonlySet<string>) => {
     undefined,
     new ToolResultDelivery(1024 * 1024),
     undefined,
-    "full",
+    undefined,
     undefined,
     families,
   );

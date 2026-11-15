@@ -27,7 +27,7 @@ cliTest.for(["decreasing", "ordered"] as const)(
         path,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
