@@ -11,6 +11,10 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import {
+  TOOL_REGISTRATION_OWNERS,
+  toolRegistrationCount,
+} from "./tool-registration-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -524,22 +528,13 @@ checkCounted(
   [],
 );
 
-// Each catalog tool is bound once, in the shared binding table
-// (serviceToolBindings.ts / contractToolBindings.ts), so its admission,
-// logging, progress and delivery come from one loop. A bespoke
-// `server.registerTool` call re-implements that wiring for one family.
-// Owners: the binding loop, the server core that wraps the SDK, and the agent
-// environment server, which serves its own catalog rather than REA's.
+// tool-registration-guard.mjs states the rule and its written owners.
 checkCounted(
   "MCP tool registered outside the shared binding table (bind it in src/server/serviceToolBindings.ts)",
   "bespoke-mcp-tool-registration",
   files.filter(({ path }) => path.startsWith("src/")),
-  /\.registerTool\(/gu,
-  [
-    "src/server/contractToolBindings.ts",
-    "src/server/EvidenceMcpServerCore.ts",
-    "src/server/environment/serveEnvironment.ts",
-  ],
+  toolRegistrationCount,
+  [...TOOL_REGISTRATION_OWNERS.keys()],
 );
 
 // A runtime setting view throws the ConfigurationError of a malformed launch
