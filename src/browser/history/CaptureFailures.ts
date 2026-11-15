@@ -1,4 +1,5 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
@@ -289,12 +290,7 @@ export const historicalCaptureFailure = (
     // Bare syscall rejections remain physical even when they equal the abort reason.
     phase === "decoder" &&
     origin === "owned-or-classified" &&
-    options?.signal?.aborted === true &&
-    (cause === options.signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
+    isAbortOf(cause, options?.signal)
   )
     return new AnalysisCancelledError(OPERATION, {
       cause: options.signal.reason,

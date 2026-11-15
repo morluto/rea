@@ -1,4 +1,5 @@
 import { addAbortListener } from "node:events";
+import { isAbortWithReason } from "./process/SignalAbort.js";
 import type { Readable } from "node:stream";
 import { getHeapStatistics } from "node:v8";
 
@@ -245,13 +246,7 @@ const readCliJsonStdin = async (
 const isJsonInputCancellation = (
   cause: unknown,
   signal: AbortSignal,
-): boolean =>
-  cause === signal.reason ||
-  (cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason);
+): boolean => isAbortWithReason(cause, signal.reason);
 
 const accessDeniedSystemCode = (
   cause: unknown,

@@ -1,4 +1,5 @@
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Why a URL was refused before any vendor response could be admitted. */
@@ -64,14 +65,7 @@ export const HOPPER_METADATA_TIMEOUT_MS = 10_000;
 export const isHopperRequestCancellation = (
   cause: unknown,
   signal: AbortSignal | undefined,
-): boolean =>
-  signal?.aborted === true &&
-  (cause === signal.reason ||
-    (cause instanceof Error &&
-      cause.name === "AbortError" &&
-      "code" in cause &&
-      cause.code === "ABORT_ERR" &&
-      cause.cause === signal.reason));
+): boolean => isAbortOf(cause, signal);
 
 /**
  * Bound observed response bytes before retaining them, including chunked bodies.

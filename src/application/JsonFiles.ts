@@ -8,6 +8,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { basename, dirname, resolve } from "node:path";
 
 import {
@@ -303,17 +304,7 @@ const jsonFileCleanupError = <Value>(
 const isJsonReadCancellation = (
   cause: unknown,
   signal?: AbortSignal,
-): boolean => {
-  if (signal?.aborted !== true) return false;
-  if (cause === signal.reason) return true;
-  return (
-    cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason
-  );
-};
+): boolean => isAbortOf(cause, signal);
 
 /** Atomically write text to the caller-supplied path. */
 export const writeTextFile = async (

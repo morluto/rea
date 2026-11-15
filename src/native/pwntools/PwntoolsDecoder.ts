@@ -1,4 +1,5 @@
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
@@ -424,11 +425,9 @@ export class PwntoolsDecoder<
       } catch (cause: unknown) {
         // Normalize Node's abort envelope only at the write that produced it.
         if (
-          options?.signal?.aborted &&
-          cause instanceof Error &&
-          "code" in cause &&
-          cause.code === "ABORT_ERR" &&
-          cause.cause === options.signal.reason
+          options?.signal?.aborted === true &&
+          cause !== options.signal.reason &&
+          isAbortOf(cause, options.signal)
         )
           throw new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,

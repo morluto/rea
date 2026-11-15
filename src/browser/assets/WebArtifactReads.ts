@@ -1,4 +1,5 @@
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
@@ -177,15 +178,7 @@ const webArtifactPrimaryError = (
     return new AnalysisCancelledError(context.operation, {
       cause: artifactFileCancellationCause(cause),
     });
-  if (
-    origin === "owned-or-classified" &&
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
-  )
+  if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return new AnalysisCancelledError(context.operation, {
       cause: signal.reason,
     });
