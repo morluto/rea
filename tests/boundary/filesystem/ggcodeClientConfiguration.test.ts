@@ -72,7 +72,9 @@ describe("ggcode configuration paths", () => {
 
   it("resolves the personal skills directory beside the config root", () => {
     expect(
-      skillDestinations("/home/a", ["ggcode"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["ggcode"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".ggcode", "skills", "reverse-engineer-anything"),
     ]);
