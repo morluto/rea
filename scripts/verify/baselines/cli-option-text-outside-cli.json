@@ -8,7 +8,6 @@
   "src/domain/javascript/javascriptSemanticResourceLimits.ts": 1,
   "src/dotnet/ManagedDecodeBudget.ts": 1,
   "src/dotnet/ManagedMemberRecovery.ts": 1,
-  "src/dotnet/ManagedSnapshot.ts": 1,
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
   "src/ghidra/GhidraProviderClient.ts": 2,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
