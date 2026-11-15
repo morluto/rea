@@ -9,7 +9,6 @@ processTest.skipIf(
     (typeof process.getuid === "function" && process.getuid() === 0),
 )(
   "fails the numeric limit guard when a required scan directory is unreadable",
-  { timeout: 60_000 },
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-limit-permission-");
     await mkdir(join(root, "scripts/verify"), { recursive: true });
@@ -33,7 +32,7 @@ processTest.skipIf(
       processes.run(
         process.execPath,
         ["scripts/verify/rea-numeric-limits.mjs"],
-        { cwd: root, timeoutMs: 20_000 },
+        { cwd: root },
       );
     const healthy = await run();
     expect(healthy.exitCode, healthy.stderr).toBe(0);

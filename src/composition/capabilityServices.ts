@@ -12,18 +12,17 @@ import {
 } from "./capabilityDeclarations.js";
 import { isAbsolute } from "node:path";
 import { createGpuCodeObjectsService } from "./gpu.js";
-import { createPacketCaptureService, tsharkHostSupported } from "./captures.js";
-import {
-  createSignalRecordingService,
-  sigrokHostSupported,
-} from "./signals.js";
+import { createPacketCaptureService } from "./captures.js";
+import { tsharkHostSupported } from "../captures/TsharkCaptureProvider.js";
+import { createSignalRecordingService } from "./signals.js";
+import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
 import { apkSignatureModule } from "./apkSignature.js";
+import { evmInterfaceModule } from "./evm.js";
 import {
-  evmInterfaceModule,
   evmHostSupported,
   evmLimiterAvailability,
-} from "./evm.js";
+} from "../evm/EvmoleInterfaceProvider.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
@@ -40,10 +39,8 @@ import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
-import {
-  createJavaScriptRecoveryProvider,
-  wakaruHostSupported,
-} from "./javascriptRecovery.js";
+import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
+import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
@@ -51,10 +48,8 @@ import type {
   CommandProviderLaunchFailures,
 } from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import {
-  createFirmwareAnalysisProvider,
-  firmwareHostSupported,
-} from "./firmware.js";
+import { createFirmwareAnalysisProvider } from "./firmware.js";
+import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
 import { createFlutterBuildAnalysisProvider } from "./flutter.js";
@@ -79,7 +74,6 @@ import {
   createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
-  pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
   createNativeInitializersService,
@@ -88,6 +82,7 @@ import {
   createKernelModuleService,
   createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
+import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -124,6 +119,7 @@ import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -166,6 +162,8 @@ export interface CapabilityServiceOptions {
   readonly desktopBuildSettle?: BuildSettle;
   /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
   readonly desktopBuildDefaults?: BuildComputerDefaults;
+  /** How long a build computer waits for its desktop to draw and how often its start reports progress; the shipped timing unless a test shortens it. */
+  readonly desktopBuildStartTiming?: ComputerStartTiming;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
@@ -344,6 +342,7 @@ const modules = {
         providerEnvironment,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
+        options.desktopBuildStartTiming,
       ),
     (value) => value.closeAll(),
   ),

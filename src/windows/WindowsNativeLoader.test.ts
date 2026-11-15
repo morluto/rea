@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   loadWindowsNativeAuthority,
   windowsNativeFailureRemediation,
@@ -280,5 +281,34 @@ describe("packaged Windows native artifact validation", () => {
       available: false,
       reason: expect.stringContaining("privateBridgeDescriptorAccess"),
     });
+  });
+});
+
+describe("system authority cache", () => {
+  // Each case starts from an empty module-level cache.
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  const systemAuthority = async () =>
+    (await import("./WindowsNativeLoader.js")).systemWindowsNativeAuthority;
+  const other = {
+    platform: HOST_PLATFORM.platform === "win32" ? "linux" : "win32",
+    architecture: "x64",
+  } as const;
+
+  it("keeps the host result after another host is injected", async () => {
+    const authority = await systemAuthority();
+    const host = authority();
+    const injected = authority(other);
+    expect(injected).not.toEqual(host);
+    expect(authority()).toEqual(host);
+  });
+
+  it("never caches an injected host's result for the host", async () => {
+    const authority = await systemAuthority();
+    const injected = authority(other);
+    const host = authority();
+    expect(host).not.toEqual(injected);
+    expect(authority()).toEqual(host);
   });
 });

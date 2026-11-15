@@ -9,7 +9,6 @@ import { createWebScreenshotArtifact } from "../../../src/domain/webScreenshot.j
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 // Linux limits one argument to 128 KiB and macOS all arguments to 1 MiB.
 const COMMAND_LINE_LIMIT_BYTES = 1024 * 1024;
 
@@ -66,7 +65,6 @@ describe("browser comparison JSON file inputs", () => {
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 
   cliTest(
@@ -102,7 +100,6 @@ describe("browser comparison JSON file inputs", () => {
         },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 
   cliTest(
@@ -110,7 +107,6 @@ describe("browser comparison JSON file inputs", () => {
     async ({ cli }) => {
       await assertPngInputErrorProjections(cli);
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 
   cliTest(
@@ -140,7 +136,6 @@ describe("browser comparison JSON file inputs", () => {
         input_reason: "read-failed",
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 

@@ -94,6 +94,26 @@ describe("selected native process identity", () => {
     },
   );
 
+  it("reports an observed exit in progress without confirming exit", async () => {
+    const exiting: ProcessOwnershipHost = {
+      ...host("start-1"),
+      processIdentities: async () =>
+        new Map([
+          [
+            42,
+            {
+              state: "readable",
+              identity: "start-1",
+              lifecycle: { state: "observed", lifecycle: "exiting" },
+            },
+          ],
+        ]),
+    };
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", exiting),
+    ).resolves.toBe("exiting");
+  });
+
   it("binds an omitted native PID to its directly observed run token", async () => {
     const omitted: ProcessOwnershipHost = {
       ...host("start-1"),

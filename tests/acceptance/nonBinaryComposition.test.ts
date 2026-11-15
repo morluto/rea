@@ -66,7 +66,6 @@ for (const { jarConfigured, setting } of [
       const cliResult = await cli.run({
         arguments: ["inspect-android-package", apk, "--json"],
         environment,
-        timeoutMs: 10_000,
       });
       expect(cliResult.exitCode).toBe(1);
       expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -91,7 +90,6 @@ cliTest.skipIf(process.platform === "win32")(
       const cliResult = await cli.run({
         arguments: ["inspect-android-package", apk, "--json"],
         environment: { REA_LOG_LEVEL: "silent", ...environment },
-        timeoutMs: 10_000,
       });
       expect(cliResult.exitCode).toBe(1);
       const client = await connect({ REA_LOG_LEVEL: "silent", ...environment });
@@ -146,7 +144,6 @@ cliTest.skipIf(process.platform !== "linux")(
     const cliResult = await cli.run({
       arguments: ["inspect-firmware-regions", path, "--json"],
       environment,
-      timeoutMs: 10_000,
     });
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -172,7 +169,6 @@ cliTest.skipIf(process.platform !== "linux")(
       arguments: ["inspect-firmware-regions", "input.bin", "--json"],
       cwd: root,
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 10_000,
     });
     // A relative path must pass input validation and reach the provider,
     // which reports the missing firmware engine — not a validation error.
@@ -199,7 +195,6 @@ cliTest(
         "--json",
       ],
       environment,
-      timeoutMs: 10000,
     });
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -239,7 +234,6 @@ cliTest(
           "--json",
         ],
         environment,
-        timeoutMs: 10_000,
       });
       const response = await client.callTool({
         name: "recover_javascript_sources",

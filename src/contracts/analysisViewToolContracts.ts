@@ -1,9 +1,7 @@
 import { API_SURFACE_EXAMPLE } from "./analysisViewApiSurfaceExample.js";
 import { ENVIRONMENT_MANIFEST_EXAMPLE } from "./analysisViewEnvironmentManifestExample.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";

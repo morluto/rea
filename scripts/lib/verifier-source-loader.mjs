@@ -43,6 +43,15 @@ const sourceResolution = (resolution) => {
     : resolution;
 };
 
+/** TypeScript source a missing `.js` or `.mjs` specifier names, as this loader resolves it. */
+export const typeScriptSourcePath = (path) => {
+  const extension = extname(path);
+  if (extension !== ".js" && extension !== ".mjs") return undefined;
+  return (
+    path.slice(0, -extension.length) + (extension === ".js" ? ".ts" : ".mts")
+  );
+};
+
 const resolveSource = (specifier, context, nextResolve) => {
   try {
     return sourceResolution(nextResolve(specifier, context));
@@ -57,10 +66,8 @@ const resolveSource = (specifier, context, nextResolve) => {
     const selected = new URL(specifier, context.parentURL);
     const path = ownedSourcePath(selected.href);
     if (path === undefined) throw cause;
-    const extension = extname(path);
-    if (extension !== ".js" && extension !== ".mjs") throw cause;
-    const source =
-      path.slice(0, -extension.length) + (extension === ".js" ? ".ts" : ".mts");
+    const source = typeScriptSourcePath(path);
+    if (source === undefined) throw cause;
     try {
       if (!statSync(source).isFile()) throw cause;
     } catch (failure) {

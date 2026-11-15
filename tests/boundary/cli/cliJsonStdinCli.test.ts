@@ -74,9 +74,7 @@ cliTest.for([false, true])(
       child.once("close", () => resolve());
     });
     await expect
-      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr), {
-        timeout: 10_000,
-      })
+      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr))
       .toBe(true);
     const heapSizeLimit = Number(
       /REA_TEST_STDIN_READ (\d+)/u.exec(stderr)?.[1],
@@ -182,9 +180,7 @@ cliTest.skipIf(process.platform === "win32").for(
       child.once("error", reject);
       child.once("close", () => resolve());
     });
-    await expect
-      .poll(() => stderr.includes("REA_TEST_STDIN_READ"), { timeout: 10_000 })
-      .toBe(true);
+    await expect.poll(() => stderr.includes("REA_TEST_STDIN_READ")).toBe(true);
     // Keep the pipe open: EOF must not be what releases the pending read.
     child.kill(signal);
     expect(await waitForExit(child, 5_000), stderr).toBe(true);

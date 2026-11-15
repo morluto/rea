@@ -1,9 +1,14 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { z } from "zod";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   type NativeCommandCapture,
@@ -63,10 +68,7 @@ interface LipoOutput {
 }
 
 /** Parse `lipo -detailed_info` framing and deterministic slice metadata. */
-export const parseLipoOutput = (
-  output: string,
-  operandPath?: string,
-): LipoOutput => {
+const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   // The echoed FAT operand is one value, even when its pathname contains lines.
   if (operandPath !== undefined) {
     const header = `Fat header in: ${operandPath}`;
@@ -235,7 +237,10 @@ export const parseLipoOutput = (
   }
   flush();
   if (architectures.length === 0)
-    throw new TypeError("lipo output contained no architectures");
+    throw malformedInput(
+      "lipo-output",
+      "lipo output contained no architectures",
+    );
   return {
     format: "fat",
     declaredArchitectureCount,
@@ -248,12 +253,15 @@ export const parseLipoOutput = (
 export const parseLipoOutputResult = (
   output: string,
   operandPath?: string,
-): Result<LipoOutput, TypeError | z.ZodError | LipoFieldRetentionError> => {
+): Result<
+  LipoOutput,
+  ParseFailureError | z.ZodError | LipoFieldRetentionError
+> => {
   try {
     return ok(parseLipoOutput(output, operandPath));
   } catch (cause: unknown) {
     if (
-      !(cause instanceof TypeError) &&
+      !(cause instanceof ParseFailureError) &&
       !(cause instanceof z.ZodError) &&
       !(cause instanceof LipoFieldRetentionError)
     )
@@ -292,7 +300,15 @@ export const parseLipoCapture = (
           maximum_retained_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
           required_retained_bytes: parsed.error.requiredBytes,
         },
-        { cause: parsed.error, retryable: false, capturedOutput },
+        {
+          cause: parsed.error,
+          capturedOutput,
+          ...fixedAllowanceOptions(
+            "The lipo field retention allowance",
+            "capture",
+            { limit: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES, unit: "bytes" },
+          ),
+        },
       ),
     );
   return err(

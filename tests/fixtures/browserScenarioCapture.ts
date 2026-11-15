@@ -37,7 +37,7 @@ export interface ScenarioExchange {
   readonly responseHeaders?: readonly ScenarioHeader[];
 }
 
-export interface ScenarioHeader {
+interface ScenarioHeader {
   readonly name: string;
   readonly value: string | null;
 }

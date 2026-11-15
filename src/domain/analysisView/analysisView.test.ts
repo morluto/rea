@@ -27,12 +27,10 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
@@ -581,7 +579,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       format: "elf",
       counts: { sections: 3, symbols: 3, segments: 0, relocations: 0 },
     },
-    coverage: completeWithinViewCoverage(6, 6),
+    coverage: completeWithinViewCoverage(6),
   });
   const mitigations = projectAnalysisView(parent, {
     kind: "facet",

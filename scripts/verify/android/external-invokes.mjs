@@ -104,7 +104,10 @@ const verifyApk = async (options, path, dexEntry) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: { ...options.environment, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
+    env: {
+      ...options.environment,
+      ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    },
     stderr: "pipe",
   });
   const client = new Client({
@@ -250,7 +253,10 @@ const verifySiteBudget = async (options, path, control) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: { ...options.environment, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
+    env: {
+      ...options.environment,
+      ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "rea-external-site-budget", version: "1" });

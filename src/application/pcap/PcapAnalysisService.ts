@@ -5,7 +5,7 @@ import {
   pcapRequestSchema,
   type PcapOperation,
 } from "../../domain/pcap/pcapAnalysis.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createPcapEvidence } from "../../domain/pcap/pcapEvidence.js";
@@ -23,11 +23,7 @@ export class PcapAnalysisService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const request = pcapRequestSchema.safeParse({ operation, input });
     if (!request.success)
       return err(

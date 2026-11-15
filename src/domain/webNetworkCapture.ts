@@ -33,7 +33,7 @@ const CAPTURE_REPORTED_RECORD_DEPTH = [
   0,
   "reported",
 ].length;
-export const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH =
+const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH =
   MAX_JSON_DEPTH - CAPTURE_REPORTED_RECORD_DEPTH;
 
 /** One admitted capture's complete-input, complete-reply and parser policy. */

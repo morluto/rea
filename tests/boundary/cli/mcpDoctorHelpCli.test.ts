@@ -2,8 +2,6 @@ import { describe, expect } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
-
 describe("MCP doctor output routing boundary", () => {
   workspaceCliTest(
     "keeps output options from selecting the CLI-derived MCP doctor",
@@ -41,7 +39,6 @@ describe("MCP doctor output routing boundary", () => {
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -70,7 +67,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -88,7 +84,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stdout).not.toContain("healthy");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -105,7 +100,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stdout).not.toContain("Usage: rea mcp doctor");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -126,7 +120,6 @@ describe("MCP doctor help boundary", () => {
           'code: VALIDATION_ERROR\nmessage: "Invalid output format: bogus"\n',
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -156,7 +149,6 @@ describe("MCP doctor help boundary", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -180,7 +172,6 @@ describe("MCP doctor timing boundary", () => {
       expect(Number.isFinite(duration)).toBe(true);
       expect(duration).toBeGreaterThanOrEqual(0);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -193,7 +184,6 @@ describe("MCP doctor timing boundary", () => {
       expect(result.stdout).toContain("Invalid output format: --timings");
       expect(result.stderr).toBe("");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -222,5 +212,4 @@ workspaceCliTest(
       else expect(result.stderr).toBe("");
     }
   },
-  CLI_INTEGRATION_TIMEOUT_MS,
 );

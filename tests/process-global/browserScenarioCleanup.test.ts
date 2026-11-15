@@ -29,6 +29,7 @@ import {
   jsonValueSchema,
 } from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
+import { waitFor } from "../support/testWait.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -319,7 +320,7 @@ it("retries a late Playwright open after cancellation before accepting another c
     signal: cancellation.signal,
   });
   try {
-    await vi.waitFor(() => expect(launchCount).toBe(1));
+    await waitFor(() => expect(launchCount).toBe(1));
     cancellation.abort();
     const cancelled = await firstCapture;
     if (cancelled.ok) throw new Error("Expected the first capture to cancel.");

@@ -23,7 +23,6 @@ cliTest(
       const result = await driver.run({
         arguments: ["inspect-artifact", path, "--detail", "complete", "--json"],
         environment: process.env,
-        timeoutMs: 15_000,
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(
