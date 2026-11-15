@@ -49,6 +49,21 @@ describe("top-level module layers", () => {
     });
   });
 
+  it("skips only the exact declared file-to-file exception", () => {
+    expect(
+      layerGraphFacts([
+        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
+      ]).upward,
+    ).toEqual({});
+    expect(
+      layerGraphFacts([
+        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
+        edge("src/domain/other.ts", "src/platform/HostPlatform.js"),
+        edge("src/domain/localPath.ts", "src/platform/Other.js"),
+      ]).upward,
+    ).toEqual({ "domain -> platform": 2 });
+  });
+
   it("refuses an undeclared unit instead of leaving it unconstrained", () => {
     expect(
       layerGraphFacts([edge("src/newProvider/A.ts", "src/domain/B.js")])
