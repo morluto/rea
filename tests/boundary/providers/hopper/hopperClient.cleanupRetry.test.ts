@@ -5,8 +5,10 @@ import { Socket } from "node:net";
 
 import { expect, it, onTestFinished } from "vitest";
 
+import { AnalysisCleanupRelease } from "../../../../src/domain/analysisCleanupRelease.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLaunch,
@@ -353,6 +355,60 @@ it("retries a failed lease release after document, process, and runtime cleanup 
   releaseAllowed = true;
   await expect(client.close()).resolves.toEqual({ ok: true, value: null });
   expect(fixture.processes).toHaveLength(1);
+});
+
+it("reports a launcher aggregate released by its own owner while session cleanup still fails", async () => {
+  const fixture = new RetryCleanupLauncher();
+  fixture.allowCleanup = true;
+  // The launcher's aggregate follows its child failure, whose release the
+  // launcher confirms on its own retry.
+  const imageRelease = new AnalysisCleanupRelease();
+  const imageFailure = imageRelease.bind(
+    new ProviderCleanupError("hopper", ["hopper-prepared-image"], {
+      reason: "fixture image cleanup denial",
+    }),
+  );
+  const launcherFailure = new ProviderCleanupError(
+    "hopper",
+    ["hopper-prepared-image"],
+    { reason: "fixture launcher cleanup denial" },
+  ).bindCleanupDependencies([imageFailure]);
+  let launcherReleases = false;
+  const launcher: BridgeLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      return ok({
+        ...launched.value,
+        releaseLease: async () => {
+          throw new Error("fixture lease release denial");
+        },
+      });
+    },
+    cleanup: async () => {
+      if (!launcherReleases) return err(launcherFailure);
+      imageRelease.confirm();
+      return ok(null);
+    },
+  };
+  const client = createClient({ launcher });
+  await expect(client.start()).resolves.toMatchObject({ ok: false });
+  const first = await client.close();
+  expect(first).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(launcherFailure.cleanupIncomplete).toBe(true);
+
+  launcherReleases = true;
+  const second = await client.close();
+  expect(second).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true, cleanupResources: ["hopper-lease"] },
+  });
+  // The launcher released its resources; only the session's lease remains.
+  expect(launcherFailure.cleanupIncomplete).toBe(false);
+  if (!first.ok) expect(first.error.cleanupResources).toEqual(["hopper-lease"]);
 });
 
 it("preserves confirmed document shutdown while retrying owned process cleanup", async () => {

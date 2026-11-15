@@ -875,12 +875,13 @@ export class HopperClient {
         this.#closeRetry = undefined;
         return closed;
       }
-      // Bind each failed part to the retry before composing, so the
-      // composite completes when a later close of this client succeeds.
+      // Bind each ownerless failed part to the retry before composing, so the
+      // composite completes when a later close of this client succeeds; a part
+      // that already follows its own owner keeps reading that owner.
       const retry = (this.#closeRetry ??= new AnalysisCleanupRelease());
-      if (!closed.ok) retry.bind(closed.error);
+      if (!closed.ok) retry.bindUnowned(closed.error);
       if (launcherClosed === undefined || launcherClosed.ok) return closed;
-      retry.bind(launcherClosed.error);
+      retry.bindUnowned(launcherClosed.error);
       return closed.ok
         ? launcherClosed
         : err(

@@ -122,18 +122,6 @@ interface CleanupFailureTracker {
   readonly onFailure: (failure: AnalysisError) => void;
 }
 
-/**
- * Let a cleanup failure the client's close reported read that close. A failure
- * whose cleanup already follows its own owner keeps reading that owner.
- */
-const bindClientRelease = (
-  release: AnalysisCleanupRelease,
-  failure: AnalysisError,
-): void => {
-  if (failure.cleanupIncomplete && !failure.hasCleanupOwner)
-    release.bind(failure);
-};
-
 const trackCleanupFailures = (
   signal: AbortSignal | undefined,
   operation: string,
@@ -1300,7 +1288,7 @@ export class BinarySession
         ...(progress === undefined ? {} : { progress }),
         ...(pending.retainDocument ? { retainDocument: true } : {}),
         onCleanupFailure: (failure) => {
-          bindClientRelease(pending.release, failure);
+          pending.release.bindUnowned(failure);
           onCleanupFailure?.(failure);
         },
       },
@@ -1308,7 +1296,7 @@ export class BinarySession
     if (closed.ok) {
       pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else bindClientRelease(pending.release, closed.error);
+    } else pending.release.bindUnowned(closed.error);
     return closed;
   }
 
