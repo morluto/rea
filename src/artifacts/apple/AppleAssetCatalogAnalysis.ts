@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -7,6 +8,7 @@ import {
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
@@ -15,6 +17,9 @@ import { streamChunkToBuffer } from "../StreamBytes.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   ArtifactTraversalObservation,
@@ -60,8 +65,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly analyzeInterfaceBuilder?: typeof analyzeInterfaceBuilderBundle;
+  /** The host whose assetutil runs; tests select macOS on another host. */
+  readonly platform?: NodeJS.Platform;
 }) => {
-  if (process.platform !== "darwin" && input.runAssetUtil === undefined)
+  if (
+    (input.platform ?? HOST_PLATFORM.platform) !== "darwin" &&
+    input.runAssetUtil === undefined
+  )
     throw new ArtifactReaderFailure(
       "unavailable",
       "Apple asset catalog inspection requires macOS assetutil",
@@ -103,7 +113,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
       collectAssetCatalogs({ ...input, resources }),
     ));
   } catch (cause: unknown) {
-    interfaceBuilderCancel.abort();
+    interfaceBuilderCancel.abort(OwnerCancellation.noLongerNeeded);
     const joined = await interfaceBuilderAnalysis;
     if (
       !joined.ok &&
@@ -112,7 +122,16 @@ export const analyzeAppleAssetCatalogs = async (input: {
         (joined.error instanceof AnalysisError &&
           joined.error.cleanupIncomplete))
     ) {
-      const primary = translateArtifactFailure("inspect_asset_catalog", cause);
+      // A defect still owns the outcome; it becomes the adapter failure the
+      // provider boundary would report, so the reader's cleanup can join it.
+      const primary =
+        cause instanceof InternalInvariantError
+          ? new ProviderAdapterError(
+              ARTIFACT_GRAPH_PROVIDER.id,
+              "inspect_asset_catalog",
+              { cause },
+            )
+          : translateArtifactFailure("inspect_asset_catalog", cause);
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
         joined.error,
@@ -318,6 +337,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   let output: string;
   try {
@@ -334,6 +354,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   const capturedOutput: AnalysisCapturedOutput = {
     stdout: output,

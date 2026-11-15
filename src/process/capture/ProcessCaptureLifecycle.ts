@@ -1,3 +1,5 @@
+import { OwnerCancellation } from "../../domain/analysisErrorCore.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, statSync, type BigIntStats } from "node:fs";
 import { open, mkdtemp, rm, stat } from "node:fs/promises";
@@ -704,10 +706,7 @@ export const createRunManifest = async (
   host: {
     readonly platform: NodeJS.Platform;
     readonly architecture: NodeJS.Architecture;
-  } = {
-    platform: process.platform,
-    architecture: process.arch,
-  },
+  } = HOST_PLATFORM,
 ): Promise<UnverifiedProcessCapture["manifest"]> => {
   const scenarioCommitment = processScenarioCommitment(
     scenario,
@@ -742,7 +741,7 @@ export const observeSettlement = async ({
   ownershipEvidence,
   settleMs,
   recordEvent = () => undefined,
-  platform = process.platform,
+  platform,
   signal,
   ownershipHost,
   onLiveProgress,
@@ -752,7 +751,7 @@ export const observeSettlement = async ({
   readonly ownershipEvidence: ProcessOwnershipEvidenceOwner;
   readonly settleMs: number;
   readonly recordEvent?: RecordProcessCaptureEvent;
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly signal?: AbortSignal | undefined;
   readonly ownershipHost?: ProcessOwnershipHost;
   readonly onLiveProgress?: (() => void) | undefined;
@@ -933,7 +932,7 @@ export const awaitTerminalExit = async ({
           })),
         ])
           .finally(() => {
-            deliveryBound.abort();
+            deliveryBound.abort(OwnerCancellation.noLongerNeeded);
           })
           .then(
             ({ delivery, reason: deliveryReason }) => {
@@ -1044,7 +1043,7 @@ export const awaitTerminalExit = async ({
         }).catch(() => undefined),
       ])
         .finally(() => {
-          grace.abort();
+          grace.abort(OwnerCancellation.noLongerNeeded);
         })
         .then(finish);
     });
@@ -1084,7 +1083,7 @@ export interface ProcessCaptureCleanupHost {
 }
 
 const processCaptureCleanupHost: ProcessCaptureCleanupHost = {
-  platform: process.platform,
+  platform: HOST_PLATFORM.platform,
   cleanupProcessGroup: cleanupOwnedProcessGroup,
   removeTemporaryRoot: (path) => rm(path, { recursive: true, force: true }),
 };

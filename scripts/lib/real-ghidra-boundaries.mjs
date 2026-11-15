@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import {
   requireMcpToolError,
   mcpTextValue,
@@ -43,15 +44,19 @@ export async function verifyGhidraBoundaries(
   addFormats(ajv);
   const validators = new Map();
   for (const tool of catalog.tools) {
-    for (const key of ["inputSchema", "outputSchema"])
+    const outputSchema = canonicalOutputSchema(tool.name);
+    for (const [key, schema] of [
+      ["inputSchema", tool.inputSchema],
+      ["outputSchema", outputSchema],
+    ])
       assert.ok(
-        ajv.validateSchema(tool[key]),
+        ajv.validateSchema(schema),
         `${tool.name} ${key}: ${JSON.stringify(ajv.errors)}`,
       );
     validators.set(
       tool.name,
-      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-        ajv.compile(tool.outputSchema),
+      (outputSchema.$id && ajv.getSchema(outputSchema.$id)) ||
+        ajv.compile(outputSchema),
     );
   }
   let successfulCalls = 0;

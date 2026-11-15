@@ -79,6 +79,7 @@ const prepare = async () => {
     ...[
       "verify-package-commands.mjs",
       "verifier-cleanup.mjs",
+      "verifier-fixture.mjs",
       "verifier-run.mjs",
     ].map(
       (name) =>

@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import type {
   FileMapping,
   ZeroFillMapping,
@@ -53,9 +54,9 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
-    if (command === 0x80000034) chainedFixups = true;
-    if (command === 1 || command === 0x19) {
-      const wide = command === 0x19;
+    if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
+    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
+      const wide = command === LC.SEGMENT_64;
       if (wide !== (bits === 64))
         throw new BinaryFormatFailure(
           "malformed",

@@ -3,7 +3,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   isBinaryFormatOrStringLimitFailure,
-  type BinaryStringReadLimitFailure,
+  type BinaryStringReadLimit,
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
@@ -16,6 +16,12 @@ import {
   type NativeSection,
 } from "../metadata/NativeSectionDirectory.js";
 import { readPeImage } from "../metadata/PeImage.js";
+import {
+  allKeyed,
+  keyedBy,
+  uniqueKeyed,
+  type Keyed,
+} from "../../domain/keyedCollection.js";
 import {
   MAX_NATIVE_EXPORT_ROWS,
   decodeElfExportName,
@@ -403,7 +409,7 @@ const createVersionNameReader = () => {
   const decodedNames = new Map<
     string,
     | { readonly value: DecodedElfString | null }
-    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimitFailure }
+    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimit }
   >();
   let cacheBytes = 0;
   const chargeCache = (bytes: number): void => {
@@ -441,6 +447,27 @@ const createVersionNameReader = () => {
   return readName;
 };
 
+/**
+ * The one GNU version section of a type: undefined when absent, null when
+ * declared more than once. A repeat is recorded; neither table is chosen.
+ */
+const versionSection = (
+  byType: Keyed<NativeSection, number>,
+  type: number,
+  label: string,
+  issues: NativeExportIssue[],
+): NativeSection | null | undefined => {
+  const selected = uniqueKeyed(byType, type);
+  if (selected.ok) return selected.value;
+  const [first] = allKeyed(byType, type);
+  issues.push({
+    code: "version_unresolved",
+    location: hex(first!.offset),
+    message: `${label}: the ELF declares ${String(selected.error.ordinals.length)} sections of this type, so none was read`,
+  });
+  return null;
+};
+
 function* readVersionNames(
   reader: BinaryReader,
   sections: readonly NativeSection[],
@@ -469,10 +496,16 @@ function* readVersionNames(
     namesByIndex.set(index, decoded);
     textBytes = nextTextBytes;
   };
-  const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
+  const byType = keyedBy(sections, ({ type }) => type);
+  const verneed = versionSection(
+    byType,
+    SHT_GNU_VERNEED,
+    "Version requirements",
+    issues,
+  );
   // sh_info is the requirement count. An empty region contributes no names,
   // so its compressed storage is not a failed requirement read.
-  if (verneed !== undefined && verneed.info !== 0) {
+  if (verneed !== undefined && verneed !== null && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -549,10 +582,17 @@ function* readVersionNames(
     }
   }
   // GNU lookup installs requirement names first, then definition names.
-  const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
+  const verdef = versionSection(
+    byType,
+    SHT_GNU_VERDEF,
+    "Version definitions",
+    issues,
+  );
+  // Either repeated definition table may replace any requirement index.
+  if (verdef === null) namesByIndex.clear();
   // sh_info is the definition count. Zero definitions cannot replace a
   // requirement index, so compressed storage of that empty table is unread.
-  if (verdef !== undefined && verdef.info !== 0) {
+  if (verdef !== undefined && verdef !== null && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -645,7 +685,14 @@ function* parseElfExports(
     byte_order: directory.little ? ("little" as const) : ("big" as const),
   };
   const { sections } = directory;
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  const byType = keyedBy(sections, ({ type }) => type);
+  const selectedDynsym = uniqueKeyed(byType, SHT_DYNSYM);
+  if (!selectedDynsym.ok)
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF image has more than one SHT_DYNSYM",
+    );
+  const dynsym = selectedDynsym.value;
   if (
     sections.length === 0 ||
     (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
@@ -741,12 +788,18 @@ function* parseElfExports(
     nameRange.offset + nameRange.size,
   );
   const issues: NativeExportIssue[] = [];
-  const versym = sections.find(
-    ({ type, link }) => type === SHT_GNU_VERSYM && link === dynsym.index,
+  const linkedVersym = allKeyed(byType, SHT_GNU_VERSYM).filter(
+    ({ link }) => link === dynsym.index,
   );
+  const versym = linkedVersym[0];
   let versions: number | null = null;
   if (versym !== undefined) {
     try {
+      if (linkedVersym.length > 1)
+        throw new BinaryFormatFailure(
+          "malformed",
+          `${String(linkedVersym.length)} symbol version tables link to the dynamic symbol table`,
+        );
       if (versym.compressed)
         throw new BinaryFormatFailure(
           "unsupported",

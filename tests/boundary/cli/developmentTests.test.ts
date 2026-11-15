@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const run = (
   root: string,
@@ -49,18 +50,17 @@ const commit = (root: string, message: string) =>
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-development-tests-");
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "src"));
-  for (const path of [
-    "scripts/run-development-tests.mjs",
-    "scripts/run-exact-tests.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/lib/development-tests.mjs",
-    "scripts/lib/test-projects.mjs",
-    "scripts/lib/windows-owned-command.mjs",
-  ])
-    await copyFile(join(process.cwd(), path), join(root, path));
+  // The runner spawns the exact-test and exclusive-lock scripts.
+  await copyScriptsWithImports(
+    [
+      "scripts/run-development-tests.mjs",
+      "scripts/run-exact-tests.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+    ],
+    root,
+  );
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),

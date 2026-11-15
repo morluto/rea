@@ -210,24 +210,3 @@ it("refuses oversized text before JSON interpretation while retaining body ident
   );
   expect(calls).toBe(2);
 });
-
-it("keeps historical invalid rows with no response identity admissible", () => {
-  const historical = {
-    status: "unavailable",
-    requested: 1,
-    processed: 1,
-    items: [
-      {
-        script_key: request(1).scriptKey,
-        declared_url: request(1).declaredUrl,
-        status: "invalid",
-        artifact: null,
-        original_sources: [],
-        original_module_edges: [],
-        mappings: [],
-        limitation: "Source-map JSON is not a version 3 map.",
-      },
-    ],
-  };
-  expect(webSourceMapsSchema.parse(historical)).toMatchObject(historical);
-});

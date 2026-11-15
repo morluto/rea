@@ -331,20 +331,23 @@ describe("evidence bundle imports", () => {
     const result = new EvidenceLedger().import(record);
     expect(result).toMatchObject({
       ok: false,
-      error: {
-        _tag: "AnalysisInputError",
-        userMessage: expect.stringContaining(
-          `this JSON is one Evidence record (${record.evidence_id})`,
-        ),
-      },
+      error: { _tag: "AnalysisInputError" },
     });
     if (result.ok) throw new Error("Expected a wrong-kind import failure");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message: expect.stringContaining(
-        `this JSON is one Evidence record (${record.evidence_id})`,
-      ),
+      message: expect.stringContaining(record.evidence_id),
+      details: {
+        operation: "import_evidence_bundle",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            observed: { detected_kind: "evidence-record" },
+          },
+        ],
+      },
     });
   });
 

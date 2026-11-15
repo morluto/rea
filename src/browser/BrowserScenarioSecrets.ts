@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   scenarioSerializationAllowance,
   scenarioQueryLength,
@@ -590,10 +591,7 @@ export class BrowserScenarioSecrets {
       ).length === 0
     )
       return body;
-    const text = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(body);
+    const text = decodeStrictUtf8(body, "preserve");
     const redacted = redactResponseSource(
       text,
       [],

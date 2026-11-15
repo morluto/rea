@@ -13,7 +13,7 @@ import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -108,11 +108,11 @@ export class UImageArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "uImage entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "uImage entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>

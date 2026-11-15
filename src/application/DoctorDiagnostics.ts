@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsJavaScriptRuntime,
@@ -5,7 +6,7 @@ import {
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
-import { isDesktopBuildCheck } from "./DoctorProviderIds.js";
+import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorHost,
@@ -222,8 +223,7 @@ const optionalHopperStartupTimeoutCheck = (
       : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.settings.map(({ constraint }) => constraint).join("; ")}`,
     {
       classification: "config_drift",
-      remediation:
-        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+      remediation: `Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds.`,
     },
   );
 };

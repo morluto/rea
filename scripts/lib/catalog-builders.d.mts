@@ -40,7 +40,7 @@ export function toolFamilyCatalog(sources: {
     readonly TOOL_CONTRACTS: readonly unknown[];
   };
   readonly catalogIdentity: {
-    readonly FULL_CATALOG_IDENTITY: {
+    readonly DEFAULT_CATALOG_IDENTITY: {
       readonly counts: { readonly mcp_tools: number };
     };
   };

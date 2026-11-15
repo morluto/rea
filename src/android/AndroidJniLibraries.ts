@@ -153,6 +153,7 @@ export const readAndroidJniLibraries = async (input: {
                     throw new ArtifactReaderFailure(
                       "integrity",
                       "Native library exceeds its declared ZIP size",
+                      { integrityCheck: "declared-size" },
                     );
                   data.copy(bytes, offset);
                   offset += data.length;
@@ -164,6 +165,7 @@ export const readAndroidJniLibraries = async (input: {
                 throw new ArtifactReaderFailure(
                   "integrity",
                   "Native library is shorter than its declared ZIP size",
+                  { integrityCheck: "declared-size" },
                 );
               throwIfJadxInterrupted(input.signal);
               const sha256 = createHash("sha256").update(bytes).digest("hex");

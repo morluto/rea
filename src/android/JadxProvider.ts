@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -13,6 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -21,7 +23,10 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { AndroidMappingSource } from "../domain/android/androidMapping.js";
 import {
@@ -55,10 +60,13 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
+import {
+  JADX_BRIDGE_SOURCE_URL,
+  jadxBridgeIdentity,
+  type JadxBridgeIdentity,
+} from "./JadxRelease.js";
 
-const BRIDGE_SOURCE = fileURLToPath(
-  new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
-);
+const BRIDGE_SOURCE = fileURLToPath(JADX_BRIDGE_SOURCE_URL);
 type Outcome = Awaited<ReturnType<AndroidAnalysisPort["execute"]>>;
 
 const waitForTurn = (
@@ -127,9 +135,21 @@ interface PendingCleanup {
   session: JadxSession | undefined;
   root: JadxWorkspaceRoot | undefined;
   readonly fileHandles: Map<OwnedFileHandle, string>;
+  /** Reports admission failure; bound to `admissionDescriptors.release` when present. */
   readonly previousError: AnalysisError | undefined;
-  readonly operationCause: unknown;
-  reportedErrors: WeakRef<AnalysisError>[];
+  /**
+   * Descriptors this record owns from the admission close failure, and the
+   * release confirmed once all of them close. Absent when the failure's
+   * descriptors belong to another owner, such as the prerequisite scope.
+   */
+  readonly admissionDescriptors: AdmissionDescriptors | undefined;
+  /** Confirmed once this whole retained cleanup completes; errors it reported read it. */
+  readonly release: AnalysisCleanupRelease;
+}
+
+interface AdmissionDescriptors {
+  readonly owners: ReadonlySet<OwnedFileHandle>;
+  readonly release: AnalysisCleanupRelease;
 }
 
 /** Every descriptor owner nested in one rejected close, without treating a later owner as the first. */
@@ -148,6 +168,22 @@ const retainedCleanupOwners = (
   return owners;
 };
 
+/**
+ * The descriptors in `fileHandles` that one rejected close left behind, with a
+ * release for them. Undefined when that close retained none of them.
+ */
+const admissionDescriptorsOf = (
+  cause: unknown,
+  fileHandles: ReadonlyMap<OwnedFileHandle, string>,
+): AdmissionDescriptors | undefined => {
+  const owners = new Set(
+    [...retainedCleanupOwners(cause)].filter((owner) => fileHandles.has(owner)),
+  );
+  return owners.size === 0
+    ? undefined
+    : { owners, release: new AnalysisCleanupRelease() };
+};
+
 const cleanupResources = (resources: PendingCleanup): readonly string[] => [
   ...(resources.session === undefined
     ? []
@@ -161,18 +197,20 @@ const cleanupFailure = (
   resources: PendingCleanup,
   cleanup: ProviderCleanupError,
 ): AnalysisError =>
-  (resources.previousError === undefined
-    ? cleanup
-    : analysisErrorWithCleanupFailure(
-        resources.previousError,
-        cleanup,
-        resources.operation,
-      )
-  ).bindCleanupResourceOwner({
-    get cleanupResources() {
-      return cleanupResources(resources);
-    },
-  });
+  resources.release.bind(
+    (resources.previousError === undefined
+      ? cleanup
+      : analysisErrorWithCleanupFailure(
+          resources.previousError,
+          cleanup,
+          resources.operation,
+        )
+    ).bindCleanupResourceOwner({
+      get cleanupResources() {
+        return cleanupResources(resources);
+      },
+    }),
+  );
 
 const cleanup = async (
   resources: PendingCleanup,
@@ -189,10 +227,7 @@ const cleanup = async (
     sessionCloseFailed = true;
     sessionCloseCause = cause;
   }
-  const tracked = retainedCleanupOwners(resources.operationCause);
-  const trackedInMap = [...tracked].filter((owner) =>
-    resources.fileHandles.has(owner),
-  );
+  const admission = resources.admissionDescriptors;
   const fileCloseCauses: unknown[] = [];
   for (const owner of resources.fileHandles.keys()) {
     try {
@@ -201,10 +236,12 @@ const cleanup = async (
       // One descriptor's release clears only that owner. The admission error
       // stays incomplete until every owner from the same close failure is gone.
       if (
-        trackedInMap.length > 0 &&
-        trackedInMap.every((candidate) => !resources.fileHandles.has(candidate))
+        admission !== undefined &&
+        [...admission.owners].every(
+          (candidate) => !resources.fileHandles.has(candidate),
+        )
       )
-        resources.previousError?.resolveCleanup();
+        admission.release.confirm();
     } catch (cause: unknown) {
       fileCloseCauses.push(cause);
     }
@@ -268,6 +305,7 @@ interface RetainedSession {
   readonly snapshot: string;
   readonly jarHash: string;
   readonly bridgeHash: string;
+  readonly bridgeIdentity: JadxBridgeIdentity;
 }
 
 /** One serialized, immutable APK session per REA instance, retired on idle or shutdown. */
@@ -296,12 +334,18 @@ export class JadxProvider implements AndroidAnalysisPort {
     readonly environment: Readonly<Record<string, string | undefined>>,
     readonly launcher?: JadxLauncher,
     readonly settings?: AnalysisSettingsReader,
+    /** The host JADX runs on; tests select another host's admission rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
   inspectAvailability(signal?: AbortSignal) {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      this.host.platform,
+    );
     const pending = inspectJadxAvailability(environment, {
+      host: this.host,
       operationTimeoutMs:
         this.settings?.().overrides["jadx.operation_timeout_ms"],
       resourceOwner: this.#prerequisiteOwner,
@@ -356,11 +400,11 @@ export class JadxProvider implements AndroidAnalysisPort {
       const outcome: Outcome =
         !retired.ok && !cleanup.ok
           ? err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 retired.error,
                 cleanup.error,
                 request.operation,
-              ).bindCleanupDependencies([retired.error, cleanup.error]),
+              ),
             )
           : !retired.ok
             ? retired
@@ -402,11 +446,11 @@ export class JadxProvider implements AndroidAnalysisPort {
             "close_binary",
           );
           if (!retired.ok)
-            throw analysisErrorWithCleanupFailure(
+            throw analysisErrorWithCleanupDependencies(
               retired.error,
               cleanup,
               "close_binary",
-            ).bindCleanupDependencies([retired.error, cleanup]);
+            );
           throw cleanup;
         }
         if (!retired.ok) throw retired.error;
@@ -426,8 +470,8 @@ export class JadxProvider implements AndroidAnalysisPort {
         root: this.#retained.root,
         fileHandles: new Map(),
         previousError: undefined,
-        operationCause: undefined,
-        reportedErrors: [],
+        admissionDescriptors: undefined,
+        release: new AnalysisCleanupRelease(),
       };
       this.#retained = undefined;
     }
@@ -435,17 +479,8 @@ export class JadxProvider implements AndroidAnalysisPort {
     const pending = this.#pendingCleanup;
     const result = await cleanup(pending);
     if (result.ok) {
-      for (const reportedError of pending.reportedErrors)
-        reportedError.deref()?.resolveCleanup();
-      pending.reportedErrors = [];
+      pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else {
-      pending.reportedErrors = [
-        ...pending.reportedErrors.filter(
-          (reportedError) => reportedError.deref() !== undefined,
-        ),
-        new WeakRef(result.error),
-      ];
     }
     return result;
   }
@@ -501,7 +536,10 @@ export class JadxProvider implements AndroidAnalysisPort {
     request: AndroidRequest,
     options: ExecutionOptions,
   ): Promise<Outcome> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      this.host.platform,
+    );
     // Resolve the accepted operation's override before acquiring any resource.
     // An unusable launch value is refused without starting the engine.
     const timeoutMs = resolveJadxOperationTimeout(
@@ -541,6 +579,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       const configuration = await resolveJadxConfigurationInputs(
         environment,
         request.operation,
+        this.host,
         signal,
       );
       throwIfJadxInterrupted(signal);
@@ -556,6 +595,16 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal,
         retainFailedClose(BRIDGE_SOURCE),
       );
+      // Read before any child or workspace exists, so a malformed packaged
+      // bridge is refused without resources to clean up.
+      const identity = jadxBridgeIdentity();
+      if (!identity.ok)
+        throw new AnalysisCapabilityUnavailableError(
+          "jadx",
+          request.operation,
+          `${identity.error} (${BRIDGE_SOURCE}); reinstall REA to restore the packaged JADX bridge.`,
+        );
+      const bridgeIdentity = identity.value;
       let targetHash: string;
       try {
         targetHash = (
@@ -604,7 +653,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             operationDeadline: { signal: timeout, timeoutMs: timeoutMs.value },
           },
         );
-        root = await createJadxWorkspaceRoot();
+        root = await createJadxWorkspaceRoot(this.host.platform);
         const workspaceSignal =
           root.failureSignal === undefined
             ? signal
@@ -669,6 +718,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: engine.sha256,
           bridgeHash,
+          bridgeIdentity,
         };
       }
       root = retained.root;
@@ -685,6 +735,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: retained.jarHash,
           bridgeHash: retained.bridgeHash,
+          bridgeIdentity: retained.bridgeIdentity,
           signal: activeSignal,
           timeoutMs: timeoutMs.value,
           mapping: mapping.value,
@@ -708,19 +759,27 @@ export class JadxProvider implements AndroidAnalysisPort {
       root ??= this.#retained?.root;
       session ??= this.#retained?.session;
       this.#retained = undefined;
+      // The admission failure reads the release of the descriptors this record
+      // owns however it is first projected: by a cleanup failure or returned on
+      // its own. Descriptors another owner retained keep that owner's record.
+      const admissionDescriptors = admissionDescriptorsOf(cause, fileHandles);
+      const admissionFailure = (): AnalysisError =>
+        admissionDescriptors === undefined
+          ? failure()
+          : admissionDescriptors.release.bind(failure());
       this.#pendingCleanup = {
         operation: request.operation,
         session,
         root,
         fileHandles,
         get previousError() {
-          return failure();
+          return admissionFailure();
         },
-        operationCause: cause,
-        reportedErrors: [],
+        admissionDescriptors,
+        release: new AnalysisCleanupRelease(),
       };
       const retired = await this.#retire();
-      return retired.ok ? err(failure()) : retired;
+      return retired.ok ? err(admissionFailure()) : retired;
     }
   }
 }

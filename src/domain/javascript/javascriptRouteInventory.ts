@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
@@ -102,7 +103,7 @@ const inventoryShape = z.strictObject({
   unknowns: z.array(javaScriptRouteGapSchema),
   coverage: z.strictObject({
     scope: z.literal("provided-code-sources"),
-    source_parsing: z.enum(["complete", "partial", "unknown"]),
+    source_parsing: coverageStatusSchema,
     candidate_enumeration: z.enum(["complete", "partial"]),
     application_routes: z.literal("unknown"),
   }),

@@ -13,6 +13,7 @@ export const failedConfigurationMessage = (
 ): string => {
   switch (result.reason) {
     case "registration_ownership":
+    case "read_only_override":
       return result.detail;
     case "conflict":
       return "Agent configuration changed during setup. Review the current file and rerun setup.";
