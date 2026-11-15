@@ -31,7 +31,7 @@ const locatePointer = (view: JsonValue | null, pointer: string) =>
 const resolvePointer = (view: JsonValue | null, pointer: string) =>
   resolveView(view, pointer, "json");
 import { selectorOf, spellCondition } from "./viewSelector.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 

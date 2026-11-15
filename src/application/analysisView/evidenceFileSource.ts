@@ -19,6 +19,7 @@ import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { projectInputIssuesBounded } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The request cancellation and the scope retaining descriptors whose close failed. */
 export interface EvidenceFileReadOptions {
@@ -167,12 +168,7 @@ export const readEvidenceFileSource = async (
   if (!loaded.ok) return loaded;
   if (signal?.aborted) return err(cancelledBy(operation, signal));
   const value = loaded.value;
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.hasOwn(value, "records")
-  ) {
+  if (isRecord(value) && Object.hasOwn(value, "records")) {
     const bundle = authenticateEvidenceBundleValue(value, path, {
       operation,
       immutable: true,

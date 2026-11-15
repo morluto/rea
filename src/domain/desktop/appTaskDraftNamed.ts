@@ -49,7 +49,7 @@ import {
   valueFormat,
   type CheckTree,
 } from "./appTaskDraftTree.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 

@@ -6,7 +6,7 @@ import {
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
-import { isRecord } from "./domain/isRecord.js";
+import { isRecord } from "./kernel/isRecord.js";
 
 type CliFailureIdentity = Pick<
   AnalysisErrorProjection,

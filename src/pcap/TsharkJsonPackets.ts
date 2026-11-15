@@ -1,5 +1,5 @@
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /**
