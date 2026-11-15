@@ -502,7 +502,7 @@ describe("Imported class symbol byte identities", () => {
 });
 
 describe("Imported class symbol candidate completeness", () => {
-  it("keeps binding coverage partial when the caller does not state the candidates are complete", () => {
+  it("reports binding coverage unknown when the caller does not state the candidates are complete", () => {
     const result = decodeAppleDispatchMetadata(
       swiftExternalSwiftBindingImage("objc-class"),
       100,
@@ -514,7 +514,7 @@ describe("Imported class symbol candidate completeness", () => {
       expect.objectContaining({ symbol: "_OBJC_CLASS_$_NSObject" }),
     ]);
     expect(result.objc_class_import_binding_coverage).toMatchObject({
-      status: "partial",
+      status: "unknown",
       reason: expect.stringContaining("objc_class_import_addresses_complete"),
     });
   });
