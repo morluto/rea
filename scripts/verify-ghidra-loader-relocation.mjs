@@ -108,7 +108,6 @@ let report;
 workspaceFixture.releaseAfter(async () => {
   if (supervisor === undefined) return;
   const stopped = await supervisor.stop();
-  supervisor.dispose();
   assert.ok(
     stopped.status !== "incomplete",
     `Owned Ghidra cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
