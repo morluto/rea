@@ -22,6 +22,10 @@ import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
 import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -999,10 +1003,6 @@ setInterval(()=>{},1000);\n`,
       ownerFixture,
       `import {writeFileSync} from 'node:fs';
 import {requireWindowsNativeAuthority} from ${JSON.stringify(moduleUrl)};
-import {
-  VerifierFixture,
-  withVerifierFixture,
-} from "./lib/verifier-fixture.mjs";
 const native=requireWindowsNativeAuthority();
 const env=Object.entries(process.env).map(([k,v])=>k+'='+v);
 const child=native.call('process_spawn',[process.execPath,${JSON.stringify([process.execPath, "--max-old-space-size=128", fixture, "0", join(workspace, "crash-descendant-")].map(quote).join(" "))},${JSON.stringify(workspace)},env]);

@@ -11,6 +11,10 @@ import {
 import { join, resolve } from "node:path";
 
 import { prepareWindowsNativeInspectionWorkspace } from "./lib/windows-native-inspection-workspace.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -37,10 +41,6 @@ import {createRequire} from 'node:module';
 import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,statSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {systemWindowsNativeAuthority} from ${JSON.stringify(loader)};
-import {
-  VerifierFixture,
-  withVerifierFixture,
-} from "./lib/verifier-fixture.mjs";
 const temp=process.env.TEMP;
 const mode=process.argv[2];
 const creation=mode.startsWith('create-');
