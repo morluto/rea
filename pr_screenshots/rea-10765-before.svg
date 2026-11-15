@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" rx="18" fill="#111827"/>
+  <rect width="1200" height="56" rx="18" fill="#1f2937"/>
+  <rect y="38" width="1200" height="18" fill="#1f2937"/>
+  <circle cx="28" cy="28" r="8" fill="#ef4444"/>
+  <circle cx="54" cy="28" r="8" fill="#f59e0b"/>
+  <circle cx="80" cy="28" r="8" fill="#22c55e"/>
+  <text x="108" y="34" fill="#d1d5db" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">REA · Xtensa ELF admission · BEFORE</text>
+  <text x="48" y="104" fill="#fca5a5" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="28" font-weight="700">EM_XTENSA (94) stopped before analysis</text>
+  <text x="48" y="146" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">Source snapshot of the three admission gates reported in issue #10765</text>
+  <text x="60" y="218" fill="#fbbf24" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">elfArchitecture(94)</text>
+  <text x="420" y="218" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">→ undefined</text>
+  <text x="60" y="270" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">parseElf()</text>
+  <text x="420" y="270" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">→ unsupported ELF architecture</text>
+  <text x="60" y="322" fill="#9ca3af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">Ghidra support check</text>
+  <text x="420" y="322" fill="#6b7280" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">→ never reached</text>
+  <rect x="48" y="380" width="1104" height="132" rx="10" fill="#3f1d2e" stroke="#be123c" stroke-width="2"/>
+  <text x="72" y="422" fill="#fecdd3" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">CLI/MCP result: target_unavailable</text>
+  <text x="72" y="462" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">ESP32-S3 Xtensa ELF cannot reach the provider</text>
+  <text x="72" y="502" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">Issue report: Ghidra can load the same architecture</text>
+  <text x="48" y="602" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">Evidence note: this is a source/reproduction snapshot from #10765.</text>
+  <text x="48" y="638" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="16">No Xtensa hardware or Ghidra installation was run on this host.</text>
+</svg>
