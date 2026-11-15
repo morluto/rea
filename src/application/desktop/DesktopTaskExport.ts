@@ -41,7 +41,7 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCloseRejection } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { err } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -149,7 +149,7 @@ const readTaskFile = async (
   if (closed !== undefined)
     throw primary === undefined
       ? closed
-      : analysisErrorWithCleanupFailure(primary, closed, OPERATION);
+      : analysisErrorWithCloseRejection(primary, closed, OPERATION);
   if (loaded.ok) return loaded.value;
   throw primary ?? typed(loaded.error);
 };

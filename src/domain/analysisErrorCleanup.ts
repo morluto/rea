@@ -73,3 +73,32 @@ export const analysisErrorWithCleanupDependencies = (
     cleanup,
     operation,
   ).bindCleanupDependencies([primary, cleanup]);
+
+/**
+ * Compose a failure with a close rejection whose completion may be unknown. A
+ * rejection without a live cleanup record has unknown completion, not
+ * confirmed release, so the composite binds its parts only while the rejection
+ * is live. Otherwise it keeps its own pending record and never reads as
+ * complete.
+ */
+export const analysisErrorWithCloseRejection = (
+  primary: AnalysisError,
+  rejection: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  rejection.cleanupIncomplete
+    ? analysisErrorWithCleanupDependencies(primary, rejection, operation)
+    : analysisErrorWithCleanupFailure(primary, rejection, operation);
+
+/**
+ * Compose two close rejections. Each may have unknown completion, so the
+ * composite binds them only while both are live.
+ */
+export const analysisErrorWithCloseRejections = (
+  first: AnalysisError,
+  second: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  first.cleanupIncomplete
+    ? analysisErrorWithCloseRejection(first, second, operation)
+    : analysisErrorWithCleanupFailure(first, second, operation);
