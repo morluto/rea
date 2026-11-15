@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterAll, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/client";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -85,7 +86,7 @@ const expectRejectedDimensionCitation = async (
   );
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "compares the same authenticated observation while preserving incomplete facets (%s)",
   async (profile) => {
     const session = createTestBinarySession(() => {
@@ -103,8 +104,7 @@ it.each(["full", "compact"] as const)(
     const toolDefinition = (await client.listTools()).tools.find(
       ({ name }) => name === "compare_functions",
     );
-    if (toolDefinition?.outputSchema === undefined)
-      throw new Error("Missing output schema");
+    if (toolDefinition === undefined) throw new Error("Missing output schema");
     const reply = await client.callTool(
       {
         name: "compare_functions",
@@ -113,7 +113,7 @@ it.each(["full", "compact"] as const)(
           right: ref(main.evidence_id),
         },
       },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
     expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
     const result = parseEvidence(reply.structuredContent).normalized_result;

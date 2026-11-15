@@ -364,7 +364,7 @@ export const projectBatchDecompileView = (
         ...summarizeBatch(batch.items),
         limitation_count: new Set(parent.limitations).size,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "items") {
     const indices = selected(view.where.indices);

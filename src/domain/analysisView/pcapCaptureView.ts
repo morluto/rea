@@ -293,7 +293,7 @@ export const projectPcapCaptureView = (
       view,
       ...shared,
       summary: summarize(capture),
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.facet === "diagnostics") {
     const value =

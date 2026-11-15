@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -48,7 +49,7 @@ const PARTIAL = [top, middle, leaf, unrelated];
 
 const connect = async (
   options: {
-    readonly profile?: "full" | "compact";
+    readonly profile?: "compact";
     readonly records?: readonly ReturnType<typeof record>[];
     readonly maximumResponseBytes?: number;
   } = {},
@@ -63,8 +64,8 @@ const connect = async (
     serverOptions: {
       environment: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: options.profile ?? "full",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "full",
+        REA_MCP_INPUT_SCHEMA_PROFILE: options.profile ?? "compact",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "compact",
       },
       ...(options.maximumResponseBytes === undefined
         ? {}
@@ -76,7 +77,7 @@ const connect = async (
   // Every delivered result must satisfy what this profile actually advertises.
   const { tools } = await client.listTools();
   const advertised = tools.find(({ name }) => name === "get_evidence_bundle");
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("get_evidence_bundle advertises no output schema");
   const reply = (args: Record<string, unknown>) =>
     client.callTool(
@@ -84,7 +85,9 @@ const connect = async (
       { toolDefinition: advertised },
     );
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const validation = schemaValidation.assertions;
   expect(validation.validateSchema(inputSchema)).toBe(true);
   expect(validation.validateSchema(outputSchema)).toBe(true);
@@ -113,7 +116,7 @@ const exactly = (record_: { readonly evidence_id: string }) => ({
   filters: { evidence_id: record_.evidence_id },
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "reads direct membership against the whole session, not the selection (%s)",
   async (profile) => {
     const { links, summary } = await connect({ profile });

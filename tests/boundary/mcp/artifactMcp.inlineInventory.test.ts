@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -194,12 +195,12 @@ mcpTest(
 const createInventoryViewReader = async (
   client: Client,
   parent: Evidence,
-  profile: "full" | "compact",
+  profile: "compact",
 ) => {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Missing advertised view schemas");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
@@ -207,8 +208,11 @@ const createInventoryViewReader = async (
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
   };
-  if (profile === "full")
-    expect(ajv.validate(inputSchema, malformed)).toBe(false);
+  // The canonical contract refuses the empty selection; the compact
+  // advertisement may not, so the server's refusal below is what callers see.
+  expect(ajv.validate(canonicalInputSchema(advertised.name), malformed)).toBe(
+    false,
+  );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: malformed,
@@ -377,7 +381,7 @@ const assertOccurrencePages = async (
   });
 };
 
-mcpTest.for(["full", "compact"] as const)(
+mcpTest.for(["compact"] as const)(
   "keeps complete ZIP output and reads retained inventory views after the source is removed (%s)",
   async (profile, { mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-artifact-inline-");

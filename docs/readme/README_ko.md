@@ -82,11 +82,11 @@ npx rea-agents setup
 
 설정은 Claude Code, Codex, Cursor, Gemini CLI, Grok Build 및 [다른 에이전트](../getting-started/installation.md#supported-agents)를 지원합니다. 제공자 설정과 수동 MCP 등록은 [설치 및 설정](../getting-started/installation.md)을 참고하세요.
 
-MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 전체 필드 안내와 중첩 검증 정보가 필요하면 MCP 등록에서 `REA_MCP_INPUT_SCHEMA_PROFILE=full`을 설정하세요. 두 프로필 모두 전체 도구와 동일한 정규 서버 검증을 유지합니다. MCP 계약 가이드를 참고하세요.
+MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 간결한 스키마가 생략한 안내는 도구 설명 뒤에 이어집니다. 전체 도구와 정규 서버 검증은 그대로 유지됩니다. MCP 계약 가이드를 참고하세요.
 
 설정은 선택한 런타임과 REA 진입 스크립트를 직접 등록합니다. 패키지 실행기를 사용한다면 해당 캐시 항목과 런타임을 유지하고, 대상 프로젝트 밖의 신뢰할 수 있는 디렉터리에서 패키지를 받으세요. 설치 가이드를 참고하세요.
 
-기본적으로 출력 스키마는 `tools/list`에서 생략됩니다. 모델 API는 출력 스키마를 읽지 않으며 REA가 모든 결과를 직접 검증합니다. MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`로 설정하면 각 출력 스키마를 4096바이트 이내로 제공하고, `full`로 설정하면 완전한 출력 스키마를 제공합니다(결과를 검증하는 MCP 클라이언트용). 어떤 설정에서도 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
+기본적으로 출력 스키마는 `tools/list`에서 생략됩니다. 모델 API는 출력 스키마를 읽지 않으며 REA가 모든 결과를 직접 검증합니다. MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`로 설정하면 각 출력 스키마를 4096바이트 이내로 제공합니다. 어떤 설정에서도 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
 
 ### 에이전트에게 요청
 

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { crc32, deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -97,7 +98,7 @@ it("preserves Link parameter order and context through the advertised MCP contra
   const advertised = (await connected.client.listTools()).tools.find(
     ({ name }) => name === "inspect_web_page",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("inspect_web_page must advertise its output schema");
 
   const inspected = await connected.client.callTool(
@@ -113,7 +114,9 @@ it("preserves Link parameter order and context through the advertised MCP contra
   );
   expect(inspected.isError).not.toBe(true);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
 
   const normalized = webPageInspectionSchema.parse(
     normalizedResultOf(inspected.structuredContent),
@@ -792,19 +795,12 @@ cliTest(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "records a browser-socket endpoint redacted and reconciles its Evidence (%s)",
   async (profile) => {
     const browser = await startFakeCdpBrowser();
     retainBrowser(browser);
     const connected = await connectBrowser(profile);
-    const tool = (await connected.client.listTools()).tools.find(
-      ({ name }) => name === "inspect_web_page",
-    );
-    if (profile === "full")
-      expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
-        description: expect.stringContaining("/devtools/browser/ID"),
-      });
     const listed = await connected.client.callTool({
       name: "list_browser_targets",
       arguments: {
@@ -954,7 +950,7 @@ it("projects legal oversized PNG dimensions as a memory constraint", async () =>
   });
 });
 
-const connectBrowser = async (profile?: "full" | "compact") => {
+const connectBrowser = async (profile?: "compact") => {
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),

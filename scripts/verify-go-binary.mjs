@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -82,7 +81,7 @@ try {
   transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entrypoint, "mcp"],
-    hostEnvironment: schemaVerifierEnvironment(environment),
+    hostEnvironment: environment,
     cwd: process.cwd(),
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,

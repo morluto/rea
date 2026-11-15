@@ -77,6 +77,7 @@ const methodDimensions = (
   rightFieldAccessesByCaller: FieldAccessesByCaller,
   leftAssembly: ManagedMemberInspection["assembly"],
   rightAssembly: ManagedMemberInspection["assembly"],
+  sameArtifact: boolean,
 ): {
   readonly dimensions: MethodItem["dimensions"];
   readonly bodyUnknown: boolean;
@@ -133,6 +134,7 @@ const methodDimensions = (
         right,
         leftCallEdgesByCaller.get(left.token) ?? [],
         rightCallEdgesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameFieldShape =
@@ -143,6 +145,7 @@ const methodDimensions = (
         right,
         leftFieldAccessesByCaller.get(left.token) ?? [],
         rightFieldAccessesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameExceptionShape =
@@ -277,6 +280,7 @@ const sameAssemblyIdentity = (
   left.public_key.token === right.public_key.token;
 
 interface ReferenceTarget {
+  readonly rowResolved: boolean | undefined;
   readonly offset: number | null;
   readonly opcode: string;
   readonly token: string;
@@ -290,6 +294,7 @@ const compareReferenceTargets = (
   kind: "field" | "method",
   leftTargets: readonly ReferenceTarget[],
   rightTargets: readonly ReferenceTarget[],
+  sameArtifact: boolean,
 ): { readonly changed: boolean; readonly unknown: boolean } => {
   const align = (method: Method, targets: readonly ReferenceTarget[]) => {
     const anchors = method.body.anchors.filter(
@@ -324,10 +329,31 @@ const compareReferenceTargets = (
     index < Math.max(a.aligned.length, b.aligned.length);
     index += 1
   ) {
-    const leftIdentity = a.aligned[index]?.identity;
-    const rightIdentity = b.aligned[index]?.identity;
-    if (leftIdentity == null || rightIdentity == null) unknown = true;
-    else if (leftIdentity !== rightIdentity) changed = true;
+    const leftTarget = a.aligned[index];
+    const rightTarget = b.aligned[index];
+    if (leftTarget == null || rightTarget == null) {
+      unknown = true;
+      continue;
+    }
+    if (leftTarget.identity != null && rightTarget.identity != null) {
+      if (leftTarget.identity !== rightTarget.identity) changed = true;
+      continue;
+    }
+    // Same-artifact token equality requires both producers to establish the
+    // referenced row. Missing/historical facts or malformed operands stay unknown.
+    if (
+      sameArtifact &&
+      leftTarget.rowResolved === true &&
+      left.token === right.token &&
+      rightTarget.rowResolved === true &&
+      left.signature.parse_status === "decoded" &&
+      right.signature.parse_status === "decoded" &&
+      leftTarget.identity == null &&
+      rightTarget.identity == null &&
+      leftTarget.token === rightTarget.token
+    )
+      continue;
+    unknown = true;
   }
   return { changed, unknown };
 };
@@ -337,6 +363,7 @@ const compareFieldTargets = (
   right: Method,
   leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
   rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -346,14 +373,17 @@ const compareFieldTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightAccesses.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const compareCallTargets = (
@@ -361,6 +391,7 @@ const compareCallTargets = (
   right: Method,
   leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
   rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -370,14 +401,17 @@ const compareCallTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightEdges.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
@@ -748,6 +782,7 @@ export const buildMethodItems = (
       context.rightFieldAccessesByCaller,
       context.leftAssembly,
       context.rightAssembly,
+      context.sameArtifact,
     );
     if (locals.changed && !observedDimensions.includes("metadata"))
       observedDimensions.push("metadata");

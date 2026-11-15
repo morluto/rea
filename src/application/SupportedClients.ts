@@ -2006,7 +2006,7 @@ const layerLoadOrder = (
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): readonly SetupClient[] => {
@@ -2136,8 +2136,8 @@ export const resolveSupportedClients = async (
 export const clientSkillDirectories = (
   home: string,
   clientIds: readonly string[] | undefined,
-  environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): {
   readonly directories: readonly {
     readonly client: string;

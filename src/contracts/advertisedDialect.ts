@@ -366,14 +366,24 @@ const visitSchemas = (
   }
 };
 
-/** Every `pattern` keyword at a schema position, with its path. */
+/**
+ * Every regular expression at a schema position, with its path: `pattern`
+ * values and `patternProperties` keys. Clients compile both.
+ */
 export const advertisedSchemaPatterns = (
   root: unknown,
 ): readonly { readonly path: string; readonly pattern: string }[] => {
   const patterns: { path: string; pattern: string }[] = [];
   visitSchemas(root, "$", (node, path) => {
-    if (isRecord(node) && typeof node.pattern === "string")
+    if (!isRecord(node)) return;
+    if (typeof node.pattern === "string")
       patterns.push({ path, pattern: node.pattern });
+    if (isRecord(node.patternProperties))
+      for (const pattern of Object.keys(node.patternProperties))
+        patterns.push({
+          path: `${path}.patternProperties[${JSON.stringify(pattern)}]`,
+          pattern,
+        });
   });
   return patterns;
 };

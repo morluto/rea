@@ -82,11 +82,11 @@ npx rea-agents setup
 
 設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../getting-started/installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../getting-started/installation.md)。
 
-MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
+MCP 預設使用精簡輸入 Schema，以減少上下文開銷。精簡 Schema 省略的說明會接在工具描述之後。完整工具集和標準的伺服器驗證維持不變；見 MCP 合約指南。
 
 設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
 
-預設會從 `tools/list` 省略輸出 Schema：沒有任何模型 API 會讀取它們，且 REA 會自行驗證每個結果。在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 位元組內公布每個輸出 Schema，設定 `full` 則公布完整輸出 Schema（供會驗證結果的 MCP 用戶端使用）。所有設定下，伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
+預設會從 `tools/list` 省略輸出 Schema：沒有任何模型 API 會讀取它們，且 REA 會自行驗證每個結果。在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 位元組內公布每個輸出 Schema。所有設定下，伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
 
 ### 詢問 AI 代理
 
