@@ -294,6 +294,8 @@ const ARGV_SATISFYING_RULES: Readonly<
   "inspect-web-page": { endpoint: "http://127.0.0.1:9222" },
   "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
+  "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
+  "observe-javascript-runtime": { endpoint: "http://127.0.0.1:9229" },
 };
 
 const each = descriptions.map(
