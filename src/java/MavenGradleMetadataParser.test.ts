@@ -640,12 +640,38 @@ it.for([
   gradleModule(`{"name":"v","dependencies":[null]}`),
   gradleModule(`null`),
   `{"formatVersion":"1.1","component":{"group":"g","module":"m"},"variants":{}}`,
+  gradleModule(
+    `{"name":"v","dependencies":[{"group":"a","module":"b","version":{"requires":"1","rejects":"2"}}]}`,
+  ),
+  gradleModule(
+    `{"name":"v","dependencies":[{"group":"a","module":"b","version":{"requires":"1","rejects":[2]}}]}`,
+  ),
+  gradleModule(
+    `{"name":"v","dependencies":[{"group":"a","module":"b","excludes":{"group":"x"}}]}`,
+  ),
+  gradleModule(
+    `{"name":"v","dependencies":[{"group":"a","module":"b","excludes":["x"]}]}`,
+  ),
 ])(
   "refuses Gradle metadata with an unreadable present collection %s",
   (source) => {
     expectFailure(source, "malformed");
   },
 );
+
+it("reads Gradle version rejects and dependency exclusions", () => {
+  const report = parse(
+    gradleModule(
+      `{"name":"v","dependencies":[{"group":"a","module":"b","version":{"requires":"1","rejects":["2"]},"excludes":[{"group":"x","module":"y"}]}]}`,
+    ),
+  );
+  expect(report.dependencies).toEqual([
+    expect.objectContaining({
+      exclusions: [{ group_id: "x", artifact_id: "y" }],
+      gradle_version: expect.objectContaining({ rejects: ["2"] }),
+    }),
+  ]);
+});
 
 it.for([
   [
