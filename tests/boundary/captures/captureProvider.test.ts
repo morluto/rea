@@ -42,6 +42,7 @@ else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('capture', 0o
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat((process.argv.includes('-G') ? 33 : 5) * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'invalid-json') console.log('not json');
+else if (${JSON.stringify(mode)} === 'unordered') console.log(JSON.stringify([2, 1].map((frame) => ({_source:{layers:{"frame.number":[String(frame)]}}}))));
 else if (${JSON.stringify(mode)} === 'many') console.log(JSON.stringify(Array.from({length:90},(_,i)=>({_source:{layers:{"frame.number":[String(i+1)],"ip.addr":["192.0.2.1"]}}}))));
 else if (${JSON.stringify(mode)} === 'alias-canonical') { if (!process.argv.includes('bootp.type')) throw Error('alias selector missing'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"dhcp.type":["1"]}}}])); }
 else if (process.argv.includes('-G')) { console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'P\\tΟΣ\\tgreek.proto\\nF\\tΟΣ field\\tgreek.field\\tFT_STRING\\tgreek.proto\\tBASE_NONE\\t0x0\\tGreek description' : 'P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
@@ -438,6 +439,31 @@ it.each([
         name.startsWith("decoder-"),
       ),
     ).toEqual([]);
+  },
+);
+
+it.each([
+  ["invalid-json", "not json\n", "TShark emitted malformed JSON."],
+  [
+    "unordered",
+    '[{"_source":{"layers":{"frame.number":["2"]}}},{"_source":{"layers":{"frame.number":["1"]}}}]\n',
+    "TShark returned unordered frames.",
+  ],
+])(
+  "keeps the producer output of a refused %s packet reply",
+  async (mode, stdout, reason) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspect({
+      path: f.path,
+      fields: ["ip.addr"],
+    });
+    if (result.ok) throw new Error("Expected a refused packet reply");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_packet_capture",
+      reason,
+    });
+    expect(result.error.capturedOutput?.stdout).toBe(stdout);
   },
 );
 
