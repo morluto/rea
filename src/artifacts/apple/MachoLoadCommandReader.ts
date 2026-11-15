@@ -40,6 +40,7 @@ import {
   type FatSliceDeclaration,
   type FatSliceRangeIssue,
 } from "../../domain/apple/machoContainer.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -1044,9 +1045,7 @@ const payloadString = (
   chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      payload.subarray(offset, end),
-    );
+    text = strictUtf8Decoder("preserve").decode(payload.subarray(offset, end));
   } catch {
     throw new MachoFormatIssue(
       "malformed",
@@ -1117,9 +1116,7 @@ const throwCommandStringIssue = (
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
   try {
     // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return strictUtf8Decoder("preserve").decode(bytes);
   } catch {
     throw new MachoFormatIssue(
       "malformed",
