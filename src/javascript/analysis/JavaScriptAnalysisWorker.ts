@@ -574,10 +574,9 @@ export class JavaScriptAnalysisWorker {
         deadline?.interruption === "timeout" &&
         !(error instanceof AnalysisTimeoutError)
       )
+        // The primary failure already carries the captured output.
         error.retainSecondaryFailure(
-          new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
-            cause: deadline.signal.reason,
-          }),
+          this.#timeoutError(deadline.signal.reason, false),
         );
       this.#lastFailure = error;
       // Complete checkpoints remain readable after a child crash or cancellation.
@@ -1202,23 +1201,31 @@ export class JavaScriptAnalysisWorker {
     if (this.#primaryFailure !== undefined)
       return this.#projectPrimaryFailure(path);
     return deadline.interruption === "timeout"
-      ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
-          ...(inspectionFailure === undefined
-            ? {}
-            : { cause: inspectionFailure }),
-          limit: analysisSettingLimit(
-            "javascript.analysis_timeout_ms",
-            this.limits.timeoutMs,
-            this.limits.timeoutSource,
-          ),
-          capturedOutput: this.#captured(),
-          userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
-          remediationAction:
-            "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
-        })
+      ? this.#timeoutError(inspectionFailure)
       : cancelledBy(OPERATION, deadline.signal, {
           capturedOutput: this.#captured(),
         });
+  }
+  /**
+   * The per-source deadline failure, with the setting that raises it and its
+   * effective value. Every path that reports this deadline uses it.
+   */
+  #timeoutError(
+    cause: unknown,
+    withCapturedOutput = true,
+  ): AnalysisTimeoutError {
+    return new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+      ...(cause === undefined ? {} : { cause }),
+      limit: analysisSettingLimit(
+        "javascript.analysis_timeout_ms",
+        this.limits.timeoutMs,
+        this.limits.timeoutSource,
+      ),
+      ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
+      userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
+      remediationAction:
+        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+    });
   }
   #workerExitFailure(
     path: string,
@@ -1374,10 +1381,7 @@ export class JavaScriptAnalysisWorker {
     const cancellation = processInspectionCancellationError(cause, OPERATION);
     if (cancellation !== undefined)
       return deadline?.interruption === "timeout"
-        ? new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
-            cause,
-            capturedOutput: this.#captured(),
-          })
+        ? this.#timeoutError(cause)
         : cancellation.capturedOutput === undefined
           ? cancellation.retainCapturedOutput(this.#captured())
           : cancellation;
