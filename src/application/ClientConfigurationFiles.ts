@@ -14,6 +14,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { isRecord } from "../domain/isRecord.js";
 
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
@@ -167,7 +168,7 @@ export const readClientConfigurationFiles = async (
 
 /** OpenCode merges server objects in file order, replacing arrays and scalar values. */
 const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
-  if (!isObject(previous) || !isObject(next)) return next;
+  if (!isRecord(previous) || !isRecord(next)) return next;
   return Object.fromEntries(
     [...new Set([...Object.keys(previous), ...Object.keys(next)])].map(
       (key) => [
@@ -179,8 +180,6 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
     ),
   );
 };
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Native OpenCode dialect applies across all selected configuration layers. */
 export const clientWriteDialect = (
@@ -260,12 +259,12 @@ export const mergeClientConfigurationDocuments = (
       const key = document.environmentKey;
       if (
         name === PRODUCT_IDENTITY.mcpServerKey &&
-        isObject(merged) &&
-        isObject(merged[key])
+        isRecord(merged) &&
+        isRecord(merged[key])
       ) {
         const before =
-          isObject(previous) && isObject(previous[key]) ? previous[key] : {};
-        const after = isObject(next) && isObject(next[key]) ? next[key] : {};
+          isRecord(previous) && isRecord(previous[key]) ? previous[key] : {};
+        const after = isRecord(next) && isRecord(next[key]) ? next[key] : {};
         servers[name] = {
           ...merged,
           [key]: mergeEnvironmentOverrides(before, after, platform),

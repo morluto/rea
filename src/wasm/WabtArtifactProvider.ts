@@ -1,4 +1,5 @@
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { randomUUID, createHash } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -28,11 +29,12 @@ import type {
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -118,7 +120,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     input: InspectWasmArtifactInput,
     options?: WasmArtifactExecutionOptions,
   ): Promise<Result<WasmArtifactExecution, AnalysisError>> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     try {
       return await this.#resources.run(() =>
         this.#inspect(input, environment, options),
@@ -241,10 +246,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? "request"
         : options?.commandTimeoutSource;
     try {
-      if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+      if (isAborted(options?.signal))
+        throw cancelledBy(OPERATION, options.signal);
       const directory = environment.REA_WABT_BIN_DIRECTORY;
       if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
@@ -513,10 +516,21 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }
       }
       phase = "producer";
+      const signal = options?.signal;
       await writeFile(snapshotPath, selected.bytes, {
         flag: "wx",
         mode: 0o400,
-        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        ...(signal === undefined ? {} : { signal }),
+      }).catch((cause: unknown) => {
+        // Node rejects a write this signal aborted with an envelope that
+        // carries the signal's own reason; any other failure stays itself.
+        if (
+          isAborted(signal) &&
+          cause instanceof Error &&
+          cause.cause === signal.reason
+        )
+          throw cancelledBy(OPERATION, signal);
+        throw cause;
       });
       snapshotHash = selected.sha256;
       phase = "producer";
@@ -752,16 +766,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           "observed",
         );
       }
-      if (options?.signal?.aborted) {
+      if (isAborted(options?.signal)) {
         result = err(
           analysisErrorWithCancellation(
             result.ok ? undefined : result.error,
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
-              ...(partialObservation === undefined
-                ? {}
-                : { partialObservation }),
-            }),
+            cancelledBy(
+              OPERATION,
+              options.signal,
+              partialObservation === undefined ? {} : { partialObservation },
+            ),
           ),
         );
       }

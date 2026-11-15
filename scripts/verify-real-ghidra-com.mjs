@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -95,7 +96,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: schemaVerifierEnvironment(env),
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-com-proof", version: "1" });

@@ -7,7 +7,6 @@ import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -180,12 +179,6 @@ export const wabtFailureDialect = (
               "Byte admission does not reserve host memory. Free host memory or select a suitable process with sufficient capacity, then retry after cleanup settles. Increasing byte budgets or command_timeout_ms does not repair this allocation failure; do not replace a correctly configured WABT installation for this reason.",
           },
         );
-      if (unknownCause instanceof Error && unknownCause.name === "AbortError")
-        return new AnalysisCancelledError(OPERATION, {
-          ...details,
-          cause: unknownCause,
-          ...observed,
-        });
       if (unknownCause instanceof RuntimeControlUnavailableError)
         return runtimeControlCapabilityError(
           WABT_PROVIDER_IDENTITY.id,

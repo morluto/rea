@@ -10,7 +10,7 @@ import {
   selectedProviderSettings,
   settingAffectsProbe,
 } from "./doctorRuntime.js";
-import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
+import { DOCTOR_PROVIDER_IDS } from "./domain/doctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
@@ -472,7 +472,7 @@ it("shares one parsed IDA registration between timeout-budget and doctor project
   const registration = join(root, "registration.json");
   await writeFile(
     registration,
-    JSON.stringify({ command: "fixture", timeoutMs: 3210 }),
+    JSON.stringify({ command: "fixture", protocol: "legacy", timeoutMs: 3210 }),
   );
   const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
   try {
@@ -625,6 +625,13 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
     settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
   ).toBe(false);
   expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
+  // Only Windows refuses an existing Ghidra project.
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "darwin"),
+  ).toBe(false);
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "win32"),
+  ).toBe(true);
   expect(
     settingAffectsProbe(
       "jadx",

@@ -212,9 +212,9 @@ directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid 
 collected assertions can be awaited later. `import/no-duplicates` warns with
 `preferInline: false`.
 
-`no-useless-escape` keeps intentional `\-` regex escapes because advertised
-patterns must also compile in `v` mode; the catalog regression checks every
-advertised pattern.
+`no-useless-escape` keeps intentional `\-` regex escapes. Source regexes need
+no escaping for clients: the presentation re-emits every advertised pattern in
+the portable grammar (`src/contracts/portablePattern.ts`).
 
 Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
 `oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
@@ -258,7 +258,9 @@ Actions jobs own their runner and use up to four; see
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
-tests avoid process-global state and keep resource cleanup test-scoped. Each
+tests avoid process-global state and keep resource cleanup test-scoped. Source
+projects run those shared graphs in forked workers, so each worker owns its own
+heap and no single process holds the whole lane. Each
 MCP session still owns its resources, and CLI cases retain fresh command
 instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
 isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.
@@ -293,8 +295,21 @@ rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
 advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
 lists every input, output and catalog profile combination and compares the
-violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
-the packaged catalog check applies the same rules to the default profiles. Keep canonical rejection checks separate from the
+violation counts with `advertisedDialectBaseline.ts`, which may only shrink,
+except when a runtime analysis setting adds its `update_analysis_settings`
+branch, or a fix restores a contract declaration the presentation had lost and
+the PR names it; the packaged catalog check applies the same rules to the
+default profiles.
+Advertised patterns, input and output, are enforced at zero:
+`portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
+presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
+when a pattern widens. `portablePattern.test.ts` pins the same acceptance of
+BMP strings in V8's plain, `u` and `v` modes. Python, Go and Rust read code
+points as `u` does; Python's `$` also matches before a final newline, which
+only widens. A client compiling without `u` may still reject one astral
+character where a wildcard, shorthand or negated class must match it (for
+example `^[\S]$`); `PortablePatternProjection` documents this accepted
+limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
@@ -775,6 +790,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                                                                   |
 | Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
+
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
 
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,

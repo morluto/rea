@@ -2,7 +2,7 @@ import {
   finalizedResult,
   runOwned,
   type RecoveredCompletion,
-} from "../application/runOwned.js";
+} from "../providers/runOwned.js";
 import type {
   AnalysisError,
   AnalysisPartialObservation,
@@ -53,6 +53,7 @@ export const finishAnalysisCommand = async <
     operation: canonicalOperation,
     signal,
     ...(fallbackResource === undefined ? {} : { fallbackResource }),
+    partial: (value) => value,
     close: async () => {
       try {
         await service.close();

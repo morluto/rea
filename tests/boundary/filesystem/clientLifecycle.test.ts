@@ -80,6 +80,15 @@ describe("client configuration filesystem lifecycle", () => {
       "zcode",
       "dsh",
       "freebuff",
+      "cline_vscode",
+      "cline_vscode_insiders",
+      "cline_vscodium",
+      "cline_cursor",
+      "cline_windsurf",
+      "kiro",
+      "mastracode",
+      "zed",
+      "amp",
       "grok_bot",
     ]);
     expect(
