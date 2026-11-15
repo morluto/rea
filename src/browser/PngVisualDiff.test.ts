@@ -533,3 +533,61 @@ const transparencyArtifact = (
     ]),
   );
 };
+
+const imageDataArtifact = (...parts: readonly Buffer[]) => {
+  const original = png(1, 1, [10, 20, 30, 255]);
+  return createWebScreenshotArtifact(
+    Buffer.concat([
+      original.subarray(0, 33),
+      ...parts.map((data) => chunk("IDAT", data)),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
+  );
+};
+
+const scanline = Buffer.from([0, 10, 20, 30, 255]);
+const completeStream = deflateSync(scanline);
+
+it.each([
+  ["trailing data", Buffer.concat([completeStream, Buffer.from("trailing")])],
+  ["zero padding", Buffer.concat([completeStream, Buffer.from([0])])],
+  ["a second stream", Buffer.concat([completeStream, deflateSync(scanline)])],
+  ["a preset dictionary", deflateSync(scanline, { dictionary: scanline })],
+] as const)(
+  "rejects PNG image data with %s as malformed input",
+  (_label, data) => {
+    const image = imageDataArtifact(data);
+    const input = compareWebScreenshotsInputSchema.parse({
+      before: image,
+      after: image,
+    });
+    expect(() => comparePngScreenshots(input)).toThrow(TypeError);
+    expect(isOneColourPng(image.data_base64)).toBeUndefined();
+  },
+);
+
+it.each([
+  ["one IDAT", [completeStream]],
+  [
+    "split zlib header",
+    [completeStream.subarray(0, 1), completeStream.subarray(1)],
+  ],
+  [
+    "split zlib checksum",
+    [completeStream.subarray(0, -2), completeStream.subarray(-2)],
+  ],
+  ["empty IDAT chunks", [Buffer.alloc(0), completeStream, Buffer.alloc(0)]],
+] as const)("keeps a complete PNG stream in %s", (_label, parts) => {
+  const image = imageDataArtifact(...parts);
+  const before = artifact(1, 1, [10, 20, 30, 255]);
+  expect(
+    comparePngScreenshots(
+      compareWebScreenshotsInputSchema.parse({ before, after: image }),
+    ),
+  ).toMatchObject({
+    status: "identical",
+    compared_pixels: 1,
+    changed_pixels: 0,
+  });
+  expect(isOneColourPng(image.data_base64)).toBe(true);
+});
