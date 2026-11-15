@@ -13,7 +13,7 @@ import type {
   DispatchRecordBudget,
   SwiftDispatchReaders,
 } from "./AppleSwiftDispatchFacets.js";
-import { issue } from "./AppleDispatchDecodeFacts.js";
+import { issue } from "../domain/apple/appleDispatchDecodeFacts.js";
 
 it("propagates unexpected conformance reader failures", () => {
   const failure = new Error("conformance reader invariant failed");

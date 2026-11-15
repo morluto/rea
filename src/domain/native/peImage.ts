@@ -1,21 +1,18 @@
-import type {
-  FileMapping,
-  ZeroFillMapping,
-} from "../../domain/virtualFileMapping.js";
-import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
-import { readPeOptionalHeader } from "../../domain/peMachine.js";
-import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
+import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import { readPeOptionalHeader } from "../peMachine.js";
+import { readPeSectionHeader } from "../peSectionHeader.js";
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
-} from "../../domain/dosMz.js";
+} from "../dosMz.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
   type ImageSection,
-} from "../../domain/binaryContainer.js";
+} from "../binaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {
   const evidence = parseMzHeaderEvidence(reader.bytes);

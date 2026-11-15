@@ -1,10 +1,10 @@
-import { malformedInput } from "../../domain/parseFailure.js";
+import { malformedInput } from "./parseFailure.js";
 import { TraceMap, decodedMappings } from "@jridgewell/trace-mapping";
 import {
   SOURCE_MAP_FORMAT,
   sourceMapSectionOverlap,
   type SourceMapLeaf,
-} from "../../domain/sourceMapFormat.js";
+} from "./sourceMapFormat.js";
 
 /** Determine whether a leaf-local mapping falls before its enclosing boundary. */
 const isBeforeSourceMapLeafStop = (

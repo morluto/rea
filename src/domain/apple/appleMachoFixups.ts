@@ -3,12 +3,12 @@ import {
   malformedInput,
   truncatedInput,
   unsupportedInput,
-} from "../domain/parseFailure.js";
-import type { Segment } from "./AppleMachoSelection.js";
-import { readLeb128, type Leb128Read } from "../domain/leb128.js";
-import { issue } from "./AppleDispatchDecodeFacts.js";
-import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
-import { decodeMachoName, type MachoName } from "./AppleMachoNames.js";
+} from "../parseFailure.js";
+import type { Segment } from "./appleMachoSelection.js";
+import { readLeb128, type Leb128Read } from "../leb128.js";
+import { issue } from "./appleDispatchDecodeFacts.js";
+import type { DecodeIssue } from "./appleDispatchDecodeFacts.js";
+import { decodeMachoName, type MachoName } from "./appleMachoNames.js";
 
 /** Where a Mach-O stores pointer fixups, from its load commands. */
 export interface FixupCommands {
