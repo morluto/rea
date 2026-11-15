@@ -969,6 +969,7 @@ const digestAlgorithm = (
 const files = (
   header: DecodedHeader,
   maxFiles: number,
+  maxPathBytes: number,
 ): RpmPackageFile[] | null => {
   const baseNames = stringArray(header, RPM_TAG.baseNames);
   const dirNames = stringArray(header, RPM_TAG.dirNames);
@@ -1012,14 +1013,28 @@ const files = (
         `RPM ${name} has ${String(values.length)} entries for ${String(baseNames.length)} BASENAMES rows.`,
         { field: "file inventory" },
       );
-  return baseNames.map((baseName, index) => {
+  // Every row repeats its DIRNAMES value, so one long directory shared by many
+  // rows expands far past the stored header bytes. The joined path text is
+  // counted against the read budget before any path string is built.
+  const dirBytes = dirNames.map((name) => Buffer.byteLength(name, "utf8"));
+  let pathBytes = 0;
+  baseNames.forEach((baseName, index) => {
     const dirIndex = dirIndexes[index]!;
     if (dirIndex < 0 || dirIndex >= dirNames.length)
       fail(
         `RPM DIRINDEXES[${String(index)}] ${String(dirIndex)} is outside DIRNAMES.`,
         { field: "file inventory" },
       );
-    const directory = dirNames[dirIndex]!;
+    pathBytes += dirBytes[dirIndex]! + Buffer.byteLength(baseName, "utf8");
+    if (pathBytes > maxPathBytes)
+      throw new RpmPackageCapacityFailure(
+        "max_file_bytes",
+        maxPathBytes,
+        `RPM file paths expand past the ${String(maxPathBytes)}-byte read budget.`,
+      );
+  });
+  return baseNames.map((baseName, index) => {
+    const directory = dirNames[dirIndexes[index]!]!;
     const flag = flags?.[index];
     return {
       path: `${directory}${baseName}`,
@@ -1302,7 +1317,7 @@ export const parseRpmPackage = (
       RPM_TAG.enhanceFlags,
       RPM_TAG.enhanceVersion,
     );
-    const fileRows = files(mainHeader, input.max_files);
+    const fileRows = files(mainHeader, input.max_files, input.max_file_bytes);
     const scriptletRows = scriptlets(
       mainHeader,
       input.include_script_text,

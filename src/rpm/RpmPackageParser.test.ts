@@ -565,6 +565,57 @@ it("refuses file inventories above the caller budget", () => {
   }
 });
 
+it("refuses file paths that expand past the read budget through a shared directory", () => {
+  const directory = `/${"d".repeat(1023)}`;
+  const baseNames = Array.from(
+    { length: 64 },
+    (_, index) => `f${String(index)}`,
+  );
+  const bytes = rpmBinaryPackageFixture({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "shared" },
+      { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "0.1" },
+      { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+      { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+      {
+        tag: RPM_TAG.dirNames,
+        type: RPM_TYPE.stringArray,
+        strings: [directory],
+      },
+      {
+        tag: RPM_TAG.baseNames,
+        type: RPM_TYPE.stringArray,
+        strings: baseNames,
+      },
+      {
+        tag: RPM_TAG.dirIndexes,
+        type: RPM_TYPE.int32,
+        int32: baseNames.map(() => 0),
+      },
+    ],
+  });
+  // The stored header holds the directory once, so the file fits the budget
+  // while the 64 joined paths (over 64 KiB) do not.
+  const budget = bytes.length + 4096;
+  expect(budget).toBeLessThan(64 * 1024);
+  try {
+    parse(
+      bytes,
+      inspectRpmPackageInputSchema.parse({
+        path: defaults.path,
+        max_file_bytes: budget,
+      }),
+    );
+    throw new Error("expected path budget refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
+    if (!(cause instanceof RpmPackageCapacityFailure)) return;
+    expect(cause.resource).toBe("max_file_bytes");
+    expect(cause.maximum).toBe(budget);
+  }
+  expect(parse(bytes).files).toHaveLength(64);
+});
+
 it("refuses oversize scriptlet text when the caller requested it", () => {
   try {
     parse(
