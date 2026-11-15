@@ -1037,7 +1037,13 @@ capture names its launched root,
 `{ "kind": "process", "pid": …, "start_time": …, "executable_sha256": … }`,
 where `start_time` is the platform start identity read for that PID at launch
 and `executable_sha256` is `null` when the executable was not stable across
-spawn; its `name` and `local_path` are `null`. Every
+spawn; its `name` and `local_path` are `null`. A Rizin or GDB debugger
+command names its session,
+`{ "kind": "session", "session_kind": …, "id": …, "target": … }`, where `id`
+is the session ID REA minted and `target` is the launch file hashed when the
+session started (validated like a file subject), or an `unknown` target when
+REA did not observe one (always for GDB, whose session launches no file);
+later debugger commands do not rebind it. Every
 record has a subject: one whose target REA did not identify names
 `{ "kind": "unknown", "reason": … }`, where the reason is
 `derived-from-linked-evidence` (comparisons and workflows, whose sources are
