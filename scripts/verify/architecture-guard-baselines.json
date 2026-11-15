@@ -82,9 +82,6 @@
     "src/gdb/GdbSessionManager.ts": 1,
     "src/process/ownedDebuggerSession.ts": 1
   },
-  "parser-format-failure-class": {
-    "src/domain/evidenceFormat.ts": 1
-  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
@@ -101,11 +98,6 @@
     "src/native/apple/losslessJson.ts": 1,
     "src/native/parsers/plist.ts": 1,
     "src/rust/RustAuditableReader.ts": 1
-  },
-  "parser-plain-throw": {
-    "src/native/AppleDispatchMetadata.ts": 1,
-    "src/native/MachoCommandNames.ts": 1,
-    "src/native/NativeMachoInspection.ts": 4
   },
   "raw-buffer-read": {
     "src/application/BinaryTargetResolver.ts": 1,
