@@ -153,7 +153,7 @@ export const desktopBuildChecks = (
   result("ps", facts.ps.found, facts.ps.detail, {
     classification: "missing_dependency",
     remediation:
-      "Install procps, whose ps REA's process supervisor runs: sudo apt install procps.",
+      "Install procps, whose ps REA's process supervisor runs from /bin/ps or /usr/bin/ps: sudo apt install procps.",
   }),
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),
