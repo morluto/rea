@@ -22,7 +22,7 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   type FileMappingIndex,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
 import {

@@ -28,7 +28,7 @@ import {
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import { parseKernelModule } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";

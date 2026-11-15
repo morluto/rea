@@ -1,4 +1,4 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -36,7 +36,7 @@ import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeResources,
   PE_RESOURCE_METADATA_BYTES,
-} from "./PeResourceParser.js";
+} from "../../artifacts/pe/PeResourceParser.js";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {

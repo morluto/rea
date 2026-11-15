@@ -3,6 +3,7 @@ import { z } from "zod";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
@@ -167,7 +168,7 @@ export const managedNativeVerificationResultSchema = z
       metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
       pinvoke_imports_total: z.int().min(0),
       native_implementations_total: z.int().min(0),
-      coverage_state: z.enum(["complete", "partial", "unavailable"]),
+      coverage_state: managedInspectionStateSchema,
     }),
     native_observations: z.strictObject({
       total: z.int().min(1),

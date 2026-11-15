@@ -23,7 +23,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   BinaryResourceFailure,
   binaryResourceAllowance,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 
 interface PeBinaryInput {
   readonly path: string;

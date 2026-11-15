@@ -5,7 +5,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import type {
   NativeReadRequest,
   NativeSectionDirectory,

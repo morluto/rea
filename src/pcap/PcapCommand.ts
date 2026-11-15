@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -100,17 +101,7 @@ export const runPcapCommand = async (options: {
   const captureDiagnostic = (
     snapshot: ProviderProcessSnapshot,
   ): AnalysisCapturedOutput =>
-    projectDiagnostic({
-      stdout: snapshot.stdout.text,
-      stderr: snapshot.stderr.text,
-      stdout_bytes: snapshot.stdout.bytes,
-      stderr_bytes: snapshot.stderr.bytes,
-      exit_code: snapshot.exitCode ?? null,
-      signal: snapshot.signal ?? null,
-      truncated:
-        snapshot.diagnosticTruncated === true ||
-        snapshot.outputIncomplete === true,
-    });
+    projectDiagnostic(capturedProviderOutput(snapshot));
   /** A version probe that fails names the tool; a capture read names the file. */
   const pcapToolFailure = (
     diagnostic: string,

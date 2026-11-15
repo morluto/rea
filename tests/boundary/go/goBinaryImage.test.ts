@@ -7,7 +7,7 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
 import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {

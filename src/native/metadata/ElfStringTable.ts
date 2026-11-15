@@ -2,7 +2,7 @@ import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   BinaryFormatFailure,
   binaryStringReadLimit,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 
 /** Read exact string-table bytes; ELF does not prescribe a character encoding. */
 export const readElfStringBytes = (bytes: Buffer, offset: number): Buffer => {

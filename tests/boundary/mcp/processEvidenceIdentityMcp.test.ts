@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -164,7 +164,7 @@ it("feeds the exact public CLI/MCP process comparison into all three MCP consume
     writeFile(rightPath, JSON.stringify(right)),
   ]);
   const cliComparison = parseEvidence(
-    await compareProcessEvidenceFiles(leftPath, rightPath),
+    await compareProcessCaptureFiles(leftPath, rightPath),
   );
   expect(cliComparison).toEqual(comparison);
   await expectConsumerResults(client, comparison);
@@ -508,6 +508,6 @@ it("keeps withheld ownership unknown through CLI and MCP comparison", async () =
   await writeFile(leftPath, JSON.stringify(left));
   await writeFile(rightPath, JSON.stringify(right));
   expect(
-    parseEvidence(await compareProcessEvidenceFiles(leftPath, rightPath)),
+    parseEvidence(await compareProcessCaptureFiles(leftPath, rightPath)),
   ).toEqual(comparison);
 });

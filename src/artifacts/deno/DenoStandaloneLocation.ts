@@ -41,7 +41,7 @@ import {
 } from "../apple/MachoLoadCommandReader.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
+import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;

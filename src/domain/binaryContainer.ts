@@ -2,9 +2,9 @@ import {
   resolveMappedFileOffset,
   type FileMapping,
   type ZeroFillMapping,
-} from "../../domain/virtualFileMapping.js";
-import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
-import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+} from "./virtualFileMapping.js";
+import type { PeDataDirectory } from "./peOptionalHeader.js";
+import { decodeLimit, ParseFailureError } from "./parseFailure.js";
 
 /** Native container facts a format failure can name. */
 interface BinaryFormatFailureFacts {

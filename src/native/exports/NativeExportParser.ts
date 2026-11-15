@@ -7,7 +7,7 @@ import {
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
 import { readElfStringBytes } from "../metadata/ElfStringTable.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";

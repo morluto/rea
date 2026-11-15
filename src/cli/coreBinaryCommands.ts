@@ -1,5 +1,4 @@
 import { contractNamed } from "./contractCliDescription.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { realpath, stat } from "node:fs/promises";
 import { findAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
@@ -11,31 +10,22 @@ import {
 } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import {
-  directAnalysisOptionsFromCli,
-  nativeOpenOptionFields,
-  nativeTarget,
-  snapshotSelectionOption,
-} from "./options.js";
+import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";
 import {
-  cliJavaScriptSourcePaths,
-  runCliJavaScriptApplicationAnalysis,
+  javaScriptApplicationCliProjection,
+  runJavaScriptApplicationCommand,
 } from "./javascriptApplicationAnalysis.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { javascriptApplicationOptions } from "../cliObservationOptions.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import {
   registerContractCommand,
+  registerRoutedCommand,
   runDirectOnTarget,
+  commandRoute,
 } from "./contractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
@@ -115,7 +105,6 @@ const registerContractBinaryCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "xrefs"),
     {
-      command: CLI_COMMANDS.xrefs,
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
       sessionTarget: program,
       positionals: ["address"],
@@ -197,106 +186,37 @@ const registerOverviewCommands = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  const overviewOptions = z.object({
-    snapshot: snapshotSelectionOption,
-    ...nativeOpenOptionFields,
-  });
-  // `analyze` declares the JavaScript integrity policy for its JavaScript
-  // lane. Preserve whether the caller supplied it until the target lane is
-  // known, then apply the JavaScript default only in that lane. The owner
-  // field fills an omission with that default, and an `.optional()` wrapper
-  // keeps reporting it, so every binary target would look like an explicit
-  // policy. Remove the owner's default before making the CLI option optional;
-  // reapply its metadata so help and `--schema` keep describing the option.
-  const ownerIntegrityPolicy =
-    javascriptApplicationOptions.shape.integrityPolicy;
-  const defaultIntegrityPolicy = ownerIntegrityPolicy.parse(undefined);
-  const policyMetadata = ownerIntegrityPolicy.meta();
-  const omittableIntegrityPolicy = ownerIntegrityPolicy
-    .removeDefault()
-    .optional();
-  const laneIntegrityPolicy =
-    policyMetadata === undefined
-      ? omittableIntegrityPolicy
-      : omittableIntegrityPolicy.meta(policyMetadata);
-  cli.command(CLI_COMMANDS.analyze, {
-    description: "Get an overview of an app",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "App, program, or analysis database path",
-      ),
-    }),
-    options: overviewOptions.extend({
-      integrityPolicy: laneIntegrityPolicy,
-      sourcePath: javascriptApplicationOptions.shape.sourcePath,
-      sourcePathsJson: javascriptApplicationOptions.shape.sourcePathsJson,
-    }),
-    run: async ({ args, options }) => {
-      // Route JavaScript targets exactly like analyze-javascript-application,
-      // including typed cancellation; cancellation wraps logging so its exit
-      // code is not replaced by the logged failure status.
-      if (await routesToJavaScriptAnalysis(args.path, options))
-        return withCommandCancellation((signal) =>
-          logCliCommand(logger, "analyze", async () => {
-            const sourcePaths = await cliJavaScriptSourcePaths(
-              options.sourcePath,
-              options.sourcePathsJson,
-              signal,
-            );
-            if (!sourcePaths.ok) return sourcePaths.error;
-            return runCliJavaScriptApplicationAnalysis(
-              {
-                input_path: absoluteCallerPath(args.path),
-                integrity_policy:
-                  options.integrityPolicy ?? defaultIntegrityPolicy,
-                ...(sourcePaths.value === undefined
-                  ? {}
-                  : { source_paths: sourcePaths.value }),
-              },
-              environment,
-              signal,
-            );
-          }),
-        );
-      return logCliCommand(logger, "analyze", () => {
-        if (
-          options.sourcePath !== undefined ||
-          options.sourcePathsJson !== undefined
-        )
-          throw new AnalysisInputError(
-            "analyze_javascript_application",
-            undefined,
-            [
-              {
-                path: ["source_paths"],
-                reason: "invalid_value",
-                message:
-                  "Source selection requires the static JavaScript ASAR/directory analysis lane.",
-              },
-            ],
-          );
-        if (options.integrityPolicy !== undefined)
-          throw new AnalysisInputError(
-            "analyze_javascript_application",
-            undefined,
-            [
-              {
-                path: ["integrity_policy"],
-                reason: "invalid_value",
-                message:
-                  "An integrity policy requires the static JavaScript ASAR/directory analysis lane; binary_overview accepts no input.",
-              },
-            ],
-          );
-        return runDirectAnalysis(
-          args.path,
-          "binary_overview",
-          {},
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult);
-      });
-    },
-  });
+  const description = "Get an overview of an app";
+  const target = "App, program, or analysis database path";
+  registerRoutedCommand(cli, logger, { description }, [
+    commandRoute(
+      contractNamed(ELECTRON_TOOL_CONTRACTS, "analyze_javascript_application"),
+      {
+        command: CLI_COMMANDS.analyze,
+        description,
+        ...javaScriptApplicationCliProjection(target),
+        evidenceDelivery: true,
+        viewDelivery: { invalidJson: "view must be valid JSON" },
+      },
+      // Route JavaScript targets exactly like analyze-javascript-application.
+      runJavaScriptApplicationCommand(environment),
+      {
+        takes: async ({ path }) =>
+          typeof path === "string" && isJavaScriptApplicationPath(path),
+        requirement: "the static JavaScript ASAR/directory analysis lane",
+      },
+    ),
+    commandRoute(
+      contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
+      {
+        command: CLI_COMMANDS.analyze,
+        description,
+        sessionTarget: nativeTarget(target, true),
+      },
+      runDirectOnTarget(runDirectAnalysis, logger),
+      { requirement: "a native program target" },
+    ),
+  ]);
 };
 
 const registerDecompileCommand = (
@@ -326,10 +246,8 @@ const registerDecompileCommand = (
           },
         },
       },
-      omit: {
-        ...noDocument,
-        detail: "The CLI returns complete pseudocode Evidence",
-      },
+      evidenceDelivery: true,
+      omit: noDocument,
       fields: {
         procedure: {
           name: "address",
@@ -342,23 +260,6 @@ const registerDecompileCommand = (
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
-const routesToJavaScriptAnalysis = async (
-  path: string,
-  options: {
-    readonly snapshot?: string | undefined;
-    readonly "target-format"?: ExecutableFormatHint | undefined;
-    readonly architecture?: string | undefined;
-    readonly "entry-point"?: string | undefined;
-    readonly provider?: string | undefined;
-  },
-): Promise<boolean> =>
-  options.provider === undefined &&
-  options.snapshot === undefined &&
-  options["target-format"] === undefined &&
-  options.architecture === undefined &&
-  options["entry-point"] === undefined &&
-  (await isJavaScriptApplicationPath(path));
-
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
   try {
     const canonical = await realpath(path);

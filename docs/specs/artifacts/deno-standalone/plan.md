@@ -17,7 +17,7 @@ section placement:
 
 - `DenoStandaloneLocation.ts` confirms the carrier name before claiming a file.
   It reads ELF and note headers, walks PE resource directories to the named
-  payload through `src/native/pe/PeResourceLayout.ts`, and scans Intel trailers
+  payload through `src/artifacts/pe/PeResourceLayout.ts`, and scans Intel trailers
   to the slice start so an enclosing app wins over a stored executable.
 - `DenoSectionLayout.ts` parses metadata JSON, the virtual-filesystem header,
   specifier, redirect and remote tables, and the npm snapshot length.

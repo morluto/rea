@@ -1,143 +1,112 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { Cli, z } from "incur";
+import type { z } from "incur";
 
+import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { createJavaScriptRuntimeObservationProvider } from "../composition/javascriptRuntimeObservation.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../contracts/javascript/javascriptRuntimeObservationToolContracts.js";
 import { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
-import { cliDomainInput } from "./domainInput.js";
-import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import {
-  javascriptRuntimeKindSchema,
-  listJavaScriptRuntimeTargetsInputSchema,
-  observeJavaScriptRuntimeInputSchema,
-} from "../domain/javascript/javascriptRuntimeObservation.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { Evidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { Result } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { withCommandCancellation } from "./commandCancellation.js";
-
-const observeOptionsSchema = z.object({
-  runtimeKind: javascriptRuntimeKindSchema
-    .optional()
-    .describe(
-      "Declared target role; Inspector cannot authenticate the Electron role",
-    ),
-  observationMs: cliDecimalField(
-    observeJavaScriptRuntimeInputSchema.shape.observation_ms,
-  ).describe("Observation window in milliseconds"),
-});
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  admittedContractInput,
+  registerContractCommand,
+  type ContractCommandContext,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 
 /** Register CLI equivalents of passive V8 Inspector tools. */
 export const registerJavaScriptRuntimeObservationCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   const admission = new V8InspectorAdmission();
-  const providerForCommand = () =>
-    createJavaScriptRuntimeObservationProvider(
-      environment,
-      undefined,
-      admission,
-    );
-  cli.command(CLI_COMMANDS.listJavaScriptRuntimeTargets, {
-    description: "List Node/Electron V8 Inspector targets",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listJavaScriptRuntimeTargetsInputSchema.shape.inspector_endpoint,
-      ).describe("Literal-loopback Inspector endpoint"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.listJavaScriptRuntimeTargets,
-          async () => {
-            const provider = providerForCommand();
-            const input = {
-              inspector_endpoint: args.endpoint,
-            };
-            const parsed =
-              listJavaScriptRuntimeTargetsInputSchema.safeParse(input);
-            if (!parsed.success)
-              return cliError(
-                analysisInputErrorFromIssues(
-                  "list_javascript_runtime_targets",
-                  parsed.error.issues,
-                  input,
-                ),
-              );
-            return await finishAnalysisCommand(
-              () =>
-                listJavaScriptRuntimeTargets(provider, parsed.data, {
-                  signal,
-                }),
-              { close: () => provider.close?.() ?? Promise.resolve() },
-              provider.identity().id,
-              "list_javascript_runtime_targets",
-              signal,
-              "V8 Inspector resources",
-            ).then(projectCliAnalysisResult);
-          },
-        ),
-      ),
-  });
-
-  cli.command(CLI_COMMANDS.observeJavaScriptRuntime, {
-    description: "Passively observe one exact Node/Electron Inspector target",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listJavaScriptRuntimeTargetsInputSchema.shape.inspector_endpoint,
-      ).describe("Literal-loopback Inspector endpoint"),
-      targetId: observeJavaScriptRuntimeInputSchema.shape.target_id.describe(
-        "Target from list-javascript-runtime-targets",
-      ),
-    }),
-    options: observeOptionsSchema,
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.observeJavaScriptRuntime,
-          async () => {
-            const provider = providerForCommand();
-            const input = {
-              inspector_endpoint: args.endpoint,
-              target_id: args.targetId,
-              runtime_kind: options.runtimeKind,
-              observation_ms: options.observationMs,
-            };
-            const parsed = observeJavaScriptRuntimeInputSchema.safeParse(input);
-            if (!parsed.success)
-              return cliError(
-                analysisInputErrorFromIssues(
-                  "observe_javascript_runtime",
-                  parsed.error.issues,
-                  input,
-                ),
-              );
-            return await finishAnalysisCommand(
-              () =>
-                observeJavaScriptRuntime(provider, parsed.data, {
-                  signal,
-                }),
-              { close: () => provider.close?.() ?? Promise.resolve() },
-              provider.identity().id,
-              "observe_javascript_runtime",
-              signal,
-              "V8 Inspector resources",
-            ).then(projectCliAnalysisResult);
-          },
-        ),
-      ),
-  });
+  // Admit the contract input, then observe through a disposable Inspector
+  // provider whose close the command awaits.
+  const observe =
+    <Schema extends z.ZodType>(
+      contract: { readonly name: string; readonly inputSchema: Schema },
+      run: (
+        provider: JavaScriptRuntimeObservationPort,
+        input: z.output<Schema>,
+        options: { readonly signal: AbortSignal },
+      ) => Promise<Result<Evidence, AnalysisError>>,
+    ) =>
+    async (_input: unknown, context: ContractCommandContext) => {
+      const admitted = admittedContractInput(context);
+      if (!admitted.ok) return cliError(admitted.error);
+      const input = admitted.value as z.output<Schema>;
+      const { signal } = context;
+      const provider = createJavaScriptRuntimeObservationProvider(
+        environment,
+        undefined,
+        admission,
+      );
+      return finishAnalysisCommand(
+        () => run(provider, input, { signal }),
+        { close: () => provider.close?.() ?? Promise.resolve() },
+        provider.identity().id,
+        contract.name,
+        signal,
+        "V8 Inspector resources",
+      ).then(projectCliAnalysisResult);
+    };
+  const endpoint = {
+    name: "endpoint",
+    description: "Literal-loopback Inspector endpoint",
+  };
+  const listTargets = contractNamed(
+    JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
+    "list_javascript_runtime_targets",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    listTargets,
+    {
+      description: "List Node/Electron V8 Inspector targets",
+      positionals: ["inspector_endpoint"],
+      fields: { inspector_endpoint: endpoint },
+    },
+    observe(listTargets, listJavaScriptRuntimeTargets),
+  );
+  const observeRuntime = contractNamed(
+    JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
+    "observe_javascript_runtime",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    observeRuntime,
+    {
+      description: "Passively observe one exact Node/Electron Inspector target",
+      positionals: ["inspector_endpoint", "target_id"],
+      fields: {
+        inspector_endpoint: endpoint,
+        target_id: {
+          description: "Target from list-javascript-runtime-targets",
+        },
+        runtime_kind: {
+          description:
+            "Declared target role; Inspector cannot authenticate the Electron role",
+        },
+        observation_ms: {
+          description: "Observation window in milliseconds",
+        },
+      },
+    },
+    observe(observeRuntime, observeJavaScriptRuntime),
+  );
 };
 
 const cliError = (

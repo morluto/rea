@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   javaScriptMemberMutationAllowanceFromField,
   type JavaScriptMemberMutationAllowance,
@@ -241,8 +242,7 @@ const analyzeJob = async (
       ...(refusal?.reportedLimits == null
         ? {}
         : { limits: { ...refusal.reportedLimits } }),
-      message:
-        rawMessage.length > 2048 ? `${rawMessage.slice(0, 2048)}…` : rawMessage,
+      message: ellipsisExcerpt(rawMessage, 2048),
     });
     return !fatalCleanupFailure;
   }
