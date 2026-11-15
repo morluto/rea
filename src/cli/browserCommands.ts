@@ -1,17 +1,6 @@
-import { parseCliJsonInput } from "../cliJsonInput.js";
-import {
-  fetchedSourceMapLimitCliOptions,
-  sourceMapLimitsFromCli,
-} from "./sourceMapLimits.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 
-import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
-import {
-  deliverCliAnalysisEvidence,
-  parseCliAnalysisEvidenceDelivery,
-} from "./analysisEvidenceDelivery.js";
-import { webRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
 
 import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
@@ -21,22 +10,14 @@ import {
   listBrowserTargets,
   observeWebSession,
 } from "../application/BrowserObservationService.js";
-import { logCliCommand } from "../cliLogging.js";
-import { listBrowserTargetsInputSchema } from "../domain/browserObservation.js";
+
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
-import { observeWebSessionInputSchema } from "../domain/browserSession.js";
+
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
-import { cliDomainInput } from "./domainInput.js";
-import { cliDecimalField } from "./options.js";
+
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import {
-  observationDuration,
-  passiveBrowserScopeOptions,
-  selectedCommandTimeout,
-  selectedDiscoveryTimeout,
-} from "../cliObservationOptions.js";
-import { withCommandCancellation } from "./commandCancellation.js";
+
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
@@ -144,112 +125,86 @@ const registerBundleAnalysis = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.analyzeWebBundle, {
-    description:
-      "Capture and statically analyze a page bundle, defaulting to the selected target origin",
-    args: z.object({
-      endpoint: cliDomainInput(
-        listBrowserTargetsInputSchema.shape.cdp_endpoint,
-      ),
-      targetId: observeWebSessionInputSchema.shape.target_id.describe(
-        "Target ID from list-browser-targets",
-      ),
-    }),
-    options: z.object({
-      ...passiveBrowserScopeOptions,
-      ...webBundleDeliveryOptions,
-      observationMs: observationDuration(500),
-      semanticPrecision: z
-        .string()
-        .optional()
-        .describe(
-          "Inline JSON or JSON file of semantic_precision evaluator budgets for each inert script.",
-        ),
-      fetchSourceMaps: z
-        .boolean()
-        .default(false)
-        .describe("Fetch source maps referenced by captured scripts"),
-      maxHeapMb: cliDecimalField(analyzeWebBundleInputSchema.shape.max_heap_mb),
-      analysisTimeoutMs: cliDecimalField(
-        analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
-      ),
-      totalAnalysisTimeoutMs: cliDecimalField(
-        analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
-      ),
-      ...fetchedSourceMapLimitCliOptions,
-      sourceMapFetchTimeoutMs: cliDecimalField(
-        analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "analyze-web-bundle", async () => {
-          const delivery = parseCliAnalysisEvidenceDelivery(
-            "analyze_web_bundle",
-            options,
-            webRoutesDeliverySchema,
-          );
-          if (!delivery.ok) return projectAnalysisError(delivery.error);
-          const precision =
-            options.semanticPrecision === undefined
-              ? undefined
-              : await parseCliJsonInput(
-                  options.semanticPrecision,
-                  "analyze_web_bundle",
-                  signal,
-                );
-          if (precision !== undefined && !precision.ok) return precision.error;
-          const provider = createBrowserObservationProvider();
-          const input = {
-            cdp_endpoint: args.endpoint,
-            allowed_origins: options.allowedOrigins,
-            target_id: args.targetId,
-            observation_ms: options.observationMs,
-            include_script_sources: true,
-            fetch_source_maps: options.fetchSourceMaps,
-            ...(precision === undefined
-              ? {}
-              : { semantic_precision: precision.value }),
-            ...sourceMapLimitsFromCli(options),
-            ...(options.maxHeapMb === undefined
-              ? {}
-              : { max_heap_mb: options.maxHeapMb }),
-            ...(options.analysisTimeoutMs === undefined
-              ? {}
-              : { analysis_timeout_ms: options.analysisTimeoutMs }),
-            ...(options.totalAnalysisTimeoutMs === undefined
-              ? {}
-              : { total_analysis_timeout_ms: options.totalAnalysisTimeoutMs }),
-            ...(options.sourceMapFetchTimeoutMs === undefined
-              ? {}
-              : {
-                  source_map_fetch_timeout_ms: options.sourceMapFetchTimeoutMs,
-                }),
-            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
-            ...selectedCommandTimeout(options.commandTimeoutMs),
-          };
-          const parsed = analyzeWebBundleInputSchema.safeParse(input);
-          if (!parsed.success)
-            return browserCliError(
-              analysisInputErrorFromIssues(
-                "analyze_web_bundle",
-                parsed.error.issues,
-                input,
-              ),
-            );
-          return deliverCliAnalysisEvidence({
-            ...delivery.value,
-            run: () => analyzeWebBundle(provider, parsed.data, { signal }),
-            service: {
-              close: async () => {
-                await provider.close?.();
-              },
-            },
-            providerId: provider.identity().id,
-            operation: "analyze_web_bundle",
-            signal,
-          });
-        }),
-      ),
-  });
+  const contract = contractNamed(BROWSER_TOOL_CONTRACTS, "analyze_web_bundle");
+  const pageInspectionOnly =
+    "page inspection extras are not part of bundle analysis on the CLI; use inspect-web-page";
+  registerContractCommand(
+    cli,
+    logger,
+    contract,
+    {
+      command: CLI_COMMANDS.analyzeWebBundle,
+      description:
+        "Capture and statically analyze a page bundle, defaulting to the selected target origin",
+      ...browserTargetProjection,
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
+      jsonInputs: {
+        semantic_precision:
+          "semanticPrecision must be inline JSON or a JSON file path",
+      },
+      flatten: {
+        source_map_limits: {
+          output_bytes: { name: "sourceMapOutputBytes" },
+          decoded_rows: { name: "sourceMapDecodedRows" },
+          decoded_segments: { name: "sourceMapDecodedSegments" },
+          decoded_records: { name: "sourceMapDecodedRecords" },
+          section_depth: { name: "sourceMapSectionDepth" },
+          fetch_bytes: { name: "sourceMapFetchBytes" },
+        },
+      },
+      fields: {
+        ...browserTargetProjection.fields,
+        observation_ms: {
+          description: "Observation duration in milliseconds",
+        },
+        semantic_precision: {
+          description:
+            "Inline JSON or JSON file of semantic_precision evaluator budgets for each inert script.",
+        },
+        fetch_source_maps: {
+          description: "Fetch source maps referenced by captured scripts",
+        },
+        view: {
+          description:
+            "JSON web-bundle (endpoints, inferences, summary) or javascript-routes view; requires --detail summary and --evidence_output",
+        },
+      },
+      omit: {
+        include_script_sources:
+          "bundle analysis always reads script sources, the contract default",
+        include_accessibility_text: pageInspectionOnly,
+        include_console_text: pageInspectionOnly,
+        include_json_body_shapes: pageInspectionOnly,
+        include_websocket_shapes: pageInspectionOnly,
+        include_storage_keys: pageInspectionOnly,
+        include_storage_fingerprints: pageInspectionOnly,
+      },
+    },
+    async (input, { signal, delivery }) => {
+      // Delivery fields select the reply; the analysis takes the rest.
+      const parsed = analyzeWebBundleInputSchema.safeParse(input);
+      if (!parsed.success)
+        return browserCliError(
+          analysisInputErrorFromIssues(
+            contract.name,
+            parsed.error.issues,
+            input,
+          ),
+        );
+      const provider = createBrowserObservationProvider();
+      return deliverCliAnalysisEvidence({
+        ...delivery!,
+        run: () => analyzeWebBundle(provider, parsed.data, { signal }),
+        service: {
+          close: async () => {
+            await provider.close?.();
+          },
+        },
+        providerId: provider.identity().id,
+        operation: contract.name,
+        signal,
+      });
+    },
+  );
 };
