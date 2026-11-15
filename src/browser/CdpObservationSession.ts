@@ -4,7 +4,8 @@ import type {
   WebObservationSession,
 } from "../domain/browserSession.js";
 import {
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -779,9 +780,7 @@ const waitForWindow = async (
     const onAbort = (): void =>
       settle(() => {
         reject(
-          new AnalysisCancelledError("observe_web_session", {
-            cause: signal?.reason,
-          }),
+          cancelledBy("observe_web_session", carriedReason(signal?.reason)),
         );
       });
     signal?.addEventListener("abort", onAbort, { once: true });

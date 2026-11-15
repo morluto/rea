@@ -74,6 +74,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
@@ -616,35 +617,6 @@ const publishScreenExclusively = async (
   throw writeFailure.cause;
 };
 
-const cancellationWithCleanupFailure = (
-  primary: AnalysisCancelledError,
-  cleanup: AnalysisError,
-  resources: readonly string[],
-): AnalysisCancelledError =>
-  cancelledBy(
-    primary.operation,
-    carriedReason(
-      new AggregateError(
-        [primary, cleanup],
-        "ADB cancellation cleanup failed",
-        { cause: primary },
-      ),
-    ),
-    {
-      diagnostics: primary.diagnostics,
-      ...(primary.capturedOutput === undefined
-        ? {}
-        : { capturedOutput: primary.capturedOutput }),
-      cleanup: {
-        reason: [primary.cleanup?.reason, cleanup.message]
-          .filter((reason): reason is string => reason !== undefined)
-          .join("; "),
-        resources: [...new Set([...primary.cleanupResources, ...resources])],
-      },
-      partialObservation: primary.partialObservation,
-    },
-  );
-
 /** Publish an ADB-produced archive without replacing an existing caller file. */
 const publishBugreport = async (
   source: string,
@@ -1059,124 +1031,81 @@ export class AdbProvider {
       );
     }
 
-    let result: Result<AnalysisExecution, AnalysisError> | undefined;
-    let primary: AnalysisError | undefined;
     const children = new ArtifactResourceScope();
-    try {
-      result = await work(root, children);
-    } catch (cause: unknown) {
-      if (cause instanceof AdbInputSnapshotFailure) {
-        primary =
-          cause.primaryCause instanceof AnalysisError
-            ? cause.primaryCause
-            : new AnalysisOutputError(
-                operation,
-                `The caller input could not be staged for adb: ${cause.sourcePath}`,
-                { cause: cause.primaryCause ?? cause },
-              );
-        // Snapshot handle cleanup may recover when the runtime-root lease is
-        // drained below. Keep that historical failure linked to the typed
-        // primary error while the lease owns and clears live cleanup state.
-        primary.retainSecondaryFailure(
-          new AnalysisOutputError(
-            operation,
-            `ADB input snapshot cleanup previously failed for ${cause.sourcePath}`,
-            { cause },
-          ),
-          {},
-        );
-      } else {
-        primary =
-          cause instanceof AnalysisError
-            ? cause
-            : new AnalysisProtocolError(`ADB ${operation} failed`, { cause });
-      }
-    }
-
     const rootLease = runtimeRootLease(root, children);
-    const released = await this.#resources.release({
-      kind: "lease",
-      resource: root.path,
-      lease: rootLease,
-    });
-    if (signal?.aborted === true) {
-      const failure =
-        primary ??
-        (result !== undefined && !result.ok ? result.error : undefined);
-      if (failure !== undefined)
-        primary = analysisErrorWithCancellation(
-          failure,
-          cancelledBy(operation, signal),
-        );
-    }
-    if (primary === undefined && result?.ok && signal?.aborted === true) {
-      const completed = result.value;
-      primary = cancelledBy(operation, signal, {
-        partialObservation: createEvidence(
-          completed.subject ?? undefined,
-          completed.provider,
-          {
-            operation,
-            parameters,
-            result: completed.result,
-            rawResult: completed.rawResult,
-            limitations: completed.limitations,
-            locations: completed.locations,
-            confidence: "observed",
+    return finalizedResult(
+      await runOwned(
+        async () => {
+          try {
+            return await work(root, children);
+          } catch (cause: unknown) {
+            if (!(cause instanceof AdbInputSnapshotFailure))
+              return err(
+                cause instanceof AnalysisError
+                  ? cause
+                  : new AnalysisProtocolError(`ADB ${operation} failed`, {
+                      cause,
+                    }),
+              );
+            const primary =
+              cause.primaryCause instanceof AnalysisError
+                ? cause.primaryCause
+                : new AnalysisOutputError(
+                    operation,
+                    `The caller input could not be staged for adb: ${cause.sourcePath}`,
+                    { cause: cause.primaryCause ?? cause },
+                  );
+            // Snapshot handle cleanup may recover when the runtime-root lease
+            // is drained during close. Keep that historical failure linked to
+            // the typed primary error while the lease owns live cleanup state.
+            return err(
+              primary.retainSecondaryFailure(
+                new AnalysisOutputError(
+                  operation,
+                  `ADB input snapshot cleanup previously failed for ${cause.sourcePath}`,
+                  { cause },
+                ),
+                {},
+              ),
+            );
+          }
+        },
+        {
+          providerId: ADB_PROVIDER_IDENTITY.id,
+          operation,
+          signal,
+          close: async () => {
+            const released = await this.#resources.release({
+              kind: "lease",
+              resource: root.path,
+              lease: rootLease,
+            });
+            if (released.kind === "released") return;
+            const cleanup = this.#cleanupError(
+              operation,
+              parameters,
+              [released.cause],
+              [
+                root.path,
+                ...(released.cause instanceof ArtifactReaderFailure &&
+                released.cause.cleanup !== undefined
+                  ? released.cause.cleanup.resources
+                  : []),
+              ],
+            );
+            rootLease.bindCleanupError(cleanup);
+            throw cleanup;
           },
-        ),
-      });
-    }
-    if (released.kind === "failed") {
-      const cleanupResources = [
-        root.path,
-        ...(released.cause instanceof ArtifactReaderFailure &&
-        released.cause.cleanup !== undefined
-          ? released.cause.cleanup.resources
-          : []),
-      ];
-      const cleanup = this.#cleanupError(
-        operation,
-        parameters,
-        [released.cause],
-        cleanupResources,
-        result?.ok ? result.value : undefined,
-      );
-      const returnCleanupError = (error: AnalysisError) => {
-        rootLease.bindCleanupError(error);
-        return err(error);
-      };
-      if (primary instanceof AnalysisCancelledError) {
-        return returnCleanupError(
-          cancellationWithCleanupFailure(primary, cleanup, cleanupResources),
-        );
-      }
-      if (primary !== undefined)
-        return returnCleanupError(
-          analysisErrorWithCleanupFailure(primary, cleanup, operation),
-        );
-      if (result !== undefined && !result.ok) {
-        if (result.error instanceof AnalysisCancelledError) {
-          return returnCleanupError(
-            cancellationWithCleanupFailure(
-              result.error,
-              cleanup,
-              cleanupResources,
+          partial: (completed) =>
+            createAnalysisExecutionEvidence(
+              operation,
+              parameters,
+              completed,
+              "observed",
             ),
-          );
-        }
-        return returnCleanupError(
-          analysisErrorWithCleanupFailure(result.error, cleanup, operation),
-        );
-      }
-      return returnCleanupError(cleanup);
-    }
-    if (primary !== undefined) return err(primary);
-    if (result === undefined)
-      return err(
-        new AnalysisProtocolError(`ADB ${operation} returned no result`),
-      );
-    return result;
+        },
+      ),
+    );
   }
 
   #retainOutputDirectoryCleanup(
