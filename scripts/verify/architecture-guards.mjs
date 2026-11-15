@@ -80,6 +80,29 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
+// compiler keeps readers on its questions, and only the log and its record
+// module read the recorded sites. A method read on an intrinsic
+// instance asks one owner, which checks the method, the instance's prototype
+// link and the intrinsic prototypes.
+check(
+  "reader-side read of recorded opaque effects (ask javascriptSemanticEffectLog.ts or the javascriptSemanticEffectRecord.ts accessors)",
+  files,
+  /\.opaqueEffects\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticEffectLog.ts",
+    "src/domain/javascript/javascriptSemanticEffectRecord.ts",
+  ],
+);
+
+check(
+  "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
+  files,
+  /mayObserve\([^;]*\["__proto__"\]/u,
+  ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
+);
+
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
   files,
@@ -323,6 +346,18 @@ const checkCounted = (label, key, selected, pattern, owners) => {
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
     );
 };
+
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Recorded effects belong to the effect log. A reader that reads an effect
+// index itself decides on its own which effect kinds and proofs apply; new
+// readers ask the log instead, and each migrated reader lowers this count.
+checkCounted(
+  "read of a JavaScript effect index outside the effect log (ask javascriptSemanticEffectLog.ts)",
+  "javascript-effect-index-read",
+  files,
+  /\.(?:bindingWrites|memberWrites|escapedPaths|ambientWriteEffects|ambientEscapeEffects|ambientBindingWrites|ambientWrites|ambientEscapes)\b/gu,
+  ["src/domain/javascript/javascriptSemanticEffectLog.ts"],
+);
 
 // Coverage status has one vocabulary, coverageStatusSchema in
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
