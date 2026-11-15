@@ -10,6 +10,8 @@ import {
 } from "yaml";
 import type { Node } from "yaml";
 
+import { copyYamlAliasSource } from "./YamlConfigurationAliases.js";
+
 /**
  * ggcode reads MCP servers from ~/.ggcode/mcp_servers.yaml, a top-level YAML
  * sequence of named entries: `- name: rea` with `type`, `command`, `args`,
@@ -159,43 +161,6 @@ export const ggcodeConfigurationHasUnnamedServers = (text: string): boolean => {
   return false;
 };
 
-/** Copy original bindings so replaced aliases cannot bind to later anchors. */
-const copyGgcodeAliasSource = (
-  source: unknown,
-  document: Document,
-  visiting = new Set<Node>(),
-): unknown => {
-  const node = isAlias(source) ? source.resolve(document) : source;
-  if (isAlias(source) && node === undefined)
-    throw new TypeError("Cannot edit an unresolved ggcode YAML alias");
-  if (!isNode(node)) return node;
-  if (visiting.has(node))
-    throw new TypeError("Cannot edit cyclic ggcode YAML aliases");
-  visiting.add(node);
-  const copied = node.clone();
-  if (isScalar(copied) || isMap(copied) || isSeq(copied)) delete copied.anchor;
-  if (isSeq(node) && isSeq(copied))
-    copied.items = node.items.map((item) =>
-      copyGgcodeAliasSource(item, document, visiting),
-    );
-  else if (isMap(node) && isMap(copied))
-    copied.items.forEach((pair, index) => {
-      const original = node.items[index];
-      if (original === undefined) return;
-      pair.key = copyGgcodeAliasSource(original.key, document, visiting);
-      pair.value = copyGgcodeAliasSource(original.value, document, visiting);
-    });
-  if (isAlias(source)) {
-    delete copied.commentBefore;
-    delete copied.comment;
-    if (source.commentBefore !== undefined)
-      copied.commentBefore = source.commentBefore;
-    if (source.comment !== undefined) copied.comment = source.comment;
-  }
-  visiting.delete(node);
-  return copied;
-};
-
 /** Outside aliases keep their original bindings when the rea entry changes. */
 const retainGgcodeAliasConsumers = (
   document: Document,
@@ -217,7 +182,7 @@ const retainGgcodeAliasConsumers = (
         path.some((parent) => isNode(parent) && replaced.has(parent))
       )
         return;
-      const copied = copyGgcodeAliasSource(alias, document);
+      const copied = copyYamlAliasSource(alias, document);
       return isNode(copied) ? copied : undefined;
     },
   });
