@@ -770,6 +770,7 @@ describe("JSON-document contract commands", () => {
         "match-native-functions",
         "build-reconstruction-obligation-ledger",
         "evaluate-reconstruction-coverage",
+        "observe-native-calls",
       ]),
     );
   });
@@ -779,7 +780,12 @@ describe("JSON-document contract commands", () => {
     (_command, description) => {
       const command = registered.get(description.command)!;
       const args = (command.args as z.ZodObject).shape;
-      expect(Object.keys(args)).toEqual([description.key]);
+      expect(Object.keys(args)).toEqual([
+        ...(description.sessionTarget === undefined
+          ? []
+          : [description.sessionTarget.key]),
+        description.key,
+      ]);
       const advertised = (args[description.key] as z.ZodType).meta();
       expect(advertised?.contentMediaType).toBe("application/json");
       const content = advertised?.contentSchema as Record<string, unknown>;
