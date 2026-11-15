@@ -1,6 +1,6 @@
 import * as t from "@babel/types";
 import {
-  semanticAmbientWriteGeneration,
+  semanticAmbientEffectGeneration,
   semanticBindingEffectGeneration,
   semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
@@ -113,7 +113,8 @@ export const createSemanticReturnedReferences = (
       existing !== undefined &&
       existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
-      existing.ambientGeneration === semanticAmbientWriteGeneration(state) &&
+      existing.ambientGeneration ===
+        semanticAmbientEffectGeneration(state, "contents") &&
       existing.dependencies.every(
         ({ binding, generation }) =>
           semanticBindingEffectGeneration(binding) === generation,
@@ -725,7 +726,7 @@ export const createSemanticReturnedReferences = (
       result,
       invocation,
       iterationUnknown: state.arrayIterationUnknown,
-      ambientGeneration: semanticAmbientWriteGeneration(state),
+      ambientGeneration: semanticAmbientEffectGeneration(state, "contents"),
       dependencies: [...dependencies].map(([binding, generation]) => ({
         binding,
         generation,

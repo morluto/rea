@@ -6,6 +6,7 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
 
 it.each([
   ["const get=()=>module;get.call(null)", true],
@@ -157,6 +158,35 @@ it("does not treat a shadowed Function namespace as native prototype mutation", 
     }
   `);
   expect(analysis.references).toEqual([]);
+});
+
+it("recomputes a cached invocation after a later recorded prototype escape", () => {
+  const parsed = parseJavaScriptSource("const get=()=>({});get.call(null);");
+  if (parsed === null) throw new Error("Expected valid fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const statement = parsed.program.body.at(-1);
+  if (
+    !t.isExpressionStatement(statement) ||
+    !t.isCallExpression(statement.expression)
+  )
+    throw new Error("Expected final invocation");
+  const call = statement.expression;
+  const returned = createSemanticReturnedReferences(
+    index.bindings,
+    "direct-call",
+  );
+  expect(returned(call.callee, call).unresolvedInvocation).toBeUndefined();
+  retainSemanticAmbientEffect(
+    index.bindings,
+    "escape",
+    ["global", "Function", "prototype"],
+    parsed.program,
+  );
+  expect(returned(call.callee, call).unresolvedInvocation).toBe(true);
 });
 
 it("retains a finite shared callable alias graph", () => {
