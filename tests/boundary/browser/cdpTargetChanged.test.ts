@@ -51,7 +51,37 @@ const start = async (options: FakeOptions) => {
   return browser;
 };
 
-const known = { loaderId: "loader-main" } as const;
+const known: Document = { loaderId: "loader-main" };
+
+/**
+ * A refusal reason, or a completed result whose document was proven
+ * (`verified`) or left unproven with limited coverage (`limited`).
+ */
+type Outcome = "verified" | "limited" | string;
+
+const expectOutcome = (
+  result:
+    | Awaited<ReturnType<CdpBrowserProvider["inspectPage"]>>
+    | Awaited<ReturnType<CdpBrowserProvider["discoverWebMcpTools"]>>
+    | Awaited<ReturnType<CdpBrowserProvider["captureScreenshot"]>>,
+  outcome: Outcome,
+  section: string,
+) => {
+  if (outcome !== "verified" && outcome !== "limited") {
+    expect(result).toMatchObject({ ok: false, error: { reason: outcome } });
+    return;
+  }
+  if (!result.ok) throw result.error;
+  const limited = result.value.completeness.attach_limited_sections.includes(
+    section as never,
+  );
+  expect(limited).toBe(outcome === "limited");
+  expect(
+    result.value.limitations.some((text) =>
+      text.includes("loader identity was unavailable"),
+    ),
+  ).toBe(outcome === "limited");
+};
 
 describe("page capture", () => {
   const inspect = async (options: FakeOptions) => {
@@ -70,45 +100,75 @@ describe("page capture", () => {
     {
       name: "a final URL change with an unchanged loader",
       after: { ...known, path: "/next" },
-      reason: "target_changed",
+      outcome: "verified",
     },
     {
       name: "a final URL change without loader identities",
       before: {},
       after: { path: "/next" },
-      reason: "target_changed",
+      outcome: "limited",
+    },
+    {
+      name: "a final reply that omits a known loader",
+      after: {},
+      outcome: "limited",
     },
     {
       name: "a final loader change at the same URL",
       after: { loaderId: "loader-next" },
-      reason: null,
+      outcome: "target_changed",
     },
-  ])("reports $name as $reason", async ({ before, after, reason }) => {
+    {
+      name: "a final document change to another origin",
+      after: { loaderId: "loader-next", url: "https://outside.example/" },
+      outcome: "target_changed",
+    },
+    {
+      name: "a final same-document move to another origin",
+      after: { ...known, url: "https://outside.example/" },
+      outcome: "target_not_allowed",
+    },
+  ])("reports $name as $outcome", async ({ before, after, outcome }) => {
     const result = await inspect({
       commandResult: frameTrees(2, before ?? known, after),
     });
-    if (reason === null) expect(result.ok).toBe(true);
-    else expect(result).toMatchObject({ ok: false, error: { reason } });
+    expectOutcome(result, outcome, "frames");
   });
 
   it.each([
     {
       name: "a committed navigation to another origin",
       frame: { loaderId: "loader-next", url: "https://outside.example/" },
-      reason: "target_not_allowed",
+      outcome: "target_changed",
+    },
+    {
+      name: "a duplicate event for the selected document",
+      frame: known,
+      outcome: "verified",
     },
     {
       name: "a committed navigation without loader identity",
       frame: { path: "/next" },
       before: {},
-      reason: "target_changed",
+      outcome: "limited",
+    },
+    {
+      name: "an unproven navigation to another origin",
+      frame: { url: "https://outside.example/" },
+      before: {},
+      outcome: "target_not_allowed",
     },
     {
       name: "a root navigation without a frame ID",
       frame: { id: "", path: "/next" },
-      reason: "protocol_error",
+      outcome: "protocol_error",
     },
-  ])("reports $name as $reason", async ({ frame, before, reason }) => {
+  ] as readonly {
+    name: string;
+    frame: Document;
+    before?: Document;
+    outcome: Outcome;
+  }[])("reports $name as $outcome", async ({ frame, before, outcome }) => {
     const result = await inspect({
       eventsBeforeReply: ["Network.enable"],
       commandResult: frameTrees(99, before ?? known, before ?? known),
@@ -125,7 +185,7 @@ describe("page capture", () => {
             ]
           : undefined,
     });
-    expect(result).toMatchObject({ ok: false, error: { reason } });
+    expectOutcome(result, outcome, "frames");
   });
 });
 
@@ -146,41 +206,58 @@ describe("WebMCP discovery", () => {
     {
       name: "a final URL change with an unchanged loader",
       after: { ...known, path: "/next" },
-      reason: "target_changed",
+      outcome: "verified",
     },
     {
       name: "a final URL change without loader identities",
       before: {},
       after: { path: "/next" },
-      reason: "target_changed",
+      outcome: "limited",
     },
     {
       name: "a final reply that omits a known loader",
       after: {},
-      reason: "protocol_error",
+      outcome: "limited",
     },
     {
       name: "a final loader change",
       after: { loaderId: "loader-next" },
-      reason: "target_changed",
+      outcome: "target_changed",
     },
     {
       name: "a final document change to another origin",
       after: { loaderId: "loader-next", url: "https://outside.example/" },
-      reason: "target_not_allowed",
+      outcome: "target_changed",
     },
-  ])("reports $name as $reason", async ({ before, after, reason }) => {
+  ])("reports $name as $outcome", async ({ before, after, outcome }) => {
     const result = await discover({
       commandResult: frameTrees(1, before ?? known, after),
     });
-    expect(result).toMatchObject({ ok: false, error: { reason } });
+    expectOutcome(result, outcome, "webmcp_tools");
+    if (result.ok) expect(result.value.target.url).toMatch(/\/app$/u);
   });
 });
 
 describe("screenshot capture", () => {
-  it("reports a final reply that omits a known loader as protocol_error", async () => {
+  it.each([
+    {
+      name: "a final reply that omits a known loader",
+      after: {},
+      outcome: "limited",
+    },
+    {
+      name: "a final loader change",
+      after: { loaderId: "loader-next" },
+      outcome: "target_changed",
+    },
+    {
+      name: "a final same-document URL change",
+      after: { ...known, path: "/next" },
+      outcome: "target_changed",
+    },
+  ])("reports $name as $outcome", async ({ after, outcome }) => {
     const browser = await start({
-      commandResult: frameTrees(1, known, {}),
+      commandResult: frameTrees(1, known, after),
     });
     const result = await new CdpBrowserProvider().captureScreenshot(
       captureWebScreenshotInputSchema.parse({
@@ -189,9 +266,6 @@ describe("screenshot capture", () => {
         target_id: "allowed-page",
       }),
     );
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: "protocol_error" },
-    });
+    expectOutcome(result, outcome, "screenshot");
   });
 });

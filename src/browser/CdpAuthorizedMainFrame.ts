@@ -12,6 +12,8 @@ interface AuthorizedMainFrameOptions {
   readonly signal: AbortSignal | undefined;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly operation: BrowserObservationOperation;
+  /** A reply already read for another check, used as the first attempt. */
+  readonly initial?: CdpFrameTree;
 }
 
 /** Wait for the attached target's main frame to enter its approved origin. */
@@ -21,14 +23,13 @@ export const authorizedMainFrame = async ({
   signal,
   allowedOrigins,
   operation,
+  initial,
 }: AuthorizedMainFrameOptions): Promise<CdpFrameTree> => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
-    const tree = await connection.send(
-      "Page.getFrameTree",
-      {},
-      sessionId,
-      signal,
-    );
+    const tree =
+      attempt === 0 && initial !== undefined
+        ? initial
+        : await connection.send("Page.getFrameTree", {}, sessionId, signal);
     const observed = tree.root.url;
     const facts = classifyCdpFrameUrl(observed, allowedOrigins);
     if (facts.scope === "outside_policy")
