@@ -1,4 +1,4 @@
-import { chmod, rm, writeFile } from "node:fs/promises";
+import { chmod, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -680,6 +680,14 @@ const observedComparison = () => {
   return { compare, targets, failures };
 };
 
+/** Close owners a failed test left open, before its directory is removed. */
+const releaseOwners = async (
+  owners: Iterable<OwnedFileHandle>,
+): Promise<void> => {
+  for (const owner of owners)
+    if (owner.handle.fd >= 0) await owner.close().catch(() => undefined);
+};
+
 /** Release every file owner a typed cleanup failure retained. */
 const releaseRetainedOwners = async (cause: unknown): Promise<void> => {
   if (cause instanceof RetainedRegularFileCleanupFailure)
@@ -765,11 +773,18 @@ describe("compare-managed-members composed from inspect_managed_members", () => 
 });
 
 describe("compare-managed-members source failures", () => {
+  // Root and Windows can still read a 0o000 file.
+  const deniesUnreadableFiles =
+    process.platform !== "win32" && process.getuid?.() !== 0;
   it.each([
     ["left", "disappearance", "ENOENT"],
-    ["left", "permission denial", "EACCES"],
     ["right", "disappearance", "ENOENT"],
-    ["right", "permission denial", "EACCES"],
+    ...(deniesUnreadableFiles
+      ? [
+          ["left", "permission denial", "EACCES"],
+          ["right", "permission denial", "EACCES"],
+        ]
+      : []),
   ])(
     "classifies a %s-side %s and retains only earlier Evidence",
     async (side, _name, code) => {
@@ -845,23 +860,26 @@ describe("compare-managed-members source failures", () => {
       await writeFile(leftPath, buildManagedPeFixture());
       await writeFile(rightPath, buildManagedPeFixture({ methodName: "B" }));
       const changed = side === "left" ? leftPath : rightPath;
+      const changedIdentity = (await stat(changed)).ino;
       const original = boundedFileBytes.readBoundedFileBytes;
-      let reads = 0;
+      let wrote = false;
       const read = vi
         .spyOn(boundedFileBytes, "readBoundedFileBytes")
         .mockImplementation(async (...args) => {
           const observed = await original(...args);
-          reads += 1;
-          if (reads === (side === "left" ? 1 : 2))
+          if (!wrote && (await args[0].stat()).ino === changedIdentity) {
+            wrote = true;
             await writeFile(
               changed,
               buildManagedPeFixture({ methodName: "ChangedAfterRead" }),
             );
+          }
           return observed;
         });
       try {
         const result = await managedComparisonCommand()(leftPath, rightPath);
 
+        expect(wrote).toBe(true);
         expect(result).toMatchObject({
           code: "artifact_changed",
           retryable: true,
@@ -894,16 +912,20 @@ describe("compare-managed-members source cleanup", () => {
       writeFile(rightPath, buildManagedPeFixture({ methodName: "B" })),
     ]);
     const { compare, targets, failures } = observedComparison();
+    const leftIdentity = (await stat(leftPath)).ino;
     let blocked = false;
     const original = boundedFileBytes.readBoundedFileBytes;
     const read = vi
       .spyOn(boundedFileBytes, "readBoundedFileBytes")
       .mockImplementation(async (...args) => {
         const observed = await original(...args);
-        const changed = Buffer.from(bytes);
-        changed[changed.length - 1] = changed.readUInt8(changed.length - 1) ^ 1;
-        await writeFile(leftPath, changed);
-        blocked = true;
+        if (!blocked && (await args[0].stat()).ino === leftIdentity) {
+          const changed = Buffer.from(bytes);
+          changed[changed.length - 1] =
+            changed.readUInt8(changed.length - 1) ^ 1;
+          await writeFile(leftPath, changed);
+          blocked = true;
+        }
         return observed;
       });
     const nativeClose = OwnedFileHandle.prototype.close;
@@ -944,6 +966,7 @@ describe("compare-managed-members source cleanup", () => {
       blocked = false;
       read.mockRestore();
       close.mockRestore();
+      await releaseOwners(owners);
     }
   });
 
@@ -995,7 +1018,6 @@ describe("compare-managed-members source cleanup", () => {
         owners.add(this);
         throw new Error("injected persistent close failure");
       });
-    let failure: AnalysisError | undefined;
     try {
       const result = await compare(leftPath, rightPath);
 
@@ -1004,15 +1026,18 @@ describe("compare-managed-members source cleanup", () => {
         details: { cleanup: "incomplete", resources: [leftPath] },
       });
       expect(targets).toEqual([leftPath]);
-      [failure] = failures;
+      const [failure] = failures;
       expect(failure?.cleanupResources).toEqual([leftPath]);
       expect(owners.size).toBe(1);
       expect([...owners][0]?.handle.fd).toBeGreaterThanOrEqual(0);
+
+      close.mockRestore();
+      await releaseRetainedOwners(failure);
+      expect(failure?.cleanupIncomplete).toBe(false);
+      expect([...owners][0]?.handle.fd).toBe(-1);
     } finally {
       close.mockRestore();
+      await releaseOwners(owners);
     }
-    await releaseRetainedOwners(failure);
-    expect(failure?.cleanupIncomplete).toBe(false);
-    expect([...owners][0]?.handle.fd).toBe(-1);
   });
 });

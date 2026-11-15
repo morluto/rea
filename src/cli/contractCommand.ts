@@ -24,6 +24,7 @@ import {
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
@@ -349,7 +350,8 @@ export const runOnEvidenceTargets =
       };
     }
     // A cancellation that arrives as the composition settles keeps its
-    // most complete Evidence.
+    // most complete Evidence; queued interrupts reach the signal first.
+    await dispatchQueuedInterrupts();
     if (result.ok && signal.aborted)
       result = {
         ok: false,
