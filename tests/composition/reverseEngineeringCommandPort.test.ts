@@ -325,19 +325,22 @@ it.each([
   {
     operation: "inspect_with_objdump",
     environment: { PATH: "", REA_OBJDUMP_COMMAND: "rea-missing-objdump" },
-    run: (service: ReverseEngineeringService) =>
-      service.inspectWithObjdump({
-        path: "artifact",
-        operation: "file_headers",
-      }),
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.inspectWithObjdump(
+        { path: "artifact", operation: "file_headers" },
+        signal === undefined ? {} : { signal },
+      ),
     command: "rea-missing-objdump",
     reason: { lookup_failure: "not_found" },
   },
   {
     operation: "execute_rizin_command",
     environment: { PATH: "C:\\tools", PATHEXT: ".EXE;C:\\bad" },
-    run: (service: ReverseEngineeringService) =>
-      service.executeRizinCommand({ path: "artifact", command: "i" }),
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.executeRizinCommand(
+        { path: "artifact", command: "i" },
+        signal === undefined ? {} : { signal },
+      ),
     command: "rizin",
     reason: { lookup_failure: "invalid_pathext", pathext_entry: "C:\\bad" },
   },
@@ -362,6 +365,23 @@ it.each([
         operation,
         diagnostics: { boundary: "provider-lookup", command, ...reason },
       },
+    });
+    // Capability discovery reports the refusal and its repair, as it does
+    // for a launch failure.
+    expect(service.observedLaunchFailures()).toEqual({
+      [operation]: {
+        reason: projection.message,
+        remediation: projection.remediation.action,
+      },
+    });
+    // Cancellation is reported before the lookup refusal.
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped");
+    controller.abort(abortReason);
+    const cancelled = await execute(service, controller.signal);
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: abortReason },
     });
     expect(run).not.toHaveBeenCalled();
   },

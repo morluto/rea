@@ -48,6 +48,7 @@ import {
 } from "../../domain/reverseEngineering.js";
 import type {
   ReverseEngineeringCommandPort,
+  ReverseEngineeringCommandSelection,
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
@@ -331,6 +332,29 @@ export class ReverseEngineeringService {
     return created;
   }
 
+  /**
+   * Record that this dispatch could not run the configured command, unless a
+   * later dispatch has already succeeded or failed.
+   */
+  #recordUnavailable(
+    operation: ReverseEngineeringOperation,
+    dispatch: number,
+    failure: AnalysisCapabilityUnavailableError,
+  ): void {
+    const outcome = this.#outcome(operation);
+    if (
+      (outcome.failure === undefined || dispatch > outcome.failure.dispatch) &&
+      dispatch > outcome.succeeded
+    )
+      outcome.failure = {
+        dispatch,
+        reason: failure.userMessage ?? failure.message,
+        remediation:
+          failure.remediationAction ??
+          reverseCommandRepair(operation).remediationAction,
+      };
+  }
+
   /** Current launch failures observed for caller-configured standalone tools. */
   observedLaunchFailures(): CommandProviderLaunchFailures {
     const result: Partial<
@@ -402,12 +426,7 @@ export class ReverseEngineeringService {
       );
       if (!ready.ok) return ready;
     }
-    const selected = this.#commands.objdump(input);
-    if (!selected.ok)
-      return err(
-        reverseCommandUnavailable("inspect_with_objdump", selected.error),
-      );
-    const command = selected.value;
+    const selection = this.#commands.objdump(input);
     let parameters: Readonly<Record<string, JsonValue>>;
     if (input.operation === "disassemble") {
       const { symbol, ...base } = input;
@@ -419,7 +438,7 @@ export class ReverseEngineeringService {
       parameters = { ...parameters, max_output_bytes: maxOutputBytes };
     const observed = await this.#observe({
       operation: "inspect_with_objdump",
-      profile: command,
+      selection,
       path: input.operation === "architectures" ? undefined : input.path,
       parameters,
       signal: options.signal,
@@ -451,15 +470,9 @@ export class ReverseEngineeringService {
       max_output_bytes: maxOutputBytes,
       ...input
     } = request;
-    const selected = this.#commands.rizin(input);
-    if (!selected.ok)
-      return Promise.resolve(
-        err(reverseCommandUnavailable("execute_rizin_command", selected.error)),
-      );
-    const command = selected.value;
     return this.#observe({
       operation: "execute_rizin_command",
-      profile: command,
+      selection: this.#commands.rizin(input),
       path: input.path,
       parameters: request,
       signal: options.signal,
@@ -468,9 +481,12 @@ export class ReverseEngineeringService {
     });
   }
 
-  #observe(
-    request: ReverseCommandObservation,
-  ): Promise<Result<Evidence, AnalysisError>> {
+  #observe({
+    selection,
+    ...request
+  }: Omit<ReverseCommandObservation, "profile"> & {
+    readonly selection: ReverseEngineeringCommandSelection;
+  }): Promise<Result<Evidence, AnalysisError>> {
     const { operation, signal, outputBudgetBytes } = request;
     if (signal?.aborted)
       return Promise.resolve(
@@ -485,6 +501,13 @@ export class ReverseEngineeringService {
           ),
         ),
       );
+    // A command the host search did not find is this dispatch's outcome:
+    // discovery reports it like a launch failure until a later success.
+    if (!selection.ok) {
+      const refusal = reverseCommandUnavailable(operation, selection.error);
+      this.#recordUnavailable(operation, ++this.#dispatched, refusal);
+      return Promise.resolve(err(refusal));
+    }
     if (
       this.#activeOperations.size >=
         MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
@@ -524,6 +547,7 @@ export class ReverseEngineeringService {
     this.#reservedOutputBytes += outputBudgetBytes;
     const running = this.#observeProvider({
       ...request,
+      profile: selection.value,
       signal: operationSignal,
     });
     const tracked = running
@@ -1068,20 +1092,7 @@ export class ReverseEngineeringService {
         earlyFailure.diagnostics?.boundary === "provider-launch" &&
         earlyFailure.providerId === profile.identity.id
       ) {
-        const outcome = this.#outcome(operation);
-        if (
-          (outcome.failure === undefined ||
-            dispatch > outcome.failure.dispatch) &&
-          dispatch > outcome.succeeded
-        ) {
-          outcome.failure = {
-            dispatch,
-            reason: earlyFailure.userMessage ?? earlyFailure.message,
-            remediation:
-              earlyFailure.remediationAction ??
-              `Set ${operation === "inspect_with_objdump" ? "REA_OBJDUMP_COMMAND" : "REA_RIZIN_COMMAND"} to an installed executable command.`,
-          };
-        }
+        this.#recordUnavailable(operation, dispatch, earlyFailure);
       }
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
     }
