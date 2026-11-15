@@ -146,7 +146,7 @@ export const kunaFileCleanupError = (
 };
 
 /** Preserve the exact retryable resources when an inspection admission retries them. */
-export const kunaRetainedResourceCleanupError = (
+const kunaRetainedResourceCleanupError = (
   cause: ArtifactReaderFailure,
   operation: string,
 ): ProviderCleanupError | undefined => {

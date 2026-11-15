@@ -1,5 +1,4 @@
 import { constants } from "node:fs";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { access, lstat, stat } from "node:fs/promises";
 import { dirname, posix, win32 } from "node:path";
 
@@ -9,12 +8,13 @@ import type {
 } from "../application/Doctor.js";
 import { readKunaConfiguration } from "./KunaConfiguration.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { kunaInstallationDialect } from "./KunaCommand.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
-  kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -71,40 +71,20 @@ export const inspectKunaProvider = async (
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (cause: unknown) {
-    const retainedCleanup =
-      cause instanceof ArtifactReaderFailure
-        ? kunaRetainedResourceCleanupError(cause, "doctor")
-        : undefined;
-    if (retainedCleanup !== undefined)
-      return {
-        id: KUNA_PROVIDER_ID,
-        configured: environment.REA_KUNA_COMMAND !== undefined,
-        available: false,
-        providerVersion: null,
-        registrationEnvironment: {},
-        checks: [
-          {
-            name: "installation",
-            ok: false,
-            code: "cleanup_incomplete",
-            detail: retainedCleanup.message,
-            remediation: null,
-            classification: "config_drift",
-            details: {
-              cleanup_incomplete: true,
-              cleanup_resources: [...retainedCleanup.cleanupResources],
-            },
-          },
-        ],
-      };
-    if (!(cause instanceof RegularFileCleanupFailure)) {
-      const cancellation = kunaResources.installationCancellationError(
-        cause,
-        "doctor",
-      );
-      if (cancellation !== undefined) throw cancellation;
-      throw cause;
-    }
+    // The installation dialect owns what an inspection failure means; doctor
+    // reports a failure with unconfirmed cleanup and rethrows the rest.
+    let recognised = true;
+    const failure = classifyProviderFailure(
+      cause,
+      kunaInstallationDialect("doctor", kunaResources, (unrecognised) => {
+        recognised = false;
+        return new ProviderAdapterError(KUNA_PROVIDER_ID, "doctor", {
+          cause: unrecognised,
+        });
+      }),
+    );
+    if (!recognised) throw cause;
+    if (!failure.cleanupIncomplete) throw failure;
     return {
       id: KUNA_PROVIDER_ID,
       configured: environment.REA_KUNA_COMMAND !== undefined,
@@ -112,18 +92,18 @@ export const inspectKunaProvider = async (
       providerVersion: null,
       registrationEnvironment: {},
       checks: [
-        {
-          name: "installation",
-          ok: false,
-          code: "cleanup_incomplete",
-          detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
-          remediation: null,
-          classification: "config_drift",
-          details: {
-            cleanup_incomplete: true,
-            ...kunaInstallationFailureDiagnostics(cause),
+        cleanupIncompleteCheck(
+          {
+            name: "installation",
+            ok: false,
+            code: "cleanup_incomplete",
+            detail: `Kuna installation inspection could not confirm cleanup: ${failure.message}`,
+            remediation: null,
+            classification: "config_drift",
           },
-        },
+          failure.diagnostics,
+          failure.cleanupResources,
+        ),
       ],
     };
   }
@@ -139,22 +119,15 @@ export const inspectKunaProvider = async (
   } as const;
   if (!installation.ok) {
     const check = installationFailure(installation.error, configured);
-    const cleanupResources = kunaResources.cleanupResources;
     if (!kunaResources.hasPending) return { ...base, checks: [check] };
     return {
       ...base,
       checks: [
-        {
-          ...check,
-          code: "cleanup_incomplete",
-          details: {
-            ...installation.error.diagnostics,
-            cleanup_incomplete: true,
-            ...(cleanupResources === undefined
-              ? {}
-              : { cleanup_resources: [...cleanupResources] }),
-          },
-        },
+        cleanupIncompleteCheck(
+          { ...check, code: "cleanup_incomplete" },
+          installation.error.diagnostics,
+          kunaResources.cleanupResources,
+        ),
       ],
     };
   }
@@ -197,6 +170,22 @@ export const inspectKunaProvider = async (
     ],
   };
 };
+
+/** An installation check whose inspection left cleanup unconfirmed. */
+const cleanupIncompleteCheck = (
+  check: Omit<DoctorProviderCheck, "details">,
+  diagnostics: Readonly<Record<string, JsonValue>> | undefined,
+  cleanupResources: readonly string[] | undefined,
+): DoctorProviderCheck => ({
+  ...check,
+  details: {
+    ...diagnostics,
+    cleanup_incomplete: true,
+    ...(cleanupResources === undefined
+      ? {}
+      : { cleanup_resources: [...cleanupResources] }),
+  },
+});
 
 const installationFailure = (
   failure: KunaReadinessFailure,
