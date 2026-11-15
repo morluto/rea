@@ -13,6 +13,7 @@ import type { Logger } from "pino";
 import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
+import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -63,7 +64,13 @@ const composeDeepBinarySession = (
 ): BinarySession => {
   const platform = HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(selectedEnvironment, platform);
-  const hopper = new HopperProvider(config, logger, environment);
+  const hopper = new HopperProvider(
+    config,
+    logger,
+    environment,
+    platform,
+    LINUX_HOPPER_LAUNCHER_VERIFICATION,
+  );
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment, (registration, selected) =>
     createIdaMcpConnection(registration, selected, {
@@ -106,7 +113,7 @@ const createBundleResourceFactory = (
 ) => {
   return {
     createClient: async (
-      root: import("../application/AppBundleExecutable.js").ResolvedAppBundleResourceRoot,
+      root: import("../domain/apple/bundleResourceRoot.js").ResolvedAppBundleResourceRoot,
     ) => {
       const [{ ArtifactProvider }, { NativeMacOSProvider }] = await Promise.all(
         [

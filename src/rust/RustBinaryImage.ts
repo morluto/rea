@@ -2,7 +2,7 @@ import {
   BinaryResourceFailure,
   type BinaryContainer,
   type ImageSection,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";

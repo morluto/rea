@@ -17,7 +17,7 @@ import {
   createFileMappingIndex,
   isZeroFilledSpan,
   type ElfDynamicSegment,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
 /** The ParseFailure format of ELF loader pointer interpretation. */

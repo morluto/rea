@@ -16,7 +16,10 @@ import {
 import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -36,7 +39,6 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import {
   isSkippedJavaScriptAnalysis,
@@ -50,7 +52,7 @@ import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifact
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
   completeJavaScriptAnalysisSteps,

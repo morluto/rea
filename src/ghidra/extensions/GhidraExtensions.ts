@@ -10,8 +10,10 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,

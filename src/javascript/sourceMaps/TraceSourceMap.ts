@@ -28,7 +28,7 @@ import {
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
   type SourceMapSourceDeclaration,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 import { decodeValidatedSourceMapLeaves } from "./DecodedSourceMap.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */

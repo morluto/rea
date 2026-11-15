@@ -2,7 +2,7 @@ import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvai
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
 
 import {
@@ -27,7 +27,7 @@ import type { Evidence } from "../domain/evidence.js";
 import type { ProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";

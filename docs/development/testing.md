@@ -1299,6 +1299,62 @@ and workspace rather than reporting successful removal. The controlled
 `packageUpdateRegistryFailure` regression needs built process modules, uses no
 public registry, and checks both the primary failure and live descendant absence.
 
+## Pull-request test selection
+
+CI on a pull request runs static checks, the build and the portable tests the
+change affects. The complete portable suite runs on every push to `main`, on
+the scheduled and manual qualification runs, in release qualification, and on a
+PR labelled `ci:full`. Those complete runs catch a consumer that selection
+missed, after it has merged. Add `ci:full` to a PR when its effect reaches
+further than its imports show, such as runtime registration, generated files,
+subprocesses or bridges. Adding the label starts full qualification at once,
+and later pushes stay on the full tier while the label remains.
+
+`scripts/ci/test-selection.mjs` owns the selection. It reads the checked-out
+revision and selects:
+
+- changed test files;
+- tests that import a changed module, directly or through test-only helpers
+  (non-test modules under `tests/` and `src/**/*.fixture*.ts`). Selection never
+  follows production importers transitively;
+- tests beside a changed module that share its stem, or that scan their
+  directory with `readdir`;
+- the boundary tests of a changed leaf adapter (the owner table in the same
+  file), which reach their sources through the built CLI, the MCP server or a
+  fake provider process;
+- tests whose text names a changed path.
+
+Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) are traced
+like source modules. Changed Markdown outside `src/` and `tests/` selects only
+the tests that name it. Declarations, guard baselines
+(`scripts/verify/baselines/*.json`) and advertised-schema summaries select no
+tests, because the static and build jobs check them.
+
+The PR falls back to the complete fast suite when it cannot decide:
+
+- a shared boundary (`src/process/`, `src/filesystem/`, `src/contracts/tool*`,
+  `src/server/createServer*`, `src/cli.ts`, `scripts/ci/`) changed;
+- any other changed input is not traced, such as workflows, package metadata,
+  build and test-runner scripts, `scripts/lib/`, fixtures or data;
+- no test is selected;
+- more than 150 test files are selected;
+- a selected file has no single owning test project.
+
+A selection runs as one `Test shard (k/n)` job per group of up to 40 files, at
+most four jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
+The separate `Source tests` job does not run, because the groups include the
+selected source tests. The `Classify changes` summary gives the mode and its
+reason.
+
+The required checks still report on every PR and fail closed:
+
+- `Portable tests` checks that the merged report contains exactly the selected
+  files: none missing, none unplanned, no duplicates.
+- `CI required` accepts a selected plan only for a fast `pull_request` run with
+  code changes, and then requires `build` and every selected test group.
+- A missing or malformed plan fails classification, the test group and the gate.
+- A selected run never publishes timing history.
+
 ## Real-toolchain verification lanes
 
 See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).

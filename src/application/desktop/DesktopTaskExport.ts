@@ -1,4 +1,5 @@
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import {
   isPointerCheck,
   parseDesktopTask,
@@ -200,7 +201,7 @@ const readerRead = (
     Array.isArray(view.lines)
       ? view.lines.map((line) => JSON.stringify(line)).join(", ")
       : JSON.stringify(view);
-  const shown = lines.length > 600 ? `${lines.slice(0, 600)}…` : lines;
+  const shown = ellipsisExcerpt(lines, 600);
   return `; reader ${check.reader} printed: ${shown}`;
 };
 

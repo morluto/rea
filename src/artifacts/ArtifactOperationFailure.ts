@@ -2,11 +2,11 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { InternalInvariantError } from "../domain/internalInvariant.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "./ArtifactFileOperation.js";
+} from "../resources/index.js";
 
 /**
  * Translate one artifact boundary failure while retaining cleanup evidence. A

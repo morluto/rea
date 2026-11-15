@@ -41,7 +41,7 @@ import type {
   AnalysisOperationPort,
   ProviderIdentity,
   AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   BinarySessionPort,
   BinaryOpenResult,
@@ -79,10 +79,10 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import {
-  analysisErrorWithCleanupDependencies,
   analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
 } from "../../domain/analysisErrorCleanup.js";
@@ -97,10 +97,8 @@ import {
   parseBinaryTarget,
   type BinaryTargetResolverOptions,
 } from "../BinaryTargetResolver.js";
-import {
-  resolveAppBundleResourceRoot,
-  type ResolvedAppBundleResourceRoot,
-} from "../AppBundleExecutable.js";
+import { resolveAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import {
   BUNDLE_RESOURCE_OPERATIONS,
   type ActiveBundleResourceSession,

@@ -16,7 +16,7 @@ import {
 } from "../../domain/artifactReaderLimits.js";
 import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
 const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");

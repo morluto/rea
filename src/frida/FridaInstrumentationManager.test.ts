@@ -12,7 +12,7 @@ import type {
   Signal,
 } from "frida";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../ports/frida/FridaInstrumentationPort.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,

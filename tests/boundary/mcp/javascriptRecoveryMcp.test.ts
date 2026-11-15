@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -65,7 +68,7 @@ it
     expect(ajv.validate(inputSchema, args)).toBe(true);
     const response = await client.callTool(
       { name: "recover_javascript_sources", arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const parsed = toolContract(

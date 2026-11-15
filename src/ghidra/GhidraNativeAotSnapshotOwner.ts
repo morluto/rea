@@ -1,4 +1,4 @@
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import type {
   AnalysisError,
   AnalysisPartialObservation,

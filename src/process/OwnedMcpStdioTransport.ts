@@ -29,7 +29,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (

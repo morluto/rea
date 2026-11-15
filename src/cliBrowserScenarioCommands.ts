@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
-import type { BrowserScenarioCapturePort } from "./application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "./ports/BrowserScenarioCapturePort.js";
 import { publishCliAnalysisEvidence } from "./cli/analysisEvidenceDelivery.js";
 import { contractNamed } from "./cli/contractCliDescription.js";
 import { registerContractDocumentCommand } from "./cli/contractCommand.js";
@@ -43,7 +43,6 @@ export const registerBrowserScenarioCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.captureBrowserScenario,
       description:
         "Run one bounded Playwright browser scenario and return Evidence",
       document,
@@ -83,7 +82,6 @@ export const registerBrowserScenarioCommands = (
       if (!result.ok)
         return { error: "Browser scenario capture failed", ...result.error };
       return publishCliAnalysisEvidence(result, {
-        providerId: PROVIDER_ID,
         operation,
         signal,
         detail: delivery.detail,

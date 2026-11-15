@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { ok } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 let resources: ArtifactResourceScope;
 beforeEach(() => {
   resources = new ArtifactResourceScope();
@@ -51,7 +51,7 @@ const register = (
   signal?: AbortSignal,
 ) => registerMcpClient(clientFor(path), launcher, signal, resources);
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
-import * as regularReads from "./RegularFileRead.js";
+import * as regularReads from "../process/RegularFileRead.js";
 
 const launcher = {
   command: "/fixture/server path",

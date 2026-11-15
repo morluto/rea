@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";

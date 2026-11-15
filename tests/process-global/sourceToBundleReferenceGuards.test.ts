@@ -9,7 +9,7 @@ import { resolveSourceToBundleReference } from "../../src/application/javascript
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";
 import * as workflow from "../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { historicalSourceGraphSchema } from "../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createServer } from "../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";

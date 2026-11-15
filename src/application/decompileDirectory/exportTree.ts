@@ -14,9 +14,9 @@ import { basename, dirname, join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -44,7 +44,7 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";

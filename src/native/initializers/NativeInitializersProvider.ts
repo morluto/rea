@@ -6,17 +6,15 @@ import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { NativeInitializersPort } from "../../application/binaryDiagnostics/NativeInitializersPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -33,7 +31,7 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { ElfPointerRelocationFailure } from "../metadata/ElfPointerRelocations.js";
 import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";

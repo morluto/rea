@@ -10,7 +10,7 @@ import {
   type UnityFsMember,
 } from "../../tests/fixtures/unityfs.js";
 
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 
 const writeBundle = async (bytes: Buffer): Promise<string> => {

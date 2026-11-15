@@ -3,14 +3,14 @@ import {
   appendPeConsumedSpan as consume,
 } from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readPeImage, type PeImage } from "../metadata/PeImage.js";
 import {
   guardFlagRecord,

@@ -8,7 +8,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
 import { constants as fsConstants } from "node:fs";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,

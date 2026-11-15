@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import {
   PWNTOOLS_LIMITS,
@@ -235,7 +236,7 @@ const pwntoolsCommandContext = (
     operation: context.operation,
     capturedOutput: (snapshot) =>
       combinedPwntoolsOutput(snapshot, context) ??
-      capturedPwntoolsOutput(snapshot),
+      capturedProviderOutput(snapshot),
     details: {
       // A failure before any output still reports the earlier stage's output.
       ...(context.precedingOutput === undefined
@@ -362,7 +363,7 @@ const combinedPwntoolsOutput = (
   context: PwntoolsFailureContext,
 ): AnalysisCapturedOutput | undefined => {
   const current =
-    snapshot === null ? undefined : capturedPwntoolsOutput(snapshot);
+    snapshot === null ? undefined : capturedProviderOutput(snapshot);
   const preceding = context.precedingOutput;
   if (preceding === undefined || current === undefined)
     return current ?? preceding;
@@ -402,12 +403,3 @@ export const pwntoolsUnavailable = (
       },
     ],
   });
-
-/** Retain bounded text output and the shared supervisor's observed truncation flag. */
-export const capturedPwntoolsOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated === true,
-});

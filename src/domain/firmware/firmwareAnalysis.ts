@@ -96,13 +96,11 @@ const engine = z.strictObject({
   source_revision: z.null(),
   worker_count: z.literal(1),
 });
-/** Small execution metadata contract; historical omissions remain unknown. */
+/** Execution metadata every firmware result carries. */
 export const firmwareExecutionBudgetSchema = z.object({
-  analysis_timeout_ms: timerDurationMsSchema
-    .exactOptional()
-    .describe(
-      "Actual analysis phase budget in milliseconds; absent in historical Evidence means unknown",
-    ),
+  analysis_timeout_ms: timerDurationMsSchema.describe(
+    "Actual analysis phase budget in milliseconds",
+  ),
 });
 const selection = z.strictObject({ ...range.shape, sha256: digestSchema });
 const chunk = z.strictObject({

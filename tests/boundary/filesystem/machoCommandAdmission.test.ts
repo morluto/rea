@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
 import { readMachoLoadCommandTableHeader } from "../../../src/domain/apple/machoLoadCommands.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";

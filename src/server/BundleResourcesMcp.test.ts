@@ -11,7 +11,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { BinarySession } from "../application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";

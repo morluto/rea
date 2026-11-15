@@ -15,7 +15,7 @@ import {
   CLI_COMMANDS,
   DEFAULT_INFO_LOGGING_COMMANDS,
 } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
@@ -39,7 +39,7 @@ import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField, publishArgvInput } from "./options.js";
 
@@ -352,7 +352,8 @@ const inspectBuildHar = async (
   const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
-  const inspected = await finishAnalysisCommand(
+  const inspected = await finishCliEvidenceCommand(
+    callerInputPath,
     () =>
       service.inspect(
         {
@@ -363,7 +364,6 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
-        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",

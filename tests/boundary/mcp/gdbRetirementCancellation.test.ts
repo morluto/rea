@@ -15,7 +15,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
 import { runWithExternalMutationAdmission } from "../../../src/server/externalMutationAdmission.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";

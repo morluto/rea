@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION } from "../../../../src/artifacts/ArtifactPaths.js";
+import { ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION } from "../../../../src/resources/ArtifactPaths.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";

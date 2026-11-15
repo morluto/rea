@@ -1494,6 +1494,33 @@ describe("managed exported types", () => {
   });
 });
 
+it("keeps decoded members when only the loaded literals exceed capacity", () => {
+  const { heap, tokens } = fixtureUserStringHeap(
+    Array.from({ length: 8 }, (_, index) => String(index).repeat(8_000)),
+  );
+  const bytes = buildManagedPeFixture({
+    ilBody: ldstrBody(tokens),
+    userStringHeap: heap,
+  });
+  const target = managedPeFixtureTarget(bytes);
+  // The members fit 40 KB; the eight 8,000-character literals do not.
+  const result = inspectManagedMembersBytes(bytes, target, {
+    maxRepresentationBytes: 40_000,
+  });
+
+  expect(result.methods).toHaveLength(1);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  expect(result.user_strings).toMatchObject({
+    state: "partial",
+    literals: [],
+    issues: [{ code: "resource-limit", scope: "metadata.#US" }],
+  });
+  expect(result.limitations.join(" ")).toMatch(/literals are not examined/);
+  expect(
+    inspectManagedMembersBytes(bytes, target).user_strings?.literals,
+  ).toHaveLength(8);
+});
+
 describe("managed user strings", () => {
   const inspect = (options: Parameters<typeof buildManagedPeFixture>[0]) => {
     const bytes = buildManagedPeFixture(options);

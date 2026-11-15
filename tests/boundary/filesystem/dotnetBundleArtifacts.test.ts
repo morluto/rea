@@ -6,9 +6,9 @@ import { deflateRawSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
 import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
-import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { artifactFixedLimitFailure } from "../../../src/resources/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {

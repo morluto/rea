@@ -12,7 +12,7 @@ import type { Il2cppMetadata } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok } from "../../domain/result.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import type { Il2cppSeedWriterPort } from "./Il2cppSeedWriterPort.js";
+import type { Il2cppSeedWriterPort } from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
 import { toolContract } from "../../contracts/toolContracts.js";
 import { z } from "zod";
 import { Ajv2020 } from "ajv/dist/2020.js";
