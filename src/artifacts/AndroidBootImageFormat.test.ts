@@ -14,7 +14,7 @@ import {
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
-} from "./androidBootImageFormat.js";
+} from "./AndroidBootImageFormat.js";
 
 const parsed = (bytes: Buffer, fileSize = bytes.length) => {
   const result = parseAndroidBootHeader(bytes.subarray(0, 4096), fileSize);

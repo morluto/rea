@@ -28,7 +28,7 @@ import {
   type AndroidBootParseError,
   type AvbFooterFacts,
   type VendorRamdiskTableParse,
-} from "../domain/androidBootImageFormat.js";
+} from "./AndroidBootImageFormat.js";
 
 type BootEntry = PositionalArtifactEntry & {
   readonly formatMetadata: AndroidBootImageEntryMetadata;
