@@ -938,7 +938,7 @@ const files = (
     if (values !== undefined && values.length !== baseNames.length)
       fail(
         `RPM ${name} has ${String(values.length)} entries for ${String(baseNames.length)} BASENAMES rows.`,
-        { field: "file inventory", observed: values.length },
+        { field: "file inventory" },
       );
   return baseNames.map((baseName, index) => {
     const dirIndex = dirIndexes[index]!;
@@ -1047,7 +1047,7 @@ const scriptlets = (
     if (programs !== undefined && programs.length !== triggerScripts.length)
       fail(
         `RPM TRIGGERSCRIPTPROG has ${String(programs.length)} entries for ${String(triggerScripts.length)} TRIGGERSCRIPTS.`,
-        { field: "trigger script programs", observed: programs.length },
+        { field: "trigger script programs" },
       );
     const conditions = triggerConditions(header, triggerScripts.length);
     for (const [index, source] of triggerScripts.entries()) {

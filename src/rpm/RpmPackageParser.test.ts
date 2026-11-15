@@ -601,6 +601,11 @@ it.each([
       if (!(cause instanceof ParseFailureError)) return;
       expect(cause.kind).toBe("malformed");
       expect(cause.message).toMatch(message);
+      // The saved lead and signature facts survive the refusal.
+      expect(cause.failure.observed).toMatchObject({
+        lead: { magic: "edabeedb" },
+        signature: expect.any(Object),
+      });
     }
   },
 );
