@@ -10,9 +10,11 @@ import { SHARED_BOUNDARY } from "./scopes.mjs";
 
 /** More selected files than this run the complete suite instead. */
 const SELECTION_CAP = 150;
-/** Selected files per test job, and the most jobs one selection uses. */
-const FILES_PER_GROUP = 40;
-const MAX_GROUPS = 4;
+// Selected files per test job, and the most jobs one selection uses. Each job
+// runs one `--shard` of the selection; the CI sequencer balances the shards by
+// main's recorded per-file durations when that history is available.
+const FILES_PER_SHARD = 40;
+const MAX_SHARDS = 4;
 
 // Leaf adapters whose tests also reach their sources through the built CLI,
 // MCP server or a fake provider process rather than an import. An adapter
@@ -262,7 +264,7 @@ export function traceAffectedTests({ files, snapshot }) {
   return { selected, untraced };
 }
 
-const full = (reason) => ({ version: 2, mode: "full", reason, groups: [] });
+const full = (reason) => ({ version: 3, mode: "full", reason });
 
 /**
  * Plan the portable tests one CI run executes.
@@ -294,46 +296,42 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
     } catch {
       return full(`No single test project runs ${path}`);
     }
-  const count = Math.min(MAX_GROUPS, Math.ceil(paths.length / FILES_PER_GROUP));
-  const groups = Array.from({ length: count }, () => []);
-  paths.forEach((path, index) => groups[index % count].push(path));
   const reasons = Object.groupBy([...selected.values()], (reason) => reason);
   return {
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: `Affected tests: ${Object.entries(reasons)
       .map(([reason, entries]) => `${entries.length} ${reason}`)
       .join(", ")}`,
-    groups,
+    files: paths,
+    shards: Math.min(MAX_SHARDS, Math.ceil(paths.length / FILES_PER_SHARD)),
   };
 }
 
 /** Parse a plan produced by `planTestSelection`; anything else fails closed. */
 export function parseTestSelection(value) {
   const plan = typeof value === "string" ? JSON.parse(value) : value;
+  const files = plan?.files;
   const valid =
-    plan?.version === 2 &&
+    plan?.version === 3 &&
     typeof plan.reason === "string" &&
-    Array.isArray(plan.groups) &&
     (plan.mode === "full"
-      ? plan.groups.length === 0
+      ? files === undefined && plan.shards === undefined
       : plan.mode === "selected" &&
-        plan.groups.length >= 1 &&
-        plan.groups.length <= MAX_GROUPS &&
-        plan.groups.every(
-          (group) =>
-            Array.isArray(group) &&
-            group.length > 0 &&
-            group.every(
-              (path) =>
-                typeof path === "string" &&
-                isTest(path) &&
-                /^(src|tests)\//u.test(path) &&
-                !path.split("/").some((part) => ["", ".", ".."].includes(part)),
-            ),
+        Array.isArray(files) &&
+        files.length > 0 &&
+        files.length <= SELECTION_CAP &&
+        new Set(files).size === files.length &&
+        files.every(
+          (path) =>
+            typeof path === "string" &&
+            isTest(path) &&
+            /^(src|tests)\//u.test(path) &&
+            !path.split("/").some((part) => ["", ".", ".."].includes(part)),
         ) &&
-        new Set(plan.groups.flat()).size === plan.groups.flat().length &&
-        plan.groups.flat().length <= SELECTION_CAP);
+        Number.isInteger(plan.shards) &&
+        plan.shards >= 1 &&
+        plan.shards <= Math.min(MAX_SHARDS, files.length));
   if (!valid) throw new Error("Invalid portable test selection plan");
   return plan;
 }
@@ -343,12 +341,10 @@ export function parseTestSelection(value) {
 // slowest shard sets the critical path: at eight shards it ran 24% above the
 // mean shard. Smaller shards bound that excess at a few percent more runner
 // time. Full qualification retains six complete shards with coverage. A
-// selection runs one job per group.
+// selection runs its own shard count.
 const shardsOf = (count) =>
   Array.from({ length: count }, (_, index) => `${index + 1}/${count}`);
 
 /** The `test-shard` matrix labels for a tier and its test selection. */
 export const testShards = (tier, plan) =>
-  shardsOf(
-    plan.mode === "selected" ? plan.groups.length : tier === "full" ? 6 : 12,
-  );
+  shardsOf(plan.mode === "selected" ? plan.shards : tier === "full" ? 6 : 12);
