@@ -15,6 +15,7 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import {
+  launchedRegistrationEntry,
   readConfigurationFile,
   readConfigurationText,
   type ClientConfigurationFileError,
@@ -226,8 +227,16 @@ export const readClientPolicyBlock = async (
   if (
     override !== undefined &&
     !clientConfigurationValuesEqual(
-      override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
-      desired,
+      launchedRegistrationEntry(
+        override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
+        override.document.environmentKey,
+        settings.platform,
+      ),
+      launchedRegistrationEntry(
+        desired,
+        override.document.environmentKey,
+        settings.platform,
+      ),
     )
   )
     return ok(

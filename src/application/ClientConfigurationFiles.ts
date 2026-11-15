@@ -324,12 +324,36 @@ export const inlineRegistrationOverride = (
     [...(written === undefined ? [] : [written]), ...inline],
     platform,
   );
+  const launched = (entry: unknown): unknown =>
+    launchedRegistrationEntry(entry, declaring.environmentKey, platform);
   return clientConfigurationValuesEqual(
-    written?.servers[name],
-    effective?.servers[name],
+    launched(written?.servers[name]),
+    launched(effective?.servers[name]),
   )
     ? undefined
     : declaring.inlineOrigin;
+};
+
+/**
+ * An entry as the client launches it: Windows environment names are one name
+ * whatever their case, so `PATH` and an equal `Path` start the same server.
+ */
+export const launchedRegistrationEntry = (
+  entry: unknown,
+  environmentKey: string,
+  platform: NodeJS.Platform,
+): unknown => {
+  if (platform !== "win32" || !isObject(entry)) return entry;
+  const environment = entry[environmentKey];
+  if (!isObject(environment)) return entry;
+  return {
+    ...entry,
+    [environmentKey]: Object.fromEntries(
+      Object.entries(mergeEnvironmentOverrides({}, environment, platform)).map(
+        ([key, value]) => [key.toUpperCase(), value],
+      ),
+    ),
+  };
 };
 
 /** Merge admitted layers without re-reading or changing their source documents. */
