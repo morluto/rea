@@ -3,7 +3,7 @@ import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
 import { Cli } from "incur";
 
-import { cliCommandFor } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";

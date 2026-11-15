@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { silentLogger } from "../../../src/logger.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -397,8 +398,8 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     expect(reply.isError).not.toBe(true);
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
     expect(evidence.normalized_result).toEqual([]);
-    expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
-      "program-info-v5",
+    expect(evidence.analysis_profile?.parameters.producer).toEqual(
+      ghidraProducerIdentity(),
     );
     const limitation = evidence.limitations.find((value) =>
       value.includes(pdb.file),
@@ -453,7 +454,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       );
       expect(evidence.normalized_result).toEqual([]);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        string_inventory_evidence: "defined-data-coverage-v1",
+        producer: ghidraProducerIdentity(),
       });
       const coverage = evidence.limitations.find((limitation) =>
         /Only Ghidra-defined string Data.*empty search does not establish/u.test(
@@ -683,7 +684,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     expect(exact.normalized_result).toEqual(output);
     expect(exact.raw_result).toBeNull();
     expect(exact.analysis_profile?.parameters).toMatchObject({
-      procedure_search: "primary-and-exact-entry-symbol-names-v1",
+      producer: ghidraProducerIdentity(),
     });
 
     // Node owns Unicode folding: the bridge's non-ASCII candidates are kept

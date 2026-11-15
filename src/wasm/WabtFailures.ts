@@ -6,6 +6,7 @@ import {
 } from "../resources/index.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -153,11 +154,7 @@ export const wabtFailureDialect = (
     (kind: ProviderOutcome["kind"]) => (snapshot: ProviderProcessSnapshot) =>
       kind === "output-limit"
         ? outputLimitExcerpt(snapshot)
-        : {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: snapshot.diagnosticTruncated ?? false,
-          };
+        : capturedProviderOutput(snapshot);
   return {
     providerId: WABT_PROVIDER_IDENTITY.id,
     operation: OPERATION,
@@ -270,9 +267,9 @@ export const wabtFailureDialect = (
           ...(outcome.output === undefined
             ? {}
             : {
-                captured_output: capturedOutput(outcome.kind)(
-                  outcome.output.snapshot,
-                ),
+                captured_output: {
+                  ...capturedOutput(outcome.kind)(outcome.output.snapshot),
+                },
               }),
         },
         { operation: OPERATION, cause: command },

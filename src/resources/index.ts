@@ -5,9 +5,26 @@
  * here when a new outside use needs it.
  */
 export {
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+  readAsarHeader,
+  resolveAsarHeaderAdmission,
+} from "./AsarHeader.js";
+export type {
+  AsarHeaderExtents,
+  FinalAsarHeaderProbeObservation,
+} from "./AsarHeader.js";
+export {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
+export { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
+export {
+  ArtifactFileSource,
+  assertArtifactFileSelectedSource,
+} from "./ArtifactFileSource.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -96,3 +113,15 @@ export {
 export { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 export { streamChunkToBuffer } from "./StreamBytes.js";
 export { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+export { abortIfNeeded, digestReadableToCompletion } from "./StreamDigest.js";
+export type { StreamDigest, StreamDigestObserver } from "./StreamDigest.js";
+export {
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+  openRootArtifact,
+  releaseRootArtifact,
+} from "./StableRootArtifact.js";
+export {
+  targetDigestChangedFailure,
+  withArtifactTargetIdentity,
+} from "./withArtifactTargetIdentity.js";

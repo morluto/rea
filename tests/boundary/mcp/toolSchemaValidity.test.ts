@@ -7,7 +7,6 @@ import { z } from "zod";
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
@@ -30,6 +29,7 @@ import {
   FIRST_BOOK,
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 interface ToolSchemas {
   readonly name: string;

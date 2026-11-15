@@ -178,7 +178,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     assert.ok(Array.isArray(observation.normalized_result));
     const parameters = observation.analysis_profile?.parameters;
-    assert.equal(parameters?.import_mode, "existing-project-private-copy-v1");
+    assert.equal(parameters?.import_mode, "existing-project-private-copy");
     assert.equal(parameters?.mips_elf?.byte_order, byteOrder);
     assert.equal(parameters?.mips_support_lane, undefined);
     assert.deepEqual(parameters?.original_analysis, {
@@ -353,12 +353,12 @@ try {
           parameters.language_id,
           `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         );
-        assert.equal(parameters.language_selection, "provider-pinned-v1");
+        assert.equal(parameters.language_selection, "provider-pinned");
         assert.equal(
           parameters.mips_support_lane,
-          "elf32-exec-arch32-legacy-pinned-v1",
+          "elf32-exec-arch32-legacy-pinned",
         );
-        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption-v1");
+        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption");
         assert.ok(
           snapshot.evidence_bundle.records.some((record) =>
             parseEvidence(record).limitations.some((item) =>

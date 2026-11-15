@@ -10,18 +10,18 @@ import {
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
-import { createCatalogDigests } from "../../../src/catalogIdentity.js";
-import {
-  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  parseMcpInputSchemaProfile,
-} from "../../../src/config/mcpInputSchemaProfile.js";
+import { createCatalogDigests } from "../../../src/contracts/catalog/catalogIdentity.js";
+import { parseMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
+import {
+  advertisedToolPresentation,
+  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+} from "../../../src/contracts/mcpSchemaPresentation.js";
 
 interface AdvertisedTool {
   readonly name: string;

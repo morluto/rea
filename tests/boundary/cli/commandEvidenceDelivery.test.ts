@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   createEvidence,
   parseEvidence,

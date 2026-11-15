@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,6 +18,7 @@ import {
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const writeImage = async (name: string, text: string): Promise<string> => {
   const directory = await createTestTempDirectory("rea-hex-records-");

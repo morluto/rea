@@ -4,7 +4,19 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { normalizeArtifactPath } from "../resources/index.js";
+import {
+  normalizeArtifactPath,
+  ArtifactReaderFailure,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  artifactReadCancelledBy,
+  ArtifactResourceScope,
+  abortIfNeeded,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
 import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
@@ -14,18 +26,6 @@ import {
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import {
-  ArtifactReaderFailure,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-  artifactReadCancelledBy,
-  ArtifactResourceScope,
-} from "../resources/index.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,

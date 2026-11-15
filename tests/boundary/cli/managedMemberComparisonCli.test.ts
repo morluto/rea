@@ -264,7 +264,7 @@ cliTest(
               confidence: "exact",
             }),
             limitations: malformed
-              ? [expect.stringMatching(/^signature-malformed:/)]
+              ? [expect.objectContaining({ code: "signature-malformed" })]
               : [],
           }),
         ]);

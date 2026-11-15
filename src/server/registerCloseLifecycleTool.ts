@@ -8,7 +8,7 @@ import {
 } from "./operationProgress.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../domain/analysisErrorRecovery.js";
 import type { Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -74,10 +74,10 @@ export const registerCloseLifecycleTool = ({
     const resources = resourceClose.value;
     if (!closed.ok) {
       if (resources.ok) return closed;
-      const combined = analysisErrorWithCleanupFailure(
+      const combined = analysisErrorWithCleanupDependencies(
         closed.error,
         resources.error,
-      ).bindCleanupDependencies([closed.error, resources.error]);
+      );
       // The session offers a retry only after retiring its target; a failed
       // save keeps that target open and needs its own recovery first.
       return err(
