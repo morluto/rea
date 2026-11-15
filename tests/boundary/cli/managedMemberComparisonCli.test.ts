@@ -418,7 +418,9 @@ it("retains completed comparison Evidence when interrupted as the comparison set
     .spyOn(managedMemberComparisonResultSchema, "parse")
     .mockImplementation((...args) => {
       const parsed = parse(...args);
-      process.emit("SIGINT");
+      // An OS interrupt is delivered on a later turn, after the synchronous
+      // comparison has settled.
+      setImmediate(() => process.emit("SIGINT"));
       return parsed;
     });
   const previousExitCode = process.exitCode;
