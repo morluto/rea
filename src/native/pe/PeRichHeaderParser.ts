@@ -17,16 +17,11 @@ import {
 } from "../metadata/BinaryContainer.js";
 import { readPeHeaders } from "./PeResourceLayout.js";
 
-/** The caller's Rich header entry budget; consumers branch on the class, not on prose. */
-export class PeRichHeaderEntryLimitFailure extends BinaryResourceFailure {
-  constructor(
-    readonly allowance: number,
-    message: string,
-  ) {
-    super("structure", allowance, message);
-    this.name = "PeRichHeaderEntryLimitFailure";
-  }
-}
+/**
+ * The caller's entry budget, named on the failure. Consumers read it with
+ * `binaryResourceAllowance`.
+ */
+export const PE_RICH_HEADER_ENTRY_ALLOWANCE = "entries";
 
 const DOS_HEADER_BYTES = 0x40;
 const E_LFANEW_OFFSET = 0x3c;
@@ -176,9 +171,11 @@ const richRecord = async (
     };
   const count = span / PE_RICH_HEADER_ENTRY_BYTES;
   if (count > input.max_entries)
-    throw new PeRichHeaderEntryLimitFailure(
+    throw new BinaryResourceFailure(
+      "structure",
       input.max_entries,
       `PE Rich header holds ${String(count)} entries, over the ${String(input.max_entries)}-entry budget.`,
+      PE_RICH_HEADER_ENTRY_ALLOWANCE,
     );
   const decode = (at: number): number => (reader.u32(at) ^ key) >>> 0;
   const entries: PeRichHeaderEntry[] = [];

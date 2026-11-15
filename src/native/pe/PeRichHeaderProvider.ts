@@ -33,10 +33,13 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../../providers/classifyProviderFailure.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceAllowance,
+} from "../metadata/BinaryContainer.js";
 import {
   parsePeRichHeader,
-  PeRichHeaderEntryLimitFailure,
+  PE_RICH_HEADER_ENTRY_ALLOWANCE,
 } from "./PeRichHeaderParser.js";
 
 const OPERATION = "inspect_pe_rich_header";
@@ -122,10 +125,9 @@ const failureDialect = (
           {
             boundary: raised.boundary,
             maximum: raised.maximum_bytes,
-            limit:
-              raised instanceof PeRichHeaderEntryLimitFailure
-                ? "entries"
-                : null,
+            limit: binaryResourceAllowance(raised, [
+              PE_RICH_HEADER_ENTRY_ALLOWANCE,
+            ]),
           },
           { ...details, cause: raised, ...limitRecovery(raised, input) },
         )
@@ -191,6 +193,6 @@ const limitRecovery = (
   failure: BinaryResourceFailure,
   input: InspectPeRichHeaderInput,
 ): ResourceConstraintRecovery =>
-  failure instanceof PeRichHeaderEntryLimitFailure
+  binaryResourceAllowance(failure, [PE_RICH_HEADER_ENTRY_ALLOWANCE]) !== null
     ? { retryable: false, remediationAction: entryRemediation(input) }
     : fixedAllowanceOptions("The PE structural decoding allowance", "parser");

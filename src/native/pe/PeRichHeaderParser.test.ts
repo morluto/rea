@@ -5,9 +5,10 @@ import {
   PE_RICH_HEADER_ABSENT_LIMITATION,
   peRichHeaderSchema,
 } from "../../domain/native/peRichHeader.js";
+import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
 import {
   parsePeRichHeader,
-  PeRichHeaderEntryLimitFailure,
+  PE_RICH_HEADER_ENTRY_ALLOWANCE,
 } from "./PeRichHeaderParser.js";
 import {
   peRichHeaderImage,
@@ -183,10 +184,13 @@ it("reports a block that ends inside an entry as malformed", async () => {
 
 it("fails closed past the entry budget", async () => {
   const failure = await parse({}, 2).catch((error: unknown) => error);
-  expect(failure).toBeInstanceOf(PeRichHeaderEntryLimitFailure);
+  expect(failure).toBeInstanceOf(BinaryResourceFailure);
   expect(failure).toMatchObject({
-    allowance: 2,
-    failure: { kind: "limit", limit: { name: "structure", maximum: 2 } },
+    boundary: "structure",
+    failure: {
+      kind: "limit",
+      limit: { name: PE_RICH_HEADER_ENTRY_ALLOWANCE, maximum: 2 },
+    },
   });
   await expect(parse({}, 3)).resolves.toMatchObject({
     rich_header: { state: "present" },
