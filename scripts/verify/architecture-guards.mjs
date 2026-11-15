@@ -320,9 +320,12 @@ checkCounted(
   "literal Mach-O load-command code (use LC from src/domain/apple/machoLoadCommandCodes)",
   "macho-load-command-literal",
   files.filter((file) =>
-    /MachoLoadCommandCursor|readMachoLoadCommand/u.test(file.content),
+    /MachoLoadCommandCursor|readMachoLoadCommand|machoLoadCommandCodes/u.test(
+      file.content,
+    ),
   ),
-  /\b(?:frame\.command|command\.kind|command|cmd)\s*[!=]==\s*(?:0x[0-9a-fA-F]+|\d+)\b/gu,
+  // An equality test, or membership in a literal list of codes.
+  /\b(?:frame\.command|command\.kind|command|cmd)\s*[!=]==\s*(?:0x[0-9a-fA-F]+|\d+)\b|\[\s*(?:0x[0-9a-fA-F]+|\d+)(?:\s*,\s*(?:0x[0-9a-fA-F]+|\d+))*\s*,?\s*\]\s*\.(?:includes|indexOf)\(\s*(?:\w+\.)*(?:command|cmd|kind)\s*\)/gu,
   ["src/domain/apple/machoLoadCommandCodes.ts"],
 );
 
