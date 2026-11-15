@@ -1,12 +1,12 @@
-import { webPageInspectionSchema } from "../../domain/browserObservationSchemas.js";
-import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
-import { parseEvidence } from "../../domain/evidence.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
+import { retainedBrowserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import { parseEvidence } from "./evidence.js";
 import type {
   CapturedWebScript,
   WebScriptExportResult,
-} from "../../domain/webScriptExport.js";
-import { pageScripts } from "./PageScriptCapture.js";
-import { scenarioScripts } from "./ScenarioScriptCapture.js";
+} from "./webScriptExport.js";
+import { pageScripts } from "./pageScriptCapture.js";
+import { scenarioScripts } from "./scenarioScriptCapture.js";
 
 /** Capture-specific parsing and source selection, independent of publication. */
 export interface ScriptCaptureAdapter {

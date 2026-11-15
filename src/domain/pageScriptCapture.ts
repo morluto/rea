@@ -1,5 +1,5 @@
-import type { WebPageInspection } from "../../domain/browserObservationSchemas.js";
-import type { CapturedWebScript } from "../../domain/webScriptExport.js";
+import type { WebPageInspection } from "./browserObservationSchemas.js";
+import type { CapturedWebScript } from "./webScriptExport.js";
 
 /** Project verified Debugger sources without fetching resource URLs. */
 export const pageScripts = (
