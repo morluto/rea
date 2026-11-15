@@ -1,5 +1,29 @@
 import { z } from "zod";
+import type { ParseFailure } from "./parseFailure.js";
 import { err, ok, type Result } from "./result.js";
+
+type FailureSite = { readonly offset?: number; readonly field?: string };
+
+/** iNES-family failures in the shared parser algebra, with where they were found. */
+const malformed = (detail: string, at: FailureSite = {}): ParseFailure => ({
+  kind: "malformed",
+  format: "ines",
+  detail,
+  ...at,
+});
+const truncated = (detail: string, at: FailureSite = {}): ParseFailure => ({
+  kind: "truncated",
+  format: "ines",
+  detail,
+  ...at,
+});
+const unsupported = (detail: string, at: FailureSite = {}): ParseFailure => ({
+  kind: "unsupported",
+  format: "ines",
+  detail,
+  undecodedContent: true,
+  ...at,
+});
 
 /** The one reader of header bytes; callers index inside the admitted prefix. */
 const headerByte = (prefix: Buffer, index: number): number =>
@@ -140,19 +164,34 @@ const mirroring = (flags6: number): InesHeader["mirroring"] =>
  */
 const classicDeclaration = (
   prefix: Buffer,
-): Result<HeaderDeclaration, string> => {
+): Result<HeaderDeclaration, ParseFailure> => {
   const prgUnits = headerByte(prefix, 4);
   const chrUnits = headerByte(prefix, 5);
   const flags6 = headerByte(prefix, 6);
   const flags7 = headerByte(prefix, 7);
-  if ((flags7 & 0x0c) !== 0) return err("unsupported iNES header variant");
+  if ((flags7 & 0x0c) !== 0)
+    return err(
+      unsupported("unsupported iNES header variant", {
+        offset: 7,
+        field: "flags 7",
+      }),
+    );
   // Dirty legacy headers make the upper mapper bits ambiguous. Do not repair
   // them or claim a mapper that the observed header cannot establish.
   if (prefix.subarray(12, 16).some((byte) => byte !== 0))
     return err(
-      "ambiguous iNES mapper: reserved header bytes 12..15 are nonzero",
+      malformed(
+        "ambiguous iNES mapper: reserved header bytes 12..15 are nonzero",
+        { offset: 12, field: "bytes 12..15" },
+      ),
     );
-  if (prgUnits === 0) return err("iNES requires at least one PRG-ROM unit");
+  if (prgUnits === 0)
+    return err(
+      malformed("iNES requires at least one PRG-ROM unit", {
+        offset: 4,
+        field: "PRG-ROM size",
+      }),
+    );
   return ok({
     prg: { bytes: prgUnits * 16_384, unitBytes: 16_384 },
     chr: { bytes: chrUnits * 8_192, unitBytes: 8_192 },
@@ -185,7 +224,9 @@ const declaredRamBytes = (shift: number): number =>
  * and miscellaneous ROM bytes after CHR-ROM. Unused bits must be zero; nonzero
  * bits are refused rather than interpreted.
  */
-const nes2Declaration = (prefix: Buffer): Result<HeaderDeclaration, string> => {
+const nes2Declaration = (
+  prefix: Buffer,
+): Result<HeaderDeclaration, ParseFailure> => {
   const byte = (index: number) => headerByte(prefix, index);
   const flags6 = byte(6);
   const flags7 = byte(7);
@@ -197,10 +238,21 @@ const nes2Declaration = (prefix: Buffer): Result<HeaderDeclaration, string> => {
     [15, 0xc0],
   ] as const)
     if ((byte(index) & reserved) !== 0)
-      return err(`reserved NES 2.0 header bits are nonzero in byte ${index}`);
+      return err(
+        malformed(`reserved NES 2.0 header bits are nonzero in byte ${index}`, {
+          offset: index,
+          field: `byte ${index}`,
+        }),
+      );
   const prg = nes2RomArea(byte(4), byte(9) & 0x0f, 16_384);
   const chr = nes2RomArea(byte(5), byte(9) >>> 4, 8_192);
-  if (prg.bytes === 0) return err("NES 2.0 requires at least one PRG-ROM unit");
+  if (prg.bytes === 0)
+    return err(
+      malformed("NES 2.0 requires at least one PRG-ROM unit", {
+        offset: 4,
+        field: "PRG-ROM size",
+      }),
+    );
   return ok({
     prg,
     chr,
@@ -246,15 +298,36 @@ const nes2Declaration = (prefix: Buffer): Result<HeaderDeclaration, string> => {
 export const parseInesLayout = (
   prefix: Buffer,
   fileSize: number,
-): Result<InesLayout, string> => {
+): Result<InesLayout, ParseFailure> => {
   const format = nesContainerFormat(prefix);
-  if (format === undefined) return err("missing iNES byte signature");
+  if (format === undefined)
+    return err(
+      malformed("missing iNES byte signature", {
+        offset: 0,
+        field: "signature",
+      }),
+    );
   if (format === "unif")
-    return err("unif containers are not supported by the iNES lane");
+    return err(
+      unsupported("unif containers are not supported by the iNES lane", {
+        offset: 0,
+        field: "signature",
+      }),
+    );
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
-    return err("invalid iNES file extent: expected a nonnegative safe integer");
+    return err(
+      malformed(
+        "invalid iNES file extent: expected a nonnegative safe integer",
+        { field: "file extent" },
+      ),
+    );
   if (fileSize < 16 || prefix.length < 16)
-    return err("truncated iNES header: expected 16 bytes");
+    return err(
+      truncated("truncated iNES header: expected 16 bytes", {
+        offset: 0,
+        field: "header",
+      }),
+    );
   const declared =
     format === "ines" ? classicDeclaration(prefix) : nes2Declaration(prefix);
   if (!declared.ok) return declared;
@@ -267,7 +340,10 @@ export const parseInesLayout = (
     BigInt(16 + (trainer ? 512 : 0)) + BigInt(prg.bytes) + BigInt(chr.bytes);
   if (declaredEnd > BigInt(fileSize))
     return err(
-      `truncated ${label} payload: header declares ${declaredEnd} bytes; file has ${fileSize}`,
+      truncated(
+        `truncated ${label} payload: header declares ${declaredEnd} bytes; file has ${fileSize}`,
+        { field: "payload" },
+      ),
     );
   const regions: InesRegion[] = [{ path: "header.bin", offset: 0, length: 16 }];
   let offset = 16;
@@ -297,7 +373,10 @@ export const parseInesLayout = (
     // Miscellaneous ROM boundaries are mapper-specific; keep the area whole.
     if (offset === fileSize)
       return err(
-        `${label} declares ${miscRomCount} miscellaneous ROM${miscRomCount === 1 ? "" : "s"} but no bytes follow CHR-ROM`,
+        truncated(
+          `${label} declares ${miscRomCount} miscellaneous ROM${miscRomCount === 1 ? "" : "s"} but no bytes follow CHR-ROM`,
+          { offset, field: "miscellaneous ROM" },
+        ),
       );
     regions.push({
       path: "misc-rom.bin",

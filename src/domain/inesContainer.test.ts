@@ -19,7 +19,7 @@ const nes2Header = (bytes: Readonly<Record<number, number>> = {}): Buffer => {
 
 const layout = (prefix: Buffer, size: number) => {
   const parsed = parseInesLayout(prefix, size);
-  if (!parsed.ok) throw new Error(parsed.error);
+  if (!parsed.ok) throw new Error(parsed.error.detail);
   expect(inesInventorySchema.shape.header.parse(parsed.value.header)).toEqual(
     parsed.value.header,
   );
@@ -33,7 +33,7 @@ it("bounds the complete classic header count without inventing RAM regions", () 
   bytes[6] = 0xfe;
   bytes[7] = 0xf3;
   const parsed = parseInesLayout(bytes, 16 + 512 + 255 * (16_384 + 8_192));
-  if (!parsed.ok) throw new Error(parsed.error);
+  if (!parsed.ok) throw new Error(parsed.error.detail);
   expect(parsed.value.header).toMatchObject({
     mapper: 255,
     trainer_present: true,
@@ -188,12 +188,14 @@ it.each([
     modify: (bytes: Buffer) => bytes.subarray(0, 8),
     size: 8,
     reason: "truncated iNES header",
+    kind: "truncated",
   },
   {
     label: "short payload",
     modify: (bytes: Buffer) => bytes,
     size: 16,
     reason: "truncated iNES payload",
+    kind: "truncated",
   },
   {
     label: "dirty legacy header",
@@ -203,6 +205,7 @@ it.each([
     },
     size: 16_400,
     reason: "ambiguous iNES mapper",
+    kind: "malformed",
   },
   {
     label: "empty PRG",
@@ -212,6 +215,7 @@ it.each([
     },
     size: 16,
     reason: "at least one PRG",
+    kind: "malformed",
   },
   {
     label: "unsupported variant",
@@ -221,24 +225,28 @@ it.each([
     },
     size: 16_400,
     reason: "unsupported iNES header variant",
+    kind: "unsupported",
   },
   {
     label: "unsafe extent",
     modify: (bytes: Buffer) => bytes,
     size: Number.MAX_SAFE_INTEGER + 1,
     reason: "invalid iNES file extent",
+    kind: "malformed",
   },
   {
     label: "UNIF",
     modify: () => Buffer.from("UNIF"),
     size: 16_400,
     reason: "unif",
+    kind: "unsupported",
   },
   {
     label: "oversized NES 2.0 PRG-ROM",
     modify: () => nes2Header({ 9: 0x01 }),
     size: 16_400,
     reason: `truncated NES 2.0 payload: header declares ${16 + 0x101 * 16_384} bytes; file has 16400`,
+    kind: "truncated",
   },
   {
     label: "NES 2.0 exponent beyond safe integers",
@@ -246,18 +254,21 @@ it.each([
     modify: () => nes2Header({ 4: 0xff, 9: 0x0f }),
     size: 16_400,
     reason: `header declares ${16n + 2n ** 63n * 7n} bytes`,
+    kind: "truncated",
   },
   {
     label: "empty NES 2.0 PRG",
     modify: () => nes2Header({ 4: 0 }),
     size: 16,
     reason: "NES 2.0 requires at least one PRG-ROM unit",
+    kind: "malformed",
   },
   {
     label: "absent NES 2.0 miscellaneous ROM bytes",
     modify: () => nes2Header({ 14: 1 }),
     size: 16_400,
     reason: "declares 1 miscellaneous ROM but no bytes follow CHR-ROM",
+    kind: "truncated",
   },
   ...(
     [
@@ -271,16 +282,21 @@ it.each([
     modify: () => nes2Header({ [index]: value }),
     size: 16_400,
     reason: `reserved NES 2.0 header bits are nonzero in byte ${index}`,
+    kind: "malformed",
   })),
   {
     label: "reserved NES 2.0 extended console bits",
     modify: () => nes2Header({ 7: 0x0b, 13: 0x10 }),
     size: 16_400,
     reason: "reserved NES 2.0 header bits are nonzero in byte 13",
+    kind: "malformed",
   },
-])("refuses $label before producing regions", ({ modify, size, reason }) => {
-  expect(parseInesLayout(modify(header()), size)).toMatchObject({
-    ok: false,
-    error: expect.stringContaining(reason),
-  });
-});
+])(
+  "refuses $label before producing regions",
+  ({ modify, size, reason, kind }) => {
+    expect(parseInesLayout(modify(header()), size)).toMatchObject({
+      ok: false,
+      error: { kind, format: "ines", detail: expect.stringContaining(reason) },
+    });
+  },
+);

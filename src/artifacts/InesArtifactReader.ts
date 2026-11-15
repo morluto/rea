@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { artifactOperationCause } from "./ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
@@ -57,7 +58,10 @@ export class InesArtifactReader implements ArtifactReader {
     // Concurrent source changes take precedence over malformed header diagnostics.
     await this.#verifySource(signal);
     const parsed = parseInesLayout(prefix, this.source.initial.size);
-    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    if (!parsed.ok)
+      throw new ArtifactReaderFailure("format", parsed.error.detail, {
+        cause: new ParseFailureError(parsed.error),
+      });
     this.#layout = parsed.value;
     this.#entries.clear();
     for (const region of parsed.value.regions) {
