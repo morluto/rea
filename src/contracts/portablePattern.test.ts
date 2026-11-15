@@ -155,6 +155,10 @@ describe("portable pattern projection", () => {
     "^(?i:a)$",
     "^😀$",
     "^é😀+$",
+    "^[😀]$",
+    "^[a😀]+$",
+    "^[\\u{1F600}-\\u{1F64F}]$",
+    "^[^😀]$",
   ])("omits %s, which has no portable form", (source) => {
     expect(projectPortablePattern(source)).toEqual({
       kind: "unexpressible",
