@@ -7,13 +7,11 @@
     "artifacts -> application": 2,
     "composition -> cliCommandNames.ts": 3,
     "config -> native": 1,
-    "desktop -> application": 4,
     "dotnet -> application": 1,
     "native -> application": 2
   },
   "cycles": [
     "application <-> artifacts",
-    "application <-> desktop",
     "application <-> dotnet",
     "artifacts <-> firmware",
     "artifacts <-> gpu",
