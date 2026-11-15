@@ -14,10 +14,9 @@ import type { Logger } from "pino";
 import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";
 import {
-  cliJavaScriptSourcePaths,
-  runCliJavaScriptApplicationAnalysis,
+  javaScriptApplicationCliProjection,
+  runJavaScriptApplicationCommand,
 } from "./javascriptApplicationAnalysis.js";
-import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
@@ -182,10 +181,6 @@ const registerContractBinaryCommands = (
   );
 };
 
-/** JavaScript-analysis fields `analyze` leaves to analyze-javascript-application. */
-const javascriptOnlySelection =
-  "analyze-javascript-application takes this selection";
-
 const registerOverviewCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -207,51 +202,12 @@ const registerOverviewCommands = (
         {
           command: CLI_COMMANDS.analyze,
           description,
-          positionals: ["input_path"],
-          callerPaths: ["input_path"],
-          fields: {
-            input_path: { name: "path", description: target },
-            source_paths: { name: "sourcePath" },
-            integrity_policy: {
-              description:
-                "Behavior when declared application integrity does not match",
-            },
-          },
-          cliOptions: {
-            sourcePathsJson: javascriptApplicationOptions.shape.sourcePathsJson,
-          },
-          omit: {
-            format: javascriptOnlySelection,
-            semantic_precision: javascriptOnlySelection,
-            max_semantic_nodes: javascriptOnlySelection,
-            max_semantic_nodes_per_file: javascriptOnlySelection,
-            max_semantic_unknowns: javascriptOnlySelection,
-            max_semantic_unknowns_per_file: javascriptOnlySelection,
-            max_heap_mb: javascriptOnlySelection,
-            analysis_timeout_ms: javascriptOnlySelection,
-            detail: "analyze returns the complete JavaScript analysis",
-            view: javascriptOnlySelection,
-          },
+          ...javaScriptApplicationCliProjection(target),
+          evidenceDelivery: true,
+          viewDelivery: { invalidJson: "view must be valid JSON" },
         },
         // Route JavaScript targets exactly like analyze-javascript-application.
-        async (input, { signal, cliOptions }) => {
-          const sourcePaths = await cliJavaScriptSourcePaths(
-            input.source_paths,
-            cliOptions.sourcePathsJson,
-            signal,
-          );
-          if (!sourcePaths.ok) return sourcePaths.error;
-          return runCliJavaScriptApplicationAnalysis(
-            {
-              ...input,
-              ...(sourcePaths.value === undefined
-                ? {}
-                : { source_paths: sourcePaths.value }),
-            },
-            environment,
-            signal,
-          );
-        },
+        runJavaScriptApplicationCommand(environment),
         {
           takesTarget: isJavaScriptApplicationPath,
           requirement: "the static JavaScript ASAR/directory analysis lane",
