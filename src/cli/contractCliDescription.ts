@@ -1757,8 +1757,9 @@ const admitInvocation = (
 
 /**
  * Describe each contract an operation option selects. Each must project to
- * the registered command's exact arguments and options, so the help and
- * schema the registered contract advertises hold for every choice.
+ * the registered command's exact arguments, options and object-level option
+ * rules, so the help and schema the registered contract advertises hold for
+ * every choice.
  */
 export const describeOperationChoices = (
   description: ContractCliDescription,
@@ -1766,13 +1767,14 @@ export const describeOperationChoices = (
 ): ReadonlyMap<unknown, ContractCliDescription> => {
   const choices = new Map<unknown, ContractCliDescription>();
   const signature = (described: ContractCliDescription): string =>
-    JSON.stringify(
+    JSON.stringify([
       described.parameters.map(({ key, positional, schema }) => [
         key,
         positional,
         z.toJSONSchema(schema, { unrepresentable: "any" }),
       ]),
-    );
+      described.optionConstraints ?? null,
+    ]);
   const expected = signature(description);
   for (const [value, contract] of Object.entries(
     projection.operationBy?.contracts ?? {},

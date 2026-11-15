@@ -1328,6 +1328,37 @@ describe("Positional selectors with a named option", () => {
     );
   });
 
+  it("refuses an operation choice whose contract projects other option rules", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z
+              .object({ text: z.string(), limit: z.number().optional() })
+              .meta({ dependentRequired: { limit: ["text"] } }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          text: z.string(),
+          limit: z.number().optional(),
+        }),
+      },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
+  });
+
   it("refuses a selector whose contract admits an empty value", () => {
     expect(() =>
       describeContractCommand(

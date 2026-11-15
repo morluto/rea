@@ -439,15 +439,15 @@ export const registerContractCommand = <
           return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
             signal,
             operation: selected.contract.name,
-            callerInputs: description.callerInputs(values),
+            callerInputs: selected.callerInputs(values),
             sessionTarget:
               description.sessionTarget === undefined
                 ? undefined
                 : (values[description.sessionTarget.key] as string),
             opening: opening.value,
-            inputBinding: description.inputBinding,
+            inputBinding: selected.inputBinding,
             delivery: admitted.value.delivery,
-            cliOptions: description.cliOptionValues(
+            cliOptions: selected.cliOptionValues(
               values,
             ) as CliOptionValues<CliOptions>,
           });
