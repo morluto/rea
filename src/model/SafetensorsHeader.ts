@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
@@ -235,11 +236,7 @@ export const readSafetensorsHeader = async (
   budget.charge(2 * size);
   let text: string;
   try {
-    text =
-      "{" +
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        await reader.take(size - 1),
-      );
+    text = "{" + decodeStrictUtf8(await reader.take(size - 1), "preserve");
   } catch (cause) {
     if (cause instanceof TypeError)
       rejectModel("Safetensors header is not valid UTF-8");
