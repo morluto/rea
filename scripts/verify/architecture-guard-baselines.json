@@ -397,8 +397,7 @@
   },
   "cleanup-resolve-push": {
     "src/native/CommandRunner.ts": 1,
-    "src/native/LldbCallTracer.ts": 1,
-    "src/providers/AnalysisClientFailure.ts": 1
+    "src/native/LldbCallTracer.ts": 1
   },
   "cleanup-dependency-binding": {
     "src/android/JadxConfiguration.ts": 1,
