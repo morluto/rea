@@ -23,6 +23,24 @@ process.stdin.on("data", chunk => {
  }
 });`;
 
+/** A fake GDB that answers the auto-load setting with `reply` and others with ^done. */
+const autoLoadReplyFixture = (reply: string) => `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary);
+    input = input.slice(boundary + 1);
+    const match = /^(\\d+)(.*)/.exec(line);
+    if (match) process.stdout.write(match[1] + (match[2].includes("-gdb-set auto-load off") ? "${reply}\\n" : "^done\\n"));
+  }
+});
+`;
+
 const debuggerDeadlineOverride = {
   setting: "debugger.command_deadline_ms",
   action: "set",
@@ -146,44 +164,37 @@ process.stdin.on("data", (chunk) => {
     },
   );
 
-  it("does not start GDB when it rejects the required auto-load setting", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
-    const provider = join(directory, "fake-gdb-reject.mjs");
-    await writeFile(
-      provider,
-      `#!${process.execPath}
-process.stdout.write("(gdb)\\n");
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const boundary = input.indexOf("\\n");
-    if (boundary < 0) break;
-    const line = input.slice(0, boundary);
-    input = input.slice(boundary + 1);
-    const match = /^(\\d+)(.*)/.exec(line);
-    if (match) process.stdout.write(match[1] + (match[2].includes("-gdb-set auto-load off") ? "^error,msg=\\"rejected\\"\\n" : "^done\\n"));
-  }
-});
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = new GdbSessionManager({
-      spawnProcess: fixtureOwner.spawnProcess,
-      platform: "linux",
-      environment: { REA_GDB_COMMAND: provider },
-    });
-    managers.push(manager);
+  // A malformed ^done is not a success record: the typed MI parser refuses it
+  // where a ^done prefix match would have accepted the setting.
+  it.each([
+    ["rejects", String.raw`^error,msg=\"rejected\"`],
+    [
+      "answers with a malformed ^done for",
+      String.raw`^done,msg=\"unterminated`,
+    ],
+  ])(
+    "does not start GDB when it %s the required auto-load setting",
+    async (_label, reply) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
+      const provider = join(directory, "fake-gdb-reject.mjs");
+      await writeFile(provider, autoLoadReplyFixture(reply));
+      await chmod(provider, 0o700);
+      const manager = new GdbSessionManager({
+        spawnProcess: fixtureOwner.spawnProcess,
+        platform: "linux",
+        environment: { REA_GDB_COMMAND: provider },
+      });
+      managers.push(manager);
 
-    const started = await manager.start();
+      const started = await manager.start();
 
-    expect(started.ok).toBe(false);
-    if (!started.ok)
-      expect(JSON.stringify(started.error)).toContain(
-        "automatic-loading disable command",
-      );
-  });
+      expect(started.ok).toBe(false);
+      if (!started.ok)
+        expect(JSON.stringify(started.error)).toContain(
+          "automatic-loading disable command",
+        );
+    },
+  );
 });
 
 it("starts GDB without applying an invalid console output limit", async () => {
