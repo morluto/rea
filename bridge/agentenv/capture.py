@@ -463,31 +463,37 @@ def stop_owned():
         time.sleep(0.2)
 
 def abandon_drain():
-    """After owned processes are gone, one grace, then report an outside holder.
+    """Wait out stderr, and keep stopping same-session children after it closes.
 
-    A same-session child that still holds stderr stays in the signal sequence.
-    A descendant outside the session is not signaled and is not reported as exited.
+    A descendant outside the session is not signaled. If it still holds stderr
+    after one grace, the result says the output is incomplete.
     """
     global output_incomplete, leader_unsettled
-    if drainer is None or not drainer.is_alive():
+    if drainer is None:
         return
     grace_end = None
-    while drainer.is_alive():
+    while drainer.is_alive() or (stop_requested() and live_owned_members()):
         if stop_requested() and live_owned_members():
             grace_end = None
             if escalate() and live_owned_members():
                 leader_unsettled = True
-                output_incomplete = True
+                if drainer.is_alive():
+                    output_incomplete = True
                 return
-        elif stop_requested():
+        elif stop_requested() and drainer.is_alive():
             if grace_end is None:
                 grace_end = time.monotonic() + GRACE_S
             elif time.monotonic() >= grace_end:
                 output_incomplete = True
                 return
+        elif not drainer.is_alive():
+            return
         else:
             grace_end = None
-        drainer.join(0.2)
+        if drainer.is_alive():
+            drainer.join(0.2)
+        else:
+            time.sleep(0.2)
 
 def finish_stop():
     stop_owned()
