@@ -1294,21 +1294,21 @@ const discoverTables = (
       });
     }
   }
-  if (hydrated !== null) {
-    const section = image.sections.find(
+  if (
+    hydrated !== null &&
+    image.sections.some(
       (candidate) =>
         (candidate.characteristics & 0x40000000) !== 0 &&
         (candidate.characteristics & 0x20000000) === 0 &&
         hydrated.base >= image.addressForRva(candidate.rva) &&
         hydrated.base + BigInt(hydrated.sizeBytes) <=
           image.addressForRva(candidate.rva + virtualExtent(candidate)),
-    );
-    if (section !== undefined)
-      ranges.push({
-        start: hydrated.base,
-        end: hydrated.base + BigInt(hydrated.sizeBytes),
-      });
-  }
+    )
+  )
+    ranges.push({
+      start: hydrated.base,
+      end: hydrated.base + BigInt(hydrated.sizeBytes),
+    });
   ranges.sort((left, right) => (left.start < right.start ? -1 : 1));
   const merged: { start: bigint; end: bigint }[] = [];
   for (const range of ranges) {
