@@ -46,7 +46,9 @@ export class CdpRuntimeSources {
     const registered = event.registered;
     try {
       if (registered?.method === "Runtime.executionContextCreated") {
-        this.#retainedBytes += registered.payload.declarationBytes;
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#retainedBytes += bytes.value;
         assertRuntimeRetention(
           this.session.operation,
           "metadata",
@@ -66,7 +68,9 @@ export class CdpRuntimeSources {
         }
         if (retainNewMetadata) this.#contexts.set(context.id, context);
       } else if (registered?.method === "Debugger.scriptParsed") {
-        this.#retainedBytes += registered.payload.declarationBytes;
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#retainedBytes += bytes.value;
         assertRuntimeRetention(
           this.session.operation,
           "metadata",

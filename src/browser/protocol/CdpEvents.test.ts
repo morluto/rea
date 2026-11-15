@@ -62,7 +62,9 @@ describe("registered CDP event payloads", () => {
       scopeUrl: "https://app.test/",
     });
   });
+});
 
+describe("registered Runtime and Debugger event payloads", () => {
   it("derives tolerant script facts and the strict runtime declaration from one parse", () => {
     const params = {
       scriptId: "script-1",
@@ -81,9 +83,10 @@ describe("registered CDP event payloads", () => {
       contextKey: "3",
     });
     expect(event.registered.payload.runtime.success).toBe(true);
-    expect(event.registered.payload.declarationBytes).toBe(
-      Buffer.byteLength(JSON.stringify(params)),
-    );
+    expect(event.registered.payload.declarationBytes).toEqual({
+      ok: true,
+      value: Buffer.byteLength(JSON.stringify(params)),
+    });
 
     const partial = receiveCdpEvent({
       method: "Debugger.scriptParsed",
@@ -95,6 +98,29 @@ describe("registered CDP event payloads", () => {
     expect(partial.registered.payload.facts.scriptId).toBe("script-2");
     expect(partial.registered.payload.facts.contextKey).toBeNull();
     expect(partial.registered.payload.runtime.success).toBe(false);
+  });
+
+  it("reports an unserializable declaration's size as a failure instead of throwing", () => {
+    // Nesting that JSON.parse accepts but JSON.stringify cannot serialize.
+    const nested = JSON.parse(
+      `${'{"a":'.repeat(20_000)}0${"}".repeat(20_000)}`,
+    ) as unknown;
+    const event = receiveCdpEvent({
+      method: "Debugger.scriptParsed",
+      params: {
+        scriptId: "script-1",
+        url: "https://app.test/app.js",
+        executionContextId: 3,
+        unused: nested,
+      },
+    });
+    if (event.registered?.method !== "Debugger.scriptParsed")
+      throw new TypeError("expected a registered script event");
+    expect(event.registered.payload.facts.scriptId).toBe("script-1");
+    expect(event.registered.payload.declarationBytes).toMatchObject({
+      ok: false,
+      error: expect.any(RangeError),
+    });
   });
 
   it("keeps an execution context's identity unknown when its id is malformed", () => {
