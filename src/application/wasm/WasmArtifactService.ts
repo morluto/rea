@@ -74,7 +74,17 @@ export class WasmArtifactService {
             },
             {
               retryable: false,
-              remediationAction: `Raise max_artifact_paths to at least ${String(input.value[field].length)} (maximum ${String(MAX_WASM_ARTIFACT_PATHS)}), or use --max-artifact-paths on the CLI; then retry the same selection. The value applies on the next inspection without restart. File and command byte budgets remain independent.`,
+              remediationAction: `Raise max_artifact_paths to at least ${String(input.value[field].length)} (maximum ${String(MAX_WASM_ARTIFACT_PATHS)}); then retry the same selection. The value applies on the next inspection without restart. File and command byte budgets remain independent.`,
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_artifact_paths",
+                effective_value: maximumPaths,
+                unit: "count",
+                minimum: 1,
+                maximum: MAX_WASM_ARTIFACT_PATHS,
+                default_value: DEFAULT_WASM_ARTIFACT_PATHS,
+                applies_at: "next_call",
+              },
             },
           ),
         );
