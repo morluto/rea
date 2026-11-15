@@ -295,7 +295,13 @@ const describeEvidenceBundleFailure = (
       message: `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`,
     };
   } catch (recordFailure: unknown) {
-    if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
+    // An earlier-format record is not a current record either; the bundle
+    // failure below already carries the recreate guidance.
+    if (
+      !(recordFailure instanceof z.ZodError) &&
+      !isUnsupportedEvidenceFormat(recordFailure)
+    )
+      throw recordFailure;
     // The format owner decides earlier bundles once; its message carries the
     // recreate guidance instead of per-field schema failures.
     if (isUnsupportedEvidenceFormat(cause))

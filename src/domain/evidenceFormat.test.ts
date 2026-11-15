@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { createEvidence } from "./evidence.js";
+import { createEvidence, parseEvidence } from "./evidence.js";
 import {
   createEvidenceBundle,
   readEvidenceBundle,
@@ -62,6 +62,30 @@ it.each([
     },
   });
 });
+
+it.each([
+  ["an unmarked record", undefined],
+  ["a revision 1 record", 1],
+])(
+  "refuses %s alone or inside a current bundle, with the recreate guidance",
+  (_name, format) => {
+    const { evidence_format: _current, ...unmarked } = record;
+    const earlier =
+      format === undefined
+        ? unmarked
+        : { ...unmarked, evidence_format: format };
+    expect(() => parseEvidence(earlier)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
+    const parsed = safeParseEvidenceBundle({
+      ...createEvidenceBundle([record]),
+      records: [earlier],
+    });
+    if (parsed.ok) throw new Error("Expected the earlier record to be refused");
+    expect(parsed.error.kind).toBe("unsupported-format");
+    expect(parsed.error.cause).toMatchObject({
+      failure: { format: "evidence-record", field: "evidence_format" },
+    });
+  },
+);
 
 it("still names a standalone Evidence record as the wrong input kind", () => {
   const parsed = safeParseEvidenceBundle(record);

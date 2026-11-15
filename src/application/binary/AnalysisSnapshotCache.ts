@@ -48,7 +48,10 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
-import { sameTargetIdentity } from "../../domain/targetIdentity.js";
+import {
+  binaryTargetSelection,
+  sameTargetIdentity,
+} from "../../domain/targetIdentity.js";
 import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
@@ -552,6 +555,13 @@ export class AnalysisSnapshotCache {
       binding = restored;
     }
     const cachedSubject = cached.execution.subject;
+    // The query ID commits to the snapshot target, including its selection,
+    // so a cached subject naming the target's bytes made the same selection.
+    // Snapshot subjects do not persist it yet (ADR target-identity slice 2d).
+    const selection =
+      cachedSubject?.sha256 === target.sha256
+        ? binaryTargetSelection(target)
+        : null;
     const subject =
       cachedSubject == null
         ? null
@@ -563,6 +573,7 @@ export class AnalysisSnapshotCache {
               ...(cachedSubject.architecture === null
                 ? {}
                 : { architecture: cachedSubject.architecture }),
+              ...(selection === null ? {} : { selection }),
             },
             target,
           );

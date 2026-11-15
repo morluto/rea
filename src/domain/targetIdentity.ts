@@ -1,18 +1,44 @@
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
+import { z } from "zod";
+
+import type { BinaryTarget } from "./binaryTargetTypes.js";
+import { digestSchema } from "./digests.js";
+
+const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
+
+/** Persisted facts inside a file's bytes that select what was analysed. */
+export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("entry-point"),
+    entry_point: z.string().min(1),
+  }),
+  z.strictObject({
+    kind: z.literal("esp-flash"),
+    flash_offset: flashOffsetSchema,
+    partition_table_offset: flashOffsetSchema,
+  }),
+]);
 
 /**
  * Facts inside a file's bytes that select what was analysed. Two observations
  * of the same bytes with different selections are different targets.
  */
-export type FileTargetSelection =
-  | { readonly kind: "entry-point"; readonly entry_point: string }
-  | {
-      readonly kind: "esp-flash";
-      readonly flash_offset: number | null;
-      readonly partition_table_offset: number | null;
-    };
+export type FileTargetSelection = z.infer<typeof fileTargetSelectionSchema>;
+
+/**
+ * A hashed local file, path-free. Format and architecture are validated by
+ * the persistence format that embeds the identity (for Evidence, the subject
+ * declaration it must agree with).
+ */
+export const fileTargetIdentitySchema = z.strictObject({
+  kind: z.literal("file"),
+  sha256: digestSchema,
+  format: z.string().min(1),
+  architecture: z.string().min(1).nullable(),
+  selection: fileTargetSelectionSchema.nullable(),
+});
 
 /** A hashed local file, path-free. */
 export interface FileTargetIdentity {
@@ -28,6 +54,31 @@ export interface FileTargetIdentity {
  * docs/adr/evidence/target-identity.md for the kinds later slices add.
  */
 export type TargetIdentity = FileTargetIdentity;
+
+/** The selection an open binary target makes inside its bytes, if any. */
+export const binaryTargetSelection = (
+  target: BinaryTarget,
+): FileTargetSelection | null =>
+  target.format === "raw-binary" || target.format === "gamecube-dol"
+    ? { kind: "entry-point", entry_point: target.entryPoint }
+    : target.format === "esp-flash-image"
+      ? {
+          kind: "esp-flash",
+          flash_offset: target.espFlash.flashOffset,
+          partition_table_offset: target.espFlash.partitionTableOffset,
+        }
+      : null;
+
+/** The one projection of an open binary target into its target identity. */
+export const binaryTargetIdentity = (
+  target: BinaryTarget,
+): FileTargetIdentity => ({
+  kind: "file",
+  sha256: target.sha256,
+  format: target.format,
+  architecture: target.architecture ?? null,
+  selection: binaryTargetSelection(target),
+});
 
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
 export const targetIdentityKey = (identity: TargetIdentity): string => {

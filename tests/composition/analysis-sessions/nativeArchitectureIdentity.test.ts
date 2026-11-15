@@ -134,7 +134,11 @@ it.each(cases)(
     expect(() =>
       parseEvidence({
         ...evidence,
-        subject: { ...evidence.subject, architecture: "x86" },
+        subject: {
+          ...evidence.subject,
+          architecture: "x86",
+          identity: { ...evidence.subject!.identity, architecture: "x86" },
+        },
       }),
     ).toThrow("semantic identifier");
     const changed = createAnalysisProfile(provider, changedFacts);

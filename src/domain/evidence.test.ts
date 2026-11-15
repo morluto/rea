@@ -15,6 +15,8 @@ import {
   immutableEvidence,
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
 } from "./evidence.js";
 import {
   MAX_JSON_DEPTH,
@@ -24,6 +26,7 @@ import {
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "./evidenceFormat.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
@@ -36,6 +39,84 @@ const TARGET: BinaryTarget = {
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 const PROFILE = createAnalysisProfile(PROVIDER, { loader: "default" });
+
+describe("subject target identity", () => {
+  const raw = (entryPoint: string): BinaryTarget => ({
+    path: "/tmp/firmware.bin",
+    sha256: "b".repeat(64),
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    availableArchitectures: ["arm"],
+    entryPoint,
+    entryPointSource: "caller",
+  });
+  const observe = (target: BinaryTarget) =>
+    createEvidence(target, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: null,
+    });
+
+  it("commits to the selection, so entry points of the same bytes are different subjects", () => {
+    const first = observe(raw("0x0"));
+    const second = observe(raw("0x100"));
+    expect(evidenceFileTarget(first)).toEqual({
+      kind: "file",
+      sha256: "b".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: { kind: "entry-point", entry_point: "0x0" },
+    });
+    expect(first.evidence_format).toBe(2);
+    expect(first.evidence_id).not.toBe(second.evidence_id);
+  });
+
+  it("keeps the ID when only the display path changes", () => {
+    const original = observe(raw("0x0"));
+    const rebound = rebindEvidenceToTargetPath(original, {
+      ...raw("0x0"),
+      path: "/elsewhere/firmware.bin",
+    });
+    expect(evidenceSubjectDisplay(rebound)).toEqual({
+      name: "firmware.bin",
+      local_path: "/elsewhere/firmware.bin",
+    });
+    expect(rebound.evidence_id).toBe(original.evidence_id);
+    // A different selection is a different target, so the path is not rebound.
+    expect(
+      rebindEvidenceToTargetPath(original, {
+        ...raw("0x100"),
+        path: "/elsewhere/firmware.bin",
+      }),
+    ).toBe(original);
+  });
+
+  it("refuses a subject whose identity disagrees with its declaration or format", () => {
+    const record = JSON.parse(JSON.stringify(observe(raw("0x0"))));
+    const forged = (identity: Record<string, unknown>) => ({
+      ...record,
+      subject: {
+        ...record.subject,
+        identity: { ...record.subject.identity, ...identity },
+      },
+    });
+    expect(() => parseEvidence(forged({ sha256: "c".repeat(64) }))).toThrow(
+      /identity does not match/u,
+    );
+    expect(() =>
+      parseEvidence(
+        forged({
+          selection: {
+            kind: "esp-flash",
+            flash_offset: 0,
+            partition_table_offset: null,
+          },
+        }),
+      ),
+    ).toThrow(/esp-flash selection does not apply to format raw-binary/u);
+  });
+});
 
 it.each(RAW_ONLY_ARCHITECTURES)(
   "rejects a detected Evidence subject with the raw-only %s architecture",
@@ -888,16 +969,13 @@ it("borrows a previously sealed envelope only after authenticating all semantic 
   expect(() => immutableEvidence(changed)).toThrow();
 });
 
-it("diagnoses a previous explicit-null coverage commitment without admitting or rewriting its ID", () => {
+it("refuses a record from an earlier format without admitting or rewriting its ID", () => {
   const historical = structuredClone(PRE_66_NULL_COVERAGE_EVIDENCE);
-  expect(() => parseEvidence(historical)).toThrow(
-    /earlier relationship_coverage identity commitment/u,
+  expect(() => parseEvidence(historical)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
+  expect(() => parseEvidence({ ...historical, evidence_format: 1 })).toThrow(
+    /Evidence record format 1 is not format 2/u,
   );
   expect(historical).toEqual(PRE_66_NULL_COVERAGE_EVIDENCE);
-  const corrupted = { ...historical, normalized_result: { observed: false } };
-  expect(() => parseEvidence(corrupted)).toThrow(
-    /semantic identifier does not match/u,
-  );
   const current = createEvidence(undefined, historical.provider, {
     operation: "inspect",
     parameters: {},

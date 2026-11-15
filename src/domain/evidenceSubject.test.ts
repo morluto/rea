@@ -22,6 +22,12 @@ describe("persisted observation subject declarations", () => {
         const declaration = { format, architecture };
         const evidence = evidenceSubject.safeParse({
           ...declaration,
+          identity: {
+            kind: "file",
+            sha256: digest,
+            ...declaration,
+            selection: null,
+          },
           name: "fixture",
           local_path: "/tmp/fixture",
           digest: { sha256: digest },
@@ -55,6 +61,13 @@ describe("persisted observation subject declarations", () => {
       evidenceSubject.safeParse({
         format: "pe",
         architecture: null,
+        identity: {
+          kind: "file",
+          sha256: digest,
+          format: "pe",
+          architecture: null,
+          selection: null,
+        },
         name: "fixture",
         local_path: "/tmp/fixture",
         digest: { sha256: digest },

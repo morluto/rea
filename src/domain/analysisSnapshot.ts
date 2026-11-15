@@ -11,6 +11,7 @@ import {
 } from "./unicodeCodePointOrder.js";
 import { localPathStringSchema } from "./localPath.js";
 import {
+  binaryTargetIdentity,
   sameTargetIdentity,
   type FileTargetIdentity,
 } from "./targetIdentity.js";
@@ -523,7 +524,7 @@ export const snapshotMatchesTarget = (
 ): boolean =>
   sameTargetIdentity(
     snapshotTargetIdentity(snapshot),
-    snapshotTargetIdentity(snapshotTarget(target)),
+    binaryTargetIdentity(target),
   );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */

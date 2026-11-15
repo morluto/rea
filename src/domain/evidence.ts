@@ -1,4 +1,8 @@
-import { RECREATE_EVIDENCE_GUIDANCE } from "./evidenceFormat.js";
+import {
+  admitEvidenceRecordFormat,
+  EVIDENCE_FORMAT_REVISION,
+  evidenceFormatSchema,
+} from "./evidenceFormat.js";
 import { isDeepStrictEqual } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
@@ -8,6 +12,14 @@ import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
+import {
+  binaryTargetIdentity,
+  fileTargetIdentitySchema,
+  sameTargetIdentity,
+  type FileTargetIdentity,
+  type FileTargetSelection,
+  type TargetIdentity,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -46,11 +58,47 @@ export const providerSchema = z.strictObject({
   version: z.string().nullable(),
 });
 const subjectBaseSchema = z.strictObject({
+  /** The committed target identity; the remaining members are display facts. */
+  identity: fileTargetIdentitySchema,
   name: z.string().min(1),
+  /** Duplicates `identity.sha256` until readers move to the identity accessors. */
   digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
-const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
+/** Formats whose identity carries each selection kind. */
+const SELECTION_FORMATS: Readonly<
+  Record<FileTargetSelection["kind"], readonly string[]>
+> = {
+  "entry-point": ["raw-binary", "gamecube-dol"],
+  "esp-flash": ["esp-flash-image"],
+};
+const subjectSchema = withEvidenceSubjectDeclaration(
+  subjectBaseSchema,
+).superRefine((subject, context) => {
+  const { identity } = subject;
+  // The declaration members duplicate the identity until they are removed;
+  // one producer writes both, so any disagreement is a forged record.
+  if (
+    identity.sha256 !== subject.digest.sha256 ||
+    identity.format !== subject.format ||
+    identity.architecture !== subject.architecture
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["identity"],
+      message:
+        "Evidence subject identity does not match its digest, format and architecture",
+    });
+  if (
+    identity.selection !== null &&
+    !SELECTION_FORMATS[identity.selection.kind].includes(identity.format)
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["identity", "selection"],
+      message: `A ${identity.selection.kind} selection does not apply to format ${identity.format}`,
+    });
+});
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -99,6 +147,8 @@ export type CallerInputPaths = Readonly<
 const evidenceBaseSchema = z
   .object({
     evidence_id: prefixedDigestSchema("ev"),
+    /** Selects the reader; not part of the committed content. */
+    evidence_format: evidenceFormatSchema,
     subject: subjectSchema.nullable(),
     provider: providerSchema,
     analysis_profile: analysisProfileSchema.nullable(),
@@ -160,9 +210,7 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
       context.addIssue({
         code: "custom",
         path: ["evidence_id"],
-        message: usesPre66NullCoverageIdentity(withoutId, evidenceId)
-          ? `Evidence uses an earlier relationship_coverage identity commitment: explicit null was omitted from that digest. ${RECREATE_EVIDENCE_GUIDANCE}`
-          : "Evidence semantic identifier does not match its record",
+        message: "Evidence semantic identifier does not match its record",
       });
   },
 );
@@ -189,6 +237,8 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
   readonly architecture?: BinaryArchitecture;
+  /** What the observation selected inside the bytes; absent selects nothing. */
+  readonly selection?: FileTargetSelection;
   /** Preserve an existing Evidence subject's display name when deriving observations. */
   readonly name?: string;
 }
@@ -207,24 +257,72 @@ export const evidenceSubjectTarget = (
         ...(subject.architecture === null
           ? {}
           : { architecture: subject.architecture }),
+        ...(subject.identity.selection === null
+          ? {}
+          : { selection: subject.identity.selection }),
       };
 
-const sameEvidenceSubjectTargetIdentity = (
-  subject: EvidenceSubjectTarget,
-  target: EvidenceSubjectTarget,
-): boolean =>
-  subject.sha256 === target.sha256 &&
-  subject.format === target.format &&
-  (subject.architecture ?? null) === (target.architecture ?? null);
+/** The one projection of a producer's subject input into its target identity. */
+export const evidenceSubjectTargetIdentity = (
+  target: EvidenceSubjectTarget | BinaryTarget,
+): FileTargetIdentity =>
+  "kind" in target
+    ? binaryTargetIdentity(target)
+    : {
+        kind: "file",
+        sha256: target.sha256,
+        format: target.format,
+        architecture: target.architecture ?? null,
+        selection: target.selection ?? null,
+      };
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
   subject: EvidenceSubjectTarget,
-  target: EvidenceSubjectTarget,
+  target: EvidenceSubjectTarget | BinaryTarget,
 ): EvidenceSubjectTarget =>
-  sameEvidenceSubjectTargetIdentity(subject, target)
+  sameTargetIdentity(
+    evidenceSubjectTargetIdentity(subject),
+    evidenceSubjectTargetIdentity(target),
+  )
     ? { ...subject, path: target.path }
     : subject;
+
+/** The one builder of a persisted Evidence subject from a producer's target. */
+export const evidenceSubject = (
+  target: EvidenceSubjectTarget | BinaryTarget,
+): NonNullable<Evidence["subject"]> =>
+  subjectSchema.parse({
+    identity: evidenceSubjectTargetIdentity(target),
+    name:
+      ("name" in target ? target.name : undefined) ??
+      (basename(target.path) || "artifact"),
+    digest: { sha256: target.sha256 },
+    format: target.format,
+    architecture: target.architecture ?? null,
+    local_path: target.path,
+  });
+
+/** The target identity an Evidence record commits to, or null when it has no subject. */
+export const evidenceTargetIdentity = (
+  evidence: Pick<Evidence, "subject">,
+): TargetIdentity | null => evidence.subject?.identity ?? null;
+
+/** The file identity an Evidence record names, when its subject is a file. */
+export const evidenceFileTarget = (
+  evidence: Pick<Evidence, "subject">,
+): FileTargetIdentity | undefined => {
+  const identity = evidenceTargetIdentity(evidence);
+  return identity?.kind === "file" ? identity : undefined;
+};
+
+/** Display facts beside the subject identity; never part of the Evidence ID. */
+export const evidenceSubjectDisplay = (
+  evidence: Pick<Evidence, "subject">,
+): { readonly name: string; readonly local_path: string } | undefined =>
+  evidence.subject === null
+    ? undefined
+    : { name: evidence.subject.name, local_path: evidence.subject.local_path };
 
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
@@ -259,21 +357,11 @@ export interface EvidenceObservation extends EvidenceObservationInput {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-/** Target identity shared by semantic commitments, excluding caller-selected display paths. */
-export const evidenceSubjectIdentity = (subject: Evidence["subject"]) =>
-  subject === null
-    ? null
-    : {
-        digest: subject.digest,
-        format: subject.format,
-        architecture: subject.architecture,
-      };
-
 /** Content committed by an Evidence ID, excluding local request/display metadata. */
 export const evidenceSemanticContent = (
   evidence: EvidenceWithoutId,
 ): Record<string, JsonValue> => ({
-  subject: evidenceSubjectIdentity(evidence.subject),
+  subject: evidence.subject?.identity ?? null,
   provider: evidence.provider,
   analysis_profile: evidence.analysis_profile,
   predicate_type: evidence.predicate_type,
@@ -294,20 +382,6 @@ export const evidenceSemanticContent = (
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
   `ev_${digestCanonicalValue(evidenceSemanticContent(evidence), "Evidence")}`;
 
-/** Recognize an obsolete commitment for diagnosis only; never admit or rewrite it. */
-const usesPre66NullCoverageIdentity = (
-  evidence: EvidenceWithoutId,
-  evidenceId: string,
-): boolean => {
-  if (evidence.relationship_coverage !== null) return false;
-  const legacyProjection = evidenceSemanticContent(evidence);
-  delete legacyProjection.relationship_coverage;
-  return (
-    evidenceId ===
-    `ev_${digestCanonicalValue(legacyProjection, "Historical Evidence identity")}`
-  );
-};
-
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
   const immutable =
@@ -315,6 +389,7 @@ export const parseEvidence = (input: unknown): Evidence => {
       ? immutableEvidenceSnapshots.get(input)
       : undefined;
   if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(input);
   return authenticatedEvidenceSchema.parse(input);
 };
 
@@ -354,7 +429,7 @@ export const rebindEvidenceToTargetPath = (
   const subject = evidence.subject;
   if (subject === null) return evidence;
   if (
-    !sameEvidenceSubjectTargetIdentity(evidenceSubjectTarget(subject)!, target)
+    !sameTargetIdentity(subject.identity, evidenceSubjectTargetIdentity(target))
   )
     return evidence;
   if (
@@ -496,20 +571,10 @@ export const evidenceEnvelopeForAdmission = (
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
 ) => {
-  const subject =
-    target === undefined
-      ? null
-      : {
-          name:
-            ("name" in target ? target.name : undefined) ??
-            (basename(target.path) || "artifact"),
-          digest: { sha256: target.sha256 },
-          format: target.format,
-          architecture: target.architecture ?? null,
-          local_path: target.path,
-        };
+  const subject = target === undefined ? null : evidenceSubject(target);
   return {
     evidence_id: `ev_${"0".repeat(64)}`,
+    evidence_format: EVIDENCE_FORMAT_REVISION,
     subject,
     provider: {
       id: provider.id,

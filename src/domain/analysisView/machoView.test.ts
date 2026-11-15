@@ -3,6 +3,7 @@ import { inspectMachoSchema } from "../native/nativeInspection.js";
 
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 it("binds every Mach-O facet to its rows, including empty pages", () => {
@@ -201,13 +202,13 @@ const report = {
 };
 const parent = (
   normalizedResult: unknown = report,
-  subject: AnalysisViewParent["subject"] = {
+  subject: AnalysisViewParent["subject"] = evidenceSubject({
     name: "tool",
-    digest: { sha256: "b".repeat(64) },
+    sha256: "b".repeat(64),
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/bin/tool",
-  },
+    path: "/bin/tool",
+  }),
 ): AnalysisViewParent => ({
   predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
@@ -445,13 +446,15 @@ describe("Mach-O view uncertainty", () => {
       ],
     });
     const contradictory = projectAnalysisView(
-      parent(report, {
-        name: "tool",
-        digest: { sha256: "b".repeat(64) },
-        format: "elf",
-        architecture: null,
-        local_path: "/bin/tool",
-      }),
+      parent(
+        report,
+        evidenceSubject({
+          name: "tool",
+          sha256: "b".repeat(64),
+          format: "elf",
+          path: "/bin/tool",
+        }),
+      ),
       { kind: "summary" },
     );
     if (contradictory.ok) throw new Error("expected a subject refusal");

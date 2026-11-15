@@ -6,6 +6,7 @@ import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (
@@ -176,13 +177,12 @@ it("checks subject identity again after warming an immutable parent", () => {
   const result = projectAnalysisView(
     {
       ...sealed,
-      subject: {
+      subject: evidenceSubject({
         name: "app",
-        local_path: "/different",
-        digest: { sha256: "d".repeat(64) },
+        path: "/different",
+        sha256: "d".repeat(64),
         format: "javascript-bundle",
-        architecture: null,
-      },
+      }),
     },
     analysisViewRequestSchema.parse({
       kind: "javascript-routes",

@@ -4,6 +4,7 @@ import { freezeJsonSnapshot } from "../immutableJson.js";
 
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const target = "a".repeat(64);
@@ -93,13 +94,13 @@ const parent = (
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "decode_interface_builder",
   normalizedResult,
-  subject: {
+  subject: evidenceSubject({
     name: "Fixture",
-    digest: { sha256 },
+    sha256,
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
-  },
+    path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
+  }),
   limitations: [],
 });
 
