@@ -284,8 +284,6 @@
     "src/adb/AdbDeviceOutput.ts": 1,
     "src/adb/AdbHostFileName.ts": 1,
     "src/adb/AdbProvider.ts": 1,
-    "src/apktool/ApktoolConfiguration.ts": 4,
-    "src/apktool/ApktoolProvider.ts": 2,
     "src/captures/TsharkCaptureProvider.ts": 1,
     "src/cli/desktopCaptureCommands.ts": 1,
     "src/cli/mcpRegistration.ts": 2,

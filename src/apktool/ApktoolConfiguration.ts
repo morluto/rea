@@ -71,7 +71,7 @@ export interface ApktoolCommandSelection {
  */
 export const resolveApktoolCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<ApktoolCommandSelection> => {
   if (signal?.aborted === true)
@@ -195,7 +195,7 @@ export const apktoolInvocation = (
   selection: ApktoolCommandSelection,
   arguments_: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): ApktoolInvocation =>
   platform === "win32" && isWindowsBatchFile(selection.command)
     ? {
@@ -215,7 +215,7 @@ export const apktoolInvocation = (
 /** Read the version from Apktool's single-line `--version` response. */
 export const parseApktoolVersionOutput = (
   stdout: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ):
   | ApktoolClientIdentity
   | { readonly version: null; readonly reportedVersion: string | null } => {
@@ -278,14 +278,10 @@ export const inspectApktoolClient = async (
   options: {
     readonly signal?: AbortSignal;
     readonly environment?: Readonly<Record<string, string | undefined>>;
-    readonly platform?: NodeJS.Platform;
-  } = {},
+    readonly platform: NodeJS.Platform;
+  },
 ): Promise<ApktoolClientIdentity> => {
-  const {
-    signal,
-    environment = process.env,
-    platform = process.platform,
-  } = options;
+  const { signal, environment = process.env, platform } = options;
   const hostEnvironment = snapshotEnvironment(environment, platform);
   let invocation: ApktoolInvocation;
   try {
