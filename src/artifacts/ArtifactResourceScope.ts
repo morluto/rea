@@ -136,13 +136,33 @@ export class ArtifactResourceScope {
         await this.retryCleanup();
         continue;
       }
-      const running = Promise.resolve().then(operation);
-      this.#active.add(running);
-      try {
-        return await running;
-      } finally {
-        this.#active.delete(running);
-      }
+      return this.#track(operation);
+    }
+  }
+
+  /**
+   * Run optional work, such as diagnostic sampling, that may retain owners but
+   * must not wait for or fail on earlier pending cleanup. Cleanup drains still
+   * join it, so an owner it retains is not left behind by a finished drain.
+   */
+  track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#closed)
+      return Promise.reject(
+        new ArtifactReaderFailure(
+          "unavailable",
+          "Artifact resource scope is closed",
+        ),
+      );
+    return this.#track(operation);
+  }
+
+  async #track<T>(operation: () => Promise<T>): Promise<T> {
+    const running = Promise.resolve().then(operation);
+    this.#active.add(running);
+    try {
+      return await running;
+    } finally {
+      this.#active.delete(running);
     }
   }
 
