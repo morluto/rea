@@ -391,7 +391,7 @@ export const projectProcessCliInputCleanupError = (
  * This catch includes target execution, and the projection stays non-retryable.
  * Tell the user what happened; do not ask them to run the command again.
  */
-const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
   "Do not repeat this command. Tell the user the process command could not complete, give them the reported reason, and ask them to check the scenario or capture files it read. If those files are valid, report the failure with its diagnostics.";
 
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
