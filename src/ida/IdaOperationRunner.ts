@@ -510,7 +510,9 @@ export class IdaOperationRunner {
       return {
         items: [...result.values()],
         coverage,
+        // An observed graph is available even when its coverage is unknown.
         availability:
+          this.options.callGraphAvailable === false &&
           coverage.status === "unknown"
             ? { available: false, reason: coverage.reason }
             : { available: true },
