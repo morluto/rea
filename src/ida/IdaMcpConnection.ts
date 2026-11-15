@@ -18,7 +18,6 @@ import {
 } from "./IdaDiagnosticRedactor.js";
 import { IdaDiagnosticResourceError } from "./IdaDiagnosticWriter.js";
 import { MIMEType } from "node:util";
-import { win32 } from "node:path";
 import {
   mergeEnvironmentOverrides,
   snapshotEnvironment,
@@ -122,10 +121,10 @@ const IDA_STDIO_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 const IDA_STDERR_TAIL_BYTES = 16_384;
 
 /**
- * Windows creates owned processes from an absolute executable only, and runs
- * `.bat`/`.cmd` launchers only through cmd.exe. Resolve a bare registration
- * command against the child's PATH/PATHEXT and route batch launchers through
- * the shared non-AutoRun cmd.exe invocation.
+ * Windows creates owned processes from an absolute drive-path executable only,
+ * without appending an extension, and runs `.bat`/`.cmd` launchers only through
+ * cmd.exe. Resolve the registration command against the child's PATH/PATHEXT
+ * and route batch launchers through the shared non-AutoRun cmd.exe invocation.
  */
 const idaStdioLauncher =
   (platform: NodeJS.Platform, launch: OwnedMcpLauncher): OwnedMcpLauncher =>
@@ -136,23 +135,23 @@ const idaStdioLauncher =
       options.env ?? {},
       "win32",
     );
-    let command = options.command;
-    if (!win32.isAbsolute(command))
-      if (/[\\/]/u.test(command)) command = win32.resolve(command);
-      else {
-        const found = await findWindowsExecutable(command, environment, {
-          signal: options.signal ?? new AbortController().signal,
-          allowBatch: true,
-        });
-        if (!found.ok)
-          throw new Error(
-            found.error.kind === "invalid_extension"
-              ? "Windows PATHEXT must contain filename extensions, not paths"
-              : `IDA MCP command ${JSON.stringify(command)} was not found on the registration PATH`,
-            { cause: found.error },
-          );
-        command = found.value;
-      }
+    const found = await findWindowsExecutable(options.command, environment, {
+      signal: options.signal ?? new AbortController().signal,
+      allowBatch: true,
+    });
+    if (!found.ok)
+      throw new Error(
+        found.error.kind === "invalid_extension"
+          ? "Windows PATHEXT must contain filename extensions, not paths"
+          : `IDA MCP command ${JSON.stringify(options.command)} was not found at its path or on the registration PATH/PATHEXT`,
+        { cause: found.error },
+      );
+    const command = found.value;
+    // The owned Windows launcher creates processes from drive paths only.
+    if (!/^[a-z]:\\/iu.test(command))
+      throw new Error(
+        `IDA MCP command ${JSON.stringify(command)} is not on a drive path; map its network share to a drive letter or install the server locally`,
+      );
     if (!isWindowsBatchFile(command)) return launch({ ...options, command });
     return launch({
       ...options,
@@ -664,6 +663,8 @@ export const createIdaMcpConnection = (
             // IDA keeps its own redacted tail; the supervisor retains none.
             maxDiagnosticBytes: { stdout: 0, stderr: 0 },
             onStderr: retainStderr,
+            // Cleanup failures carry the same redacted tail as other transport failures.
+            capturedOutput: capturedTransportOutput,
           },
           idaStdioLauncher(
             dependencies.platform ?? process.platform,

@@ -81,6 +81,8 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
       /** Observe the owned child's stderr from acquisition onward, including when it closes early. */
       readonly onStderr?: (chunk: unknown) => void;
+      /** Owner-redacted output attached to cleanup failures when the owner retains its own tail. */
+      readonly capturedOutput?: () => AnalysisCapturedOutput;
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
@@ -256,9 +258,14 @@ export class OwnedMcpStdioTransport implements Transport {
           reason: stopped.reason,
           stderr: this.diagnostics()?.stderr ?? "",
         },
-        this.settings.operation === undefined
-          ? undefined
-          : { operation: this.settings.operation },
+        {
+          ...(this.settings.operation === undefined
+            ? {}
+            : { operation: this.settings.operation }),
+          ...(this.settings.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: this.settings.capturedOutput() }),
+        },
       );
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;

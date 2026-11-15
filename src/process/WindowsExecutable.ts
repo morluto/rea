@@ -38,9 +38,13 @@ export type WindowsExecutableFailure =
     };
 
 /**
- * Resolve a default bare command against PATH/PATHEXT only. Never return a bare
- * name on failure: handing it to Windows would restart implicit CWD lookup.
- * Callers own the lookup deadline and translation to their operation errors.
+ * Resolve a command the way Windows users name it: a bare name against
+ * PATH/PATHEXT only, and a path-qualified name (`C:\Python\python`,
+ * `.venv\Scripts\python`) at that location with the same PATHEXT suffixes.
+ * Owned launches pass an explicit application name to `CreateProcessW`, which
+ * never appends an extension itself. Never return a bare name on failure:
+ * handing it to Windows would restart implicit CWD lookup. Callers own the
+ * lookup deadline and translation to their operation errors.
  */
 export const findWindowsExecutable = async (
   executable: string,
@@ -72,7 +76,12 @@ export const findWindowsExecutable = async (
             [".exe", ".com"].includes(extension.toLowerCase()),
           );
   const cwd = options.cwd ?? process.cwd();
-  for (const directory of windowsPathEntries(selected.PATH ?? "")) {
+  const qualified =
+    /[\\/]/u.test(executable) || win32.parse(executable).root !== "";
+  const directories = qualified
+    ? [""]
+    : windowsPathEntries(selected.PATH ?? "");
+  for (const directory of directories) {
     for (const extension of allowed) {
       if (options.signal.aborted) return err({ kind: "interrupted" });
       const candidate = win32.resolve(
