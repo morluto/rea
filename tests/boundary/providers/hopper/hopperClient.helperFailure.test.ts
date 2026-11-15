@@ -1,3 +1,8 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { spawn } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,17 +21,17 @@ import type {
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
 // this run's authenticated bridge so normal cleanup can release its runtime/lease.
 const trackFailedHelperClient = (
   launcher: BridgeLauncher,
   startupTimeoutMs = 10_000,
-): HopperClient => {
+): TransportHopperClient => {
   let session: BridgeSession | undefined;
   let external = false;
   const client = new HopperClient({
+    replyContracts: transportReplyContracts,
     launcher: {
       async launch(input, options) {
         session = input;
@@ -151,6 +156,7 @@ it.skipIf(process.platform !== "darwin")(
     const retry = new HopperFixtureLauncher();
     let session: BridgeSession | undefined;
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: {
         async launch(input, options) {
           if (session !== undefined) return retry.launch(input);
@@ -200,6 +206,68 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+it("classifies a pre-handoff Apple Events denial as not retryable from the same client", async () => {
+  const stderr =
+    "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n";
+  const launcher: BridgeLauncher = {
+    launch() {
+      return Promise.resolve(
+        ok({
+          process: spawn(
+            process.execPath,
+            [
+              "-e",
+              `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(2));`,
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          ),
+          ownsProcessLifetime: false as const,
+          providerLifetime: "external-application" as const,
+          shutdownMode: "bridge-request" as const,
+          authorizationDenialBeforeHandoff: true as const,
+        }),
+      );
+    },
+  };
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 10_000,
+  });
+  onTestFinished(async () => {
+    const closed = await client.close();
+    if (!closed.ok) throw closed.error;
+  });
+  const failed = await client.start();
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "HopperStartError",
+      cleanupIncomplete: false,
+      launchRejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+    },
+  });
+  if (failed.ok) throw new Error("Expected Apple Events denial");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_unavailable",
+    category: "unavailable",
+    retryable: false,
+    details: {
+      stage: "launch",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+      launcher: { exit_code: 2, signal: null },
+    },
+  });
+});
 
 it.each(["exit", "signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",

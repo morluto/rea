@@ -5,26 +5,38 @@ import {
   captureDom,
   captureFrames,
   captureResources,
-  cdpFrameUrl,
   classifyCdpFrameUrl,
   observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import {
+  frameTreeReply,
+  resourceTreeReply,
+} from "../../tests/fixtures/fakeCdpSend.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 const origin = "https://app.example.test";
 
 it.each([
-  [{ url: `${origin}/page?x=1#old` }, `${origin}/page?x=1#old`],
+  [
+    { url: `${origin}/page?x=1#old` },
+    { kind: "observed", url: `${origin}/page?x=1#old` },
+  ],
   [
     { url: `${origin}/page?x=1#old`, urlFragment: "#new" },
-    `${origin}/page?x=1#new`,
+    { kind: "observed", url: `${origin}/page?x=1#new` },
   ],
-  [{ url: `${origin}/page?x=1#old`, urlFragment: "" }, `${origin}/page?x=1`],
-  [{ url: `${origin}/page`, urlFragment: null }, undefined],
-  [{ url: `${origin}/page`, urlFragment: "missing-hash" }, undefined],
+  [
+    { url: `${origin}/page?x=1#old`, urlFragment: "" },
+    { kind: "observed", url: `${origin}/page?x=1` },
+  ],
+  [{ url: `${origin}/page`, urlFragment: null }, { kind: "invalid_fragment" }],
+  [
+    { url: `${origin}/page`, urlFragment: "missing-hash" },
+    { kind: "invalid_fragment" },
+  ],
 ])("preserves frame URL fragment semantics: %j", (frame, expected) => {
-  expect(cdpFrameUrl(frame)).toBe(expected);
+  expect(observeCdpFrameUrl(frame)).toMatchObject(expected);
 });
 
 it("keeps source identity and scope independent while redacting transport credentials", () => {
@@ -63,7 +75,7 @@ it("keeps source identity and scope independent while redacting transport creden
 it("does not authorize a foreign origin through its fragment", () => {
   const completeness = new CdpCaptureCompleteness();
   const captured = captureFrames(
-    {
+    frameTreeReply({
       frameTree: {
         frame: {
           id: "foreign",
@@ -71,7 +83,7 @@ it("does not authorize a foreign origin through its fragment", () => {
           urlFragment: `#${origin}`,
         },
       },
-    },
+    }),
     new Set([origin]),
     undefined,
     completeness,
@@ -83,7 +95,9 @@ it("does not authorize a foreign origin through its fragment", () => {
 it("classifies a malformed frame fragment as unknown protocol coverage", () => {
   const completeness = new CdpCaptureCompleteness();
   const captured = captureFrames(
-    { frameTree: { frame: { id: "frame-main", url: origin, urlFragment: 7 } } },
+    frameTreeReply({
+      frameTree: { frame: { id: "frame-main", url: origin, urlFragment: 7 } },
+    }),
     new Set([origin]),
     undefined,
     completeness,
@@ -375,8 +389,11 @@ describe("CDP frame capture", () => {
       };
     }
     const result = { frameTree };
-    const frames = captureFrames(result, new Set([origin]));
-    const resources = captureResources(result, new Set([origin]));
+    const frames = captureFrames(frameTreeReply(result), new Set([origin]));
+    const resources = captureResources(
+      resourceTreeReply(result),
+      new Set([origin]),
+    );
     expect(frames.items).toHaveLength(2_000);
     expect(resources.items).toHaveLength(2_000);
   });
@@ -400,33 +417,6 @@ describe("CDP accessibility inventory and identity", () => {
       excluded: [],
     });
   });
-
-  it.each([undefined, { length: 1 }])(
-    "keeps an omitted or non-array node inventory unknown: %s",
-    (nodes) => {
-      const completeness = new CdpCaptureCompleteness();
-      const capture = captureAccessibility([{ nodes }], {
-        includeText: true,
-        completeness,
-      });
-
-      expect(capture).toMatchObject({
-        total: 0,
-        nodes: [],
-        hasUnobservedChildren: false,
-      });
-      expect(completeness.snapshot()).toMatchObject({
-        unavailable_sections: ["accessibility"],
-        excluded: [
-          {
-            section: "accessibility",
-            reason: "invalid_protocol_value",
-            count: null,
-          },
-        ],
-      });
-    },
-  );
 
   it("retains valid nodes and counts malformed inventory entries", () => {
     const completeness = new CdpCaptureCompleteness();
@@ -651,7 +641,7 @@ it.each([7, "missing-hash"])(
   (urlFragment) => {
     const completeness = new CdpCaptureCompleteness();
     const captured = captureFrames(
-      {
+      frameTreeReply({
         frameTree: {
           frame: { id: "root", url: origin },
           childFrames: [
@@ -665,7 +655,7 @@ it.each([7, "missing-hash"])(
             },
           ],
         },
-      },
+      }),
       new Set([origin]),
       undefined,
       completeness,

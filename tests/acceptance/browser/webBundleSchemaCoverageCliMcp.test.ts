@@ -131,5 +131,4 @@ cliTest(
       await browser.close();
     }
   },
-  120_000,
 );

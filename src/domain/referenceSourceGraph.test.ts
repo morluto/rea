@@ -8,7 +8,6 @@ import {
   createHistoricalSourceManifest,
   historicalSourceGraphSchema,
   historicalSourceParseFailureKey,
-  parseHistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "./referenceSourceGraph.js";
 
@@ -129,7 +128,7 @@ const registerSourceCommitmentTests = (): void => {
       manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
     });
     expect(first).toEqual(second);
-    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(historicalSourceGraphSchema.parse(graph)).toEqual(graph);
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),
@@ -145,7 +144,7 @@ const registerSourceCommitmentTests = (): void => {
   it("rejects stale roots and commits file, directory, and symlink semantics", () => {
     const original = createHistoricalSourceGraph(graphInput());
     expect(() =>
-      parseHistoricalSourceGraph({ ...original, root_sha256: HASH_A }),
+      historicalSourceGraphSchema.parse({ ...original, root_sha256: HASH_A }),
     ).toThrow(/root commitment/u);
 
     for (const mutate of [
@@ -167,6 +166,7 @@ const registerSourceCommitmentTests = (): void => {
         input.exclusions = [
           {
             path: "private.env",
+            entry_kind: "file",
             reason: "configured-secret",
             pattern: ".env",
           },
@@ -188,7 +188,12 @@ const registerSourceCommitmentTests = (): void => {
         ...graphInput(),
         inventory_state: "partial",
         exclusions: [
-          { path: "private.env", reason: "configured-secret", pattern },
+          {
+            path: "private.env",
+            entry_kind: "file",
+            reason: "configured-secret",
+            pattern,
+          },
         ],
       });
     expect(graphWith(".env").root_sha256).not.toBe(
@@ -214,7 +219,7 @@ describe("historical source graph", () => {
       manifests: paths,
     };
     const graph = createHistoricalSourceGraph(input);
-    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(historicalSourceGraphSchema.parse(graph)).toEqual(graph);
     expect(() =>
       createHistoricalSourceGraph({
         ...input,
@@ -428,6 +433,7 @@ describe("partial historical source graphs", () => {
         exclusions: [
           {
             path: "secret",
+            entry_kind: "file" as const,
             reason: "configured-secret" as const,
             pattern: "secret",
           },
@@ -561,10 +567,8 @@ describe("historical source graph excluded symlink targets", () => {
       path: "secret.txt",
       reason: "configured-secret",
       pattern: "secret.txt",
-    };
-    expect(() => createHistoricalSourceGraph(input)).toThrow(
-      /recorded exclusion/u,
-    );
+    } as (typeof input.exclusions)[number];
+    expect(() => createHistoricalSourceGraph(input)).toThrow(/entry_kind/u);
   });
 });
 

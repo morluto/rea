@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { getHeapStatistics } from "node:v8";
 import { version } from "graphql";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -86,9 +87,7 @@ const decode = (
       ),
     );
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
-    );
+    return ok(decodeStrictUtf8(bytes, "preserve"));
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return err(

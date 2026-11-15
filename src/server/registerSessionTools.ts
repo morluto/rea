@@ -1,5 +1,5 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
-import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -225,32 +225,7 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(input.format === undefined ? {} : { formatHint: input.format }),
-          ...(input.architecture === undefined
-            ? {}
-            : { architecture: input.architecture }),
-          ...(input.entry_point === undefined
-            ? {}
-            : { entryPoint: input.entry_point }),
-          ...(input.flash_offset === undefined &&
-          input.partition_table_offset === undefined
-            ? {}
-            : {
-                espFlash: {
-                  ...(input.flash_offset === undefined
-                    ? {}
-                    : {
-                        flashOffset: parseEspFlashAddress(input.flash_offset),
-                      }),
-                  ...(input.partition_table_offset === undefined
-                    ? {}
-                    : {
-                        partitionTableOffset: parseEspFlashAddress(
-                          input.partition_table_offset,
-                        ),
-                      }),
-                },
-              }),
+          ...openBinaryTargetSelection(input),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),
@@ -520,6 +495,6 @@ const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
   code: "not_configured",
   reason: "No Android JADX analysis provider is configured.",
   remediation:
-    "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+    "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
   diagnostics: { configured: false },
 });

@@ -564,10 +564,7 @@ export const projectWebNetworkCaptureView = (
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
       },
-      coverage: completeWithinViewCoverage(
-        report.records.length,
-        report.records.length,
-      ),
+      coverage: completeWithinViewCoverage(report.records.length),
     });
   if (view.kind === "qlog") {
     if (report.format !== "qlog")

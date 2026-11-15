@@ -13,7 +13,7 @@ import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   authorizedElectronFile,
   type ElectronFileScope,
@@ -33,8 +33,7 @@ export const throwIfRuntimeObservationCancelled = (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 /**

@@ -57,6 +57,11 @@ it.each(["name", "descriptor"] as const)(
           examined_methods: 1,
         },
         unknowns: [],
+        manifest_splits: {
+          status: "observed",
+          required_split_types: [],
+          split_required: false,
+        },
       },
       libraries: [
         {

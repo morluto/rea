@@ -1,4 +1,5 @@
 import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { IPty } from "@lydell/node-pty";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
@@ -54,6 +55,7 @@ import {
   observeSettlement,
   prepareProcessCapture,
   resolveProcessResult,
+  processCaptureCleanupFacts,
   settleProcessCaptureJournal,
   type ProcessCaptureCleanupHost,
   type ProcessCaptureObservationBuffer,
@@ -258,6 +260,7 @@ const createTerminalRenderer = (
 interface StartCaptureRuntimeOptions {
   readonly scenario: ProcessScenario;
   readonly hostEnvironment: Readonly<Record<string, string | undefined>>;
+  readonly hostPlatform: NodeJS.Platform;
   readonly temporaryRoot: string;
   readonly runId: string;
   readonly ownershipBaseline: ProcessOwnershipBaseline;
@@ -383,6 +386,7 @@ const startCaptureRuntime = async (
     stopSampler = startProcessSampler({
       rootPid: terminal.pid,
       runId: options.runId,
+      platform: options.hostPlatform,
       started,
       limit: scenario.limits.processes,
       samples: options.samples,
@@ -567,13 +571,11 @@ const finishProcessRun = async (options: {
   const cleanupFailure = cleanupReportFailure(cleanup);
   let verifiedCapture: ProcessCapture | undefined;
   if (capture !== undefined && cleanupFailure === undefined) {
-    const settlement: UnverifiedProcessCapture["settlement"] =
-      capture.settlement.state === "quiesced"
-        ? { ...capture.settlement, cleanup_outcome: "not_required" }
-        : { ...capture.settlement, cleanup_outcome: "cleaned" };
     const completedCapture: UnverifiedProcessCapture = {
       ...capture,
-      settlement,
+      ...processCaptureCleanupFacts(capture, {
+        ownedProcessesSignaled: cleanupOutcome.ownedProcessesSignaled,
+      }),
       cleanup: {
         owned_process_group: "verified",
         temporary_root: "removed",
@@ -730,7 +732,10 @@ const completeCapture = async (options: {
       runtime.startedAt,
       new Date(),
       runtime.executableIdentity,
-      { platform: options.hostPlatform, architecture: process.arch },
+      {
+        platform: options.hostPlatform,
+        architecture: HOST_PLATFORM.architecture,
+      },
     );
   } catch (cause: unknown) {
     options.observationBuffer.manifest = {
@@ -867,6 +872,7 @@ const runProcessScenario = async (
     runtime = await startCaptureRuntime({
       scenario,
       hostEnvironment,
+      hostPlatform,
       temporaryRoot,
       runId,
       ownershipBaseline,
@@ -979,8 +985,8 @@ const runProcessScenario = async (
 /** Execute one scenario through a typed expected-failure channel. */
 export const captureProcessScenario = async (
   scenario: ProcessScenario,
-  signal?: AbortSignal,
-  platform: NodeJS.Platform = process.platform,
+  signal: AbortSignal | undefined,
+  platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>> = process.env,
   captureSnapshot?: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
@@ -1007,6 +1013,7 @@ export const captureProcessScenario = async (
       const resolvedScenario = await resolveProcessScenarioRuntimePaths(
         scenario,
         environment,
+        platform,
       );
       const capture = await runProcessScenario(
         runResourceScope,

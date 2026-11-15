@@ -14,12 +14,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import {
-  readGhidraInstallationProperties,
-  MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
-} from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { readGhidraInstallationProperties } from "../../../src/ghidra/GhidraInstallationProperties.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 
 const controls = vi.hoisted(() => ({
   file: undefined as ((handle: FileHandle, path: string) => void) | undefined,

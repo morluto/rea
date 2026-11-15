@@ -156,7 +156,7 @@ const fixture = async (
         );
       });
     },
-    options.maximumInputElements,
+    { maximumInputElements: options.maximumInputElements },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },
@@ -275,7 +275,10 @@ it("discovers without initialization, then shares one canonical runtime and pres
   const hold = barrier();
   const f = await fixture({ hold });
   const before = await f.client.listTools();
-  expect(before.tools).toEqual(catalog.tools);
+  // Listings omit the recorded output schemas (the default `off` profile).
+  expect(before.tools).toEqual(
+    catalog.tools.map(({ outputSchema: _output, ...tool }) => tool),
+  );
   expect((await f.client.listPrompts()).prompts).toEqual(
     catalog.prompts.map(({ parameters: _parameters, ...prompt }) => prompt),
   );
@@ -322,13 +325,9 @@ it.each(["legacy", "auto"] as const)(
   async (mode) => {
     const valid = await fixture({ unionOutput: true, mode });
     const before = await valid.client.listTools();
-    const schema = before.tools.find(
-      ({ name }) => name === "fixture",
-    )?.outputSchema;
-    if (schema === undefined) throw new Error("Missing union output schema");
-    expect(schema).toHaveProperty("anyOf");
-    expect(schema).not.toHaveProperty("properties.result");
-    if (mode === "legacy") expect(schema.type).toBe("object");
+    expect(
+      before.tools.find(({ name }) => name === "fixture")?.outputSchema,
+    ).toBeUndefined();
     expect(valid.loads()).toBe(0);
     const success = await valid.client.callTool({
       name: "fixture",
