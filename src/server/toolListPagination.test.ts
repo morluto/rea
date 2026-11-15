@@ -20,6 +20,18 @@ import { paginateToolsList } from "./toolListPagination.js";
 /** FastMCP's default per-event SSE limit, the bound #9093 reports. */
 const FASTMCP_SSE_EVENT_LIMIT_BYTES = 1_048_576;
 
+/**
+ * The compact presentation strips field descriptions before advertising, so
+ * one fixture tool advertises about 2 KiB and an 80-tool catalog about
+ * 150 KiB: far under the default page budget. The paging tests set explicit
+ * small budgets against the advertised size instead of growing prose that
+ * gets removed.
+ */
+const PAGING_TEST_PAGE_BUDGET_BYTES = 8_192;
+
+/** One fixture tool advertises about 2 KiB, so it exceeds this budget. */
+const OVERSIZED_TEST_PAGE_BUDGET_BYTES = 1_024;
+
 const bigInputSchema = (seed: string, fields = 40, repeats = 3) => {
   const shape: Record<string, z.ZodType> = {};
   for (let i = 0; i < fields; i++) {
@@ -34,12 +46,20 @@ const bigInputSchema = (seed: string, fields = 40, repeats = 3) => {
   return z.strictObject(shape);
 };
 
-const createCatalogServer = (count: number) => {
+const createCatalogServer = (
+  count: number,
+  budget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+) => {
   const server = new EvidenceMcpServer(
     { name: "tools-list-pagination-test", version: "1" },
     { capabilities: {} },
     undefined,
     createToolResultDelivery(10 * 1024 * 1024),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    budget,
   );
   const registered: RegisteredTool[] = [];
   for (let i = 0; i < count; i++) {
@@ -105,7 +125,10 @@ const connect = async (server: EvidenceMcpServer) => {
 
 describe("tools/list pagination", () => {
   it("pages an oversized catalog into sub-limit events and returns the whole catalog", async () => {
-    const { server } = createCatalogServer(80);
+    const { server } = createCatalogServer(
+      80,
+      pageBudget(PAGING_TEST_PAGE_BUDGET_BYTES),
+    );
     const { client, replies, close } = await connect(server);
     try {
       const listed = await client.listTools();
@@ -147,7 +170,10 @@ describe("tools/list pagination", () => {
   });
 
   it("rejects an unknown cursor", async () => {
-    const { server } = createCatalogServer(80);
+    const { server } = createCatalogServer(
+      80,
+      pageBudget(PAGING_TEST_PAGE_BUDGET_BYTES),
+    );
     const { client, close } = await connect(server);
     try {
       await expect(
@@ -161,7 +187,10 @@ describe("tools/list pagination", () => {
   });
 
   it("rejects a stale cursor after the catalog changes", async () => {
-    const { server, registered } = createCatalogServer(80);
+    const { server, registered } = createCatalogServer(
+      80,
+      pageBudget(PAGING_TEST_PAGE_BUDGET_BYTES),
+    );
     const { client, replies, close } = await connect(server);
     try {
       await client.listTools();
@@ -187,6 +216,11 @@ describe("tools/list pagination", () => {
       { capabilities: {} },
       undefined,
       createToolResultDelivery(10 * 1024 * 1024),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      pageBudget(OVERSIZED_TEST_PAGE_BUDGET_BYTES),
     );
     server.registerTool(
       "oversized_tool",
@@ -205,8 +239,8 @@ describe("tools/list pagination", () => {
           details: {
             reported_limits: {
               setting: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
-              source: "default",
-              effective_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.bytes,
+              source: "setting",
+              effective_bytes: OVERSIZED_TEST_PAGE_BUDGET_BYTES,
               default_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.defaultBytes,
               maximum_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.maximumBytes,
               tool_name: "oversized_tool",

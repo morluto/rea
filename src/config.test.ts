@@ -179,8 +179,8 @@ describe("runtime configuration", () => {
       },
     });
     const empty = parseConfig({});
-    expect(empty.ok).toBe(true);
-    if (empty.ok) expect(empty.value.mcpToolsListPageBudget).toBeUndefined();
+    if (!empty.ok) throw empty.error;
+    expect(empty.value.mcpToolsListPageBudget).toBeUndefined();
   });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
