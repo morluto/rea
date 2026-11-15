@@ -11,7 +11,11 @@ import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   findOverlappingFatSlices,
@@ -95,11 +99,7 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("open_binary", options.signal));
   if (target.format !== "mach-o" && target.format !== "mach-o-universal")
     return invalid("Hopper image preparation requires a Mach-O target");
   let opened: FileHandle;
@@ -158,11 +158,7 @@ const inspectAndFinalizeHopperMachOImage = async (
   }
   if (closeOutcome.kind === "closed") {
     if (result.ok && options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     return result;
   }
   return retainHopperPreflightCloseFailure({
@@ -225,15 +221,20 @@ const retainHopperPreflightCloseFailure = (options: {
               cleanup,
             },
           )
-        : new AnalysisCancelledError("open_binary", {
-            cause: options.result.error.cause,
-            cleanup,
-          });
+        : cancelledBy(
+            "open_binary",
+            carriedReason(options.result.error.cause),
+            { cleanup },
+          );
   } else if (options.cancellationBeforeClose) {
-    failure = new AnalysisCancelledError("open_binary", {
-      cause: options.signal?.reason,
-      cleanup,
-    });
+    // cancellationBeforeClose records that the caller's signal had aborted.
+    failure = cancelledBy(
+      "open_binary",
+      carriedReason(options.signal?.reason),
+      {
+        cleanup,
+      },
+    );
   } else {
     failure = new BinaryTargetError(
       options.target.path,
@@ -256,11 +257,7 @@ const retainHopperPreflightCloseFailure = (options: {
     failure.retainSecondaryFailure(cleanupError);
   }
   if (options.signal?.aborted && !cancellationIsPrimary)
-    failure.retainSecondaryFailure(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    failure.retainSecondaryFailure(cancelledBy("open_binary", options.signal));
   new AnalysisCleanupLeaseGroup(failure, [lease]);
   return err(failure);
 };
@@ -280,10 +277,7 @@ const inspectHopperMachOImage = async (
     );
   const read = (offset: number, length: number): Promise<Buffer> =>
     readFileHandleRange(file, offset, length, () => {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("open_binary", {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy("open_binary", signal);
     });
   const header = await read(0, 8);
   const fatPrefix = readFatHeaderPrefix(header);
@@ -298,14 +292,9 @@ const inspectHopperMachOImage = async (
     for await (const chunk of readFileHandleChunks(file, {
       ...(signal === undefined ? {} : { signal }),
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("open_binary", { cause: reason }),
+        cancelledBy("open_binary", carriedReason(reason)),
     })) {
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", {
-            cause: signal.reason,
-          }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       const bytes = Buffer.from(chunk);
       hash.update(bytes);
       size += bytes.length;
@@ -317,10 +306,7 @@ const inspectHopperMachOImage = async (
         prefixLength += copied;
       }
     }
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     if (prefixLength !== prefix.length)
       return invalid("Thin Mach-O header is truncated");
     const observedSha256 = hash.digest("hex");
@@ -372,10 +358,7 @@ const inspectHopperMachOImage = async (
   const admitted = target.universalSlice;
   const matches: FatSliceDeclaration[] = [];
   for (const slice of parsed.slices) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     const rangeError = validateFatSlice(slice, size, tableEnd);
     if (rangeError !== null) return invalid(rangeError);
     if (slice.reserved !== null && slice.reserved !== 0)
