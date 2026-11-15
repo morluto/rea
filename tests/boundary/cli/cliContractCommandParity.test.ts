@@ -1305,6 +1305,47 @@ describe("Positional selectors with a named option", () => {
     },
   );
 
+  it("refuses a selector whose contract admits an empty value", () => {
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ text: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["text"],
+          selectorOptions: { text: { name: "text", description: "Text" } },
+        },
+      ),
+    ).toThrow("probe.text admits an empty selector");
+  });
+
+  it("refuses a selector option on a field that is not a positional text selector", () => {
+    const describeSelector = (
+      positionals: readonly ("text" | "count")[],
+      field: "text" | "count",
+    ) =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.object({ text: z.string(), count: z.number() }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals,
+          selectorOptions: { [field]: { name: "named", description: "Named" } },
+        },
+      );
+    expect(() => describeSelector([], "text")).toThrow(
+      "probe.text is not a positional selector",
+    );
+    expect(() => describeSelector(["count"], "count")).toThrow(
+      "probe.count is not a text selector",
+    );
+  });
+});
+
+describe("Operation choices selected by an option", () => {
   it("refuses an operation choice whose contract projects other options", () => {
     const projection = {
       command: "probe",
@@ -1356,45 +1397,6 @@ describe("Positional selectors with a named option", () => {
     );
     expect(() => describeOperationChoices(base, projection)).toThrow(
       "other does not project to probe's options",
-    );
-  });
-
-  it("refuses a selector whose contract admits an empty value", () => {
-    expect(() =>
-      describeContractCommand(
-        { name: "probe", inputSchema: z.object({ text: z.string() }) },
-        {
-          command: "probe",
-          description: "Probe",
-          positionals: ["text"],
-          selectorOptions: { text: { name: "text", description: "Text" } },
-        },
-      ),
-    ).toThrow("probe.text admits an empty selector");
-  });
-
-  it("refuses a selector option on a field that is not a positional text selector", () => {
-    const describeSelector = (
-      positionals: readonly ("text" | "count")[],
-      field: "text" | "count",
-    ) =>
-      describeContractCommand(
-        {
-          name: "probe",
-          inputSchema: z.object({ text: z.string(), count: z.number() }),
-        },
-        {
-          command: "probe",
-          description: "Probe",
-          positionals,
-          selectorOptions: { [field]: { name: "named", description: "Named" } },
-        },
-      );
-    expect(() => describeSelector([], "text")).toThrow(
-      "probe.text is not a positional selector",
-    );
-    expect(() => describeSelector(["count"], "count")).toThrow(
-      "probe.count is not a text selector",
     );
   });
 });
