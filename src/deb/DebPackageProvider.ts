@@ -27,6 +27,7 @@ import {
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   DebPackageCapacityFailure,
   DebPackageFormatFailure,
@@ -59,14 +60,10 @@ const partialDiagnostics = (cause: unknown) => {
     return {};
   const partial = cause.partial;
   if (partial === undefined) return {};
-  return {
-    diagnostics: {
-      ar_members: partial.ar.members.map((member) => member.name),
-      format_version: partial.ar.format_version,
-      control_package: partial.control?.package ?? null,
-      data_entry_count: partial.data_entries.length,
-    },
-  };
+  // The partial report is already bounded by the caller's limits, so carry
+  // it whole: control facts, scripts, member offsets and file rows read
+  // before the refusal stay visible to CLI and MCP callers.
+  return { diagnostics: { partial: partial satisfies JsonValue } };
 };
 
 const failureForPrimary = (

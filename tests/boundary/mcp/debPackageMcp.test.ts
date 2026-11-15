@@ -98,6 +98,45 @@ it("requires an absolute path for inspect_deb_package", async () => {
   }
 });
 
+it("delivers the parsed control facts when data.tar is refused", async () => {
+  const { client, close } = await connect();
+  try {
+    const root = await createTestTempDirectory("rea-deb-mcp-partial-");
+    const path = join(root, "bad-data.deb");
+    await writeFile(path, debPackageFixture({ corruptDataChecksum: true }));
+    const response = await client.callTool({
+      name: "inspect_deb_package",
+      arguments: { path },
+    });
+    expect(response.isError).toBe(true);
+    const { error } = parseMcpToolError(response);
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_deb_package",
+        diagnostics: {
+          partial: {
+            ar: {
+              members: expect.arrayContaining([
+                expect.objectContaining({ name: "data.tar.gz", offset: 858 }),
+              ]),
+            },
+            control: {
+              package: "hello",
+              version: { raw: "1:2.03-1" },
+              maintainer_scripts: expect.arrayContaining([
+                expect.objectContaining({ name: "postinst" }),
+              ]),
+            },
+          },
+        },
+      },
+    });
+  } finally {
+    await close();
+  }
+});
+
 it("refuses malformed ar bytes and inspects xz-compressed members", async () => {
   const { client, close } = await connect();
   try {
