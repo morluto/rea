@@ -42,3 +42,14 @@ it("reports an arrival only when it happens before the operation settles", async
   arrival.arrive("second");
   expect(await arrival.reached(running, "announced boundary")).toBe("first");
 });
+
+it("counts an arrival announced in the same turn the operation settles", async () => {
+  const arrival = phaseArrival();
+  const operation = Promise.resolve().then(() => arrival.arrive());
+  await arrival.reached(operation, "immediate boundary");
+  const gate = phaseGate();
+  const held = Promise.resolve().then(() => {
+    void gate.hold();
+  });
+  await gate.reached(held, "immediate hold");
+});
