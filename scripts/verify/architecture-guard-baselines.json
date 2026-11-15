@@ -121,7 +121,6 @@
     "src/il2cpp/Il2cppMetadataFile.ts": 2,
     "src/model/ModelHeaderReader.ts": 1,
     "src/native/AppleDispatchMetadata.ts": 1,
-    "src/native/AppleMachoSelection.ts": 3,
     "src/native/LldbCallTracer.ts": 1,
     "src/native/LldbRetainedObservations.ts": 1,
     "src/native/MachoCommandNames.ts": 1,
@@ -569,12 +568,6 @@
     "src/process/capture/ProcessHarness.ts": 1,
     "src/server/createServer.ts": 1,
     "src/windows/WindowsNativeLoader.ts": 1
-  },
-  "keyed-first-match": {
-    "src/artifacts/fit/FitStructure.ts": 1,
-    "src/domain/apkSignature/apkV1SignatureBlock.ts": 1,
-    "src/native/MachoArchitectureSelection.ts": 2,
-    "src/native/NativeMachoInspection.ts": 1
   },
   "abort-without-reason": {},
   "completed-abort-reclassification": {
