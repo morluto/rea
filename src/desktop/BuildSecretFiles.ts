@@ -16,11 +16,9 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../resources/ArtifactFileOperation.js";
-import type {
-  ArtifactResourceScope,
-  ArtifactResourceOwner,
-} from "../resources/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../resources/index.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

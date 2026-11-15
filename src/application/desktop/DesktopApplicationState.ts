@@ -7,7 +7,7 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

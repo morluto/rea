@@ -12,8 +12,10 @@ import {
   type McpRegistrationClient,
 } from "../application/McpRegistrationCatalog.js";
 import { runningClientRewriteNotice } from "../application/SupportedClients.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   classifyMcpAddDiscovery,
   declaredSensitiveValues,

@@ -1,4 +1,8 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactReaderFailure,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -38,7 +42,6 @@ import {
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import type { PacketCapturePort } from "../ports/captures/PacketCapturePort.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
@@ -49,7 +52,6 @@ import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
 } from "../providers/artifactResourceFailure.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,

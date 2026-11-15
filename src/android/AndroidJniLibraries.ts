@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
 import type {

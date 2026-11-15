@@ -5,8 +5,8 @@ import { dirname } from "node:path";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";

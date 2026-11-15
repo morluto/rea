@@ -5,9 +5,11 @@ import {
 } from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { SqliteDatabasePort } from "../ports/sqlite/SqliteDatabasePort.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,

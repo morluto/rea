@@ -1,8 +1,10 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+} from "../resources/index.js";
 import {
   PACKAGE_FILE_FIELDS,
   packageFileMismatch,

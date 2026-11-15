@@ -13,7 +13,7 @@ import {
   evmProducerLimitsSchema,
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
+import { readStableArtifact } from "../resources/index.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),

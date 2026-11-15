@@ -218,6 +218,19 @@ const ENTRY_IMPORTER_LAYERS = new Set([
   "adapters",
 ]);
 
+/**
+ * Units below the providers layer that every other unit reaches only through
+ * their entry file `src/<unit>/index.ts`: the shared provider toolkit in
+ * `src/resources` (stable reads, artifact readers, resource scopes, cleanup
+ * leases and their failure projections).
+ */
+export const ENTRY_UNITS = Object.freeze(["resources"]);
+
+/** Whether an import from `from` into `to` must use `to`'s entry file. */
+const requiresEntry = (from, to) =>
+  ENTRY_UNITS.includes(to) ||
+  (isProviderUnit(to) && ENTRY_IMPORTER_LAYERS.has(UNIT_LAYERS[from]));
+
 const sortedCounts = (counts) =>
   Object.fromEntries(
     [...counts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
@@ -232,8 +245,9 @@ const sortedCounts = (counts) =>
  * reusing browser's CDP helpers): `crossProvider` counts them per pair, and a
  * pair that is not in the baseline fails. Application, composition and the
  * CLI/MCP adapters reach a provider only through its entry file
- * `src/<provider>/index.ts`: `providerEntry` counts their imports of any other
- * file in a provider folder. Both counts may only shrink.
+ * `src/<provider>/index.ts`, and every unit reaches an ENTRY_UNITS unit only
+ * through its `index.ts`: `entry` counts the imports of any other file in such
+ * a unit. Both counts may only shrink.
  */
 export const providerBoundaryFacts = (imports) => {
   const cross = new Map();
@@ -242,18 +256,18 @@ export const providerBoundaryFacts = (imports) => {
     const from = sourceUnit(file);
     const to = sourceUnit(target);
     if (from === undefined || to === undefined || from === to) continue;
-    if (!isProviderUnit(to)) continue;
     const key = `${from} -> ${to}`;
-    if (isProviderUnit(from)) cross.set(key, (cross.get(key) ?? 0) + 1);
+    if (isProviderUnit(from) && isProviderUnit(to))
+      cross.set(key, (cross.get(key) ?? 0) + 1);
     else if (
-      ENTRY_IMPORTER_LAYERS.has(UNIT_LAYERS[from]) &&
+      requiresEntry(from, to) &&
       sourcePath(target) !== `src/${to}/index.ts`
     )
       entry.set(key, (entry.get(key) ?? 0) + 1);
   }
   return {
     crossProvider: sortedCounts(cross),
-    providerEntry: sortedCounts(entry),
+    entry: sortedCounts(entry),
   };
 };
 
@@ -261,7 +275,7 @@ export const providerBoundaryFacts = (imports) => {
 const COUNTED = Object.freeze([
   ["upward", "upward import"],
   ["crossProvider", "cross-provider import"],
-  ["providerEntry", "import past the provider entry"],
+  ["entry", "import past the entry file"],
 ]);
 
 /**
@@ -321,5 +335,5 @@ export const lowerLayerBaseline = (facts, baseline) => ({
   upward: lowerCounts(facts.upward, baseline.upward),
   cycles: baseline.cycles.filter((group) => facts.cycles.includes(group)),
   crossProvider: lowerCounts(facts.crossProvider, baseline.crossProvider),
-  providerEntry: lowerCounts(facts.providerEntry, baseline.providerEntry),
+  entry: lowerCounts(facts.entry, baseline.entry),
 });

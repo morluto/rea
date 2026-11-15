@@ -4,13 +4,13 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { artifactFileCancellationCause } from "../../resources/ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  artifactFileCancellationCause,
   completedStableArtifact,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
   AnalysisOutputError,
   cancelledBy,

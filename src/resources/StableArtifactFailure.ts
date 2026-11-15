@@ -1,16 +1,16 @@
-import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../resources/ArtifactFileOperation.js";
+} from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {

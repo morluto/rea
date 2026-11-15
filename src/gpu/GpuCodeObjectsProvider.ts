@@ -1,4 +1,13 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  artifactFileCompletion,
+} from "../resources/index.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";
@@ -26,15 +35,6 @@ import {
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
-  withArtifactRegularFile,
-  bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  artifactFileCompletion,
-} from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
 import {

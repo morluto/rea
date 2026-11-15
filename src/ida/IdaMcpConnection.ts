@@ -1,9 +1,9 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../resources/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
-import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,

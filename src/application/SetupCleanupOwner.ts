@@ -1,8 +1,8 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,

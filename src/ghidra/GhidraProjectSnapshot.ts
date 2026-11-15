@@ -14,11 +14,11 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,

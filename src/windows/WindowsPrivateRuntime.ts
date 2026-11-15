@@ -2,8 +2,10 @@ import { win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 
 import {

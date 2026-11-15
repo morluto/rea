@@ -1,6 +1,8 @@
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";

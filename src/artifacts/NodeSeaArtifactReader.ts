@@ -11,7 +11,7 @@ import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {
   decodeNodeSeaBlob,

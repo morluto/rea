@@ -1,9 +1,11 @@
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { createHash } from "node:crypto";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";

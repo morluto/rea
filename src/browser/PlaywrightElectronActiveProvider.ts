@@ -3,13 +3,15 @@ import {
   processInspectionCancellationError,
 } from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";

@@ -1,10 +1,12 @@
-import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   firstKeyed,
   keyedBy,
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";

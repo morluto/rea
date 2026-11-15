@@ -1,21 +1,17 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../resources/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
-} from "../resources/ArtifactFileOperation.js";
-import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
+} from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../ports/v8CodeCache/V8CodeCachePort.js";
 import {

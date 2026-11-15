@@ -5,21 +5,17 @@ import {
   type NtfsJournalCache,
   type NtfsAcquisition,
 } from "./NtfsJournalCache.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import {
   readStableArtifact,
   assertStableArtifactState,
-} from "../../resources/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/index.js";
 import {
   primaryAnalysisError,
   type AnalysisError,

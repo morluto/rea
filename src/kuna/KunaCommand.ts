@@ -23,9 +23,9 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../resources/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,

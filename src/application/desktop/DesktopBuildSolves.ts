@@ -4,17 +4,17 @@ import {
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../resources/ArtifactFileOperation.js";
+  writeTextFile,
+} from "../../resources/index.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "../../desktop/AgentEnvComputer.js";
-import { writeTextFile } from "../../resources/TextFileWrite.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";

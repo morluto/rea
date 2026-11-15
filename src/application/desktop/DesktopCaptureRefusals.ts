@@ -1,11 +1,11 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../../resources/ArtifactFileOperation.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {

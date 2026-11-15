@@ -20,12 +20,10 @@ import { readBoundedFileBytes } from "./BoundedFileBytes.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../resources/AnalysisCleanupLease.js";
-import type {
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type {
   AnalysisCleanupObservation,
   AnalysisError,

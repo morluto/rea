@@ -17,8 +17,10 @@ import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
 } from "../process/RegularFileRead.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
