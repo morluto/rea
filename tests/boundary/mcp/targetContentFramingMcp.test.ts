@@ -27,6 +27,7 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -42,7 +43,10 @@ const connect = async (environment?: NodeJS.ProcessEnv) => {
     { kind: "session", session },
     environment === undefined ? {} : { environment },
   );
-  const client = new Client({ name: "target-content-test", version: "1" });
+  const client = new Client(
+    { name: "target-content-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(() =>
@@ -136,7 +140,10 @@ describe("MCP fixed-target scope guidance", () => {
       },
       { environment: { ...process.env, REA_MCP_TOOL_FAMILIES: scope } },
     );
-    const client = new Client({ name: "fixed-target-scope", version: "1" });
+    const client = new Client(
+      { name: "fixed-target-scope", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(() => Promise.all([client.close(), server.close()]));
@@ -225,10 +232,13 @@ describe.each([
           return result;
         },
       );
-      const client = new Client({
-        name: "partial-provenance-client",
-        version: "1",
-      });
+      const client = new Client(
+        {
+          name: "partial-provenance-client",
+          version: "1",
+        },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       try {

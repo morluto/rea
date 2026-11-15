@@ -14,6 +14,7 @@ import * as evidenceBundleFiles from "../../../src/application/EvidenceBundleFil
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("preserves the exact reason when import is cancelled after reading the bundle", async () => {
   const root = await createTestTempDirectory(
@@ -102,10 +103,13 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   // Valid whitespace crosses the streaming threshold without a large JSON tree.
   await writeFile(path, " ".repeat(9 * 1024 * 1024) + JSON.stringify(bundle));
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-cancellation",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-cancellation",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const controller = new AbortController();
   onTestFinished(async () => {
     controller.abort();
@@ -240,10 +244,13 @@ it("retains a failed import close in the server scope through SDK error projecti
     });
 
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-close-failure",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-close-failure",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     allowClose = true;
     close.mockRestore();
@@ -299,10 +306,13 @@ it("retries a transient import close failure before admitting the bundle", async
       throw new Error("one transient file close failure");
     });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-close-retry",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-close-retry",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     close.mockRestore();
     await client.close();

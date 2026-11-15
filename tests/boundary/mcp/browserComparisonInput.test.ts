@@ -18,6 +18,7 @@ import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenari
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
@@ -95,7 +96,10 @@ describe("browser comparison input boundary", () => {
   it("advertises producer captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
     const server = new McpServer({ name: "capture-input", version: "0" });
-    const client = new Client({ name: "capture-input", version: "0" });
+    const client = new Client(
+      { name: "capture-input", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     let calls = 0;

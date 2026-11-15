@@ -30,6 +30,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
@@ -66,10 +67,13 @@ process.stdin.on("data", (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "rizin-evidence-provenance",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const callerPath = "./relative/../rizin-fixture.bin";
@@ -157,7 +161,10 @@ it("admits Rizin startup across a bound analysis session", async () => {
     undefined,
     analysisSession,
   );
-  const client = new Client({ name: "rizin-start-admission", version: "1" });
+  const client = new Client(
+    { name: "rizin-start-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -223,7 +230,10 @@ process.stdin.on("data", async (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "rizin-cancellation", version: "1" });
+    const client = new Client(
+      { name: "rizin-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

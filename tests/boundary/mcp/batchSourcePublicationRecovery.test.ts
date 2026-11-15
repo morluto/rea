@@ -14,6 +14,7 @@ import { registerEnhancedTools } from "../../../src/server/registerEnhancedTools
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const source = createEvidence(undefined, provider, {
   operation: "health",
@@ -80,7 +81,10 @@ it.each([
       allowsSnapshotReplay: undefined,
       recordWorkflowSnapshot: undefined,
     });
-    const client = new Client({ name: "batch-overflow-test", version: "1" });
+    const client = new Client(
+      { name: "batch-overflow-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

@@ -18,6 +18,7 @@ import { registerCutterTools } from "../../../src/server/registerCutterTools.js"
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // CutterBridgeClient's per-probe request deadline.
 const CUTTER_REQUEST_DEADLINE_MS = 25_000;
@@ -68,7 +69,10 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
     silentLogger,
     createToolResultDelivery(undefined),
   );
-  const client = new Client({ name: "cutter-cancellation", version: "1" });
+  const client = new Client(
+    { name: "cutter-cancellation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const controller = new AbortController();
@@ -148,7 +152,10 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
     silentLogger,
     createToolResultDelivery(undefined),
   );
-  const client = new Client({ name: "cutter-cleanup-race", version: "1" });
+  const client = new Client(
+    { name: "cutter-cleanup-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const call = (command: string) =>
@@ -249,7 +256,10 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
     silentLogger,
     createToolResultDelivery(undefined),
   );
-  const client = new Client({ name: "cutter-discovery-cancel", version: "1" });
+  const client = new Client(
+    { name: "cutter-discovery-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const controller = new AbortController();
@@ -366,10 +376,13 @@ it.skipIf(process.platform === "win32")(
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({
-      name: "cutter-generation-proof",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "cutter-generation-proof",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);

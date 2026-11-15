@@ -48,6 +48,7 @@ import {
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 afterEach(async () => {
@@ -78,7 +79,10 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-diagnostics", version: "1" });
+  const mcp = new Client(
+    { name: "provider-diagnostics", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -189,7 +193,10 @@ describe("provider selection over MCP", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "provider-selection", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -342,7 +349,10 @@ it("offers admitted providers and retains unconfigured rejections", async () => 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "provider-selection", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -536,7 +546,10 @@ const connectDetailFixture = async (starts: string[]) => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "session-detail", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "session-detail", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -757,7 +770,10 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     ]),
   );
   const server = createServer({ kind: "session", session });
-  const mcp = new Client({ name: "snapshot-mismatch", version: "1" });
+  const mcp = new Client(
+    { name: "snapshot-mismatch", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -905,7 +921,10 @@ it.each([true, false])(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "comment-recovery", version: "1" });
+    const mcp = new Client(
+      { name: "comment-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server, { close: () => session.close() });
@@ -1000,7 +1019,10 @@ it("keeps containing-function recovery for undeclared comment facets", async () 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "undeclared-comment-facet", version: "1" });
+  const mcp = new Client(
+    { name: "undeclared-comment-facet", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1298,7 +1320,10 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "project-refusal", version: "1" });
+  const mcp = new Client(
+    { name: "project-refusal", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1352,7 +1377,10 @@ it("labels unbound provider observations as selection-time after a repair", asyn
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-scope", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-scope", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1470,7 +1498,10 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-refresh-cancel", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-refresh-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1557,7 +1588,10 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "refresh-switch-race", version: "1" });
+  const mcp = new Client(
+    { name: "refresh-switch-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1650,7 +1684,10 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "refresh-prompt", version: "1" });
+  const mcp = new Client(
+    { name: "refresh-prompt", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1722,7 +1759,10 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-refresh-cleanup", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-refresh-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1797,7 +1837,10 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "profile-completion", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "profile-completion", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1889,7 +1932,10 @@ it.each(["ready", "cancelled", "physical"] as const)(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "async-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "async-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server, { close: () => session.close() });

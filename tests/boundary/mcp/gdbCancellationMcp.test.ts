@@ -41,6 +41,7 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
@@ -93,7 +94,10 @@ process.stdin.on("data", (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "gdb-startup-readiness", version: "1" });
+    const client = new Client(
+      { name: "gdb-startup-readiness", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -209,7 +213,10 @@ process.stdin.on("data", async (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "gdb-cancellation", version: "1" });
+    const client = new Client(
+      { name: "gdb-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -314,7 +321,10 @@ process.stdin.on("data", (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "gdb-inferior-tty", version: "1" });
+    const client = new Client(
+      { name: "gdb-inferior-tty", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -407,7 +417,10 @@ process.stdin.on("data", (chunk) => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "gdb-mi-utf8", version: "1" });
+    const client = new Client(
+      { name: "gdb-mi-utf8", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -532,7 +545,10 @@ it("records partial GDB Evidence from an MCP command error", async () => {
       return ok("added");
     },
   );
-  const client = new Client({ name: "gdb-partial-evidence", version: "1" });
+  const client = new Client(
+    { name: "gdb-partial-evidence", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -594,7 +610,10 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
     undefined,
     analysisSession,
   );
-  const client = new Client({ name: "gdb-owned-cleanup", version: "1" });
+  const client = new Client(
+    { name: "gdb-owned-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -708,10 +727,13 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
       return ok("added");
     },
   );
-  const client = new Client({
-    name: "gdb-startup-partial-evidence",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "gdb-startup-partial-evidence",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

@@ -15,6 +15,7 @@ import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const assertPublication = ({
   error,
@@ -258,7 +259,10 @@ it.each([
     });
     const session = new BinarySession(router, records);
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "source-publication", version: "1" });
+    const client = new Client(
+      { name: "source-publication", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -355,7 +359,10 @@ it("reports omission when the primary cannot be safely authenticated", async () 
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "recovery-headroom", version: "1" });
+  const client = new Client(
+    { name: "recovery-headroom", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -423,7 +430,10 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "wide-recovery", version: "1" });
+  const client = new Client(
+    { name: "wide-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -493,10 +503,13 @@ it.each(["compact"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({
-      name: "source-primary-headroom",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "source-primary-headroom",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -561,7 +574,10 @@ it("accounts for source links before admitting a completed direct observation", 
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "wide-primary-admission", version: "1" });
+  const client = new Client(
+    { name: "wide-primary-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);

@@ -13,6 +13,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([
   ["resolved padded", true, "0x00401000", "0x401000", "available"],
@@ -62,7 +63,10 @@ it.each([
       close: async () => ok(null),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bookmark-verifier", version: "1" });
+    const client = new Client(
+      { name: "bookmark-verifier", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -121,7 +125,10 @@ it.each([false, true])(
       close: async () => ok(null),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "context-cleanup", version: "1" });
+    const client = new Client(
+      { name: "context-cleanup", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

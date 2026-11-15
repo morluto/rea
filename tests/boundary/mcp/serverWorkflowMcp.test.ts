@@ -26,6 +26,7 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -37,10 +38,13 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -120,10 +124,13 @@ it("advertises the complete currently available inventory with a session", async
       }) satisfies AnalysisClient,
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

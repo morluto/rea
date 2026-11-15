@@ -9,6 +9,7 @@ import {
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerGuidanceTools } from "../../../src/server/registerGuidanceTools.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const open: {
   client: Client;
@@ -46,7 +47,10 @@ it("advertises strict provider-free contracts and returns packaged guide results
   );
   const resources = new ArtifactResourceScope();
   registerGuidanceTools(server, resources);
-  const client = new Client({ name: "guidance-client", version: "1" });
+  const client = new Client(
+    { name: "guidance-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
