@@ -19,6 +19,7 @@ import {
 import {
   receiveCdpEvent,
   type CdpEvent,
+  type CdpReceivedEvent,
   type CdpConnection,
 } from "./CdpConnection.js";
 import {
@@ -122,7 +123,7 @@ it.each([
       if (stage !== "initial") emitScript();
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
+      onEvent: (value: (event: CdpReceivedEvent) => void) => {
         listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
@@ -332,7 +333,7 @@ it.each([
       }
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
+      onEvent: (value: (event: CdpReceivedEvent) => void) => {
         listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
@@ -776,7 +777,7 @@ it.each([
       emitScript("after-grandchild", "grandchild", 11);
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
+      onEvent: (value: (event: CdpReceivedEvent) => void) => {
         listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },
@@ -910,7 +911,7 @@ it.each([
       });
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
+      onEvent: (value: (event: CdpReceivedEvent) => void) => {
         listener = (event) => value(receiveCdpEvent(event));
         return () => {};
       },

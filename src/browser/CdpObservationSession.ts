@@ -18,6 +18,7 @@ import {
 } from "./CdpCaptureValues.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
+import { CdpDocumentTracker } from "./CdpTargetSession.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
@@ -73,7 +74,15 @@ export const observeCdpSession = async (
   const mainFrameId = initial.root.facts.frameId;
   if (mainFrameId === null)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
+  const capture = new TimelineCapture(
+    allowedOrigins,
+    new CdpDocumentTracker({
+      frameId: mainFrameId,
+      loaderId: initial.root.facts.loaderId,
+      url: observedFrameUrl(initial.root.url),
+    }),
+    initialUrl,
+  );
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
     capture.transportDisconnected(),
@@ -205,11 +214,16 @@ class TimelineCapture {
 
   constructor(
     private readonly allowedOrigins: ReadonlySet<string>,
-    private mainFrameId: string,
+    /** The selected root document; its frame scopes main-frame timeline rows. */
+    private readonly document: CdpDocumentTracker,
     initialUrl: string,
   ) {
     this.finalUrl =
       allowedSanitizedUrl(initialUrl, allowedOrigins)?.url ?? null;
+  }
+
+  get #mainFrameId(): string {
+    return this.document.current.frameId;
   }
 
   ingest(event: CdpTransportEvent): void {
@@ -374,7 +388,7 @@ class TimelineCapture {
   }
 
   #navigationRequested(frame: CdpFrameEvent, contextOnly: boolean): void {
-    const identity = selectCdpFrameIdentity(frame.facts, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(frame.facts, this.#mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -398,14 +412,19 @@ class TimelineCapture {
     { facts, url: observation, transitionType }: CdpFrameEvent,
     contextOnly: boolean,
   ): void {
-    const identity = selectCdpFrameIdentity(facts, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(facts, this.#mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main" && !identity.isRootReplacement) return;
     const rawUrl = observedFrameUrl(observation);
     const destination = classifyCdpFrameUrl(observation, this.allowedOrigins);
     if (identity.isRootReplacement) {
-      this.mainFrameId = identity.frameId ?? this.mainFrameId;
+      if (identity.frameId !== null)
+        this.document.observe({
+          frameId: identity.frameId,
+          loaderId: facts.loaderId,
+          url: rawUrl,
+        });
       this.#pendingReload = false;
       if (contextOnly) {
         if (observation.kind !== "observed") this.invalidateFinalUrl();
@@ -436,7 +455,7 @@ class TimelineCapture {
   }
 
   #sameDocument(frame: CdpFrameEvent, contextOnly: boolean): void {
-    const identity = selectCdpFrameIdentity(frame.facts, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(frame.facts, this.#mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -463,7 +482,7 @@ class TimelineCapture {
     const resourceType = facts.resourceType;
     if (resourceType !== undefined && resourceType !== "Document") return;
     if (
-      facts.frameId !== this.mainFrameId ||
+      facts.frameId !== this.#mainFrameId ||
       facts.redirect.kind !== "response"
     )
       return;
@@ -528,12 +547,12 @@ class TimelineCapture {
     const id = facts.requestId;
     const frameId = facts.frameId;
     if (id === null) {
-      if (frameId === this.mainFrameId && facts.resourceType === "Document")
+      if (frameId === this.#mainFrameId && facts.resourceType === "Document")
         this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
     }
     this.#forgetRequest(id);
-    if (frameId !== this.mainFrameId || facts.resourceType !== "Document")
+    if (frameId !== this.#mainFrameId || facts.resourceType !== "Document")
       return;
     const loaderId = facts.loaderId;
     const bytes =
@@ -618,7 +637,7 @@ class TimelineCapture {
   }
 
   #lifecycle(lifecycle: CdpEventPayload<"Page.lifecycleEvent">): void {
-    if (lifecycle.frameId !== this.mainFrameId) return;
+    if (lifecycle.frameId !== this.#mainFrameId) return;
     const timestamp = lifecycle.timestamp;
     if (
       timestamp === undefined ||

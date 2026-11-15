@@ -39,16 +39,27 @@ export interface CdpEvent {
   readonly sessionId?: string | undefined;
 }
 
-/** An event as subscribers receive it: raw payload plus its registered parse. */
-export interface CdpReceivedEvent extends CdpEvent {
+/**
+ * An event as subscribers receive it. The raw payload is not part of this
+ * type or object: subscribers read only its registered parse, so malformed
+ * members cannot be reinterpreted, dropped or defaulted by each subscriber.
+ */
+export interface CdpReceivedEvent {
+  readonly method: string;
+  readonly sessionId?: string | undefined;
   /** The payload parsed once by its registered schema; undefined for an unregistered event. */
   readonly registered: CdpRegisteredEvent | undefined;
 }
 
 /** Admit one event message: parse its payload once by its registered schema. */
-export const receiveCdpEvent = (event: CdpEvent): CdpReceivedEvent => ({
-  ...event,
-  registered: registeredCdpEvent(event.method, event.params),
+export const receiveCdpEvent = ({
+  method,
+  params,
+  sessionId,
+}: CdpEvent): CdpReceivedEvent => ({
+  method,
+  ...(sessionId === undefined ? {} : { sessionId }),
+  registered: registeredCdpEvent(method, params),
 });
 
 export interface CdpTransportEvent extends CdpReceivedEvent {
