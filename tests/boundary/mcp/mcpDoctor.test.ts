@@ -3,7 +3,7 @@ import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js
 import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
-} from "../../../src/catalogDiscovery.js";
+} from "../../../src/contracts/catalog/catalogDiscovery.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFile, spawn } from "node:child_process";
@@ -25,7 +25,7 @@ import {
   DEFAULT_CATALOG_IDENTITY,
   catalogIdentityForToolFamilies,
   createCatalogIdentity,
-} from "../../../src/catalogIdentity.js";
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";

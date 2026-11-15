@@ -18,7 +18,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import type { McpOutputSchemaProfile } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 

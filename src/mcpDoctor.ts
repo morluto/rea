@@ -5,7 +5,7 @@ import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { createCatalogIdentity } from "./catalogIdentity.js";
+import { createCatalogIdentity } from "./contracts/catalog/catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
@@ -22,7 +22,7 @@ import {
   DISCOVER_TOOLS,
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
-} from "./catalogDiscovery.js";
+} from "./contracts/catalog/catalogDiscovery.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
 import { toolContract } from "./contracts/toolContracts.js";
 import { advertisedOutputJsonSchema } from "./contracts/toolSchemaMetadata.js";

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import { createCatalogIdentity } from "../dist/catalogIdentity.js";
+import { createCatalogIdentity } from "../dist/contracts/catalog/catalogIdentity.js";
 import {
   parseMcpOutputSchemaProfile,
   resolveMcpOutputSchemaProfile,

@@ -19,7 +19,7 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
+import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";

@@ -10,7 +10,7 @@ import {
 } from "../recordedMcpCatalog.js";
 import type { AppConfig } from "../config/types.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import { RECORDED_CATALOG_DIGEST_PROFILES } from "../recordedCatalogDigests.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../contracts/catalog/recordedCatalogDigests.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";

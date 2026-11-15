@@ -41,7 +41,7 @@ import {
   type McpOutputSchemaProfile,
 } from "../config/mcpOutputSchemaProfile.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import type { createCatalogIdentity } from "../catalogIdentity.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -68,7 +68,7 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
-import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";

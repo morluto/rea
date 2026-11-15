@@ -7,7 +7,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   catalogIdentityForToolFamilies,
   type createCatalogIdentity,
-} from "../catalogIdentity.js";
+} from "../contracts/catalog/catalogIdentity.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {

@@ -11,7 +11,7 @@ import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
-import { createCatalogDigests } from "../../../src/catalogIdentity.js";
+import { createCatalogDigests } from "../../../src/contracts/catalog/catalogIdentity.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
