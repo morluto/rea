@@ -32,11 +32,9 @@ export const phaseArrival = <T = void>(): PhaseArrival<T> => {
   return {
     arrive,
     reached: async (operation, boundary) => {
-      await awaitAcknowledgement(
-        arrived.then(() => {}),
-        operation,
-        boundary,
-      );
+      // Pass `arrived` itself: a derived promise would settle a turn later
+      // and lose the race to an operation that settles right after arriving.
+      await awaitAcknowledgement(arrived, operation, boundary);
       return arrived;
     },
   };
