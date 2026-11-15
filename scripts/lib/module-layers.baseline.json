@@ -7,18 +7,15 @@
     "application -> mcpStartupPolicy.ts": 3,
     "application -> serverIdentity.ts": 1,
     "artifacts -> application": 2,
-    "captures -> application": 1,
     "composition -> cliCommandNames.ts": 3,
     "config -> application": 2,
     "config -> native": 1,
     "desktop -> application": 5,
-    "domain -> contracts": 4,
     "dotnet -> application": 2,
     "hopper -> application": 2,
     "il2cpp -> application": 1,
     "native -> application": 2,
     "process -> artifacts": 17,
-    "signals -> application": 1,
     "windows -> artifacts": 2
   },
   "cycles": [
@@ -39,7 +36,6 @@
     "cli <-> cliObservationOptions.ts",
     "cli <-> cliOutput.ts",
     "config <-> filesystem",
-    "contracts <-> domain",
     "main <-> server",
     "process <-> windows"
   ]

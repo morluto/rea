@@ -11,7 +11,7 @@ import {
   analysisRefusalRemediation,
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 
 const budgetError = (
   setting: Parameters<typeof analysisSettingLimit>[0],

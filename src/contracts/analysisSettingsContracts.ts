@@ -1,4 +1,4 @@
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { z } from "zod";
 import {
   analysisSettingIds,

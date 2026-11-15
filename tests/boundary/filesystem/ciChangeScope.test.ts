@@ -235,6 +235,8 @@ it.each([
   ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
   ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
