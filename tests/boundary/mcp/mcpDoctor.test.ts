@@ -37,7 +37,7 @@ import {
 import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
-} from "../../../src/mcpStartupPolicy.js";
+} from "../../../src/config/mcpStartupPolicy.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { waitFor } from "../../support/testWait.js";
 

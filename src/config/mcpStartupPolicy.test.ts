@@ -1,9 +1,9 @@
-import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 
-import { parseClientConfiguration } from "./application/ClientConfigurationDocument.js";
-import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
-import { explicitSetupRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
+import { parseClientConfiguration } from "../application/ClientConfigurationDocument.js";
+import { clientRegistrationEnvironmentDetails } from "../application/ClientRegistrationEnvironment.js";
+import { explicitSetupRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import {
   mcpProviderDeadlineAllowanceMs,
   recommendedMcpToolTimeoutSeconds,
