@@ -12,29 +12,35 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const oracleSchema = z.object({
   producer: z.literal("google.protobuf 6.33.5"),
-  samples: z.array(
-    z.object({
-      encoding: z.enum(["packed", "unpacked"]),
-      descriptor_base64: z.string(),
-      body_base64: z.string(),
-      body_sha256: z.string(),
-      fields: z.array(
-        protobufFieldSchema.pick({
-          number: true,
-          wire_type: true,
-          offset: true,
-          bytes: true,
-          payload_offset: true,
-          payload_bytes: true,
-          value: true,
-          schema_name: true,
-          schema_type: true,
-          schema_status: true,
-          schema_value: true,
-        }),
-      ),
-    }),
-  ),
+  samples: z
+    .array(
+      z.object({
+        encoding: z.enum(["packed", "unpacked"]),
+        descriptor_base64: z.string(),
+        body_base64: z.string(),
+        body_sha256: z.string(),
+        fields: z.array(
+          protobufFieldSchema.pick({
+            number: true,
+            wire_type: true,
+            offset: true,
+            bytes: true,
+            payload_offset: true,
+            payload_bytes: true,
+            value: true,
+            schema_name: true,
+            schema_type: true,
+            schema_status: true,
+            schema_value: true,
+          }),
+        ),
+      }),
+    )
+    .length(2)
+    .refine(
+      (samples) => new Set(samples.map(({ encoding }) => encoding)).size === 2,
+      "Expected one packed and one unpacked producer witness",
+    ),
 });
 const oracle = oracleSchema.parse(
   JSON.parse(
