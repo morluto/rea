@@ -9,8 +9,8 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.js";
-import { presentAdvertisedInputSchema } from "../dist/contracts/compactInputSchema.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../dist/config/mcpInputSchemaProfile.js";
+import { advertiseTool } from "../dist/contracts/advertisedTool.js";
+import { advertisedToolPresentation } from "../dist/config/mcpOutputSchemaProfile.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -166,12 +166,14 @@ await withVerifierCleanup(async () => {
             );
             assert.deepEqual(
               tool.parameters,
-              presentAdvertisedInputSchema(
-                advertisedInputJsonSchema(
-                  toolContract(tool.name.slice(prefix.length)),
-                ),
-                COMPACT_INPUT_SCHEMA_PRESENTATION,
-              ),
+              advertiseTool(
+                {
+                  inputSchema: advertisedInputJsonSchema(
+                    toolContract(tool.name.slice(prefix.length)),
+                  ),
+                },
+                advertisedToolPresentation("off"),
+              ).inputSchema,
               `${tool.name}: Copilot must forward the compact input schema`,
             );
             schemasChecked++;

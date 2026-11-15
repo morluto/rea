@@ -14,14 +14,13 @@ import {
   advertisedInputJsonSchema,
   advertisedOutputJsonSchema,
 } from "./contracts/toolSchemaMetadata.js";
+import type { CompactInputSchemaPresentation } from "./contracts/compactInputSchema.js";
 import {
-  describeAdvertisedTool,
-  presentAdvertisedInput,
-  type CompactInputSchemaPresentation,
-} from "./contracts/compactInputSchema.js";
-import { presentAdvertisedOutputSchema } from "./contracts/compactOutputSchema.js";
+  advertiseTool,
+  type AdvertisedToolPresentation,
+} from "./contracts/advertisedTool.js";
 import {
-  COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+  advertisedToolPresentation,
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
 } from "./config/mcpOutputSchemaProfile.js";
@@ -47,42 +46,31 @@ const createToolCatalog = (contracts: readonly ToolContract[]) =>
     output_schema: advertisedOutputJsonSchema(contract),
   }));
 
-/** The compact input schema and the tool description carrying its guidance. */
-const presentedInput = (
-  description: string,
-  schema: Record<string, unknown>,
-  presentation: CompactInputSchemaPresentation,
-) => {
-  const input = presentAdvertisedInput(schema, presentation);
-  return {
-    description: describeAdvertisedTool(description, input.guidance),
-    input_schema: input.schema,
-  };
-};
-
-/** Advertised input for every tool; output stays canonical unless bounded. */
+/**
+ * The identity's view of each tool: what the selected presentation
+ * advertises. An omitted output advertisement still digests the canonical
+ * reply contract the server validates.
+ */
 const presentToolCatalog = (
   catalog: ReturnType<typeof createToolCatalog>,
-  presentation: CompactInputSchemaPresentation,
+  presentation: AdvertisedToolPresentation,
 ) =>
-  catalog.map((tool) => ({
-    ...tool,
-    ...presentedInput(tool.description, tool.input_schema, presentation),
-  }));
-
-const presentOutputSchemas = (
-  catalog: ReturnType<typeof presentToolCatalog>,
-  outputSchemaProfile: McpOutputSchemaProfile,
-) =>
-  outputSchemaProfile === "compact"
-    ? catalog.map((tool) => ({
-        ...tool,
-        output_schema: presentAdvertisedOutputSchema(
-          tool.output_schema,
-          COMPACT_OUTPUT_SCHEMA_PRESENTATION,
-        ),
-      }))
-    : catalog;
+  catalog.map((tool) => {
+    const advertised = advertiseTool(
+      {
+        description: tool.description,
+        inputSchema: tool.input_schema,
+        outputSchema: tool.output_schema,
+      },
+      presentation,
+    );
+    return {
+      ...tool,
+      description: advertised.description ?? tool.description,
+      input_schema: advertised.inputSchema ?? tool.input_schema,
+      output_schema: advertised.outputSchema ?? tool.output_schema,
+    };
+  });
 
 const createPromptCatalog = (contracts: readonly PromptContract[]) =>
   contracts
@@ -111,13 +99,17 @@ const digest = (value: unknown): string => {
 };
 
 const digestCatalogs = (
-  catalog: ReturnType<typeof presentToolCatalog>,
+  catalog: ReturnType<typeof createToolCatalog>,
   prompts: ReturnType<typeof createPromptCatalog>,
+  compactPresentation: CompactInputSchemaPresentation,
   outputSchemaProfile: McpOutputSchemaProfile,
 ) => {
   const tools = {
     output_schema_profile: outputSchemaProfile,
-    catalog: presentOutputSchemas(catalog, outputSchemaProfile),
+    catalog: presentToolCatalog(
+      catalog,
+      advertisedToolPresentation(outputSchemaProfile, compactPresentation),
+    ),
   };
   return {
     tools_sha256: digest(tools),
@@ -144,11 +136,9 @@ export const createCatalogDigests = (
   ),
 ) =>
   digestCatalogs(
-    presentToolCatalog(
-      createToolCatalog(sortByName(contracts)),
-      compactPresentation,
-    ),
+    createToolCatalog(sortByName(contracts)),
     createPromptCatalog(promptContracts),
+    compactPresentation,
     outputSchemaProfile,
   );
 
@@ -162,14 +152,21 @@ export const createCatalogDigestProfiles = (
   contracts: readonly ToolContract[] = TOOL_CONTRACTS,
   promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
 ): CatalogDigestProfiles => {
-  const catalog = presentToolCatalog(
-    createToolCatalog(sortByName(contracts)),
-    COMPACT_INPUT_SCHEMA_PRESENTATION,
-  );
+  const catalog = createToolCatalog(sortByName(contracts));
   const prompts = createPromptCatalog(promptContracts);
   return {
-    off: digestCatalogs(catalog, prompts, "off"),
-    compact: digestCatalogs(catalog, prompts, "compact"),
+    off: digestCatalogs(
+      catalog,
+      prompts,
+      COMPACT_INPUT_SCHEMA_PRESENTATION,
+      "off",
+    ),
+    compact: digestCatalogs(
+      catalog,
+      prompts,
+      COMPACT_INPUT_SCHEMA_PRESENTATION,
+      "compact",
+    ),
   };
 };
 
