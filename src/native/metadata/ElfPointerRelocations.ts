@@ -287,15 +287,22 @@ export const elfRelocationWidth = (
 ): number | undefined =>
   type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
 
+type DynamicTags = {
+  readonly values: ReadonlyMap<bigint, bigint>;
+  /** An omitted value can mean an absent or an ambiguous declaration. */
+  readonly ambiguous: ReadonlySet<bigint>;
+};
+
 function* dynamicTags(
   bytes: Buffer,
   input: ElfPointerRelocationInput,
-): Generator<undefined, Map<bigint, bigint>> {
+): Generator<undefined, DynamicTags> {
   yield;
   if (input.dynamicSegments.length > 1)
     malformed("multiple PT_DYNAMIC segments");
   const declaration = input.dynamicSegments[0];
-  if (declaration === undefined) return new Map();
+  if (declaration === undefined)
+    return { values: new Map(), ambiguous: new Set() };
   const width = input.bits / 4;
   if (declaration.size > 16n * 1024n * 1024n)
     throw new ElfPointerRelocationFailure(
@@ -325,7 +332,7 @@ function* dynamicTags(
     const { tag, value } = parsed.value;
     if (tag === 0n) {
       for (const symbolTag of redeclared) tags.delete(symbolTag);
-      return tags;
+      return { values: tags, ambiguous: redeclared };
     }
     if (SYMBOL_TABLE_TAGS.has(tag)) {
       if (tags.has(tag)) redeclared.add(tag);
@@ -386,7 +393,10 @@ export function* readElfRelocationWritesSteps(
       "unsupported-container",
       "ELF image has no PT_DYNAMIC segment",
     );
-  const tags = yield* dynamicTags(bytes, input);
+  const { values: tags, ambiguous: ambiguousTags } = yield* dynamicTags(
+    bytes,
+    input,
+  );
   const word = input.bits === 64 ? 8 : 4;
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
@@ -475,7 +485,8 @@ export function* readElfRelocationWritesSteps(
     (address: bigint): ElfHashWordReader =>
     (offset) => {
       try {
-        const at = index.offset(address + BigInt(offset), 4);
+        // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
+        const at = index.offset(address, offset + 4) + offset;
         return ok(
           input.little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at),
         );
@@ -485,6 +496,8 @@ export function* readElfRelocationWritesSteps(
       }
     };
   function* countSymbols(): Generator<undefined, number | undefined> {
+    if (ambiguousTags.has(DT_HASH) || ambiguousTags.has(DT_GNU_HASH))
+      return undefined;
     const maximum = Math.floor(bytes.length / 4);
     let count: number | undefined;
     const classic = tags.get(DT_HASH);

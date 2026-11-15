@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import type { FileMapping } from "../../domain/virtualFileMapping.js";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
@@ -218,7 +219,7 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
 };
 
 const walker =
-  (wholeExtents: boolean) =>
+  (wholeExtents: boolean, mappings?: readonly FileMapping[]) =>
   (
     bytes: Buffer,
     unsupported?: "record",
@@ -234,7 +235,7 @@ const walker =
         little: true,
         machine,
         dynamicSegments: [{ offset: 0n, size: 0x100n }],
-        mappings: [{ address: 0n, offset: 0, size: bytes.length }],
+        mappings: mappings ?? [{ address: 0n, offset: 0, size: bytes.length }],
         zeroFills: [],
       },
       {
@@ -368,6 +369,45 @@ it.each(["unmapped hash", "truncated symbols", "conflicting hashes"] as const)(
     expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBeNull();
   },
 );
+
+it.each([4n, 0x6ffffef5n])(
+  "preserves ambiguity of redeclared hash tag %s despite another hash count",
+  (redeclared) => {
+    const bytes = symbolicImage(1025n, 0n, {
+      definition: { value: 0x4000n },
+      records: 2,
+      symbolTags: [
+        [6n, 0x200n],
+        [11n, 24n],
+        [4n, 0x280n],
+        [0x6ffffef5n, 0x2b0n],
+        [redeclared, redeclared === 4n ? 0x280n : 0x2b0n],
+      ],
+    });
+    // The classic table declares two symbols, the GNU table three.
+    [1, 1, 1, 0, 0, 0, 2, 0, 1].forEach((value, index) =>
+      bytes.writeUInt32LE(value, 0x2b0 + index * 4),
+    );
+    bytes.writeBigUInt64LE(1027n, 0x120);
+    bytes.writeBigInt64LE(0x1234n, 0x128);
+    expect(
+      walk(bytes, undefined, 183, 64, true).writes.map(({ value }) => value),
+    ).toEqual([null, 0x1234n]);
+  },
+);
+
+it("requires the full hash table mapping including skipped words", () => {
+  const bytes = symbolicImage(1025n, 0n, {
+    definition: { value: 0x4000n },
+  });
+  const acrossGap = walker(true, [
+    { address: 0n, offset: 0, size: 0x288 },
+    { address: 0x28cn, offset: 0x28c, size: bytes.length - 0x28c },
+  ]);
+  expect(
+    acrossGap(bytes, undefined, 183, 64, true).writes[0]?.value,
+  ).toBeNull();
+});
 
 it.each([
   ["an x86-64 COPY", symbolicImage(5n, 8n), [62, 64, 5]],
