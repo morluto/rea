@@ -1,6 +1,6 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
-  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -8,9 +8,9 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-  ArtifactFileSource,
-  artifactReaderLimitFailure,
-} from "../resources/index.js";
+} from "./ArtifactReader.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";

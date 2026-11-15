@@ -1,30 +1,30 @@
 import { createHash } from "node:crypto";
 
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../result.js";
 
 import {
   appendManagedParseIssues,
   managedFailure,
   ManagedReaderFailure,
   readManagedValue,
-} from "./ManagedReaderFailure.js";
+} from "./managedReaderFailure.js";
 import type {
   ManagedMemberInspection,
   ManagedParseIssue,
-} from "../domain/managed/managedArtifact.js";
+} from "./managedArtifact.js";
 import {
   managedDecodeBudget,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "./managedDecodeBudget.js";
 import {
   readManagedTypeNesting,
   type ManagedTypeNesting,
-} from "./ManagedTypeNesting.js";
+} from "./managedTypeNesting.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
   type MetadataTableLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   readManagedCompressedUnsigned,
   decodeMetadataCodedIndex,
@@ -34,13 +34,13 @@ import {
   metadataToken,
   readMetadataString,
   sha256Bytes,
-} from "./ManagedMetadataHeaps.js";
-import { memberListTable } from "./ManagedMemberPointers.js";
+} from "./managedMetadataHeaps.js";
+import { memberListTable } from "./managedMemberPointers.js";
 import type {
   TypeMemberListEntry,
   TypeMemberListFacts,
-} from "./ManagedTypeMemberLists.js";
-import type { TypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
+} from "./managedTypeMemberLists.js";
+import type { TypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
 /** A renderable TypeDef projection paired with its original source row. */

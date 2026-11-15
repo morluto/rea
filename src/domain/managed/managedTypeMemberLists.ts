@@ -1,16 +1,16 @@
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataToken } from "./ManagedMetadataHeaps.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
+import { metadataToken } from "./managedMetadataHeaps.js";
 import {
   memberListTable,
   validatedMemberListStart,
-} from "./ManagedMemberPointers.js";
+} from "./managedMemberPointers.js";
 
 import {
   readTypeDefinitionRowFacts,
   type TypeDefinitionRowFacts,
-} from "./ManagedTypeDefinitionRows.js";
+} from "./managedTypeDefinitionRows.js";
 
 export type MemberDefinitionTable = 4 | 6;
 
