@@ -210,12 +210,23 @@ const catalogProfiles = [
   },
 ];
 
+const withoutOutputProfile = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  const { REA_MCP_OUTPUT_SCHEMA_PROFILE: _profile, ...rest } = environment;
+  return rest;
+};
+
 it("recognizes a hot/cold initial catalog and its inventory identity", async () => {
   const result = await runProductionMcpDoctor({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
-    environment: { ...process.env, REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    // The product default output profile, not the test suite's.
+    environment: {
+      ...withoutOutputProfile(process.env),
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+    },
   });
   expect(result.healthy).toBe(true);
   expect(result.inventory?.tools).toMatchObject({
@@ -229,7 +240,7 @@ it("recognizes a hot/cold initial catalog and its inventory identity", async () 
       .combined_sha256,
   );
   const environment = {
-    ...process.env,
+    ...withoutOutputProfile(process.env),
     REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
   };
   const identity = progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY);
@@ -596,108 +607,124 @@ describe("production MCP doctor output", () => {
 });
 
 describe("production MCP doctor probe validation", () => {
-  it("reports schema-invalid probes and mismatched inventory from the child", async () => {
-    const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
-    const snapshotPath = join(root, "reply.json");
-    const environment = { PATH: process.env.PATH ?? "" };
-    const client = new Client(
-      { name: "doctor-reply-capture", version: "1" },
-      { jsonSchemaValidator: schemaValidation },
-    );
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: environment,
-      stderr: "pipe",
-    });
-    let removedToolName = "";
-    transport.stderr?.on("data", () => undefined);
-    try {
-      await client.connect(transport);
-      const tools = await client.listTools();
-      removedToolName =
-        tools.tools.find(({ name }) => name !== "binary_session")?.name ?? "";
-      if (removedToolName === "")
-        throw new Error("Expected a second production tool");
-      const prompts = await client.listPrompts();
-      const toolDefinition = tools.tools.find(
-        ({ name }) => name === "binary_session",
+  // The default lists no output schemas and `compact` lists widened ones; the
+  // doctor validates the reply against the canonical contract under each.
+  it.each([undefined, "compact", "full"] as const)(
+    "reports schema-invalid probes and mismatched inventory from the child (output profile %s)",
+    async (outputProfile) => {
+      const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
+      const snapshotPath = join(root, "reply.json");
+      const environment = {
+        PATH: process.env.PATH ?? "",
+        ...(outputProfile === undefined
+          ? {}
+          : { REA_MCP_OUTPUT_SCHEMA_PROFILE: outputProfile }),
+      };
+      const client = new Client(
+        { name: "doctor-reply-capture", version: "1" },
+        { jsonSchemaValidator: schemaValidation },
       );
-      if (toolDefinition === undefined)
-        throw new Error("Production binary_session contract is missing");
-      const reply = await client.callTool(
-        { name: "binary_session", arguments: {} },
-        { toolDefinition },
-      );
-      await writeFile(
-        snapshotPath,
-        JSON.stringify({
-          serverInfo: client.getServerVersion(),
-          protocolVersion: client.getNegotiatedProtocolVersion(),
-          tools,
-          prompts,
-          reply,
-        }),
-      );
-    } finally {
-      await client.close();
-      await transport.close();
-    }
-    // Replay real production metadata through a synthetic stdio producer.
-    for (const mode of ["valid", "invalid", "inventory"]) {
-      const result = await runProductionMcpDoctor({
+      const transport = new StdioClientTransport({
         command: process.execPath,
-        args: [
-          resolve("tests/fixtures/mcpDoctorReply.mjs"),
-          snapshotPath,
-          mode,
-        ],
+        args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
-        environment,
+        env: environment,
+        stderr: "pipe",
       });
-      expect(result.healthy).toBe(mode === "valid");
-      expect(result.inventory?.tools.observed).toBe(
-        FULL_CATALOG_IDENTITY.counts.mcp_tools + (mode === "inventory" ? 1 : 0),
-      );
-      expect(result.inventory?.prompts.observed).toBe(
-        FULL_CATALOG_IDENTITY.counts.mcp_prompts,
-      );
-      expect(result.checks).toContainEqual({
-        name: "initialize",
-        ok: true,
-        detail: expect.any(String),
-      });
-      expect(result.checks).toContainEqual({
-        name: "server-identity",
-        ok: mode !== "invalid",
-        detail:
-          mode === "invalid"
-            ? expect.stringMatching(/^identity not observed: .*output schema/iu)
-            : expect.stringMatching(/^package=.+; catalog=.+$/u),
-      });
-      if (mode === "invalid")
-        expect(result.checks).toContainEqual({
-          name: "request-flow",
-          ok: false,
-          detail: expect.stringMatching(/output schema/iu),
-        });
-      if (mode === "inventory") {
-        expect(result.inventory?.tools).toMatchObject({
-          expected: FULL_CATALOG_IDENTITY.counts.mcp_tools,
-          observed: FULL_CATALOG_IDENTITY.counts.mcp_tools + 1,
-          missing: [removedToolName],
-          unexpected: ["doctor_unexpected_fixture"],
-          duplicates: ["doctor_unexpected_fixture"],
-        });
-        expect(result.checks).toContainEqual({
-          name: "inventory:tools",
-          ok: false,
-          detail: expect.stringContaining("doctor_unexpected_fixture"),
-        });
+      let removedToolName = "";
+      transport.stderr?.on("data", () => undefined);
+      try {
+        await client.connect(transport);
+        const tools = await client.listTools();
+        expect(
+          tools.tools.some(({ outputSchema }) => outputSchema !== undefined),
+        ).toBe(outputProfile !== undefined);
+        removedToolName =
+          tools.tools.find(({ name }) => name !== "binary_session")?.name ?? "";
+        if (removedToolName === "")
+          throw new Error("Expected a second production tool");
+        const prompts = await client.listPrompts();
+        const toolDefinition = tools.tools.find(
+          ({ name }) => name === "binary_session",
+        );
+        if (toolDefinition === undefined)
+          throw new Error("Production binary_session contract is missing");
+        const reply = await client.callTool(
+          { name: "binary_session", arguments: {} },
+          { toolDefinition },
+        );
+        await writeFile(
+          snapshotPath,
+          JSON.stringify({
+            serverInfo: client.getServerVersion(),
+            protocolVersion: client.getNegotiatedProtocolVersion(),
+            tools,
+            prompts,
+            reply,
+          }),
+        );
+      } finally {
+        await client.close();
+        await transport.close();
       }
-    }
-  });
+      // Replay real production metadata through a synthetic stdio producer.
+      for (const mode of ["valid", "invalid", "inventory"]) {
+        const result = await runProductionMcpDoctor({
+          command: process.execPath,
+          args: [
+            resolve("tests/fixtures/mcpDoctorReply.mjs"),
+            snapshotPath,
+            mode,
+          ],
+          cwd: process.cwd(),
+          environment,
+        });
+        expect(result.healthy).toBe(mode === "valid");
+        expect(result.inventory?.tools.observed).toBe(
+          FULL_CATALOG_IDENTITY.counts.mcp_tools +
+            (mode === "inventory" ? 1 : 0),
+        );
+        expect(result.inventory?.prompts.observed).toBe(
+          FULL_CATALOG_IDENTITY.counts.mcp_prompts,
+        );
+        expect(result.checks).toContainEqual({
+          name: "initialize",
+          ok: true,
+          detail: expect.any(String),
+        });
+        expect(result.checks).toContainEqual({
+          name: "server-identity",
+          ok: mode !== "invalid",
+          detail:
+            mode === "invalid"
+              ? expect.stringMatching(
+                  /^identity not observed: .*output schema/iu,
+                )
+              : expect.stringMatching(/^package=.+; catalog=.+$/u),
+        });
+        if (mode === "invalid")
+          expect(result.checks).toContainEqual({
+            name: "request-flow",
+            ok: false,
+            detail: expect.stringMatching(/output schema/iu),
+          });
+        if (mode === "inventory") {
+          expect(result.inventory?.tools).toMatchObject({
+            expected: FULL_CATALOG_IDENTITY.counts.mcp_tools,
+            observed: FULL_CATALOG_IDENTITY.counts.mcp_tools + 1,
+            missing: [removedToolName],
+            unexpected: ["doctor_unexpected_fixture"],
+            duplicates: ["doctor_unexpected_fixture"],
+          });
+          expect(result.checks).toContainEqual({
+            name: "inventory:tools",
+            ok: false,
+            detail: expect.stringContaining("doctor_unexpected_fixture"),
+          });
+        }
+      }
+    },
+  );
 });
 
 describe("production MCP doctor child lifecycle", () => {

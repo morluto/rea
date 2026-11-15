@@ -177,7 +177,10 @@ const createJniSummaryContractFixture = async () => {
         close: async () => {},
         inspectAvailability: vi.fn(),
       },
-      environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+      environment: {
+        REA_MCP_TOOL_FAMILIES: "android,application,session",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      },
     },
   });
   return { ...harness, apk, selection, raw, declarations, execute };
@@ -281,7 +284,10 @@ it.skipIf(process.platform === "win32")(
     const harness = await createApplicationMcpHarness({
       serverOptions: {
         androidAnalysis: provider,
-        environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+        environment: {
+          REA_MCP_TOOL_FAMILIES: "android,application,session",
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+        },
       },
     });
     onTestFinished(harness.close);

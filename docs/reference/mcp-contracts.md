@@ -2108,10 +2108,11 @@ never refused by the advertisement:
 - `$schema`, `format`, `default`, `examples`, `title`, `propertyNames`,
   `additionalProperties` schemas, property-count bounds, conditionals and
   length bounds of 1,999 or more are dropped.
-- Nullable values remain `anyOf` a typed branch and `{"type": "null"}`. The
-  dialect has no null type, and advertising only the non-null type would
-  refuse a valid call such as `limit: null`; this is the one construct the
-  dialect checker still counts for the compact profile.
+- A nullable value is advertised in the dialect's one nullable form: `anyOf`
+  a typed branch and `{"type": "null"}`, below the root. Type lists such as
+  `["integer", "null"]` are outside the dialect (Gemini's legacy schema
+  rejects them, and clients rewrite them differently), and advertising only
+  the non-null type would refuse a valid call such as `limit: null`.
 
 Guidance never stays inside the compact schema. The root description (input
 groups, Evidence-source guidance, the reduced-form notice) and sentences for
@@ -2289,14 +2290,19 @@ profile and the advertised form that profile produces. `full`, `compact`, and
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
-Some clients reject a complete `tools/list` frame or HTTP SSE event before
-they load any tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
-setting bounds every advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
-(the measured pi-web-ui failure and catalog breakdown are in
-[#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
-is unchanged. Both settings keep the same named canonical tool contract for
-server-side result validation, and both still return complete
-`structuredContent` and text results.
+`REA_MCP_OUTPUT_SCHEMA_PROFILE` selects what `tools/list` carries for each
+tool's `outputSchema`. The default, `off`, omits it: no model API surveyed
+reads an output schema, MCP client validators only repeat REA's own result
+validation, and complete output schemas were about 92% of a default
+`tools/list` (4.3 of 4.6 MB). Some clients also reject a large `tools/list`
+frame or HTTP SSE event before they load any tools (the measured pi-web-ui
+failure is in [#2512](https://github.com/morluto/rea/issues/2512)). Select
+`compact` to bound every advertised output schema to 4,096 bytes, or `full`
+for complete output schemas when an MCP client should validate results. Every
+profile keeps the same named canonical tool contract for server-side result
+validation and still returns complete `structuredContent` and text results;
+the MCP specification does not require an output schema for
+`structuredContent`.
 
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the

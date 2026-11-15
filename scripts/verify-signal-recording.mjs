@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -77,7 +78,7 @@ const assertRejectedSelector = (
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: environment,
+  env: schemaVerifierEnvironment(environment),
   stderr: "pipe",
 });
 // Independently synthesize 9600-baud 8N1 samples at 1 MHz: bytes 52 45 41.
