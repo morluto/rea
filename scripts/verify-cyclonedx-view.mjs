@@ -13,6 +13,7 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { inspectAnalysisView } = await importVerifierSource(
@@ -32,10 +33,6 @@ const { createRustBinaryService } = await importVerifierSource(
 );
 const { cargoPackageUrl, golangPackageUrl } = await importVerifierSource(
   new URL("../src/domain/packageUrl.ts", import.meta.url).href,
-  import.meta.url,
-);
-const { PrivateRuntimeRoot } = await importVerifierSource(
-  new URL("../src/process/PrivateRuntimeRoot.ts", import.meta.url).href,
   import.meta.url,
 );
 
@@ -141,9 +138,9 @@ const assertProjection = async (evidence) => {
   return { ...first, bytes };
 };
 
-const root = await PrivateRuntimeRoot.create({
-  prefix: "rea-cyclonedx-view-",
-});
+// The fixture owns the root and removes it only after the readers and
+// commands that use it release; a failed release retains and names it.
+const root = await VerifierFixture.open({ prefix: "rea-cyclonedx-view-" });
 const report = {
   node: process.version,
   schema: null,
@@ -522,7 +519,7 @@ await withVerifierCleanup(async () => {
       () => rustService.close(),
       () => commands.close(),
     ]);
-    await root.close();
+    await root.release();
   },
 ]);
 

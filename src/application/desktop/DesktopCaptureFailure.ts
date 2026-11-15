@@ -8,7 +8,7 @@ import {
   ArtifactResourceScope,
 } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   ProviderAdapterError,
   type ProviderAdapterErrorOptions,
@@ -230,11 +230,7 @@ export const failedCaptureError = (
     diagnostics: { phase: "desktop_capture" },
   }));
   return primary instanceof AnalysisError && primary.cleanupIncomplete
-    ? analysisErrorWithCleanupFailure(
-        primary,
-        failure,
-        DESKTOP_OPERATION,
-      ).bindCleanupDependencies([primary, failure])
+    ? analysisErrorWithCleanupDependencies(primary, failure, DESKTOP_OPERATION)
     : failure;
 };
 

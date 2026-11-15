@@ -619,6 +619,7 @@ const BROWSER_ERROR_CODES: Readonly<
   window_not_found: "unreadable_output",
   window_metadata_missing: "unreadable_output",
   process_ownership_unavailable: "unreadable_output",
+  application_already_running: "target_unavailable",
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
@@ -748,6 +749,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {
@@ -797,7 +801,20 @@ const requestErrorDetails = (
         ? {}
         : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
-  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
+  if (error instanceof EvidenceIntegrityError)
+    return {
+      reason: error.message,
+      ...(error.side === undefined ? {} : { side: error.side }),
+      ...(error.issuePath === undefined
+        ? {}
+        : { issue_path: [...error.issuePath] }),
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+      ...(error.remainingIssueCount === undefined
+        ? {}
+        : { remaining_issue_count: error.remainingIssueCount }),
+    };
   return undefined;
 };
 
@@ -805,7 +822,12 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return projectArtifactIntegrityDetails(error.artifactDetails);
+    return {
+      ...projectArtifactIntegrityDetails(error.artifactDetails),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
+    };
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -813,6 +835,9 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

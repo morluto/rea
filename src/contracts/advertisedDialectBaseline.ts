@@ -34,7 +34,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input input-depth": 33,
     "input keyword $schema": 256,
     "input keyword allOf": 99,
-    "input keyword const": 1916,
+    "input keyword const": 1918,
     "input keyword default": 803,
     "input keyword else": 6,
     "input keyword examples": 253,

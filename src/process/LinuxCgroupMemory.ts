@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posix } from "node:path";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
@@ -139,7 +140,8 @@ export const readLinuxCgroupMemoryState = async (
     readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
   } = {},
 ): Promise<LinuxCgroupMemoryState | undefined> => {
-  if ((options.platform ?? process.platform) !== "linux") return undefined;
+  if ((options.platform ?? HOST_PLATFORM.platform) !== "linux")
+    return undefined;
   const membership = await readKernelFile(
     options.procCgroupPath ?? "/proc/self/cgroup",
     undefined,

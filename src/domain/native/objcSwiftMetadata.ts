@@ -466,7 +466,7 @@ export const nativeDispatchMetadataInputSchema = z.strictObject({
   objc_class_import_addresses_complete: z
     .boolean()
     .describe(
-      "Whether the candidate addresses include every selected class-label row; false keeps binding coverage partial when the existing record budget truncates the scan.",
+      "Whether the candidate addresses include every selected class-label row. false keeps binding coverage partial when the existing record budget truncates the scan; omitted is unknown and also keeps it partial.",
     )
     .optional(),
   max_input_bytes: z

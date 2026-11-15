@@ -197,7 +197,6 @@ const addIndexedDb = async (
         version: version ?? null,
         object_stores: stores.map(indexedDbStoreSchema),
       },
-      projectionVersion: 2,
       complete:
         version !== undefined &&
         stores.length === database.objectStores.length &&
@@ -425,21 +424,22 @@ const addFingerprint = (
     readonly identity: unknown;
     readonly value: unknown;
     readonly complete: boolean;
-    readonly projectionVersion?: 2;
   },
 ): void => {
-  state.items.push({
-    scope: input.scope,
+  const fingerprint = {
     identity_sha256: digest(input.identity),
     value_sha256: input.value === undefined ? null : digest(input.value),
-    ...(input.projectionVersion === undefined
-      ? {}
-      : { projection_version: input.projectionVersion }),
     complete:
       input.complete &&
       stableValueComplete(input.identity) &&
       stableValueComplete(input.value),
-  });
+  };
+  // The IndexedDB schema projection includes the database version.
+  state.items.push(
+    input.scope === "indexed_db_schema"
+      ? { ...fingerprint, scope: input.scope, projection_version: 2 }
+      : { ...fingerprint, scope: input.scope },
+  );
 };
 
 const STORAGE_ENTRY_PAGE_SIZE = 1_000;

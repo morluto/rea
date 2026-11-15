@@ -31,6 +31,10 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import type {
@@ -276,7 +280,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     reply = replySchema.parse(decoded.value);
   } catch (cause: unknown) {
     throw sqliteReplyFinalizationFailure(
-      sqliteReplyReadFailure(cause, capturedOutput),
+      classifyProviderFailure(cause, sqliteReplyReadDialect(capturedOutput)),
       finalization,
     );
   }
@@ -288,32 +292,24 @@ export const executeSqliteDatabaseWorker = async (request: {
   return { inspection: reply.inspection, finalization };
 };
 
-const sqliteReplyReadFailure = (
-  cause: unknown,
+/**
+ * How a failed worker-reply read is reported. The shared classifier keeps a
+ * typed failure, the read's cancellation and its unresolved cleanup; anything
+ * else means the owned worker's reply is missing or malformed.
+ */
+const sqliteReplyReadDialect = (
   capturedOutput: AnalysisCapturedOutput,
-): AnalysisError => {
-  const optionsWithoutCause = {
-    capturedOutput,
-    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {}),
-  };
-  const options = { cause, ...optionsWithoutCause };
-  const error =
-    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? cancelledBy(
-          operation,
-          carriedReason(artifactFileCancellationCause(cause)),
-          optionsWithoutCause,
-        )
-      : new AnalysisOutputError(
-          operation,
-          `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          options,
-        );
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+): ProviderFailureDialect => ({
+  providerId: "sqlite",
+  operation,
+  observedOutput: capturedOutput,
+  unclassified: (cause, details) =>
+    new AnalysisOutputError(
+      operation,
+      `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { ...details, cause, capturedOutput },
+    ),
+});
 
 /** Stable bytes remain usable when only their descriptor's final close failed. */
 const sqliteReplyCompletionFailure = (
@@ -321,7 +317,10 @@ const sqliteReplyCompletionFailure = (
   capturedOutput: AnalysisCapturedOutput,
 ): AnalysisError => {
   if (cause.cleanup === undefined)
-    return sqliteReplyReadFailure(cause, capturedOutput);
+    return classifyProviderFailure(
+      cause,
+      sqliteReplyReadDialect(capturedOutput),
+    );
   const cleanup = new ProviderCleanupError(
     "sqlite",
     cause.cleanup.resources,

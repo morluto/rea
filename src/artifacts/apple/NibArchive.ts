@@ -1,7 +1,6 @@
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { hasNibArchiveSignature } from "../../domain/apple/appleArchiveFormat.js";
 import { isInterfaceBuilderConnectionClass } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
-import { TextDecoder } from "node:util";
 import {
   malformedInput,
   truncatedInput,
@@ -11,6 +10,7 @@ import {
   InterfaceBuilderDecodeBudget,
   InterfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 
@@ -629,9 +629,7 @@ const decodeUtf8 = (
 ): string => {
   try {
     // These are length-prefixed names, not standalone text documents.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(start, end),
-    );
+    return strictUtf8Decoder("preserve").decode(bytes.subarray(start, end));
   } catch (cause: unknown) {
     throw malformedInput(
       "nib-archive",
