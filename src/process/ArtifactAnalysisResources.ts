@@ -516,8 +516,8 @@ export class ArtifactAnalysisResources {
           },
         };
       },
-      dialect: (outcome, details) =>
-        new AnalysisOutputError(operation, outcome.message, details),
+      dialect: (_outcome, _details, unclassified) =>
+        unclassified(this.providerId),
     };
   }
 

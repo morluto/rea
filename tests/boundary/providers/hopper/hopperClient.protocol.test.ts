@@ -2,7 +2,7 @@ import { once } from "node:events";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../../src/hopper/HopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";

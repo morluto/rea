@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import {
   systemDoctorHost,
   type DoctorCheck,
@@ -62,24 +63,22 @@ const selectedRegistrationEnvironment = async (
   processEnvironment: Readonly<NodeJS.ProcessEnv>,
   resourceScope: RetainedResourceScope,
   signal: AbortSignal,
+  platform: NodeJS.Platform,
 ): Promise<SelectedRegistrationEnvironment | undefined> => {
   const [selected] = clients;
   // Only an unambiguous selection can stand for the terminal's environment.
   if (selected === undefined || clients.length !== 1) return undefined;
   signal.throwIfAborted();
-  const home = homeDirectoryFromEnvironment(
-    processEnvironment,
-    process.platform,
-  );
+  const home = homeDirectoryFromEnvironment(processEnvironment, platform);
   const client = (
-    await resolveSupportedClients(home, process.platform, processEnvironment)
+    await resolveSupportedClients(home, platform, processEnvironment)
   ).find(({ name }) => name === selected);
   if (client === undefined || client.format === "unsupported")
     return { environment: {}, unresolved: new Set(), unknown: true };
   const registered = await readSelectedRegistration(
     client,
     resourceScope,
-    process.platform,
+    platform,
   );
   if (registered === undefined) return undefined;
   if ("unknown" in registered)
@@ -105,7 +104,7 @@ const selectedRegistrationEnvironment = async (
 export const selectedProviderSettings = (
   selected: SelectedRegistrationEnvironment | undefined,
   terminal: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, string | undefined>> => {
   if (selected === undefined) return terminal;
   const settings: Record<string, string | undefined> = {
@@ -297,7 +296,10 @@ const unresolvedProvider = (
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
+  /** The host diagnosed; tests select another host's client layout. */
+  host: HostPlatform = HOST_PLATFORM,
 ): DoctorHost => {
+  const { platform } = host;
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -324,6 +326,8 @@ export const createSystemDoctorHost = (
   };
   return systemDoctorHost({
     environment,
+    platform,
+    architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: async (
       analysisProvider,
@@ -356,29 +360,26 @@ export const createSystemDoctorHost = (
         environment,
         resourceScope,
         inspectionSignal,
+        platform,
       );
       const inspectionEnvironment = selectedProviderSettings(
         selected,
         environment,
+        platform,
       );
       return [
         unresolvedProvider(
           "ghidra",
           selected,
           inspectionEnvironment,
-          process.platform,
+          platform,
         ) ??
           (await inspectSystemGhidraProvider(
             inspectionEnvironment,
             resourceScope,
             inspectionSignal,
           )),
-        unresolvedProvider(
-          "ida",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
+        unresolvedProvider("ida", selected, inspectionEnvironment, platform) ??
           (await inspectIdaRegistration(
             inspectionEnvironment.REA_IDA_MCP_CONFIG,
             resourceScope,
@@ -391,24 +392,14 @@ export const createSystemDoctorHost = (
                   inspectionSignal,
                 ),
           )),
-        unresolvedProvider(
-          "jadx",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
+        unresolvedProvider("jadx", selected, inspectionEnvironment, platform) ??
           (await inspectJadxProvider(
             inspectionEnvironment,
             resourceScope,
             inspectionSignal,
           )),
-        unresolvedProvider(
-          "kuna",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
-          (await inspectKunaProvider(inspectionEnvironment, process.platform, {
+        unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??
+          (await inspectKunaProvider(inspectionEnvironment, platform, {
             resourceScope,
             signal: inspectionSignal,
           })),

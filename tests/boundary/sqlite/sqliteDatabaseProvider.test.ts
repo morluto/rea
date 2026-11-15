@@ -1134,7 +1134,8 @@ nativeTest(
       error: {
         _tag: "ProviderAdapterError",
         diagnostics: {
-          failure_kind: "process",
+          failure_kind: "exited",
+          stop_requested: false,
           exit_code: 7,
           captured_output: {
             stderr: "authored SQLite worker failure",
@@ -1397,7 +1398,7 @@ nativeTest(
 
 nativeTest.each([
   ["cancelled", "cancelled"],
-  ["output-limit", "unreadable_output"],
+  ["output-limit", "resource_constraint"],
   ["heap-diagnostic", "resource_constraint"],
 ] as const)(
   "preserves the typed %s worker failure through retained cleanup retry",

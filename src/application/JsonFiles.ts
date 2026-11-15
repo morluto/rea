@@ -8,6 +8,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { basename, dirname, resolve } from "node:path";
 
 import {
@@ -243,8 +244,7 @@ const jsonFileReadFailure = (
       cause: cause.physicalCause,
       path,
     });
-  if (isJsonReadCancellation(cause, signal))
-    return cancelledBy(operation, signal);
+  if (isAbortOf(cause, signal)) return cancelledBy(operation, signal);
   return new EvidenceFileError(
     "read",
     cause instanceof NonRegularFileReadError
@@ -301,21 +301,6 @@ const jsonFileCleanupError = <Value>(
   }).bindCleanupDependencies([primary, cleanup]);
   if (!primary.cleanupIncomplete) rememberJsonReadCleanup(combined, failure);
   return combined;
-};
-
-const isJsonReadCancellation = (
-  cause: unknown,
-  signal?: AbortSignal,
-): signal is AbortedSignal => {
-  if (signal?.aborted !== true) return false;
-  if (cause === signal.reason) return true;
-  return (
-    cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason
-  );
 };
 
 /** Atomically write text to the caller-supplied path. */

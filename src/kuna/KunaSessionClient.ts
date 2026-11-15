@@ -4,10 +4,7 @@ import {
 } from "../process/RegexMatcher.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { basename, join } from "node:path";
-import {
-  regularFileCancellation,
-  RegularFileCleanupFailure,
-} from "../filesystem/OwnedRegularFile.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -62,8 +59,7 @@ import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   KUNA_INVENTORY_OUTPUT_BYTES,
-  kunaFileCleanupError,
-  kunaRetainedResourceCleanupError,
+  kunaInstallationDialect,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
@@ -2068,25 +2064,16 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(inspected.value);
     } catch (cause: unknown) {
-      const retainedCleanup =
-        cause instanceof ArtifactReaderFailure
-          ? kunaRetainedResourceCleanupError(cause, "health")
-          : undefined;
-      if (retainedCleanup !== undefined) return err(retainedCleanup);
-      if (!(cause instanceof RegularFileCleanupFailure)) {
-        const cancellation = kunaResources.installationCancellationError(
+      return err(
+        classifyProviderFailure(
           cause,
-          "health",
-        );
-        if (cancellation !== undefined) return err(cancellation);
-      }
-      if (!(cause instanceof RegularFileCleanupFailure))
-        return err(
-          classifyProviderFailure(cause, kunaSessionDialect("health")),
-        );
-      const error = kunaFileCleanupError(cause, "health");
-      kunaResources.bindFailure(cause, error);
-      return err(error);
+          kunaInstallationDialect(
+            "health",
+            kunaResources,
+            kunaSessionDialect("health").unclassified,
+          ),
+        ),
+      );
     }
   }
 

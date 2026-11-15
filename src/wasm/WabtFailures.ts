@@ -226,7 +226,7 @@ export const wabtFailureDialect = (
           ),
         },
       },
-      dialect: (exit, details) =>
+      dialect: (exit, details, unclassified) =>
         // A tool that cannot start, or a version probe that exits or whose
         // output cannot be collected, leaves the configured installation
         // unusable for this call.
@@ -241,7 +241,7 @@ export const wabtFailureDialect = (
                 remediationAction: wabtConfigurationRecoveryAction(exit.cause),
               },
             )
-          : new AnalysisOutputError(OPERATION, exit.message, details),
+          : unclassified(WABT_PROVIDER_IDENTITY.id),
     }),
     commandCleanup: (command, primary, outcome) =>
       new ProviderCleanupError(

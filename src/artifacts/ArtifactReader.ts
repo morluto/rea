@@ -2,6 +2,7 @@ import { fixedAllowanceRemediation } from "../domain/fixedAllowanceRemediation.j
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
+  ArtifactIntegrityCheck,
   ArtifactLimitBoundary,
 } from "../domain/artifactOperationError.js";
 import type {
@@ -23,22 +24,6 @@ import type {
   AnalysisCleanupObservation,
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-
-/**
- * Which consistency check an `integrity` failure tripped, so consumers need
- * not read the message: a member the reader did not produce, member metadata
- * that differs from inventory, a container or unpacked file whose identity
- * changed, short read coverage, bytes disagreeing with the declared size, or a
- * read stream over a handle the reader does not own.
- */
-export type ArtifactIntegrityCheck =
-  | "foreign-entry"
-  | "entry-metadata"
-  | "container-identity"
-  | "unpacked-entry-identity"
-  | "read-coverage"
-  | "declared-size"
-  | "reader-ownership";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -311,6 +296,37 @@ export class ArtifactReaderFailure extends Error {
     this.integrityCheck = options?.integrityCheck;
   }
 
+  /**
+   * Reader-owned facts a rebuilt failure must keep. Each rebuild chooses its
+   * own cause, cleanup, cancellation and partial observation.
+   */
+  primaryFacts(): Pick<
+    ArtifactReaderFailureOptions,
+    | "userMessage"
+    | "resolvedPath"
+    | "boundary"
+    | "admission"
+    | "readerLimit"
+    | "integrityCheck"
+  > {
+    return {
+      ...(this.userMessage === undefined
+        ? {}
+        : { userMessage: this.userMessage }),
+      ...(this.resolvedPath === undefined
+        ? {}
+        : { resolvedPath: this.resolvedPath }),
+      ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.admission === undefined ? {} : { admission: this.admission }),
+      ...(this.readerLimit === undefined
+        ? {}
+        : { readerLimit: this.readerLimit }),
+      ...(this.integrityCheck === undefined
+        ? {}
+        : { integrityCheck: this.integrityCheck }),
+    };
+  }
+
   /** Retain completed facts when a later artifact step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
@@ -349,27 +365,14 @@ export class ArtifactReaderFailure extends Error {
       primary.message,
       {
         cause: primary,
-        userMessage: primary.userMessage,
-        resolvedPath: primary.resolvedPath,
+        // The constrained bound survives cleanup wrapping, or a file-size
+        // refusal would be reported as a memory constraint once a close fails.
+        ...primary.primaryFacts(),
         cancellation: primary.cancellation,
         cleanup: combineCleanup(primary.cleanup, cleanup),
         cleanupLeases:
           cleanupLeases ??
           (cleanup === primary.cleanup ? primary.cleanupLeases : undefined),
-        // The constrained bound survives cleanup wrapping, or a file-size
-        // refusal would be reported as a memory constraint once a close fails.
-        ...(primary.boundary === undefined
-          ? {}
-          : { boundary: primary.boundary }),
-        ...(primary.admission === undefined
-          ? {}
-          : { admission: primary.admission }),
-        ...(primary.readerLimit === undefined
-          ? {}
-          : { readerLimit: primary.readerLimit }),
-        ...(primary.integrityCheck === undefined
-          ? {}
-          : { integrityCheck: primary.integrityCheck }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

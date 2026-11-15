@@ -6,7 +6,11 @@ import {
   composedCallerGuidance,
 } from "./analysisErrorPresentation.js";
 
-/** Preserve the original lifecycle failure alongside incomplete cleanup. */
+/**
+ * Preserve the original lifecycle failure alongside incomplete cleanup. The
+ * composite waits for an owner to bind its completion; compose with
+ * `analysisErrorWithCleanupDependencies` when the parts own it.
+ */
 export const analysisErrorWithCleanupFailure = (
   primary: AnalysisError,
   cleanup: AnalysisError,
@@ -53,3 +57,19 @@ export const analysisErrorWithCleanupFailure = (
       }),
     },
   );
+
+/**
+ * Compose a failure with the cleanup failure that followed it. The composite
+ * has no cleanup record of its own: it completes once the primary's and the
+ * cleanup's records both report release, each read from its owner.
+ */
+export const analysisErrorWithCleanupDependencies = (
+  primary: AnalysisError,
+  cleanup: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  analysisErrorWithCleanupFailure(
+    primary,
+    cleanup,
+    operation,
+  ).bindCleanupDependencies([primary, cleanup]);

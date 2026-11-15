@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
-import { HopperStartError } from "../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../src/hopper/HopperErrors.js";
 import type { Result } from "../../src/domain/result.js";
 import type {
   AnalysisClient,

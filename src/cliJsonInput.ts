@@ -1,4 +1,5 @@
 import { addAbortListener } from "node:events";
+import { isAbortOf } from "./process/SignalAbort.js";
 import type { Readable } from "node:stream";
 import { getHeapStatistics } from "node:v8";
 
@@ -100,8 +101,7 @@ export const parseCliJsonInput = async (
         ? jsonFileReadError(value, operation, physicalCause)
         : jsonAccessDeniedError(value, operation, systemCode, physicalCause);
     }
-    if (signal?.aborted && isJsonInputCancellation(cause, signal))
-      return cancelled(signal.reason);
+    if (isAbortOf(cause, signal)) return cancelled(signal.reason);
     const systemCode = accessDeniedSystemCode(cause);
     if (systemCode !== undefined)
       return jsonAccessDeniedError(value, operation, systemCode, cause);
@@ -193,7 +193,7 @@ const readCliJsonStdin = async (
     } catch (cause: unknown) {
       if (
         cause instanceof JsonInputCancellationFailure ||
-        (signal?.aborted && isJsonInputCancellation(cause, signal))
+        isAbortOf(cause, signal)
       )
         throw cause;
       if (cause instanceof AnalysisResourceConstraintError) return err(cause);
@@ -239,17 +239,6 @@ const readCliJsonStdin = async (
     throw cause;
   }
 };
-
-const isJsonInputCancellation = (
-  cause: unknown,
-  signal: AbortSignal,
-): boolean =>
-  cause === signal.reason ||
-  (cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason);
 
 const accessDeniedSystemCode = (
   cause: unknown,

@@ -5,6 +5,7 @@ import {
   spawn,
   type ExecFileOptionsWithBufferEncoding,
 } from "node:child_process";
+import { isAbortOf } from "./SignalAbort.js";
 
 type ExecFileOutputOptions = Omit<
   ExecFileOptionsWithBufferEncoding,
@@ -242,8 +243,10 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              error?.name === "AbortError" && error.code === "ABORT_ERR"
-                ? new ExecFileOutputCancelledError(error.cause)
+              // A successful callback's null is not a rejection, even when
+              // the caller's abort reason is also null.
+              error !== null && isAbortOf(error, signal)
+                ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
               stderr,

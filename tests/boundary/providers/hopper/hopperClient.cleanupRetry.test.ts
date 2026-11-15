@@ -6,7 +6,7 @@ import { Socket } from "node:net";
 import { expect, it, onTestFinished } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../../src/hopper/HopperErrors.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLaunch,

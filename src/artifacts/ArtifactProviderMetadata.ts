@@ -4,7 +4,7 @@ import { ARTIFACT_ANALYSIS_OPERATIONS } from "../contracts/artifactToolContracts
 
 /** Declare artifact coverage without constructing readers or acquiring resources. */
 export const artifactCapabilities = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): readonly CapabilityDescriptor[] =>
   Object.freeze(
     ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {

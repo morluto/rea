@@ -1,4 +1,6 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
@@ -50,9 +52,7 @@ const WEB_ARTIFACT_FORMAT = "captured-web-artifact";
 /** Decode exact UTF-8 content, preserving a BOM for digest verification. */
 export const decodeWebArtifact = (bytes: Buffer): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return decodeStrictUtf8(bytes, "preserve");
   } catch (cause: unknown) {
     throw malformedInput(
       WEB_ARTIFACT_FORMAT,
@@ -184,15 +184,7 @@ const webArtifactPrimaryError = (
       context.operation,
       carriedReason(artifactFileCancellationCause(cause)),
     );
-  if (
-    origin === "owned-or-classified" &&
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
-  )
+  if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
     ? selectedFileError({ cause, origin }, context)

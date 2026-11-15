@@ -25,6 +25,7 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
@@ -246,7 +247,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         if (stopped.status === "not-owned") {
           reason = "native command ownership remains unresolved";
         } else if (stopped.status !== "incomplete") {
-          marker.resolveCleanup();
+          // The marker reads the supervisor's release of this stop.
           this.#cleanupMarkers.delete(owner);
           continue;
         } else
@@ -284,6 +285,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         { operation: "native_command", cause: failure },
       );
     }
+    marker.bindCleanupReleaseClaim(owner.cleanupRelease);
     this.#cleanupMarkers.set(owner, marker);
     if (failure.cleanupMarker === marker) return failure;
     return new NativeCommandFailure(
@@ -447,12 +449,11 @@ export const resolveXcrunTool = async (
     const cancellation =
       signal?.aborted === true ? { reason: signal.reason } : undefined;
     const observedCancellation =
-      signal?.aborted === true &&
-      cause instanceof Error &&
-      cause.cause === signal.reason &&
-      ((cause instanceof ArtifactReaderFailure &&
-        cause.reason === "cancelled") ||
-        ("code" in cause && cause.code === "ABORT_ERR"));
+      isAbortOf(cause, signal) ||
+      (signal?.aborted === true &&
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled" &&
+        cause.cause === signal.reason);
     return err(
       new NativeCommandFailure(
         tool,

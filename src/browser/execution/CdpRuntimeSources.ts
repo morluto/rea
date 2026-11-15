@@ -8,7 +8,7 @@ import type {
   WebRuntimeSource,
   webRuntimeLocationSchema,
 } from "../../domain/webRuntime.js";
-import type { CdpEvent } from "../CdpConnection.js";
+import type { CdpReceivedEvent } from "../CdpConnection.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import {
   runtimeContextSchema,
@@ -17,11 +17,6 @@ import {
   selectCdpScriptFrame,
 } from "../CdpScriptContextFacts.js";
 import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
-
-const scriptIdentitySchema = runtimeScriptParsedSchema.pick({ scriptId: true });
-const contextIdentitySchema = z.object({
-  context: runtimeContextSchema.shape.context.pick({ id: true }),
-});
 
 /** Source ownership is proven by execution context/frame metadata, independently of URL aliases. */
 export class CdpRuntimeSources {
@@ -42,21 +37,22 @@ export class CdpRuntimeSources {
   constructor(readonly session: CdpRuntimeSession) {}
 
   /** Subscribe before enabling Debugger; existing uncollected scripts are replayed by the producer. */
-  ingest(event: CdpEvent, retainNewMetadata = true): void {
-    if (
-      event.sessionId !== this.session.transport.sessionId ||
-      this.#failure !== undefined
-    )
-      return;
+  ingest(event: CdpReceivedEvent, retainNewMetadata = true): void {
+    if (this.#failure !== undefined) return;
+    const registered = event.registered;
     try {
-      if (event.method === "Runtime.executionContextCreated") {
-        this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
+      if (registered?.method === "Runtime.executionContextCreated") {
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#retainedBytes += bytes.value;
         assertRuntimeRetention(
           this.session.operation,
           "metadata",
           this.#retainedBytes,
         );
-        const context = runtimeContextSchema.parse(event.params).context;
+        const declaration = registered.payload.runtime;
+        if (!declaration.success) throw declaration.error;
+        const context = declaration.data.context;
         const previous = this.#contexts.get(context.id);
         if (
           previous !== undefined &&
@@ -67,14 +63,18 @@ export class CdpRuntimeSources {
             if (item.execution_context_id === context.id) this.revalidate(item);
         }
         if (retainNewMetadata) this.#contexts.set(context.id, context);
-      } else if (event.method === "Debugger.scriptParsed") {
-        this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
+      } else if (registered?.method === "Debugger.scriptParsed") {
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#retainedBytes += bytes.value;
         assertRuntimeRetention(
           this.session.operation,
           "metadata",
           this.#retainedBytes,
         );
-        const script = runtimeScriptParsedSchema.parse(event.params);
+        const declaration = registered.payload.runtime;
+        if (!declaration.success) throw declaration.error;
+        const script = declaration.data;
         const previous = this.scripts.get(script.scriptId);
         if (
           previous !== undefined &&
@@ -103,15 +103,15 @@ export class CdpRuntimeSources {
   }
 
   /** Frozen inventories still monitor known identities through asynchronous source reads. */
-  verifyKnownIdentity(event: CdpEvent): void {
-    if (event.method === "Debugger.scriptParsed") {
-      const id = scriptIdentitySchema.safeParse(event.params);
-      if (id.success && this.scripts.has(id.data.scriptId))
+  verifyKnownIdentity(event: CdpReceivedEvent): void {
+    const registered = event.registered;
+    if (registered?.method === "Debugger.scriptParsed") {
+      const { scriptId } = registered.payload.facts;
+      if (scriptId !== undefined && this.scripts.has(scriptId))
         this.ingest(event, false);
-    } else if (event.method === "Runtime.executionContextCreated") {
-      const id = contextIdentitySchema.safeParse(event.params);
-      if (id.success && this.#contexts.has(id.data.context.id))
-        this.ingest(event, false);
+    } else if (registered?.method === "Runtime.executionContextCreated") {
+      const { id } = registered.payload.facts;
+      if (id !== undefined && this.#contexts.has(id)) this.ingest(event, false);
     }
   }
 

@@ -33,14 +33,17 @@ import {
 } from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
-import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
+import {
+  acquireHopperReleaseCacheLease,
+  hopperLeaseMessage,
+} from "../process/HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   HOPPER_DOWNLOAD_BYTES,
   HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HOPPER_PUBLIC_KEY_URL,
@@ -54,6 +57,7 @@ import {
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
 import { withRegularFile } from "./RegularFileRead.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -434,6 +438,12 @@ export class LinuxHopperPublisher {
         launcherSha256: digest,
         runId,
         resources,
+        failure: (failure, cause) =>
+          new HopperReleaseError(
+            "verification_unavailable",
+            hopperLeaseMessage(failure),
+            { cause },
+          ),
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();
@@ -1082,13 +1092,13 @@ export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
 };
 
 const decodeUtf8 = (bytes: Uint8Array): string =>
-  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  decodeStrictUtf8(bytes, "strip-signature");
 const releaseFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
   fallback: HopperReleaseError["reason"],
 ): HopperReleaseError => {
-  if (isHopperRequestCancellation(cause, signal))
+  if (isAbortOf(cause, signal))
     return new HopperReleaseError(
       "cancelled",
       "Hopper publisher verification was cancelled.",

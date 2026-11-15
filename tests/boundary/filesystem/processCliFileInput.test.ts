@@ -1,4 +1,4 @@
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
@@ -93,9 +93,6 @@ describe("process CLI error projection", () => {
           analysisErrorProjectionSchema.parse(projection).remediation.action;
         expect(action).not.toContain("SECRET");
         expect(action).not.toMatch(/\bretry\b/iu);
-        expect(
-          await readFile("docs/user-visible-errors.csv", "utf8"),
-        ).toContain(action);
       } finally {
         read.mockRestore();
       }

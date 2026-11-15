@@ -5,6 +5,7 @@ import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each([null, "owned stop unconfirmed"])(
   "preserves a selected worker deadline with cleanup=%s",
@@ -59,7 +60,7 @@ it.each([null, "owned stop unconfirmed"])(
         _tag: "AnalysisTimeoutError",
         timeoutMs: 1234,
       });
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
       const resolved = projectAnalysisError(failure);
       expect(resolved).toMatchObject({
         code: "provider_timeout",
@@ -84,13 +85,23 @@ it("does not recommend a timer above the supported maximum", () => {
   expect(failure.remediation.action).not.toContain("Increase");
 });
 
-it("says diagnostic capture has no runtime override", () => {
+it("reports exceeded diagnostic capture as a fixed resource constraint", () => {
   const projected = projectAnalysisError(
     classifyProviderFailure(
       new OwnedCommandFailure("output-limit", "diagnostics exceeded"),
       sqliteDatabaseDialect("/selected.db", "worker"),
     ),
   );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_sqlite_database",
+      reported_limits: {
+        diagnostic_capture_bytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      },
+    },
+  });
   expect(projected.remediation.action).toContain(
     String(SQLITE_DATABASE_LIMITS.diagnosticBytes),
   );
