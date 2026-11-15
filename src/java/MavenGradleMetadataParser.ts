@@ -2,6 +2,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 
 import { parseXmlDocument, opensLikeXml } from "../domain/xmlDocument.js";
 import {
+  MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
   MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
   mavenPropertyReferences,
   requestedVersionKind,
@@ -42,6 +43,35 @@ const childrenNamed = (element: Element, local: string): Element[] =>
 const firstNamed = (element: Element, local: string): Element | undefined =>
   childrenNamed(element, local)[0];
 
+const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
+
+/**
+ * A Maven POM root: `project` in the POM namespace, or a namespace-free
+ * `project` that declares `modelVersion` or `artifactId`. Ant and other
+ * `project` vocabularies declare neither and are not POMs.
+ */
+const isMavenProjectRoot = (root: Node | null): root is Element => {
+  if (!isElement(root) || root.localName !== "project") return false;
+  if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
+  return (
+    (root.namespaceURI === null || root.namespaceURI === "") &&
+    childElements(root).some(
+      (child) =>
+        child.localName === "modelVersion" || child.localName === "artifactId",
+    )
+  );
+};
+
+/** Refuse a report whose rows would outgrow the fixed row allowance. */
+const admitDependencyRows = (rows: number): void => {
+  if (rows > MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS)
+    throw new MavenGradleMetadataReportFailure(
+      "dependency_rows",
+      MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+      rows,
+    );
+};
+
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
   const trimmed = value.trim();
@@ -56,7 +86,9 @@ const elementText = (element: Element | undefined): string | null => {
     child !== null;
     child = child.nextSibling
   )
-    if (child.nodeType === 3) parts.push(child.nodeValue ?? "");
+    // Text (3) and CDATA section (4) nodes both carry character data.
+    if (child.nodeType === 3 || child.nodeType === 4)
+      parts.push(child.nodeValue ?? "");
   return nonempty(parts.join(""));
 };
 
@@ -268,13 +300,13 @@ const parsePom = (
   });
   if (!parsed.ok)
     throw new MavenGradleMetadataFormatFailure(
-      parsed.error.reason === "doctype" ? "unsupported" : "malformed",
-      parsed.error.reason === "doctype"
+      parsed.error.kind,
+      parsed.error.kind === "unsupported"
         ? "Maven POM declares a document type, which is unsupported."
         : "Maven POM is not well-formed XML.",
     );
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "project")
+  if (!isMavenProjectRoot(root))
     throw new MavenGradleMetadataFormatFailure(
       "unsupported",
       "Selected XML document is not a Maven project POM.",
@@ -326,19 +358,20 @@ const parsePom = (
   const managedContainer = dependencyManagementElement
     ? firstNamed(dependencyManagementElement, "dependencies")
     : undefined;
-  const dependency_management = (
+  const managedElements =
     managedContainer === undefined
       ? []
-      : childrenNamed(managedContainer, "dependency")
-  ).map((element, index) =>
-    parseMavenDependency(element, "dependencyManagement", index, unresolved),
-  );
+      : childrenNamed(managedContainer, "dependency");
   const dependenciesContainer = firstNamed(root, "dependencies");
-  const dependencies = (
+  const dependencyElements =
     dependenciesContainer === undefined
       ? []
-      : childrenNamed(dependenciesContainer, "dependency")
-  ).map((element, index) =>
+      : childrenNamed(dependenciesContainer, "dependency");
+  admitDependencyRows(managedElements.length + dependencyElements.length);
+  const dependency_management = managedElements.map((element, index) =>
+    parseMavenDependency(element, "dependencyManagement", index, unresolved),
+  );
+  const dependencies = dependencyElements.map((element, index) =>
     parseMavenDependency(element, "dependencies", index, unresolved),
   );
   if (parent !== null)
@@ -384,7 +417,12 @@ const parseGradleDependency = (
   index: number,
   unresolved: MavenGradleUnresolved[],
 ): MavenGradleDependency => {
-  const record = isRecord(value) ? value : {};
+  if (!isRecord(value))
+    throw new MavenGradleMetadataFormatFailure(
+      "malformed",
+      `Gradle ${origin === "variant-dependencies" ? "dependency" : "dependency constraint"} ${String(index)} is not a JSON object.`,
+    );
+  const record = value;
   const group_id = textOf(record.group);
   const artifact_id = textOf(record.module);
   const gradle_version = gradleVersionOf(record.version);
@@ -424,6 +462,28 @@ const parseGradleDependency = (
     platform,
   };
 };
+
+/** An absent collection is empty; a present one must be a JSON array. */
+const gradleArray = (value: unknown, field: string): readonly unknown[] => {
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value;
+  throw new MavenGradleMetadataFormatFailure(
+    "malformed",
+    `Gradle module metadata ${field} is present but is not a JSON array.`,
+  );
+};
+
+const gradleObjects = (
+  value: unknown,
+  field: string,
+): readonly Record<string, unknown>[] =>
+  gradleArray(value, field).map((entry, index) => {
+    if (isRecord(entry)) return entry;
+    throw new MavenGradleMetadataFormatFailure(
+      "malformed",
+      `Gradle module metadata ${field}[${String(index)}] is not a JSON object.`,
+    );
+  });
 
 const parseGradle = (
   source: string,
@@ -471,15 +531,24 @@ const parseGradle = (
   const createdBy = isRecord(parsed.createdBy) ? parsed.createdBy : null;
   const createdGradle =
     createdBy !== null && isRecord(createdBy.gradle) ? createdBy.gradle : null;
-  const variants = Array.isArray(variantsValue) ? variantsValue : [];
+  const variants = gradleObjects(variantsValue, "variants");
+  admitDependencyRows(
+    variants.reduce(
+      (rows, variant) =>
+        rows +
+        gradleArray(variant.dependencies, "dependencies").length +
+        gradleArray(variant.dependencyConstraints, "dependencyConstraints")
+          .length,
+      0,
+    ),
+  );
   const dependencies: MavenGradleDependency[] = [];
   const dependency_management: MavenGradleDependency[] = [];
   const gradleVariants: NonNullable<MavenGradleMetadata["gradle"]>["variants"] =
     [];
   let nextIndex = 0;
   let repeatedVariantNameChars = 0;
-  for (const variantValue of variants) {
-    const variant = isRecord(variantValue) ? variantValue : {};
+  for (const variant of variants) {
     const name = textOf(variant.name);
     const attributes = isRecord(variant.attributes) ? variant.attributes : {};
     const category = textOf(attributes["org.gradle.category"]);
@@ -489,12 +558,14 @@ const parseGradle = (
     const available = isRecord(variant["available-at"])
       ? variant["available-at"]
       : null;
-    const variantDependencies = Array.isArray(variant.dependencies)
-      ? variant.dependencies
-      : [];
-    const constraints = Array.isArray(variant.dependencyConstraints)
-      ? variant.dependencyConstraints
-      : [];
+    const variantDependencies = gradleArray(
+      variant.dependencies,
+      "dependencies",
+    );
+    const constraints = gradleArray(
+      variant.dependencyConstraints,
+      "dependencyConstraints",
+    );
     // Every row repeats its variant's name; admit that expansion before
     // building rows, so a long name times many rows cannot outgrow the input.
     repeatedVariantNameChars +=
@@ -504,6 +575,7 @@ const parseGradle = (
       MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS
     )
       throw new MavenGradleMetadataReportFailure(
+        "repeated_variant_name_chars",
         MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
         repeatedVariantNameChars,
       );

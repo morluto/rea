@@ -5,7 +5,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
 import { isGhidraByteSearchCursorMismatch } from "./GhidraByteSearchCursorFailure.js";
 import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
@@ -264,7 +264,7 @@ const describeCause = (
     return describeErrorCause(cause, redact, depth);
   }
   if (typeof cause === "string") {
-    const message = boundedUtf8Text(redact(cause), MAX_CAUSE_MESSAGE_BYTES);
+    const message = utf8HeadExcerpt(redact(cause), MAX_CAUSE_MESSAGE_BYTES);
     return {
       type: "string",
       message: message.text,
@@ -283,11 +283,11 @@ const describeErrorCause = (
   redact: (value: string, incomplete?: boolean) => string,
   depth: number,
 ): JsonValue => {
-  const message = boundedUtf8Text(
+  const message = utf8HeadExcerpt(
     redact(cause.message),
     MAX_CAUSE_MESSAGE_BYTES,
   );
-  const name = boundedUtf8Text(redact(cause.name), MAX_CAUSE_FIELD_BYTES);
+  const name = utf8HeadExcerpt(redact(cause.name), MAX_CAUSE_FIELD_BYTES);
   return {
     name: name.text,
     ...(name.truncated ? { name_truncated: true } : {}),
@@ -311,11 +311,11 @@ const causeCommandOutcome = (
   if (!(cause instanceof GhidraLaunchSupportError)) return {};
   const outcome = cause.outcome;
   if (outcome === undefined) return {};
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     redact(outcome.stdout, outcome.outputTruncated !== false),
     MAX_COMMAND_OUTPUT_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(outcome.stderr, outcome.outputTruncated !== false),
     MAX_COMMAND_OUTPUT_BYTES,
   );
@@ -345,7 +345,7 @@ const causeAdmissionDetail = (
       detail[key] = value;
       continue;
     }
-    const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
+    const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_FIELD_BYTES);
     detail[key] = bounded.text;
   }
   return { detail };
@@ -357,7 +357,7 @@ const causeCode = (
 ): Record<string, JsonValue> => {
   const code = "code" in cause ? cause.code : undefined;
   if (typeof code === "string") {
-    const bounded = boundedUtf8Text(redact(code), MAX_CAUSE_FIELD_BYTES);
+    const bounded = utf8HeadExcerpt(redact(code), MAX_CAUSE_FIELD_BYTES);
     return {
       code: bounded.text,
       ...(bounded.truncated ? { code_truncated: true } : {}),
@@ -373,7 +373,7 @@ const causeSignal = (
 ): Record<string, JsonValue> => {
   const signal = "signal" in cause ? cause.signal : undefined;
   if (typeof signal === "string") {
-    const bounded = boundedUtf8Text(redact(signal), MAX_CAUSE_FIELD_BYTES);
+    const bounded = utf8HeadExcerpt(redact(signal), MAX_CAUSE_FIELD_BYTES);
     return {
       signal: bounded.text,
       ...(bounded.truncated ? { signal_truncated: true } : {}),
@@ -390,7 +390,7 @@ const causeCompilerOutcome = (
   if (!(cause instanceof DarwinProcessOwnershipInspectionError)) return {};
   const outcome = cause.compilerOutcome;
   if (outcome === undefined) return {};
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(outcome.stderr),
     MAX_COMPILER_STDERR_BYTES,
   );
@@ -414,7 +414,7 @@ const boundedCompilerField = (
   redact: (value: string, incomplete?: boolean) => string,
 ): { readonly value: string | number | null; readonly truncated: boolean } => {
   if (typeof value !== "string") return { value, truncated: false };
-  const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
+  const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_FIELD_BYTES);
   return { value: bounded.text, truncated: bounded.truncated };
 };
 
@@ -440,13 +440,13 @@ const causeLaunchRollback = (
       },
     };
   const result = rollback.result;
-  const reason = boundedUtf8Text(
+  const reason = utf8HeadExcerpt(
     redact(result.reason),
     MAX_CAUSE_MESSAGE_BYTES,
   );
   const diagnostic = (value: string | undefined): Record<string, JsonValue> => {
     if (value === undefined) return {};
-    const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_MESSAGE_BYTES);
+    const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_MESSAGE_BYTES);
     return {
       diagnostic: bounded.text,
       ...(bounded.truncated ? { diagnostic_truncated: true } : {}),
@@ -533,11 +533,11 @@ const causeLaunchOutcome = (
   if (cause.cause instanceof GhidraLaunchSupportError) return launchSupport;
   const output = cause.capturedOutput;
   if (output === undefined) return launchSupport;
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     redact(output.stdout),
     GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(output.stderr),
     GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );

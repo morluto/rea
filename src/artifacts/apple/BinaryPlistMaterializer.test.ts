@@ -10,6 +10,7 @@ import {
 } from "./BinaryPlistMaterializer.js";
 import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
 const source = (objects: readonly Buffer[]): Buffer => {
   const table =
@@ -299,4 +300,15 @@ it("bounds the text that overlapping table entries repeat", () => {
   expect(decoded.text).toContain("k");
   // A range past the remaining budget is rejected before it is decoded.
   expect(decodedBytes).toBeLessThanOrEqual(2 * budget + bytes.length);
+});
+
+it("reports a plan without its binary source as a defect, not as bad input", () => {
+  const bytes = source([text("value")]);
+  const { binaryValuePlan: _omitted, ...plan } = estimateBinaryPlistExpansion(
+    bytes,
+    1024 * 1024,
+  );
+  expect(() => decodeBinaryPlistValue(bytes, plan)).toThrow(
+    InternalInvariantError,
+  );
 });

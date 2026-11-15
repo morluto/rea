@@ -19,6 +19,14 @@ export const MAVEN_GRADLE_METADATA_LIMIT_MAXIMA = {
 export const MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS =
   4 * 1024 * 1024;
 
+/**
+ * Fixed allowance for dependency plus constraint rows in one report. A row
+ * spelled in two or three input bytes (`{}` or `<dependency/>`) becomes a full
+ * row and up to three unresolved records, a few hundred bytes of report; the
+ * largest published BOMs declare a few thousand rows.
+ */
+export const MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS = 65_536;
+
 /** Detected metadata document; classification is from content, not the suffix. */
 export const MAVEN_GRADLE_METADATA_FORMATS = [
   "maven-pom",

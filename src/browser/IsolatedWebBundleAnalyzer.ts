@@ -13,10 +13,11 @@ import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -91,7 +92,9 @@ export class IsolatedWebBundleAnalyzer {
   /** Reserve capacity before capture, so concurrent captures cannot retain source inventories. */
   async reserve(): Promise<Result<void, AnalysisError>> {
     if (this.#closed)
-      return err(new AnalysisCancelledError("analyze_web_bundle"));
+      return err(
+        cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed),
+      );
     if (this.#admission.active() !== undefined)
       return err(
         new AnalysisResourceConstraintError(
@@ -99,6 +102,7 @@ export class IsolatedWebBundleAnalyzer {
           "capacity",
           "Another web-bundle capture or analysis owns this admission's source and result reservation",
           { concurrent_web_bundle_analyses: 1 },
+          { measuredExhaustion: true },
         ),
       );
     // Claim the slot before awaiting cleanup so another host cannot pass the check.
@@ -123,7 +127,9 @@ export class IsolatedWebBundleAnalyzer {
     }
     if (this.#closed) {
       this.#admission.release(this);
-      return err(new AnalysisCancelledError("analyze_web_bundle"));
+      return err(
+        cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed),
+      );
     }
     return ok(undefined);
   }
@@ -141,7 +147,7 @@ export class IsolatedWebBundleAnalyzer {
     if (this.#closed)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError("analyze_web_bundle", {
+          cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed, {
             partialObservation: inspection,
           }),
         ),
@@ -154,6 +160,7 @@ export class IsolatedWebBundleAnalyzer {
             "capacity",
             "This web analyzer already owns an active analysis",
             { concurrent_web_bundle_analyses: 1 },
+            { measuredExhaustion: true },
           ),
         ),
       );
@@ -304,8 +311,7 @@ export class IsolatedWebBundleAnalyzer {
       deadline.dispose();
     }
     if (caller.aborted && deadline.interruption !== "timeout") {
-      const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
-        cause: caller.reason,
+      const cancelled = cancelledBy("analyze_web_bundle", caller, {
         partialObservation: partial ?? inspection,
       });
       failure = hasPrimaryFailure

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { DesktopTaskReader } from "../../domain/desktop/appTask.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
@@ -19,7 +22,10 @@ import {
   AGENTENV_PROVIDER,
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
-import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+} from "../../process/AbortablePromise.js";
 
 type Exec = (
   argv: readonly string[],
@@ -95,7 +101,7 @@ export class DesktopRemoteTaskReaders {
           pending.requestId,
         );
         const observed = await waitForAbortable(pending.command, signal);
-        if (observed === ABORTED) throw signal.reason;
+        if (observed instanceof AbortedWait) throw observed.carried;
         result = observed;
         if (result.timed_out) {
           pending.uncertain = new Error(
@@ -269,9 +275,9 @@ export class DesktopRemoteTaskReaders {
     views: ReadonlyMap<string, TaskFileView>,
     absent: readonly string[],
   ) {
-    return new AnalysisCancelledError("check_build_task", {
-      cause: signal.reason,
-    }).retainDiagnostics(this.#facts(views, absent));
+    return cancelledBy("check_build_task", signal).retainDiagnostics(
+      this.#facts(views, absent),
+    );
   }
 
   #failure(

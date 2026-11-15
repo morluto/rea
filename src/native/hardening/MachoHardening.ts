@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
 import {
   machoArchitectureName,
@@ -51,10 +52,6 @@ const MH_ALLOW_STACK_EXECUTION = 0x20000;
 const MH_PIE = 0x200000;
 const MH_NO_HEAP_EXECUTION = 0x1000000;
 const CPU_TYPE_ARM64 = 0x0100000c;
-const LC_SEGMENT = 0x1;
-const LC_SYMTAB = 0x2;
-const LC_SEGMENT_64 = 0x19;
-const LC_CODE_SIGNATURE = 0x1d;
 const MAPPING_BUDGET = 4096;
 
 function malformed(message: string): never {
@@ -296,7 +293,7 @@ const readSliceImage = async (
       rows,
     };
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure && cause.kind === "malformed") {
+    if (cause instanceof BinaryFormatFailure && cause.kind !== "unsupported") {
       if (ref.thin) throw cause;
       return failedImage(ref, "malformed", cause.message, header);
     }
@@ -323,10 +320,10 @@ const readCommandFacts = (
   const framed = frameLoadCommands(table, (command) => {
     if (segmentName(command, wide, sliceSize) === "__RESTRICT")
       facts.restrict ??= command.offset;
-    if (command.command === LC_CODE_SIGNATURE) {
+    if (command.command === LC.CODE_SIGNATURE) {
       admitCodeSignature(command, sliceSize);
       facts.signature ??= command.offset;
-    } else if (command.command === LC_SYMTAB) {
+    } else if (command.command === LC.SYMTAB) {
       if (facts.symtab !== null)
         malformed("Mach-O slice has more than one LC_SYMTAB");
       facts.symtab = command;
@@ -356,7 +353,7 @@ const admitCodeSignature = (
   { body, index }: MachoLoadCommand,
   sliceSize: number,
 ): void => {
-  const data = readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true);
+  const data = readMachoLinkeditDataCommand(LC.CODE_SIGNATURE, body, true);
   if (data === null)
     return malformed(
       `load command ${index} is too short for LC_CODE_SIGNATURE`,
@@ -464,9 +461,9 @@ const segmentName = (
   wide: boolean,
   sliceSize: number,
 ): string | null => {
-  const expected = wide ? LC_SEGMENT_64 : LC_SEGMENT;
+  const expected = wide ? LC.SEGMENT_64 : LC.SEGMENT;
   if (command.command !== expected) {
-    if (command.command === LC_SEGMENT || command.command === LC_SEGMENT_64)
+    if (command.command === LC.SEGMENT || command.command === LC.SEGMENT_64)
       malformed("Mach-O segment command width does not match the slice header");
     return null;
   }

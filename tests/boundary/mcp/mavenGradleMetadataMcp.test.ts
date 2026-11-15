@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import { mavenGradleMetadataSchema } from "../../../src/domain/java/mavenGradleMetadata.js";
 import {
   gradleModuleFixture,
@@ -14,7 +15,8 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
-const completeEvidenceSchema = toolContract(
+const completeEvidenceSchema = contractNamed(
+  MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   "inspect_maven_gradle_metadata",
 ).outputSchema.safeExtend({ normalized_result: mavenGradleMetadataSchema });
 

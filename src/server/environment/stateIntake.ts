@@ -19,6 +19,7 @@ import {
   RegularFileCleanupFailure,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -124,9 +125,6 @@ const fileFailure = (cause: unknown): IntakeFailure =>
   (cause instanceof Error && "code" in cause
     ? FILE_FAILURES.get(String(cause.code))
     : undefined) ?? "read-failed";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const MAX_INLINE_BASE64_CHARACTERS =
   Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;

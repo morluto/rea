@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import {
   gradleModuleFixture,
   mavenPomFixture,
@@ -10,7 +11,10 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const outputSchema = toolContract("inspect_maven_gradle_metadata").outputSchema;
+const outputSchema = contractNamed(
+  MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
+  "inspect_maven_gradle_metadata",
+).outputSchema;
 
 cliTest(
   "reports Maven coordinates and a BOM import through the public CLI",

@@ -2,7 +2,10 @@ import {
   kiloLocation,
   kiloProjectLocation,
 } from "./McpRegistrationKiloLocations.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { dirname, join, win32 } from "node:path";
 
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -10,9 +13,14 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
 import {
+  appDataRedirection,
+  registrationWriteBlocker,
+  supportedClientDefinition,
   supportedClients,
-  supportedClientRegistrationProfile,
+  type SetupClient,
+  type SupportedClientName,
 } from "./SupportedClients.js";
+import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
@@ -29,25 +37,51 @@ import {
   fromSetup,
   present,
   fixedProjectLocation,
-  clineLocation,
-  clineCliLocation,
   fxLocation,
   gooseLocation,
   junieLocation,
-  kiroLocation,
-  mastraLocation,
-  mcporterLocation,
-  zedLocation,
-  ampLocation,
   type McpRegistrationLocationContext,
   type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
   type McpRegistrationInlineConfiguration,
 } from "./McpRegistrationLocations.js";
 
-interface ClientDescriptorBase {
+/**
+ * A client `rea mcp add` knows but the client table does not yet hold. Its
+ * facts are declared here until it joins that table; every other client
+ * projects its table row.
+ */
+interface RegistrationOnlyDescriptor {
+  readonly kind: "registration-only";
   readonly displayName: string;
   readonly format: ClientConfigurationFormat;
+  readonly aliases?: readonly string[];
+  readonly globalLocation: (
+    context: McpRegistrationLocationContext,
+  ) => Promise<McpRegistrationGlobalLocation>;
+  readonly projectLocation?: (
+    context: McpRegistrationLocationContext,
+  ) => Promise<McpRegistrationLocation>;
+  readonly registrationConnection: ClientRegistrationConnectionProfile;
+}
+
+/** An add-mcp agent backed by one client-table row. */
+interface TableClient {
+  readonly kind: "client";
+  readonly name: SupportedClientName;
+}
+
+const tableClient = <const Name extends SupportedClientName>(
+  name: Name,
+): TableClient & { readonly name: Name } => ({ kind: "client", name });
+
+type CatalogEntry = TableClient | RegistrationOnlyDescriptor;
+
+/** The facts registration needs, from the client's single owner. */
+interface ClientDescriptor {
+  readonly displayName: string;
+  readonly format: ClientConfigurationFormat;
+  readonly aliases: readonly string[];
   readonly globalLocation: (
     context: McpRegistrationLocationContext,
   ) => Promise<McpRegistrationGlobalLocation>;
@@ -55,108 +89,26 @@ interface ClientDescriptorBase {
     context: McpRegistrationLocationContext,
   ) => Promise<McpRegistrationLocation>;
   readonly projectFormat?: ClientConfigurationFormat;
+  readonly registrationProfile: ClientRegistrationProfile;
+  readonly setupName?: SupportedClientName;
 }
 
-type ClientDescriptor = ClientDescriptorBase &
-  (
-    | {
-        readonly registrationProfile: ClientRegistrationProfile;
-        readonly registrationConnection?: never;
-      }
-    | {
-        readonly registrationConnection: ClientRegistrationConnectionProfile;
-        readonly registrationProfile?: never;
-      }
-  );
-
-/** mcporter getUrl's native nullish priority; an empty first value suppresses later aliases. */
-const MCPORTER_URL_FIELDS = [
-  "baseUrl",
-  "base_url",
-  "url",
-  "serverUrl",
-  "server_url",
-] as const;
-const MCPORTER_STDIO_INCOMPATIBILITIES: readonly NativeStdioIncompatibility[] =
-  [
-    // RawEntrySchema admits only optional strings, including an empty string.
-    ...MCPORTER_URL_FIELDS.map((field): NativeStdioIncompatibility => ({
-      kind: "invalid-string",
-      field,
-    })),
-    ...MCPORTER_URL_FIELDS.map((field, index): NativeStdioIncompatibility =>
-      index === 0
-        ? { kind: "truthy", field }
-        : {
-            kind: "all",
-            conditions: [
-              ...MCPORTER_URL_FIELDS.slice(0, index).map(
-                (prior): NativeStdioIncompatibility => ({
-                  kind: "nullish",
-                  field: prior,
-                }),
-              ),
-              { kind: "truthy", field },
-            ],
-          },
-    ),
-  ];
-
-/** Reviewed add-mcp 2.6.1 client contracts plus Incur's separate Amp contract. */
+/**
+ * Reviewed add-mcp 2.6.1 agent ids plus Incur's separate Amp contract, in
+ * add-mcp's order. Table-backed agents carry only their row name; the row owns
+ * the location, format, profile, aliases, project documents and read scope.
+ */
 export const MCP_REGISTRATION_CLIENTS = {
-  antigravity: {
-    displayName: "Antigravity",
-    format: "json",
-    globalLocation: fromSetup("antigravity"),
-    registrationProfile: supportedClientRegistrationProfile("antigravity"),
-  },
-  cline: {
-    displayName: "Cline VSCode Extension",
-    format: "json",
-    globalLocation: clineLocation,
-    registrationConnection: { kind: "cline" },
-  },
-  "cline-cli": {
-    displayName: "Cline CLI",
-    format: "json",
-    globalLocation: clineCliLocation,
-    registrationConnection: { kind: "cline" },
-  },
-  "claude-code": {
-    displayName: "Claude Code",
-    format: "claude_code",
-    globalLocation: fromSetup("claude_code"),
-    registrationProfile: supportedClientRegistrationProfile("claude_code"),
-    projectLocation: fixedProjectLocation([".mcp.json"]),
-  },
-  "claude-desktop": {
-    displayName: "Claude Desktop",
-    format: "json",
-    globalLocation: fromSetup("claude_desktop"),
-    registrationProfile: supportedClientRegistrationProfile("claude_desktop"),
-  },
-  codex: {
-    displayName: "Codex",
-    format: "toml",
-    globalLocation: fromSetup("codex"),
-    registrationProfile: supportedClientRegistrationProfile("codex"),
-    projectLocation: fixedProjectLocation([".codex/config.toml"]),
-  },
-  cursor: {
-    displayName: "Cursor",
-    format: "json",
-    globalLocation: fromSetup("cursor"),
-    registrationProfile: supportedClientRegistrationProfile("cursor"),
-    projectLocation: fixedProjectLocation([".cursor/mcp.json"]),
-  },
-  "factory-droid": {
-    displayName: "Factory Droid",
-    format: "json",
-    globalLocation: fromSetup("droid"),
-    registrationProfile: supportedClientRegistrationProfile("droid"),
-    projectLocation: fixedProjectLocation([".factory/mcp.json"]),
-  },
+  antigravity: tableClient("antigravity"),
+  cline: tableClient("cline_vscode"),
+  "cline-cli": tableClient("cline"),
+  "claude-code": tableClient("claude_code"),
+  "claude-desktop": tableClient("claude_desktop"),
+  codex: tableClient("codex"),
+  cursor: tableClient("cursor"),
+  "factory-droid": tableClient("droid"),
   fx: {
+    kind: "registration-only",
     displayName: "fx",
     format: "fx",
     globalLocation: fxLocation,
@@ -175,14 +127,9 @@ export const MCP_REGISTRATION_CLIENTS = {
       ],
     },
   },
-  "gemini-cli": {
-    displayName: "Gemini CLI",
-    format: "json",
-    globalLocation: fromSetup("gemini_cli"),
-    registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
-    projectLocation: fixedProjectLocation([".gemini/settings.json"]),
-  },
+  "gemini-cli": tableClient("gemini_cli"),
   goose: {
+    kind: "registration-only",
     displayName: "Goose",
     format: "goose",
     globalLocation: gooseLocation,
@@ -192,28 +139,11 @@ export const MCP_REGISTRATION_CLIENTS = {
       stdio: [{ kind: "required-enum", field: "type", values: ["stdio"] }],
     },
   },
-  "github-copilot-cli": {
-    displayName: "GitHub Copilot CLI",
-    format: "copilot_cli",
-    globalLocation: fromSetup("copilot_cli"),
-    registrationProfile: supportedClientRegistrationProfile("copilot_cli"),
-    projectLocation: fixedProjectLocation([".mcp.json", ".github/mcp.json"]),
-    projectFormat: "copilot_cli_project",
-  },
-  "grok-build": {
-    displayName: "Grok Build",
-    format: "grok",
-    globalLocation: fromSetup("grok_build"),
-    registrationProfile: supportedClientRegistrationProfile("grok_build"),
-    projectLocation: fixedProjectLocation([".grok/config.toml"]),
-  },
-  hermes: {
-    displayName: "Hermes Agent",
-    format: "hermes",
-    globalLocation: fromSetup("hermes"),
-    registrationProfile: supportedClientRegistrationProfile("hermes"),
-  },
+  "github-copilot-cli": tableClient("copilot_cli"),
+  "grok-build": tableClient("grok_build"),
+  hermes: tableClient("hermes"),
   junie: {
+    kind: "registration-only",
     displayName: "Junie",
     format: "json",
     globalLocation: junieLocation,
@@ -225,8 +155,10 @@ export const MCP_REGISTRATION_CLIENTS = {
     },
   },
   "kilo-code": {
+    kind: "registration-only",
     displayName: "Kilo Code",
     format: "kilo",
+    aliases: ["kilo", "kilocode"],
     globalLocation: kiloLocation,
     projectLocation: kiloProjectLocation,
     registrationConnection: {
@@ -235,133 +167,66 @@ export const MCP_REGISTRATION_CLIENTS = {
       stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
     },
   },
-  "kimi-code": {
-    displayName: "Kimi Code",
-    format: "kimi",
-    globalLocation: fromSetup("kimi"),
-    registrationProfile: supportedClientRegistrationProfile("kimi"),
-    projectLocation: fixedProjectLocation([".kimi-code/mcp.json"]),
-  },
-  "kiro-cli": {
-    displayName: "Kiro CLI",
-    format: "json",
-    globalLocation: kiroLocation,
-    projectLocation: fixedProjectLocation([".kiro/settings/mcp.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["type", "url"],
-      stdio: [
-        { kind: "optional-enum", field: "type", values: ["stdio"] },
-        { kind: "present", field: "url" },
-      ],
-    },
-  },
-  mastracode: {
-    displayName: "Mastra Code",
-    format: "json",
-    globalLocation: mastraLocation,
-    projectLocation: fixedProjectLocation([".mastracode/mcp.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "string", field: "url" }],
-    },
-  },
-  mcporter: {
-    displayName: "MCPorter",
-    format: "json",
-    globalLocation: mcporterLocation,
-    projectLocation: fixedProjectLocation(["config/mcporter.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: [...MCPORTER_URL_FIELDS, "executable"],
-      stdio: MCPORTER_STDIO_INCOMPATIBILITIES,
-    },
-  },
-  opencode: {
-    displayName: "OpenCode",
-    format: "opencode",
-    globalLocation: fromSetup("opencode"),
-    registrationProfile: supportedClientRegistrationProfile("opencode"),
-    projectLocation: fixedProjectLocation([
-      "opencode.jsonc",
-      "opencode.json",
-      ".opencode/opencode.jsonc",
-      ".opencode/opencode.json",
-    ]),
-  },
-  pi: {
-    displayName: "Pi",
-    format: "pi",
-    globalLocation: fromSetup("pi"),
-    registrationProfile: supportedClientRegistrationProfile("pi"),
-    projectLocation: fixedProjectLocation([".pi/mcp.json"]),
-  },
-  vscode: {
-    displayName: "VS Code",
-    format: "vscode",
-    globalLocation: fromSetup("vscode"),
-    registrationProfile: supportedClientRegistrationProfile("vscode"),
-    projectLocation: fixedProjectLocation([".vscode/mcp.json"]),
-  },
-  windsurf: {
-    displayName: "Windsurf",
-    format: "json",
-    globalLocation: fromSetup("windsurf"),
-    registrationProfile: supportedClientRegistrationProfile("windsurf"),
-  },
-  zed: {
-    displayName: "Zed",
-    format: "zed",
-    globalLocation: zedLocation,
-    projectLocation: fixedProjectLocation([".zed/settings.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "present", field: "url" }],
-    },
-  },
-  amp: {
-    displayName: "Amp",
-    format: "amp",
-    globalLocation: ampLocation,
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "present", field: "url" }],
-    },
-  },
-} as const satisfies Record<string, ClientDescriptor>;
+  "kimi-code": tableClient("kimi"),
+  "kiro-cli": tableClient("kiro"),
+  mastracode: tableClient("mastracode"),
+  mcporter: tableClient("mcporter"),
+  opencode: tableClient("opencode"),
+  pi: tableClient("pi"),
+  vscode: tableClient("vscode"),
+  windsurf: tableClient("windsurf"),
+  zed: tableClient("zed"),
+  amp: tableClient("amp"),
+} as const satisfies Record<string, CatalogEntry>;
 
 export type McpRegistrationClientId = keyof typeof MCP_REGISTRATION_CLIENTS;
 
-const ALIASES = {
-  "cline-vscode": "cline",
-  codeium: "windsurf",
-  cascade: "windsurf",
-  droid: "factory-droid",
-  factory: "factory-droid",
-  gemini: "gemini-cli",
-  "github-copilot": "vscode",
-  grok: "grok-build",
-  "hermes-agent": "hermes",
-  kilo: "kilo-code",
-  kilocode: "kilo-code",
-  kimi: "kimi-code",
-  kiro: "kiro-cli",
-  mastra: "mastracode",
-  "pi-agent": "pi",
-} as const satisfies Record<string, McpRegistrationClientId>;
-
 const isClientId = (value: string): value is McpRegistrationClientId =>
   Object.hasOwn(MCP_REGISTRATION_CLIENTS, value);
+
+/** Project one agent's facts from its owner: the table row, or its pending descriptor. */
+const clientDescriptor = (id: McpRegistrationClientId): ClientDescriptor => {
+  const entry: CatalogEntry = MCP_REGISTRATION_CLIENTS[id];
+  if (entry.kind === "registration-only") {
+    const { registrationConnection, ...facts } = entry;
+    return {
+      aliases: [],
+      ...facts,
+      // Pending clients bind their add-mcp id as the native identity.
+      registrationProfile: {
+        nativeClient: id,
+        connection: registrationConnection,
+      },
+    };
+  }
+  const row = supportedClientDefinition(entry.name);
+  if (row.format === "unsupported")
+    throw new Error(`${row.name} has no registration format`);
+  const projectPaths = row.mcpAdd?.projectPaths;
+  return {
+    displayName: row.displayName,
+    format: row.format,
+    aliases: row.mcpAdd?.aliases ?? [],
+    globalLocation: fromSetup(entry.name),
+    ...(projectPaths === undefined
+      ? {}
+      : { projectLocation: fixedProjectLocation(projectPaths) }),
+    ...(row.mcpAdd?.projectFormat === undefined
+      ? {}
+      : { projectFormat: row.mcpAdd.projectFormat }),
+    registrationProfile: row.registrationProfile,
+    setupName: entry.name,
+  };
+};
 
 const resolveMcpRegistrationClientId = (
   input: string,
 ): McpRegistrationClientId | undefined => {
   const lower = input.toLowerCase();
   if (isClientId(lower)) return lower;
-  return Object.entries(ALIASES).find(([alias]) => alias === lower)?.[1];
+  return Object.keys(MCP_REGISTRATION_CLIENTS)
+    .filter(isClientId)
+    .find((id) => clientDescriptor(id).aliases.includes(lower));
 };
 
 export interface McpRegistrationClient {
@@ -374,7 +239,16 @@ export interface McpRegistrationClient {
   readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
   readonly scope: "global" | "project";
   readonly format: ClientConfigurationFormat;
-  readonly privateProfile?: true;
+  /**
+   * fx keeps a profile only its owner may read. `home` is the caller's home
+   * folder, which the private folder mode must never reach through a link.
+   */
+  readonly privateProfile?: { readonly home: string };
+  /**
+   * The table row resolved for this user-scope registration. Its read-scope
+   * facts (Gemini settings policy, MSIX package storage) govern the write.
+   */
+  readonly setupClient?: SetupClient;
 }
 
 export interface McpRegistrationSelection {
@@ -389,10 +263,7 @@ export interface McpRegistrationSelection {
 
 type CatalogFailure = ConfigurationError | AnalysisCancelledError;
 const checkCancellation = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError("MCP registration selection", {
-      cause: signal.reason,
-    });
+  if (signal?.aborted) throw cancelledBy("MCP registration selection", signal);
 };
 
 const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
@@ -408,24 +279,16 @@ const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
   return ids;
 };
 
-/** Existing setup bindings retain their exact profile; additional clients bind the descriptor key. */
+/** Table rows retain their exact profile; pending clients bind the descriptor key. */
 export const mcpClientRegistrationProfile = (
   id: McpRegistrationClientId,
-): ClientRegistrationProfile => {
-  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
-  return (
-    descriptor.registrationProfile ?? {
-      nativeClient: id,
-      connection: descriptor.registrationConnection,
-    }
-  );
-};
+): ClientRegistrationProfile => clientDescriptor(id).registrationProfile;
 
 const projectTarget = async (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationClient> => {
-  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
+  const descriptor = clientDescriptor(id);
   if (descriptor.projectLocation === undefined)
     throw new ConfigurationError(
       `${descriptor.displayName} has no project-scoped registration. Remove --no-global or select a project-capable client; no settings were written.`,
@@ -445,8 +308,12 @@ const globalTarget = async (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
 ): Promise<{ client: McpRegistrationClient; markers: readonly string[] }> => {
-  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
+  const descriptor = clientDescriptor(id);
   const resolved = await descriptor.globalLocation(context);
+  const setupClient =
+    descriptor.setupName === undefined
+      ? undefined
+      : context.setup.find(({ name }) => name === descriptor.setupName);
   return {
     client: {
       id,
@@ -465,10 +332,33 @@ const globalTarget = async (
       ...(resolved.inlineConfiguration === undefined
         ? {}
         : { inlineConfiguration: resolved.inlineConfiguration }),
-      ...(id === "fx" ? { privateProfile: true } : {}),
+      ...(id === "fx" ? { privateProfile: { home: context.home } } : {}),
+      ...(setupClient === undefined ? {} : { setupClient }),
     },
     markers: resolved.markers.map((marker) => selectedPath(marker, context)),
   };
+};
+
+/**
+ * Refuse writes a running MSIX client would overwrite, or that this process's
+ * MSIX AppData redirection would divert, exactly as setup does.
+ */
+const msixWriteBlocker = (
+  clients: readonly McpRegistrationClient[],
+  context: McpRegistrationLocationContext,
+): string | undefined => {
+  for (const { setupClient } of clients) {
+    const blocker =
+      setupClient === undefined
+        ? undefined
+        : registrationWriteBlocker(setupClient, "mcp add");
+    if (blocker !== undefined) return blocker;
+  }
+  return redirectedWriteBlocker(
+    appDataRedirection(context.setup),
+    clients.map(({ configPath }) => configPath),
+    "mcp add",
+  );
 };
 
 const validateJunieGlobal = async (
@@ -538,6 +428,18 @@ const validateJunieGlobal = async (
   }
 };
 
+/** User-scope read-scope rules that must hold before any target is written. */
+const admitGlobalTargets = async (
+  clients: readonly McpRegistrationClient[],
+  context: McpRegistrationLocationContext,
+): Promise<void> => {
+  const junie = clients.find((client) => client.id === "junie");
+  if (junie) await validateJunieGlobal(junie, context);
+  const blocker = msixWriteBlocker(clients, context);
+  if (blocker !== undefined)
+    throw new ConfigurationError(`${blocker} No settings were written.`);
+};
+
 /** Resolve all selected paths before any registration writer receives authority. */
 export const resolveMcpRegistrationClients = async (
   selection: McpRegistrationSelection,
@@ -572,10 +474,7 @@ export const resolveMcpRegistrationClients = async (
             : await projectTarget(id, context),
         );
       }
-      if (selection.global) {
-        const junie = clients.find((client) => client.id === "junie");
-        if (junie) await validateJunieGlobal(junie, context);
-      }
+      if (selection.global) await admitGlobalTargets(clients, context);
       checkCancellation(selection.signal);
       return ok(clients);
     }
@@ -594,8 +493,7 @@ export const resolveMcpRegistrationClients = async (
     const amp = (await globalTarget("amp", context)).client;
     checkCancellation(selection.signal);
     const selected = [...(detected.length === 0 ? all : detected), amp];
-    const junie = selected.find((client) => client.id === "junie");
-    if (junie) await validateJunieGlobal(junie, context);
+    await admitGlobalTargets(selected, context);
     return ok(selected);
   } catch (cause: unknown) {
     const failure =
@@ -611,9 +509,7 @@ export const resolveMcpRegistrationClients = async (
     if (selection.signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("MCP registration selection", {
-          cause: selection.signal.reason,
-        }),
+        cancelledBy("MCP registration selection", selection.signal),
       );
     return err(failure);
   }

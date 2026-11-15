@@ -15,7 +15,9 @@ not establish live model-service acceptance.
 
 `rea mcp doctor --json` starts the production MCP adapter with the current runtime
 executable and environment. A healthy result establishes that adapter's
-initialization, discovery and target-free request flow; it does not verify a
+initialization, discovery and target-free request flow, with the request-flow
+reply validated against the canonical `binary_session` output contract whatever
+output schema profile the server lists. It does not verify a
 client's configured launcher or its inherited environment. Test the generated
 registration through the actual client, including a reduced `PATH` when checking
 desktop or service startup. Record the client version and launch environment
@@ -48,8 +50,9 @@ and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5a
 The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
 using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
 That run checked client config listing and a direct registered-server MCP
-handshake (254 tools on that build). It predates the verifier lifecycle changes
-below and does not establish their real-client behavior.
+handshake that listed the complete catalog of that build. It predates the
+verifier lifecycle changes below and does not establish their real-client
+behavior.
 
 `npm run verify:cline-client` creates its sandbox home before launching commands
 and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
@@ -80,9 +83,9 @@ does not write in this release.
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
 macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
-published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+published `rea-agents@6.5.0` package. `GET /tools` exposed REA tools without
 enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
-207 forwarded names, descriptions and input schemas matched a direct MCP client.
+forwarded names, descriptions and input schemas matched a direct MCP client.
 
 Calls through `POST /tools` returned session metadata and JavaScript analysis
 Evidence for a fixture at a Unicode path. A missing target returned REA's input

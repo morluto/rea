@@ -1,3 +1,5 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipInspectionCancelled,
@@ -19,13 +21,14 @@ import {
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { createDarwinHelperCache } from "./DarwinHelperCache.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 import {
@@ -266,8 +269,8 @@ const compilerFailureFacts = (
   | undefined => {
   const failure = execFileOutputFailure(cause);
   if (failure === undefined) return undefined;
-  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
-  const stdout = boundedUtf8Text(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
+  const stderr = utf8HeadExcerpt(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
+  const stdout = utf8HeadExcerpt(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
   const outcome =
     failure.code === "ETIMEDOUT"
       ? "timed_out"
@@ -336,7 +339,7 @@ const compilerInspectionError = (
     code === "ENOENT"
       ? `macOS process ownership inspection requires the Apple Swift compiler via ${launcher}`
       : `macOS process ownership helper compilation failed via ${launcher}`;
-  const stderr = boundedUtf8Text(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
+  const stderr = utf8HeadExcerpt(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
   const diagnostics = stderr.text.trim();
   const truncated =
     stderr.truncated ||
@@ -370,7 +373,8 @@ const compilerInspectionError = (
 interface ProcessReaderRoot {
   readonly path: string;
   cleanupPromise?: Promise<void> | undefined;
-  cleanupAnchor?: ProviderCleanupError | undefined;
+  /** Reported by every removal failure until a retry removes the root. */
+  cleanupRelease?: AnalysisCleanupRelease | undefined;
 }
 
 interface ProcessReaderCompilation {
@@ -462,7 +466,10 @@ export const createDarwinProcessRunTokenReader = (
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const environment = snapshotEnvironment(
+    options.environment ?? process.env,
+    HOST_PLATFORM.platform,
+  );
   const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
     ...options,
     environment,
@@ -508,13 +515,12 @@ export const createDarwinProcessRunTokenReader = (
             },
             { cause, operation: "prepare_owned_process" },
           );
-          if (target.cleanupAnchor === undefined)
-            target.cleanupAnchor = failure;
-          else failure.bindCleanupDependencies([target.cleanupAnchor]);
-          throw failure;
+          throw (target.cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+            failure,
+          );
         }
-        target.cleanupAnchor?.resolveCleanup();
-        target.cleanupAnchor = undefined;
+        target.cleanupRelease?.confirm();
+        target.cleanupRelease = undefined;
         if (root !== target) return;
         root = undefined;
         executable = undefined;
@@ -697,7 +703,7 @@ export const createDarwinProcessRunTokenReader = (
         !operation.aborting
       ) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.noLongerNeeded);
         const finalized = await operation.promise;
         if (
           waited.kind === "cancelled" &&
@@ -873,7 +879,7 @@ export const createDarwinProcessRunTokenReader = (
       const operation = compilation;
       if (operation !== undefined && !operation.settled) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.ownerClosed);
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);

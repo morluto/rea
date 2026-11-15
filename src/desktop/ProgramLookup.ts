@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
-import { delimiter, isAbsolute } from "node:path";
+
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 
 const isExecutable = async (path: string): Promise<boolean> => {
   try {
@@ -10,10 +12,6 @@ const isExecutable = async (path: string): Promise<boolean> => {
     return false;
   }
 };
-
-/** A path without empty or `.` segments, which name nothing; `..` stays, since it climbs from a link's target. */
-const tidy = (path: string): string =>
-  path.replace(/\/(?:\.?\/)+/gu, "/").replace(/(?<=.)\/\.?$/u, "");
 
 /** A program as found, and whether a relative or empty PATH entry found it. */
 export interface FoundProgram {
@@ -32,18 +30,21 @@ export const resolveProgram = async (
   environment: Readonly<Record<string, string | undefined>>,
   startedIn: string,
 ): Promise<FoundProgram | undefined> => {
-  const from = (path: string) =>
-    tidy(isAbsolute(path) ? path : `${startedIn}/${path}`);
   if (program.includes("/")) {
-    const path = from(program);
+    const path = absoluteCallerPath(program, { cwd: startedIn });
     return (await isExecutable(path))
       ? { path, fromRelativeEntry: false }
       : undefined;
   }
-  for (const directory of environment.PATH?.split(delimiter) ?? []) {
-    const path = from(directory === "" ? program : `${directory}/${program}`);
-    if (await isExecutable(path))
-      return { path, fromRelativeEntry: !isAbsolute(directory) };
-  }
+  if (environment.PATH === undefined) return undefined;
+  for (const candidate of posixPathCandidates(program, environment.PATH, {
+    relativeEntries: "resolve",
+    workingDirectory: startedIn,
+  }))
+    if (await isExecutable(candidate.path))
+      return {
+        path: candidate.path,
+        fromRelativeEntry: candidate.relativeEntry,
+      };
   return undefined;
 };

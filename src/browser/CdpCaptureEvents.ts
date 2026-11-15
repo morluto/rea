@@ -3,6 +3,7 @@ import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import * as bodyShapes from "./CdpCaptureEventBodyShapes.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
@@ -10,6 +11,10 @@ import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
 import { recordValue } from "./CdpCaptureValues.js";
+import {
+  CdpDocumentTracker,
+  type CdpDocumentIdentity,
+} from "./CdpTargetSession.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -53,10 +58,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     "metadata",
   ]);
   originViolation = false;
-  navigationDuringCapture = false;
   unknownRootIdentity = false;
-  mainFrameId: string | undefined = undefined;
-  committedDocument: string | undefined = undefined;
+  document: CdpDocumentTracker | undefined = undefined;
 
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -66,13 +69,11 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.allowedOrigins = allowedOrigins;
   }
 
-  beginAuthorizedFrame(frameId: string): void {
-    this.mainFrameId = frameId;
+  beginAuthorizedFrame(document: CdpDocumentIdentity): void {
+    this.document = new CdpDocumentTracker(document);
     this.#coverageStarts.clear();
     this.originViolation = false;
-    this.navigationDuringCapture = false;
     this.unknownRootIdentity = false;
-    this.committedDocument = undefined;
     this.scripts.clear();
     this.scriptMetadataBudgetOmissionsById.clear();
     this.rejectedScriptMetadataBudgetCount = 0;
@@ -115,18 +116,6 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     return started;
   }
 
-  beginFinalCapture(frameId: string): void {
-    this.mainFrameId = frameId;
-    // Deliberately does not clear `navigationDuringCapture`. A main-frame
-    // navigation observed during the observation window means the page never
-    // settled, and clearing the flag here reported the capture as clean while
-    // carrying pre-navigation scripts, network and console into the inventory
-    // of the new document. The caller now reports `target_changed` instead.
-    // `committedDocument` is dropped so the new document's frame events are
-    // compared against itself rather than the document we just left.
-    this.committedDocument = undefined;
-  }
-
   /** Record final script metadata omissions after all scriptParsed replacements. */
   recordScriptMetadataBudgetExclusions(): void {
     if (this.#scriptMetadataBudgetExclusionsRecorded) return;
@@ -150,7 +139,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   }
 
   ingest(event: CdpEvent): void {
-    if (this.mainFrameId !== undefined) {
+    if (this.document !== undefined) {
       if (event.method.startsWith("Network."))
         this.markDomainEnabled("Network");
       if (event.method.startsWith("Runtime."))
@@ -274,13 +263,17 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     }
   }
 
-  ingestResponseBody(candidate: ResponseBodyCandidate, value: unknown): void {
+  /** `"malformed"` records the body shape as an invalid protocol value. */
+  ingestResponseBody(
+    candidate: ResponseBodyCandidate,
+    reply: CdpCommandResult<"Network.getResponseBody"> | "malformed",
+  ): void {
     if (this.currentResponseBodyRequest(candidate) === undefined) return;
     this.#responseBodyExaminedOccurrences.set(
       candidate.requestId,
       candidate.occurrence,
     );
     if (this.malformedRedirectRequestIds.has(candidate.requestId)) return;
-    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, value);
+    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, reply);
   }
 }

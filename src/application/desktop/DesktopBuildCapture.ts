@@ -2,7 +2,7 @@ import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
   SIGN_IN_END,
@@ -214,8 +214,7 @@ const checkExportRuntime = async (
       );
     return ok(undefined);
   } catch (cause: unknown) {
-    if (signal.aborted)
-      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
+    if (signal.aborted) return err(cancelledBy(START, signal));
     const message = errorText(cause);
     const redacted = computer.redacted(message);
     return err(
@@ -679,7 +678,7 @@ export class DesktopBuildCapture {
         cause instanceof AnalysisError
           ? cause
           : signal.aborted
-            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            ? cancelledBy(EXPORT, signal)
             : adapterError(EXPORT, errorText(cause), cause),
       );
     }

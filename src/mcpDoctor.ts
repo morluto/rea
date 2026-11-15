@@ -1,4 +1,5 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
+import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
 import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
@@ -15,7 +16,10 @@ import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
 } from "./config/mcpInputSchemaProfile.js";
-import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+import {
+  parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
+} from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
 import {
@@ -24,6 +28,8 @@ import {
   progressiveCatalogIdentity,
 } from "./catalogDiscovery.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
+import { toolContract } from "./contracts/toolContracts.js";
+import { advertisedOutputJsonSchema } from "./contracts/toolSchemaMetadata.js";
 import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
@@ -38,6 +44,7 @@ import {
 } from "./mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
+import { isRecord } from "./domain/isRecord.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -135,7 +142,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     },
     stderr.append,
   );
-  const client = new Client({ name: "rea-mcp-doctor", version: "1" });
+  const client = new OwnedMcpClient({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
   try {
@@ -268,18 +275,23 @@ const inspectProductionMcpSession = async (
     promptsRequest,
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
+  // The reply is checked against the canonical output contract, not the
+  // listing: the default output profile omits output schemas and `compact`
+  // widens them, so the listed schema cannot establish a valid reply.
+  const toolDefinition = {
+    ...(sessionTool ?? {
+      name: "binary_session",
+      inputSchema: { type: "object" as const },
+    }),
+    outputSchema: advertisedOutputJsonSchema(toolContract("binary_session")),
+  };
   // A scope without the session family cannot serve request flow at all;
   // every other case still probes the call so the report names the real cause.
   const requestFlow = expectation.expectedToolNames.includes("binary_session")
     ? await client
         .callTool(
           { name: "binary_session", arguments: {} },
-          {
-            ...requestOptions(deadline, signal),
-            ...(sessionTool === undefined
-              ? {}
-              : { toolDefinition: sessionTool }),
-          },
+          { ...requestOptions(deadline, signal), toolDefinition },
         )
         .then(ok, (cause: unknown) =>
           err({
@@ -623,9 +635,9 @@ const doctorExpectationForEnvironment = (
       inputProfile.ok ? inputProfile.value : undefined,
     ),
     contracts,
-    outputSchemaProfile: outputProfile.ok
-      ? (outputProfile.value ?? "full")
-      : "full",
+    outputSchemaProfile: resolveMcpOutputSchemaProfile(
+      outputProfile.ok ? outputProfile.value : undefined,
+    ),
     promptContracts,
   });
   return {
@@ -670,9 +682,6 @@ const captureStderr = () => {
     }),
   };
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);

@@ -607,3 +607,69 @@ it("reports the repeated variant-name refusal as a fixed report allowance", asyn
     await provider.close();
   }
 });
+
+it("reads POM values written as CDATA and as mixed text and CDATA", () => {
+  const report = parse(`<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId><![CDATA[com.example]]></groupId>
+  <artifactId>demo</artifactId>
+  <version>1.<![CDATA[2.]]>3</version>
+  <properties><revision><![CDATA[1.2.3]]></revision></properties>
+</project>`);
+  expect(report.coordinates).toMatchObject({
+    group_id: "com.example",
+    version: "1.2.3",
+  });
+  expect(report.properties).toContainEqual({
+    name: "revision",
+    value: "1.2.3",
+  });
+});
+
+it.for([
+  `<project name="demo" default="build"><target name="build"/></project>`,
+  `<project xmlns="urn:example:other"><artifactId>demo</artifactId></project>`,
+])("refuses a non-Maven project document %s as unsupported", (source) => {
+  expectFailure(source, "unsupported");
+});
+
+const gradleModule = (variant: string) =>
+  `{"formatVersion":"1.1","component":{"group":"g","module":"m","version":"1"},"variants":[${variant}]}`;
+
+it.for([
+  gradleModule(`{"name":"v","dependencies":{"group":"a"}}`),
+  gradleModule(`{"name":"v","dependencyConstraints":"none"}`),
+  gradleModule(`{"name":"v","dependencies":[null]}`),
+  gradleModule(`null`),
+  `{"formatVersion":"1.1","component":{"group":"g","module":"m"},"variants":{}}`,
+])(
+  "refuses Gradle metadata with an unreadable present collection %s",
+  (source) => {
+    expectFailure(source, "malformed");
+  },
+);
+
+it.for([
+  [
+    "Gradle",
+    gradleModule(
+      `{"name":"v","dependencies":[${Array(65_537).fill("{}").join(",")}]}`,
+    ),
+  ],
+  [
+    "POM",
+    `<project><artifactId>demo</artifactId><dependencies>${"<dependency/>".repeat(65_537)}</dependencies></project>`,
+  ],
+] as const)(
+  "refuses %s rows past the report allowance before building them",
+  ([, source]) => {
+    const bytes = Buffer.from(source, "utf8");
+    expect(() =>
+      parseMavenGradleMetadata(bytes, {
+        path: "/artifacts/selected",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      }),
+    ).toThrow(/65537 dependency and constraint rows, above the 65536-row/u);
+  },
+);

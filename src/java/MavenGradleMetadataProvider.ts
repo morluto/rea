@@ -15,8 +15,6 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { MavenGradleMetadataPort } from "../application/java/MavenGradleMetadataPort.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -42,7 +40,12 @@ import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
 const OPERATION = "inspect_maven_gradle_metadata";
 
 /** Portable parser over one bounded, identity-checked POM or module-metadata file. */
-export class MavenGradleMetadataProvider implements MavenGradleMetadataPort {
+/**
+ * Satisfies the application's MavenGradleMetadataPort structurally;
+ * composition checks the fit, so this provider does not import the
+ * application layer.
+ */
+export class MavenGradleMetadataProvider {
   readonly identity = MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
@@ -60,7 +63,7 @@ export class MavenGradleMetadataProvider implements MavenGradleMetadataPort {
 
   async inspect(
     input: InspectMavenGradleMetadataInput,
-    options?: ExecutionOptions,
+    options?: { readonly signal?: AbortSignal },
   ) {
     let snapshot: StableArtifactSnapshot | undefined;
     try {
@@ -107,11 +110,13 @@ const mavenGradleMetadataFailurePrimary = (
       OPERATION,
       "memory",
       cause.message,
-      { repeated_variant_name_chars: cause.allowance },
+      { [cause.allowance]: cause.limit },
       {
         cause,
         ...fixedAllowanceOptions(
-          `The ${String(cause.allowance)}-character allowance for variant names repeated across Gradle dependency rows`,
+          cause.allowance === "dependency_rows"
+            ? `The ${String(cause.limit)}-row allowance for dependency and constraint rows`
+            : `The ${String(cause.limit)}-character allowance for variant names repeated across Gradle dependency rows`,
           "report",
         ),
       },

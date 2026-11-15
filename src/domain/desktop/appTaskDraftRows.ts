@@ -4,14 +4,10 @@ import { countTaskRows } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { sqliteRowIdentity } from "./stateChanges.js";
 import { appendAll } from "../appendAll.js";
+import { isRecord } from "../isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 interface TableView {
   readonly columns: readonly string[];

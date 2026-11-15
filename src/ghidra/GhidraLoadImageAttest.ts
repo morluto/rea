@@ -1,6 +1,6 @@
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -52,8 +52,7 @@ export const attestGhidraNativeLoadImage = async (
   if (!result.ok) return result;
   return input.signal?.aborted
     ? err(
-        new AnalysisCancelledError(input.operation, {
-          cause: input.signal.reason,
+        cancelledBy(input.operation, input.signal, {
           partialObservation: {
             kind: "native-load-image",
             stage: "completed",
@@ -134,8 +133,7 @@ const compareLoadImage = async (
   }
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: {
           kind: "native-load-image",
           stage: "measured",
