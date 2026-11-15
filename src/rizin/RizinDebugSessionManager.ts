@@ -446,10 +446,8 @@ export class RizinDebugSessionManager {
         cancellation === undefined
           ? undefined
           : cancelledBy(operation, carriedReason(cancellation.reason));
-      const describe = (failure: unknown): string => {
-        const physical = stableFileHashCause(failure);
-        return physical instanceof Error ? physical.message : String(physical);
-      };
+      const describe = (failure: unknown): string =>
+        errorMessage(stableFileHashCause(failure));
       if (!(cause instanceof RegularFileCleanupFailure)) {
         if (cancelled !== undefined) return err(cancelled);
         return ok({
