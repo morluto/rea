@@ -11,12 +11,20 @@ import {
   isZeroFilledSpan,
   type ElfDynamicSegment,
 } from "./BinaryContainer.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
-/** Shared loader interpretation; language adapters choose their public errors. */
-export class ElfPointerRelocationFailure extends Error {
-  /** The exceeded workspace bound, set only for `native-index-capacity`. */
-  readonly maximum: number | undefined;
-  /** What `maximum` counts, set only for `native-index-capacity`. */
+/** The ParseFailure format of ELF loader pointer interpretation. */
+export const ELF_POINTER_RELOCATION_FORMAT = "elf-pointer-relocations";
+
+/**
+ * Shared loader interpretation; language adapters choose their public errors.
+ * The stable `reason` names the loader rule; `native-index-capacity` is a
+ * ParseFailure `limit` carrying the exceeded maximum.
+ */
+export class ElfPointerRelocationFailure extends ParseFailureError<
+  "malformed" | "unsupported" | "limit"
+> {
+  /** What the limit's maximum counts, set only for `native-index-capacity`. */
   readonly unit: "entries" | "bytes" | undefined;
   constructor(
     reason:
@@ -41,9 +49,21 @@ export class ElfPointerRelocationFailure extends Error {
     maximum?: number,
     unit?: "entries" | "bytes",
   ) {
-    super(message);
-    this.maximum = maximum;
+    const facts = { format: ELF_POINTER_RELOCATION_FORMAT, detail: message };
+    super(
+      maximum !== undefined
+        ? { ...facts, kind: "limit", limit: { name: reason, maximum } }
+        : reason === "malformed-container"
+          ? { ...facts, kind: "malformed" }
+          : {
+              ...facts,
+              kind: "unsupported",
+              // A pointer the loader encodes in an unread form still ships.
+              undecodedContent: reason === "unsupported-pointer-encoding",
+            },
+    );
     this.unit = unit;
+    this.name = "ElfPointerRelocationFailure";
   }
 }
 export interface ElfPointerRelocationSource {
