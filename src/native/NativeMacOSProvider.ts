@@ -150,7 +150,7 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
-import { ParseFailureError } from "../domain/parseFailure.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
   MachoCommandNamesLimitError,
   readMachoCommandNames,
@@ -1748,8 +1748,9 @@ const nativeMachoSourcePrimary = (
       { maximum: cause.maximum, unit: cause.unit },
       { cause, retryable: false },
     );
-  if (cause instanceof ParseFailureError && cause.kind !== "limit")
-    return new AnalysisOutputError(operation, cause.message, { cause });
+  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const completed =
     cause instanceof NativeMachoSourceVerificationFailure
       ? cause.completed
