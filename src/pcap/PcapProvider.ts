@@ -1,3 +1,7 @@
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { PCAP_PROVIDER_IDENTITY } from "./PcapProviderIdentity.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
@@ -21,7 +25,6 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -64,7 +67,6 @@ import { preparePcapNativeBound } from "./PcapNativeBound.js";
 import { PcapSnapshot } from "./PcapSnapshot.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -304,23 +306,21 @@ export class PcapProvider {
     try {
       return await this.#resources.read(path, 64 * 1024 * 1024, signal);
     } catch (cause) {
-      if (cause instanceof AnalysisError) throw cause;
+      // The caller reports a cancelled read as the request's cancellation.
       if (
         cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled"
       )
         throw cause;
-      const classify = (failure: unknown) =>
-        failure instanceof AnalysisError
-          ? failure
-          : pcapToolUnavailable(
-              operation,
-              `Cannot read selected Wireshark tool ${path}: ${failure instanceof Error ? failure.message : String(failure)}`,
-              { cause: failure },
-            );
-      throw cause instanceof ArtifactReaderFailure
-        ? this.#resources.cleanupFailure(cause, classify, undefined, operation)
-        : classify(cause);
+      throw classifyProviderFailure(cause, {
+        ...this.#failureDialect(operation),
+        unclassified: (failure) =>
+          pcapToolUnavailable(
+            operation,
+            `Cannot read selected Wireshark tool ${path}: ${failure instanceof Error ? failure.message : String(failure)}`,
+            { cause: failure },
+          ),
+      });
     }
   }
 
@@ -433,7 +433,10 @@ export class PcapProvider {
         retainedCommand?.retainFailure(pending);
         // The classified failure may own its own cleanup, such as an
         // executable re-read whose file close failed; keep both live.
-        const primary = this.analysisFailure(cause, operation);
+        const primary = classifyProviderFailure(
+          cause,
+          this.#failureDialect(operation),
+        );
         throw analysisErrorWithCleanupFailure(
           primary,
           pending,
@@ -797,45 +800,26 @@ export class PcapProvider {
     }, options?.signal);
   }
 
-  /** Classify a request failure the same way for every pcap operation. */
-  private analysisFailure(
-    cause: unknown,
-    operation: PcapOperation,
-  ): AnalysisError {
-    const classifyArtifactFailure = (failure: unknown): AnalysisError =>
-      failure instanceof AnalysisError
-        ? failure
-        : failure instanceof ArtifactReaderFailure &&
-            failure.reason === "cancelled"
-          ? cancelledBy(
-              operation,
-              carriedReason(artifactFileCancellationCause(failure)),
-              failure.partialObservation === undefined
-                ? {}
-                : { partialObservation: failure.partialObservation },
-            )
-          : new AnalysisProtocolError(
-              `Packet-capture analysis failed: ${failure instanceof Error ? failure.message : String(failure)}`,
-              { cause: failure },
-            );
-    return cause instanceof ArtifactReaderFailure
-      ? this.#resources.cleanupFailure(
-          cause,
-          classifyArtifactFailure,
-          undefined,
-          operation,
-        )
-      : cause instanceof AnalysisError
-        ? cause
-        : cause instanceof PcapConfigurationFailure
+  /** The pcap dialect for the shared provider failure classifier. */
+  #failureDialect(operation: PcapOperation): ProviderFailureDialect {
+    return {
+      providerId: PCAP_PROVIDER_IDENTITY.id,
+      operation,
+      recognise: (cause) =>
+        cause instanceof PcapConfigurationFailure
           ? pcapToolUnavailable(operation, cause.message, {
               cause,
               diagnostics: cause.diagnostics,
             })
-          : new AnalysisProtocolError(
-              `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-              { cause },
-            );
+          : undefined,
+      readCleanup: (read, primary) =>
+        this.#resources.readCleanupFailure(read, primary, undefined, operation),
+      unclassified: (cause) =>
+        new AnalysisProtocolError(
+          `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { cause },
+        ),
+    };
   }
 
   private async executeAdmitted(
@@ -893,7 +877,9 @@ export class PcapProvider {
         );
       }
     } catch (cause) {
-      result = err(this.analysisFailure(cause, request.operation));
+      result = err(
+        classifyProviderFailure(cause, this.#failureDialect(request.operation)),
+      );
     }
     if (signal?.aborted && result.ok)
       result = err(

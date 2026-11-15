@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
+import {
+  keyedBy,
+  uniqueKeyed,
+  type Keyed,
+} from "../../domain/keyedCollection.js";
 
 import { artifactExpansionBudgetBytes } from "../../domain/artifactExpansionBudget.js";
 import type {
@@ -83,8 +88,29 @@ const capacityFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "capacity" });
 const nodeName = (node: FitNode): string =>
   node.path.slice(node.path.lastIndexOf("/") + 1);
-const propertyOf = (node: FitNode, name: string): FitProperty | undefined =>
-  node.properties.find((property) => property.name === name);
+/**
+ * A node's one property of a name. The devicetree parser already refuses a
+ * repeated property name in a node as malformed, as dtc does; a repeat here
+ * is the same malformed structure, not a first-wins choice.
+ */
+const propertiesByNode = new WeakMap<FitNode, Keyed<FitProperty>>();
+/** Key a node's properties once; every lookup on the node reuses the view. */
+const keyedProperties = (node: FitNode): Keyed<FitProperty> => {
+  let keyed = propertiesByNode.get(node);
+  if (keyed === undefined) {
+    keyed = keyedBy(node.properties, (candidate) => candidate.name);
+    propertiesByNode.set(node, keyed);
+  }
+  return keyed;
+};
+const propertyOf = (node: FitNode, name: string): FitProperty | undefined => {
+  const property = uniqueKeyed(keyedProperties(node), name);
+  if (!property.ok)
+    throw formatFailure(
+      `${node.path} declares property ${name} more than once`,
+    );
+  return property.value;
+};
 const valueOf = (fdt: Buffer, property: FitProperty): Buffer =>
   fdt.subarray(property.offset, property.offset + property.bytes);
 
