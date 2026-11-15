@@ -385,7 +385,7 @@ const referenceShape = {
 /** Exact producer facts recoverable before a later semantic worker failure. */
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
-    parse_status: z.enum(["complete", "partial", "failed"]),
+    parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
     analysis_coverage: javaScriptStaticCoverageSchema,
     routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
