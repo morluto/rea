@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ReverseEngineeringServiceRuntimeOptions } from "../application/reverse/ReverseEngineeringService.js";
 import type {
   ReverseEngineeringCommandPort,
@@ -27,7 +28,7 @@ import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecut
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): ReverseEngineeringCommandPort => ({
   objdump: (input) =>
     selectCommand(
