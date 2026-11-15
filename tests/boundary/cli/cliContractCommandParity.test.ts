@@ -4,10 +4,15 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../../../src/cli.js";
 import {
   describeContractCommand,
+  describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
 } from "../../../src/cli/contractCliDescription.js";
-import { contractCommandDescriptions } from "../../../src/cli/contractCommand.js";
+import {
+  contractCommandDescriptions,
+  contractDocumentCommandDescriptions,
+} from "../../../src/cli/contractCommand.js";
+import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
   visitRegisteredCommands,
   type RegisteredCommand,
@@ -711,5 +716,153 @@ describe("Evidence delivery of contract commands", () => {
         { command: "probe", description: "Probe" },
       ),
     ).toThrow("probe.detail differs between input branches");
+  });
+});
+
+const documents = contractDocumentCommandDescriptions(cli).map(
+  (description) => [description.command, description] as const,
+);
+
+/** The JSON Schemas a property path can reach, through unions. */
+const reachable = (
+  schema: Record<string, unknown>,
+  path: readonly string[],
+): Record<string, unknown>[] => {
+  // A typed schema keeps its own type; `allOf` there only adds constraints.
+  const branches =
+    schema.type !== undefined
+      ? []
+      : ["anyOf", "oneOf", "allOf"].flatMap((keyword) =>
+          Array.isArray(schema[keyword])
+            ? (schema[keyword] as Record<string, unknown>[])
+            : [],
+        );
+  if (branches.length > 0)
+    return branches.flatMap((branch) => reachable(branch, path));
+  const [head, ...rest] = path;
+  if (head === undefined) return [schema];
+  const properties = schema.properties as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  const next = properties?.[head];
+  return next === undefined ? [] : reachable(next, rest);
+};
+
+describe("JSON-document contract commands", () => {
+  it("registers the migrated document commands", () => {
+    expect(documents.map(([command]) => command)).toEqual(
+      expect.arrayContaining([
+        "compare-wasm-interfaces",
+        "import-managed-reconstruction",
+        "verify-managed-native-boundaries",
+        "project-managed-application-graph",
+        "trace-application-feature",
+        "trace-javascript-semantics",
+        "compare-application-versions",
+        "compare-javascript-export-shapes",
+        "project-android-application-graph",
+        "project-apple-application-graph",
+        "project-harmony-application-graph",
+        "reconcile-javascript-runtime",
+        "capture-electron-scenario",
+        "compare-artifacts",
+        "inspect-analysis-view",
+        "match-native-functions",
+      ]),
+    );
+  });
+
+  it.each(documents)(
+    "%s takes one JSON document whose --schema is its contract input",
+    (_command, description) => {
+      const command = registered.get(description.command)!;
+      const args = (command.args as z.ZodObject).shape;
+      expect(Object.keys(args)).toEqual([description.key]);
+      const advertised = (args[description.key] as z.ZodType).meta();
+      expect(advertised?.contentMediaType).toBe("application/json");
+      const content = advertised?.contentSchema as Record<string, unknown>;
+      expect(content).toEqual(jsonInputContentSchema(description.content));
+      // Every contract field reaches the document unless omitted with a reason.
+      const input = inputJsonSchema(description.contract.inputSchema);
+      const fields = new Set(
+        reachable(input, []).flatMap((branch) =>
+          Object.keys(
+            (branch.properties as Record<string, unknown> | undefined) ?? {},
+          ),
+        ),
+      );
+      for (const field of fields)
+        expect(
+          reachable(content, [field]).length > 0 ||
+            Object.hasOwn(description.omitted, field),
+          field,
+        ).toBe(true);
+      for (const field of Object.keys(description.omitted))
+        expect(reachable(content, [field]), field).toEqual([]);
+      expect(
+        Object.keys(
+          (command.options as z.ZodObject | undefined)?.shape ?? {},
+        ).toSorted(),
+      ).toEqual(description.cliOnlyOptions.map(({ key }) => key).toSorted());
+    },
+  );
+
+  it.each(documents.filter(([, { callerPaths }]) => callerPaths.length > 0))(
+    "%s resolves only caller paths its contract declares as strings",
+    (_command, description) => {
+      const input = inputJsonSchema(description.contract.inputSchema);
+      for (const path of description.callerPaths) {
+        const targets = reachable(input, path);
+        expect(targets.length, path.join(".")).toBeGreaterThan(0);
+        for (const target of targets)
+          expect(target.type, path.join(".")).toBe("string");
+      }
+    },
+  );
+
+  it("refuses omissions the document cannot make and options that shadow it", () => {
+    const contract = {
+      name: "probe",
+      inputSchema: z.object({
+        required: z.string(),
+        optional: z.string().optional(),
+      }),
+    };
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      document: "Probe JSON",
+    };
+    expect(() =>
+      describeContractDocumentCommand(contract, {
+        ...projection,
+        omit: { required: "never" },
+      }),
+    ).toThrow("probe.required is not an optional field");
+    expect(() =>
+      describeContractDocumentCommand(
+        {
+          name: "probe",
+          inputSchema: z.union([
+            z.object({ a: z.string().optional() }),
+            z.object({ b: z.string() }),
+          ]),
+        },
+        { ...projection, omit: { a: "never" } },
+      ),
+    ).toThrow("probe omits fields from a union input");
+    expect(() =>
+      describeContractDocumentCommand(contract, {
+        ...projection,
+        cliOptions: { inputJson: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    const described = describeContractDocumentCommand(contract, {
+      ...projection,
+      omit: { optional: "Not one-shot" },
+    });
+    expect(
+      Object.keys(inputJsonSchema(described.content).properties as object),
+    ).toEqual(["required"]);
   });
 });
