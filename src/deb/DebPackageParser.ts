@@ -26,6 +26,17 @@ import { decodeXz } from "./xzDecoder.js";
 
 const AR_MAGIC = Buffer.from("!<arch>\n", "ascii");
 const AR_HEADER = 60;
+/**
+ * Longest ar member name the reader resolves. GNU `/N` references can repeat
+ * one string-table entry, and every resolved name is copied into the report,
+ * so an unbounded name lets a small table expand into large report text.
+ */
+const MAX_AR_MEMBER_NAME_BYTES = 4096;
+const memberNameTooLong = (length: number): DebPackageFormatFailure =>
+  new DebPackageFormatFailure(
+    "malformed",
+    `ar member name of ${String(length)} bytes exceeds the ${String(MAX_AR_MEMBER_NAME_BYTES)}-byte name limit.`,
+  );
 const TAR_BLOCK = 512;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
@@ -283,6 +294,8 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
             "BSD ar long name length is invalid.",
           ),
         };
+      if (nameLength > MAX_AR_MEMBER_NAME_BYTES)
+        return { members, error: memberNameTooLong(nameLength) };
       if (dataStart + nameLength > bytes.length)
         return {
           members,
@@ -318,12 +331,12 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
             "GNU ar long name refers to a missing string table.",
           ),
         };
-      const end = stringTable.indexOf("\n", index);
-      name = trimField(
-        stringTable
-          .slice(index, end === -1 ? undefined : end)
-          .replace(/\/$/u, ""),
-      );
+      const newline = stringTable.indexOf("\n", index);
+      let end = newline === -1 ? stringTable.length : newline;
+      if (end > index && stringTable[end - 1] === "/") end -= 1;
+      if (end - index > MAX_AR_MEMBER_NAME_BYTES)
+        return { members, error: memberNameTooLong(end - index) };
+      name = trimField(stringTable.slice(index, end));
     } else {
       name = name.replace(/\/$/u, "");
     }

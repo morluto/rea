@@ -728,6 +728,50 @@ it("applies PAX owner records over the fixed header fields", () => {
   });
 });
 
+/** The fixture writes `/0/`; GNU ar writes a string-table reference as `/0`. */
+const gnuLongNameReferences = (bytes: Buffer): Buffer => {
+  const copy = Buffer.from(bytes);
+  for (
+    let at = copy.indexOf("/0/ ");
+    at !== -1;
+    at = copy.indexOf("/0/ ", at + 1)
+  )
+    copy[at + 2] = 0x20;
+  return copy;
+};
+
+it("refuses a GNU ar long name above the name limit before repeating it", () => {
+  const longName = "n".repeat(4097);
+  const bytes = gnuLongNameReferences(
+    debPackageFixture({
+      extraMembers: [
+        { name: "//", data: Buffer.from(`${longName}/\n`) },
+        { name: "/0", data: Buffer.alloc(0) },
+        { name: "/0", data: Buffer.alloc(0) },
+      ],
+    }),
+  );
+  const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
+  expect(error.message).toContain(
+    "4097 bytes exceeds the 4096-byte name limit",
+  );
+});
+
+it("resolves a GNU ar long name at the name limit", () => {
+  const longName = "n".repeat(4096);
+  const report = parse(
+    gnuLongNameReferences(
+      debPackageFixture({
+        extraMembers: [
+          { name: "//", data: Buffer.from(`${longName}/\n`) },
+          { name: "/0", data: Buffer.alloc(0) },
+        ],
+      }),
+    ),
+  );
+  expect(report.ar.extra_member_names).toContain(longName);
+});
+
 it("keeps a GNU ar string table as a counted member", () => {
   const bytes = debPackageFixture({
     extraMembers: [{ name: "//", data: Buffer.from("long-member-name/\n") }],
