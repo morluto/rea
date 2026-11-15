@@ -17,6 +17,7 @@ import {
   reattributedResourceConstraint,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -215,12 +216,10 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
-  else if (cause instanceof AnalysisCancelledError)
-    result = new AnalysisCancelledError(operation, {
-      ...context,
-      cause: cause.cause,
-    });
-  else if (cause instanceof AnalysisCapabilityUnavailableError)
+  else if (cause instanceof AnalysisCancelledError) {
+    const { cause: _wrapped, ...cancellationContext } = context;
+    result = cancelledBy(operation, cause, cancellationContext);
+  } else if (cause instanceof AnalysisCapabilityUnavailableError)
     result = new AnalysisCapabilityUnavailableError(
       cause.providerId,
       operation,
@@ -257,7 +256,7 @@ export const analysisClientFailureForOperation = (
       operation,
       cause.path,
       cause.reason,
-      context,
+      { ...context, integrityCheck: cause.integrityCheck },
     );
   else if (cause instanceof AnalysisResourceConstraintError)
     result = reattributedResourceConstraint(operation, cause, context);
@@ -276,7 +275,14 @@ export const analysisClientFailureForOperation = (
       result = analysisErrorWithCancellation(result, secondary);
     else result.retainSecondaryFailure(secondary);
   }
+  // The attributed error reads its source's cleanup: live resources while it
+  // is pending, otherwise the source's completed release with the resources
+  // kept as history.
   return cause.cleanupIncomplete
     ? result.bindCleanupDependencies([cause])
-    : result.resolveCleanup();
+    : result.bindCleanupReleaseClaim({
+        get cleanupReleased() {
+          return !cause.cleanupIncomplete;
+        },
+      });
 };

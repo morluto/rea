@@ -188,6 +188,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
 | `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
+| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis            |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
 
@@ -291,6 +292,17 @@ Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
 
+A deadline controlled by something other than a registered setting reports
+`details.limit` with `control_kind` instead of `setting`.
+`control_kind: "parameter"` names the per-call `parameter` and its `cli_flag`
+(`native_command_timeout_ms`, `native_ui_deadline_ms`,
+`pwntools_timeout_ms`) and applies on the next call.
+`control_kind: "environment"` names the `environment` variable REA reads when
+it starts (`REA_SWIFTC_COMPILE_TIMEOUT_MS`): `applies_at` is `next_startup`,
+or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
+`unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
+changes neither. A limit without `control_kind` is a registered setting.
+
 This output is breaking. Results and errors no longer carry the previous
 restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
@@ -379,11 +391,11 @@ recovery to the resource kind. The domain owner is
 It has three variants. Each one projects under `details.refusal` with the
 `operation` the error is attributed to:
 
-| Variant              | Producer fact                                                          | Projected fields                                            |
-| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`        | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing` |
-| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                             | `control`, `setting`, `effective_value`, `unit`, `range`    |
-| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }` | `field`, `candidates`                                       |
+| Variant              | Producer fact                                                          | Projected fields                                                                    |
+| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`        | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                             | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }` | `field`, `candidates`                                                               |
 
 Presentation is total over these variants. Authored remediation still wins.
 Without it, the variant names the recovery: fixed ceilings and their narrowing
@@ -437,7 +449,9 @@ request to change it.
   retry a startup that returns the same unchanged result: tell the user REA
   could not start, ask them to restart the MCP client, then run `rea doctor`.
 - Unexpected process-command failure: do not repeat the command. Tell the user
-  to check the input files, then run `rea doctor`.
+  the reported reason and ask them to check the scenario or capture files it
+  read; if they are valid, report the failure with its diagnostics. Doctor does
+  not check process commands.
 - `cleanup_incomplete`: the operation is not retryable. Retry that exact
   cleanup owner, named in `details.resources`, and wait until it confirms
   release before admitting new work on those resources

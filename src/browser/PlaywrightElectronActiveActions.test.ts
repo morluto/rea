@@ -599,6 +599,7 @@ const finalState = {
     observed_ipc: 0,
     observed_runtime: 0,
     hook_error: false,
+    single_instance_lock_refused: false,
   },
 };
 

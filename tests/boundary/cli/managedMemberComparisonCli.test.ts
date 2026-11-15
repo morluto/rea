@@ -22,6 +22,68 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
+  "compares proven same-artifact TypeSpec rows through CLI and MCP",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-typespec-row-proof-");
+    const call = await cli.sharedMcpCall!();
+    for (const [name, token, spec, resolved] of [
+      ["resolved", 0x0a000001, [0x1d, 8], true],
+      ["missing-row", 0x0a000002, [0x1d, 8], false],
+      ["malformed-owner", 0x0a000001, [0x7f], false],
+    ] as const) {
+      const operand = Buffer.alloc(4);
+      operand.writeUInt32LE(token);
+      const bytes = buildManagedPeFixture({
+        memberRefParentRaw: 12,
+        memberRefSignature: Buffer.from([0, 0, 1]),
+        typeSpecSignatures: [Buffer.from(spec)],
+        ilBody: Buffer.concat([
+          Buffer.from([0x1a, 0x28]),
+          operand,
+          Buffer.from([0x2a]),
+        ]),
+      });
+      const leftPath = join(directory, `${name}.dll`);
+      const rightPath = join(directory, `${name}-copy.dll`);
+      await writeFile(leftPath, bytes);
+      await writeFile(rightPath, bytes);
+      const inspection = await cli.run({
+        arguments: ["inspect-managed-members", leftPath, "--json"],
+      });
+      expect(inspection.exitCode, inspection.stderr).toBe(0);
+      const left = parseEvidence(inspection.json);
+      const facts = managedMemberInspectionSchema.parse(left.normalized_result);
+      expect(facts.call_edges[0]).toMatchObject({
+        target_identity_sha256: null,
+        target_row_resolved: resolved,
+      });
+      const other = await call("inspect_managed_members", { path: rightPath });
+      expect(other.isError, JSON.stringify(other)).not.toBe(true);
+      const right = parseEvidence(other.structuredContent);
+      const compared = await cli.run({
+        arguments: ["compare-managed-members", leftPath, rightPath, "--json"],
+      });
+      expect(compared.exitCode, compared.stderr).toBe(0);
+      const mcp = await call("compare_managed_members", { left, right });
+      expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      for (const evidence of [
+        parseEvidence(compared.json),
+        parseEvidence(mcp.structuredContent),
+      ]) {
+        const result = managedMemberComparisonResultSchema.parse(
+          evidence.normalized_result,
+        );
+        expect(result.left.artifact_sha256).toBe(facts.artifact.sha256);
+        expect(result.right.artifact_sha256).toBe(facts.artifact.sha256);
+        expect(result.methods[0]?.status).toBe(
+          resolved ? "unchanged" : "unknown",
+        );
+      }
+    }
+  },
+);
+
+cliTest(
   "attributes malformed managed comparison input to its selected argument and retains completed peer Evidence",
   async ({ cli }) => {
     const directory = await createTestTempDirectory(

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import {
   chmod,
@@ -18,6 +19,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -169,8 +171,8 @@ export const createDarwinHelperCache = (options: {
   const uid = process.getuid?.();
   // Failed closes and removals stay owned until close() retries them.
   const retained = new Map<string | OwnedFileHandle, () => Promise<void>>();
-  // The first unresolved close failure; later ones depend on it.
-  let cleanupAnchor: ProviderCleanupError | undefined;
+  // Every close failure reports this release until a retry releases them all.
+  let cleanupRelease: AnalysisCleanupRelease | undefined;
   let key: Promise<string> | undefined;
 
   const xcrun = async (
@@ -224,7 +226,7 @@ export const createDarwinHelperCache = (options: {
         sources,
         compiler,
         sdk,
-        architecture: process.arch,
+        architecture: HOST_PLATFORM.architecture,
         os_release: release(),
       }),
     );
@@ -246,7 +248,7 @@ export const createDarwinHelperCache = (options: {
     paths: readonly string[],
     signal: AbortSignal | undefined,
   ): Promise<boolean> => {
-    if (process.platform !== "darwin") return true;
+    if (HOST_PLATFORM.platform !== "darwin") return true;
     const { stdout } = await execFileOutput(
       "/bin/ls",
       ["-lde", "--", ...paths],
@@ -462,13 +464,10 @@ export const createDarwinHelperCache = (options: {
           operation: "prepare_owned_process",
         },
       );
-      // Every returned failure clears once a later retry releases them all.
-      if (cleanupAnchor === undefined) cleanupAnchor = failure;
-      else failure.bindCleanupDependencies([cleanupAnchor]);
-      throw failure;
+      throw (cleanupRelease ??= new AnalysisCleanupRelease()).bind(failure);
     }
-    cleanupAnchor?.resolveCleanup();
-    cleanupAnchor = undefined;
+    cleanupRelease?.confirm();
+    cleanupRelease = undefined;
   };
 
   return { lookup, publish, close };

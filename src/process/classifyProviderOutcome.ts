@@ -11,8 +11,26 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
+
+const RUNTIME_NAMES = {
+  jvm: "The provider's Java virtual machine",
+  v8: "The provider's JavaScript runtime",
+} as const satisfies Record<RuntimeExhaustion["runtime"], string>;
+
+const AREA_NAMES = {
+  heap: "heap",
+  "gc-overhead": "garbage-collection overhead limit",
+  metaspace: "metaspace",
+  "array-size": "array size beyond the VM limit",
+  "native-thread": "unable to create a native thread",
+} as const satisfies Record<NonNullable<RuntimeExhaustion["area"]>, string>;
 
 /** Outcomes whose meaning depends on the provider's own dialect. */
 export type ProviderDialectOutcome = Extract<
@@ -37,8 +55,12 @@ export interface ProviderOutcomeContext {
     readonly userMessage?: string;
     /** The setting or action that changes that deadline. */
     readonly remediationAction?: string;
+    /** The setting, parameter or environment control that selected the deadline. */
+    readonly limit?: AnalysisLimit;
   };
   readonly outputLimit: {
+    /** The budget that was exceeded, when the generic report is not enough. */
+    readonly reason?: string;
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
@@ -46,6 +68,16 @@ export interface ProviderOutcomeContext {
   readonly memoryLimitBytes?: number | undefined;
   /** Reported limits and recovery for an inherited CPU or file-size signal. */
   readonly resourceSignal?: (signal: "SIGXCPU" | "SIGXFSZ") => {
+    readonly limits: ReportedLimits;
+    readonly recovery: ResourceConstraintRecovery;
+    /** Provider facts appended to the shared report, such as the selected allowance. */
+    readonly detail?: string;
+  };
+  /**
+   * The provider's memory setting for a runtime exhaustion report, such as
+   * the JVM heap it starts. Without it, recovery follows the resource kind.
+   */
+  readonly runtimeExhaustion?: (exhaustion: RuntimeExhaustion) => {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
@@ -93,12 +125,15 @@ export const classifyProviderOutcome = (
         ...(context.timeout.remediationAction === undefined
           ? {}
           : { remediationAction: context.timeout.remediationAction }),
+        ...(context.timeout.limit === undefined
+          ? {}
+          : { limit: context.timeout.limit }),
       });
     case "output-limit":
       return new AnalysisResourceConstraintError(
         operation,
         "memory",
-        outcome.message,
+        context.outputLimit.reason ?? outcome.message,
         context.outputLimit.limits,
         { ...details, ...context.outputLimit.recovery },
       );
@@ -115,9 +150,38 @@ export const classifyProviderOutcome = (
       return new AnalysisResourceConstraintError(
         operation,
         outcome.signal === "SIGXFSZ" ? "file-size" : "cpu",
-        `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.`,
+        `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.${reported?.detail === undefined ? "" : ` ${reported.detail}`}`,
         reported?.limits ?? null,
         { ...details, ...reported?.recovery },
+      );
+    }
+    case "runtime-exhausted": {
+      const reported = context.runtimeExhaustion?.(outcome.exhaustion);
+      const { area, runtime } = outcome.exhaustion;
+      return new AnalysisResourceConstraintError(
+        operation,
+        area === "native-thread" ? "capacity" : "memory",
+        `${RUNTIME_NAMES[runtime]} reported running out of memory${area === undefined ? "" : ` (${AREA_NAMES[area]})`} before the process ended. This is reported evidence and does not prove the exact allocation failure.`,
+        reported?.limits ?? null,
+        {
+          ...details,
+          diagnostics: {
+            ...details.diagnostics,
+            runtime_exhaustion_report: runtimeExhaustionReport(
+              outcome.exhaustion,
+            ),
+          },
+          // The provider's recovery names the setting that governs the
+          // reported area; the generic capacity advice is only a fallback.
+          ...(reported?.recovery ??
+            (area === "native-thread"
+              ? {
+                  retryable: true,
+                  remediationAction:
+                    "Reduce concurrent analysis processes or review the host's available thread and process capacity, then retry.",
+                }
+              : {})),
+        },
       );
     }
     case "launch-refused":

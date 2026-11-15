@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
@@ -148,7 +149,9 @@ export const hashManagedSource = async (
 const snapshotBudget = (options: ManagedSnapshotReadOptions): number => {
   const maxBytes = options.maxBytes ?? DEFAULT_MANAGED_SNAPSHOT_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
-    throw new RangeError("max_snapshot_bytes must be a positive safe integer");
+    throw invariantViolation(
+      "max_snapshot_bytes must be a positive safe integer",
+    );
   return maxBytes;
 };
 

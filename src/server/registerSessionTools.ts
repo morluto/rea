@@ -1,5 +1,5 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
-import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -225,32 +225,7 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(input.format === undefined ? {} : { formatHint: input.format }),
-          ...(input.architecture === undefined
-            ? {}
-            : { architecture: input.architecture }),
-          ...(input.entry_point === undefined
-            ? {}
-            : { entryPoint: input.entry_point }),
-          ...(input.flash_offset === undefined &&
-          input.partition_table_offset === undefined
-            ? {}
-            : {
-                espFlash: {
-                  ...(input.flash_offset === undefined
-                    ? {}
-                    : {
-                        flashOffset: parseEspFlashAddress(input.flash_offset),
-                      }),
-                  ...(input.partition_table_offset === undefined
-                    ? {}
-                    : {
-                        partitionTableOffset: parseEspFlashAddress(
-                          input.partition_table_offset,
-                        ),
-                      }),
-                },
-              }),
+          ...openBinaryTargetSelection(input),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),

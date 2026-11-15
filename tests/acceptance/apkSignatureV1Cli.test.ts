@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -223,10 +224,9 @@ cliTest(
     const tool = (await client.listTools()).tools.find(
       (t) => t.name === "inspect_apk_signature",
     );
-    const outputSchema: Record<string, unknown> | undefined =
-      tool?.outputSchema;
-    if (tool === undefined || outputSchema === undefined)
-      throw new Error("inspect_apk_signature must advertise an output schema");
+    if (tool === undefined)
+      throw new Error("inspect_apk_signature must be advertised");
+    const outputSchema = canonicalOutputSchema(tool.name);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     for (const [path, fromCli] of [
       [v1Only, cliV1],

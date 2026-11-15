@@ -183,6 +183,7 @@ export const scanNodeSeaFuse = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Node SEA carrier shrank during the fuse scan",
+        { integrityCheck: "read-coverage" },
       );
     const window = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
     for (const match of window

@@ -1,3 +1,4 @@
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
@@ -6,6 +7,7 @@ import {
   type PlistDuplicateKeys,
 } from "../../domain/apple/plistDuplicateKeys.js";
 import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
+import type { ParsedPropertyList } from "../../domain/propertyListKeys.js";
 import {
   binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
@@ -26,7 +28,7 @@ const scalarArrayInput = (
   // belong to the compatible decoder copy, not the original source plan.
   const compatibleLayoutResult = readBinaryPlistLayout(bytes);
   if (!compatibleLayoutResult.ok)
-    throw new RangeError("binary plist trailer is truncated");
+    throw invariantViolation("binary plist decoder copy lost its trailer");
   const compatibleLayout = compatibleLayoutResult.value;
   const referenceWidth = compatibleLayout.referenceWidth;
   const objectCount = Number(compatibleLayout.objectCount);
@@ -92,6 +94,20 @@ export const binaryPlistDuplicateKeys = (
   return duplicates.result();
 };
 
+/**
+ * A binary plist decoded with the source facts an XML or OpenStep decode
+ * carries: number literals and the keys a dictionary repeats.
+ */
+export const decodeBinaryPropertyList = (
+  bytes: Buffer,
+  plan: PlistDecodePreflight,
+  metadata: BinaryPlistScalarMetadata = scanBinaryPlistScalars(bytes, plan),
+): ParsedPropertyList => ({
+  value: decodeBinaryPlistValue(bytes, plan, metadata),
+  numberLiterals: metadata.literals,
+  duplicateKeys: binaryPlistDuplicateKeys(plan),
+});
+
 /** Decode validated source containers without losing dictionary keys or alias occurrence identity. */
 export const decodeBinaryPlistValue = (
   bytes: Buffer,
@@ -100,7 +116,7 @@ export const decodeBinaryPlistValue = (
 ): unknown => {
   const source = plan.binaryValuePlan;
   if (source === undefined)
-    throw new TypeError("Binary plist source plan is missing");
+    throw invariantViolation("Binary plist source plan is missing");
   const compatible = decodeBinaryPlistScalars(bytes, metadata, plan);
   const scalars = parseBinary(
     scalarArrayInput(
@@ -125,7 +141,7 @@ export const decodeBinaryPlistValue = (
     if (container === undefined) {
       const index = scalarIndex.get(entry.object);
       if (index === undefined)
-        throw new TypeError("Binary plist scalar source is missing");
+        throw invariantViolation("Binary plist scalar source is missing");
       value = scalarOccurrence(
         scalars[index],
         source.scalars[index]!.uid,
@@ -219,7 +235,10 @@ export const decodeBinaryPlistText = (
 ): BinaryPlistText => {
   decodeBinaryPlistValue(bytes, preflightPropertyListDecode(bytes, maxBytes));
   const layout = readBinaryPlistLayout(bytes);
-  if (!layout.ok) throw new RangeError("binary plist trailer is truncated");
+  if (!layout.ok)
+    throw invariantViolation(
+      "binary plist trailer was not validated by its preflight",
+    );
   const texts: string[] = [];
   let decoded = 0;
   let complete = true;

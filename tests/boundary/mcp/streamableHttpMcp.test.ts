@@ -51,7 +51,10 @@ describe("rea mcp --http", () => {
       const started = await startListeningProcess(
         processes,
         ["mcp", "--http", "--port", "0"],
-        { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+        // Sessions validate advertised output schemas, which default to off.
+        {
+          REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+        },
       );
       const first = await openSession(started.url, "hot-cold-first");
       const initialNames = (await first.client.listTools()).tools.map(
@@ -98,7 +101,11 @@ describe("rea mcp --http", () => {
   processTest(
     "serves initialize, tools/list, a tool call and DELETE, then keeps serving later clients",
     async ({ processes }) => {
-      const started = await startMcpHttpProcess(processes);
+      const started = await startListeningProcess(
+        processes,
+        ["mcp", "--http", "--port", "0"],
+        {},
+      );
       expect(started.url.hostname).toBe("127.0.0.1");
       expect(started.url.pathname).toBe("/mcp");
       let stdout = "";

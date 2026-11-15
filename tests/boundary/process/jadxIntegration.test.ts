@@ -1,4 +1,5 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
@@ -1002,6 +1003,7 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         snapshot: apk,
         jarHash: "0".repeat(64),
         bridgeHash: "0".repeat(64),
+        bridgeIdentity: packagedJadxBridgeIdentity(),
         signal: new AbortController().signal,
         timeoutMs: 300,
         resources: new ArtifactResourceScope(),
@@ -1077,11 +1079,25 @@ it.each(["tool-error", "frame-overflow", "body-error", "heap-decoy"])(
                 : "manifest decoder rejected malformed binary XML",
         },
       });
-    else
+    else {
       expect(outcome.error).toMatchObject({
-        _tag: "AnalysisOutputError",
+        _tag: "AnalysisResourceConstraintError",
         reason: expect.stringContaining("MCP frame exceeds"),
       });
+      // The refusal is built after finalization, so it keeps the output
+      // the transport retained.
+      expect(outcome.error).toHaveProperty(
+        "capturedOutput",
+        expect.objectContaining({ truncated: expect.any(Boolean) }),
+      );
+      // A fixed frame ceiling, not an output defect: recovery names it.
+      expect(outcome.error).toHaveProperty("fixedAllowance", {
+        name: "The JADX frame allowance of 8388608 bytes",
+        kind: "bytes",
+        limit: 8 * 1024 * 1024,
+        unit: "bytes",
+      });
+    }
     await provider.close();
     await verifyCleanup(launches);
   },
@@ -1399,6 +1415,32 @@ it("retains the execution failure while cleanup is pending and resumes after cle
     await verifyCleanup(launches);
   } finally {
     cleanupFails = false;
+    await provider.close();
+  }
+});
+
+it("does not send a jadx-reported request failure to doctor", async () => {
+  const { service, apk, launches, provider } = await setup("tool-error");
+  try {
+    const outcome = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (outcome.ok) throw new Error("Expected the reported tool error");
+    const projected = projectAnalysisError(outcome.error);
+    expect(projected).toMatchObject({
+      code: "execution_failure",
+      retryable: false,
+      details: {
+        diagnostics: {
+          reason: "manifest decoder rejected malformed binary XML",
+        },
+      },
+    });
+    expect(projected.message).toContain("details.diagnostics.reason");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
+    await verifyCleanup(launches);
+  } finally {
     await provider.close();
   }
 });

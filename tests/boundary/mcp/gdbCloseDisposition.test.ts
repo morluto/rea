@@ -1,3 +1,4 @@
+import { fakeGdbStartupPreamble } from "../providers/gdbTestHelpers.js";
 import { randomUUID } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ it.skipIf(process.platform === "win32").each(["kill", "detach"])(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 import { createInterface } from 'node:readline';
 let live = false;
 process.stdout.write('(gdb)\\n');

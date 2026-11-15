@@ -115,6 +115,21 @@ it.skipIf(process.platform === "win32")(
         process.platform,
       ),
     ).toBe(installation);
+    // A removed working directory holds nothing under `.` or an empty entry;
+    // a later absolute entry still finds the installation.
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("ENOENT: uv_cwd");
+    });
+    try {
+      expect(
+        discoverGhidraInstallationOnPath(
+          { PATH: `.::${pathDirectory}` },
+          process.platform,
+        ),
+      ).toBe(installation);
+    } finally {
+      cwd.mockRestore();
+    }
 
     const incomplete = join(root, "incomplete");
     const incompletePath = join(root, "incomplete-bin");

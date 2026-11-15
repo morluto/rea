@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
   namedArtifactFormat,
@@ -31,7 +32,11 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { hashStableRegularFileDescriptor } from "../filesystem/StableFileHash.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import type {
   BinaryTarget,
   BinaryArchitecture,
@@ -155,11 +160,7 @@ export const parseBinaryTarget = async (
   const admitted = localPathStringSchema.safeParse(input);
   if (!admitted.success) {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("resolve_binary_target", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("resolve_binary_target", signal));
     return err(
       new BinaryTargetError(
         input,
@@ -180,7 +181,8 @@ export const parseBinaryTarget = async (
     const canonical = await realpath(candidate);
     stage = "read";
     // Windows native admission must inspect the caller-selected reparse components.
-    const sourcePath = process.platform === "win32" ? candidate : canonical;
+    const sourcePath =
+      HOST_PLATFORM.platform === "win32" ? candidate : canonical;
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
@@ -224,9 +226,7 @@ export const parseBinaryTarget = async (
   } catch (cause: unknown) {
     // A caller-selected abort value never transfers file ownership.
     if (signal?.aborted === true && cause === signal.reason)
-      return err(
-        new AnalysisCancelledError("resolve_binary_target", { cause }),
-      );
+      return err(cancelledBy("resolve_binary_target", carriedReason(cause)));
     if (cause instanceof RegularFileCleanupFailure) {
       const fileFailure = cause as RegularFileCleanupFailure<TargetResolution>;
       if (options.resources === undefined)
@@ -304,7 +304,8 @@ const readOpenedBinaryTarget = async (
     ...bundle,
     sha256: await sha256Handle(source, path, signal),
   });
-  const hostArchitecture = options.hostArchitecture ?? process.arch;
+  const hostArchitecture =
+    options.hostArchitecture ?? HOST_PLATFORM.architecture;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
   throwIfTargetResolutionCancelled(signal);
   // Flash inputs pair with one format; check before any hint branch.
@@ -549,8 +550,7 @@ const finalizedTargetResolution = (
 ): TargetResolution => {
   if (!result.ok || signal?.aborted !== true) return result;
   return err(
-    new AnalysisCancelledError("resolve_binary_target", {
-      cause: signal.reason,
+    cancelledBy("resolve_binary_target", signal, {
       diagnostics: { completed_target: jsonValueSchema.parse(result.value) },
     }),
   );
@@ -575,9 +575,10 @@ const targetFileCleanupError = (
       physical instanceof AnalysisCancelledError
         ? physical
         : cancellation !== undefined
-          ? new AnalysisCancelledError("resolve_binary_target", {
-              cause: cancellation.reason,
-            })
+          ? cancelledBy(
+              "resolve_binary_target",
+              carriedReason(cancellation.reason),
+            )
           : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
             new BinaryTargetError(
               failure.path,
@@ -586,12 +587,13 @@ const targetFileCleanupError = (
             ));
   } else if (completed?.ok === false) primary = completed.error;
   else if (cancellation !== undefined)
-    primary = new AnalysisCancelledError("resolve_binary_target", {
-      cause: cancellation.reason,
-      ...(completedTarget === undefined
+    primary = cancelledBy(
+      "resolve_binary_target",
+      carriedReason(cancellation.reason),
+      completedTarget === undefined
         ? {}
-        : { diagnostics: { completed_target: completedTarget } }),
-    });
+        : { diagnostics: { completed_target: completedTarget } },
+    );
   const error = new BinaryTargetError(
     failure.path,
     "The target file handle could not be closed",
@@ -637,15 +639,14 @@ const targetResolutionFailure = (
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)
       return err(
-        new AnalysisCancelledError("resolve_binary_target", {
-          cause: cancellation.reason,
-        }),
+        cancelledBy(
+          "resolve_binary_target",
+          carriedReason(cancellation.reason),
+        ),
       );
   }
   if (signal?.aborted === true && physical === signal.reason)
-    return err(
-      new AnalysisCancelledError("resolve_binary_target", { cause: physical }),
-    );
+    return err(cancelledBy("resolve_binary_target", carriedReason(physical)));
   const failure = classifyTargetFilesystemFailure(candidate, physical, stage);
   if (failure === undefined) throw physical;
   return err(failure);
@@ -715,9 +716,7 @@ const targetFailureReason = (
 
 const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("resolve_binary_target", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("resolve_binary_target", signal);
 };
 
 const detectArtifactFormat = async (

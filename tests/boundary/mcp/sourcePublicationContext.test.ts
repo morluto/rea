@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterAll, expect, it } from "vitest";
@@ -20,7 +21,7 @@ const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 
 it.each(
-  ["full", "compact"].flatMap((profile) =>
+  ["compact"].flatMap((profile) =>
     ["large-source", "large-primary", "invalid-source"].map((mode) => ({
       profile,
       mode,
@@ -113,11 +114,10 @@ it.each(
       const tool = (await client.listTools()).tools.find(
         ({ name }) => name === "inspect_address_context",
       );
-      if (tool?.outputSchema === undefined)
-        throw new Error("Missing context output schema");
-      expect(validation.assertions.validateSchema(tool.outputSchema)).toBe(
-        true,
-      );
+      if (tool === undefined) throw new Error("Missing context output schema");
+      expect(
+        validation.assertions.validateSchema(canonicalOutputSchema(tool.name)),
+      ).toBe(true);
       const result = await client.callTool(
         {
           name: "inspect_address_context",

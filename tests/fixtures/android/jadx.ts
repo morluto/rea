@@ -93,12 +93,17 @@ export const createJadxProtocolFixture = async (
           options.env?._JAVA_OPTIONS ?? options.hostEnvironment?._JAVA_OPTIONS,
       });
       if (mode === "cleanup-failure" || cleanupFailure !== undefined) {
-        onTestFinished(async () => {
-          const supervisor = new ProviderProcessSupervisor({
+        // Supervise from launch: a supervisor attached after the child closed
+        // never observes that close and waits out the output-close grace.
+        const supervisor = new ProviderProcessSupervisor(
+          {
             ...spawned,
             ownsProcessLifetime: true,
             cleanup: () => cleanupOwnedProcessGroup(spawned.ownership),
-          });
+          },
+          { captureStdout: false, maxDiagnosticBytes: 0 },
+        );
+        onTestFinished(async () => {
           // The SDK can close the child transport before process exit settles.
           // Retry retained ownership without bypassing the supervisor's proof.
           // Retain the entire stop result so an incomplete teardown failure reports its reason.

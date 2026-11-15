@@ -20,6 +20,26 @@ const request = {
   fetchUrl: "https://app.example.test/app.js.map",
 };
 
+it("reports a source map that is not UTF-8 as invalid with its response identity", async () => {
+  const result = await fetchWebSourceMapsOk(
+    [request],
+    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
+    undefined,
+    { fetch: async () => new Response(Buffer.from([0x7b, 0xff, 0x7d])) },
+  );
+
+  expect(result.items[0]).toMatchObject({
+    status: "invalid",
+    limitation: expect.stringMatching(
+      /^Source-map response is not valid UTF-8\. Response text was not retained/u,
+    ),
+    response_identity: {
+      bytes: 3,
+      representation: "fetch-response-body-bytes",
+    },
+  });
+});
+
 it("reports an empty selected request set without starting fetch work", async () => {
   const result = await fetchWebSourceMapsOk([], input, undefined, {
     fetch: async () => {

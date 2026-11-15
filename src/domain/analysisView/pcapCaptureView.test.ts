@@ -7,7 +7,7 @@ const capture = (
   tsharkStderr: string,
   dnsQueries: {
     query: string;
-    query_labels_hex?: string[] | null;
+    query_labels_hex: string[] | null;
     response_addresses: string[];
     response_address_count: number;
   }[] = [],
@@ -22,9 +22,15 @@ const capture = (
       tshark_command: "/usr/bin/tshark",
       tshark_source: "path",
       tshark_version: "4.6.6",
+      tshark_resolved_path: null,
+      tshark_sha256: null,
+      tshark_identity_status: "unresolved",
       capinfos_command: "/usr/bin/capinfos",
       capinfos_source: "path",
       capinfos_version: "4.6.6",
+      capinfos_resolved_path: null,
+      capinfos_sha256: null,
+      capinfos_identity_status: "unresolved",
     },
     target,
     file_type: "pcap",
@@ -80,23 +86,6 @@ const diagnostics = (offset: number, limit: number) =>
     offset,
     limit,
   }) as const;
-
-it("reads historical capture Evidence without inventing executable identity", () => {
-  const result = projectAnalysisView(capture(""), { kind: "summary" });
-  if (!result.ok) throw result.error;
-  if (result.value.kind !== "summary")
-    throw new Error("Expected a packet summary.");
-  if (!("client" in result.value.summary))
-    throw new Error("Expected packet client facts.");
-  expect(result.value.summary.client).toMatchObject({
-    tshark_resolved_path: null,
-    tshark_sha256: null,
-    tshark_identity_status: "unresolved",
-    capinfos_resolved_path: null,
-    capinfos_sha256: null,
-    capinfos_identity_status: "unresolved",
-  });
-});
 
 it("pages diagnostics without splitting a surrogate pair", () => {
   const parent = capture("ab😀cd");
@@ -165,21 +154,39 @@ it("selects colliding DNS displays by label identity and retains unknown occurre
   ).toMatchObject({ ok: true, value: { page: { items: ["192.0.2.4"] } } });
 });
 
-it("keeps historical DNS records accessible without inventing label identity", () => {
-  const parent = capture("", [
-    {
-      query: "old.example",
-      response_addresses: ["192.0.2.9"],
-      response_address_count: 1,
-    },
-  ]);
-  expect(
-    projectAnalysisView(parent, {
-      kind: "pcap",
-      facet: "dns-addresses",
-      query: "old.example",
-      offset: 0,
-      limit: 64,
-    }),
-  ).toMatchObject({ ok: true, value: { page: { items: ["192.0.2.9"] } } });
-});
+it.each([
+  ["executable identity", ["client", "tshark_identity_status"]],
+  ["DNS label identity", ["dns_queries", 0, "query_labels_hex"]],
+] as const)(
+  "refuses capture Evidence that omits %s instead of defaulting it",
+  (_label, path) => {
+    const parent = capture("", [
+      {
+        query: "a.example",
+        query_labels_hex: ["61", "6578616d706c65"],
+        response_addresses: ["192.0.2.9"],
+        response_address_count: 1,
+      },
+    ]);
+    const report = structuredClone(parent.normalizedResult) as Record<
+      string,
+      unknown
+    >;
+    let owner: unknown = report;
+    for (const key of path.slice(0, -1))
+      owner = (owner as Record<string | number, unknown>)[key];
+    delete (owner as Record<string | number, unknown>)[path.at(-1)!];
+    expect(
+      projectAnalysisView(
+        { ...parent, normalizedResult: report },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["source", "normalized_result", ...path] }],
+      },
+    });
+  },
+);

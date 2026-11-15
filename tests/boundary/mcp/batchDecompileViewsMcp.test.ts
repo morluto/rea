@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -105,7 +106,7 @@ afterAll(() => schemaValidation.clear());
 const ADVERTISED_OUTPUTS = ["batch_decompile", "inspect_analysis_view"];
 
 const connect = async (
-  profile: "full" | "compact",
+  profile: "compact",
   options: {
     readonly budget?: number;
     readonly bodies?: typeof BODIES;
@@ -132,7 +133,7 @@ const connect = async (
   const advertisedTools = new Map(
     ADVERTISED_OUTPUTS.map((name) => {
       const advertised = tools.find((tool) => tool.name === name);
-      if (advertised?.outputSchema === undefined)
+      if (advertised === undefined)
         throw new Error(`${name} advertises no output schema`);
       return [name, advertised] as const;
     }),
@@ -144,7 +145,9 @@ const connect = async (
       .parse(
         await harness.mcp.callTool(
           { name, arguments: args },
-          toolDefinition === undefined ? {} : { toolDefinition },
+          toolDefinition === undefined
+            ? {}
+            : { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
         ),
       );
   };
@@ -224,7 +227,7 @@ const invalidIssue = (message: string) => ({
   },
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "selects retained batch rows and bodies from a summary without repeating analysis (%s)",
   async (profile) => {
     const harness = await connect(profile);
@@ -366,7 +369,7 @@ it.each(["full", "compact"] as const)(
 );
 
 it("counts both forms of an unavailable entry label", async () => {
-  const harness = await connect("full");
+  const harness = await connect("compact");
   const parent = (
     await harness.call("batch_decompile", {
       addresses: ["main", "unlabeled", "label-failure"],
@@ -399,7 +402,7 @@ it("counts both forms of an unavailable entry label", async () => {
 });
 
 it("pages one body exactly without splitting a Unicode character", async () => {
-  const harness = await connect("full");
+  const harness = await connect("compact");
   const { evidence } = await harness.call("batch_decompile", {
     addresses: SELECTORS,
   });
@@ -450,7 +453,7 @@ it("pages one body exactly without splitting a Unicode character", async () => {
 it("recovers oversized batches and pages through smaller selections of the parent", async () => {
   const budget = 64 * 1024;
   const large = `int main(void) { /*${"x".repeat(budget * 2)}*/ }`;
-  const harness = await connect("full", {
+  const harness = await connect("compact", {
     budget,
     bodies: { "0x401000": large, "0x402000": large },
   });
@@ -534,7 +537,7 @@ it("recovers oversized batches and pages through smaller selections of the paren
 });
 
 it("reads the same rows from a bundle and an Evidence file without a provider", async () => {
-  const harness = await connect("full");
+  const harness = await connect("compact");
   const parent = (
     await harness.call("batch_decompile", { addresses: SELECTORS })
   ).evidence;
@@ -585,7 +588,7 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
 });
 
 it("reads historical batch Evidence with the prior null-pseudocode error", async () => {
-  const harness = await connect("full");
+  const harness = await connect("compact");
   const savedItem = {
     address: "bodyless",
     procedure: { status: "resolved", address: "0x403000", name: "bodyless" },
@@ -787,7 +790,7 @@ it("delivers no summary without retention, on a ledger failure or after cancella
   ).toMatchObject({ code: "capability_unavailable" });
   expect(calls).toBe(0);
 
-  const ledger = await connect("full");
+  const ledger = await connect("compact");
   vi.spyOn(ledger.session, "recordEvidence").mockReturnValue(
     err(new AnalysisOutputError("record_evidence", "ledger refused the batch")),
   );
@@ -797,7 +800,7 @@ it("delivers no summary without retention, on a ledger failure or after cancella
   });
   expect(parseMcpToolError(refused).error.code).toBe("unreadable_output");
 
-  const cancelled = await connect("full", {
+  const cancelled = await connect("compact", {
     execute: (operation, input) =>
       Promise.resolve(
         operation === "procedure_pseudo_code"
@@ -818,7 +821,7 @@ it("delivers no summary without retention, on a ledger failure or after cancella
 });
 
 it("binds views to their parent and each page to its own collection", async () => {
-  const harness = await connect("full");
+  const harness = await connect("compact");
   const summary = viewOf(
     (
       await harness.call("batch_decompile", {

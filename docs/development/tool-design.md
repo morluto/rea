@@ -268,10 +268,21 @@ refusal, cancellation, deadline, output or memory limit, resource signal, exit
 status with the owner's stop state, or stream failure) together with the
 retained output and whether it was truncated. `classifyProviderOutcome` maps
 that outcome to a typed error once; a provider supplies only its settings,
-recovery text and a dialect for what an exit or launch refusal means. The
-`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
-AnalysisError` functions out of `src/`; existing ones are counted in a baseline
-that may only shrink.
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. A phase that armed its own deadline throws that deadline's
+timeout where it observes the abort; for a read its signal cancelled, it
+supplies the timeout as the dialect's `interruption`, so classification never
+rereads a cancellation's reason as a timeout. A provider whose cleanup report
+has its own shape supplies `readCleanup` or `commandCleanup`; otherwise the
+unresolved cleanup is attached to the reported failure. The
+`rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
 
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
@@ -313,8 +324,8 @@ as evidence about the input. Readers report bounds failures at the read site;
 host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
 `DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
-of parser input, and direct `instanceof RangeError` checks against
-`scripts/verify/architecture-guard-baselines.json`. A
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
@@ -471,7 +482,7 @@ failed request's physical, cancellation and cleanup facts.
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling. It projects
-  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
   which owns this precedence for owned work: a recorded failure stays primary,
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed
@@ -608,8 +619,11 @@ and rendered for the CLI framework by `registerContractCommand` in
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
-rules refuse at argv parsing or at the service's contract parse. Field schemas
-and decimal argv tokens are derived, and
+rules refuse at argv parsing or at the service's contract parse. A delivery
+`view` is JSON text decoded when the command runs; the contract input then
+admits the view with its `detail` before any target is opened, including a
+`detail`-discriminated union input. Field schemas and decimal argv tokens are
+derived, and
 `tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
 command admits what its contract admits.
 

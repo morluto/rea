@@ -82,11 +82,11 @@ Ajanlarınızı seçin, önerilen değişiklikleri inceleyin ve onaylayın. Kuru
 
 Kurulum Claude Code, Codex, Cursor, Gemini CLI, Grok Build ve [diğer ajanları](../getting-started/installation.md#supported-agents) destekler. Sağlayıcı yapılandırması ve elle MCP kaydı için [yükleme ve kurulum](../getting-started/installation.md) belgesine bakın.
 
-MCP varsayılan olarak kompakt girdi şemaları kullanır. Tam alan açıklamaları ve iç içe doğrulama ayrıntıları için MCP kaydında `REA_MCP_INPUT_SCHEMA_PROFILE=full` ayarlayın. Her iki profil tüm araçları ve aynı kanonik sunucu doğrulamasını korur; MCP sözleşme rehberine bakın.
+MCP varsayılan olarak kompakt girdi şemaları kullanır. Kompakt şemanın atladığı açıklamalar araç açıklamasının ardından gelir. Tüm araçlar ve kanonik sunucu doğrulaması değişmez; MCP sözleşme rehberine bakın.
 
 Kurulum, seçilen çalışma zamanını ve REA giriş betiğini doğrudan kaydeder. Paket çalıştırıcısı kullanıyorsanız önbellek girdisini ve çalışma zamanını koruyun; paketi hedef projenin dışında güvenilir bir dizinden edinin. Kurulum rehberine bakın.
 
-Tam çıktı şemaları varsayılan olarak duyurulur. İstemciniz `tools/list` boyutunu sınırlıyorsa MCP kaydında `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` veya `off` ayarlayın. Sunucu doğrulaması ve yapılandırılmış sonuçlar tam kalır. MCP sözleşmeleri rehberindeki “Output schemas” bölümüne bakın.
+Çıktı şemaları varsayılan olarak `tools/list` içinde yer almaz: hiçbir model API'si bunları okumaz ve REA her sonucu kendisi doğrular. Her çıktı şemasını 4096 baytlık sınır içinde duyurmak için MCP kaydında `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ayarlayın. Tüm ayarlarda sunucu doğrulaması ve yapılandırılmış sonuçlar tam kalır. MCP sözleşmeleri rehberindeki “Output schemas” bölümüne bakın.
 
 ### Ajanınıza sorun
 
