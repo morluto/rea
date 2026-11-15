@@ -314,6 +314,18 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
+// Mach-O load-command codes have one table; a literal code in a load-command
+// reader restates it and drifts from the named command it means.
+checkCounted(
+  "literal Mach-O load-command code (use LC from src/domain/apple/machoLoadCommandCodes)",
+  "macho-load-command-literal",
+  files.filter((file) =>
+    /MachoLoadCommandCursor|readMachoLoadCommand/u.test(file.content),
+  ),
+  /\b(?:frame\.command|command\.kind|command|cmd)\s*[!=]==\s*(?:0x[0-9a-fA-F]+|\d+)\b/gu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
+);
+
 // JSON.parse keeps the last of repeated member names without saying so; a
 // parser of artifact content must state its duplicate-member policy
 // (src/domain/jsonDuplicateMember.ts finds a repeated name).

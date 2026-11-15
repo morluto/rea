@@ -394,5 +394,6 @@
   },
   "wall-clock-deadline": {
     "src/browser/PlaywrightScenarioRequest.ts": 1
-  }
+  },
+  "macho-load-command-literal": {}
 }
