@@ -18,8 +18,7 @@
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
     "gpu -> artifacts": 2,
-    "model -> artifacts": 1,
-    "native -> artifacts": 2
+    "model -> artifacts": 1
   },
   "entry": {
     "application -> artifacts": 1,

@@ -4,8 +4,8 @@ import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.js";
-import { parsePeResources } from "../../artifacts/pe/PeResourceParser.js";
-import { peResourceFixture } from "../../artifacts/pe/PeResources.fixture.js";
+import { parsePeResources } from "../../domain/pe/peResourceInventory.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import {
