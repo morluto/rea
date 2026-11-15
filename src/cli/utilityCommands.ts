@@ -24,7 +24,7 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS, cliCommandFor } from "../cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";

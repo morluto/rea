@@ -22,10 +22,10 @@ import {
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
-import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   ArtifactReaderFailure,
   artifactReaderLimitFailure,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,

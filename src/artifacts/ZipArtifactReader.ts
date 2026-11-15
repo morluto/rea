@@ -8,6 +8,7 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
+  ArtifactFileSource,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
@@ -50,7 +51,6 @@ import {
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";

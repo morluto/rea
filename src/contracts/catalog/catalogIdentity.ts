@@ -2,34 +2,34 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
-import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
-import type { PromptContract } from "./contracts/promptContracts.js";
-import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
-import type { ToolContract } from "./contracts/toolContractTypes.js";
-import { CLI_COMMANDS, cliCommandFor } from "./cliCommandNames.js";
-import { compareUnicodeCodePoints } from "./domain/unicodeCodePointOrder.js";
+import { contractsForToolFamilies } from "../toolFamilies.js";
+import { promptsForToolFamilies } from "../promptToolFamilyScope.js";
+import { PROMPT_CONTRACTS } from "../promptContracts.js";
+import type { PromptContract } from "../promptContracts.js";
+import { TOOL_CONTRACTS } from "../toolContracts.js";
+import type { ToolContract } from "../toolContractTypes.js";
+import { CLI_COMMANDS, cliCommandFor } from "../cliCommandNames.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import {
   advertisedInputJsonSchema,
   advertisedOutputJsonSchema,
-} from "./contracts/toolSchemaMetadata.js";
-import type { CompactInputSchemaPresentation } from "./contracts/compactInputSchema.js";
+} from "../toolSchemaMetadata.js";
+import type { CompactInputSchemaPresentation } from "../compactInputSchema.js";
 import {
   advertiseTool,
   type AdvertisedToolPresentation,
-} from "./contracts/advertisedTool.js";
-import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "./config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "./config/mcpInputSchemaProfile.js";
+} from "../advertisedTool.js";
 import {
   RECORDED_CATALOG_DIGEST_PROFILES,
   type CatalogDigestProfiles,
   type CatalogDigests,
 } from "./recordedCatalogDigests.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../mcpSchemaPresentation.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a

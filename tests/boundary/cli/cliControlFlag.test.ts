@@ -102,6 +102,21 @@ it("names a member control by its member flag, else by its field's flag", () => 
   expect(projectCliInputFields(unbound, binding)).toBe(unbound);
   const success = { details: { limit: { parameter: "producer_limits" } } };
   expect(projectCliInputFields(success, binding)).toBe(success);
+  // A registered setting that a request argument also selects names it.
+  expect(
+    projectCliInputFields(
+      {
+        code: "provider_timeout",
+        details: {
+          limit: {
+            setting: "fixture.timeout_ms",
+            parameter: "producer_limits.timeout_ms",
+          },
+        },
+      },
+      binding,
+    ),
+  ).toMatchObject({ details: { limit: { cli_flag: "--producer-limits" } } });
 });
 
 it("binds a nested flattened member to its own flag", () => {
