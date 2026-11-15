@@ -305,15 +305,17 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const { name: resolveTypeName, isResolvedTypeSpec } = typeNameLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      signatureTypeName,
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
       typeName: resolveTypeName,
+      isResolvedTypeSpec,
       signatureTypeName,
       displayTypeName,
       declarationTypeName,
