@@ -11,6 +11,12 @@ import type {
 } from "../../../src/application/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
+import {
+  describeAdvertisedTool,
+  presentAdvertisedInput,
+} from "../../../src/contracts/compactInputSchema.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -163,7 +169,17 @@ it("advertises the complete currently available inventory with a session", async
     const contract = contracts.get(tool.name);
     expect(contract, tool.name).toBeDefined();
     expect(tool.title, tool.name).toBe(contract?.title);
-    expect(tool.description, tool.name).toBe(contract?.description);
+    // The default compact input profile moves input guidance from the schema
+    // to the end of the contract description.
+    if (contract === undefined) continue;
+    expect(tool.description, tool.name).toBe(
+      describeAdvertisedTool(
+        contract.description,
+        presentAdvertisedInput(advertisedInputJsonSchema(contract), {
+          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+        }).guidance,
+      ),
+    );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();
     expect(tool.outputSchema, tool.name).toBeDefined();

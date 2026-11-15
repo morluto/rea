@@ -2,6 +2,7 @@ import { fixedAllowanceRemediation } from "../domain/fixedAllowanceRemediation.j
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
+  ArtifactIntegrityCheck,
   ArtifactLimitBoundary,
 } from "../domain/artifactOperationError.js";
 import type {
@@ -39,6 +40,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
+  /** For an `integrity` failure, the check that failed, when the reader names it. */
+  readonly integrityCheck?: ArtifactIntegrityCheck;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -103,6 +106,22 @@ export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
     ? {}
     : { sourceIdentity: { ...entry.sourceIdentity } }),
 });
+
+/**
+ * Require that an opened entry is one this reader produced, unchanged. Throws
+ * the `integrity` failure naming `foreign-entry` when the reader has no such
+ * entry, or `entry-metadata` when the supplied facts differ from it.
+ */
+export function assertProducedEntry<Produced extends ArtifactEntry>(
+  entry: ArtifactEntry,
+  produced: Produced | undefined,
+  message: string,
+): asserts produced is Produced {
+  if (produced !== undefined && sameArtifactEntry(entry, produced)) return;
+  throw new ArtifactReaderFailure("integrity", message, {
+    integrityCheck: produced === undefined ? "foreign-entry" : "entry-metadata",
+  });
+}
 
 /** Compare every portable and adapter-owned fact supplied with an entry. */
 export const sameArtifactEntry = (
@@ -243,6 +262,11 @@ export interface ArtifactReader {
 }
 
 /** Typed adapter failure translated at provider boundary. */
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;
@@ -255,6 +279,7 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
     readonly reason:
@@ -284,6 +309,38 @@ export class ArtifactReaderFailure extends Error {
     this.boundary = options?.boundary;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
+    this.integrityCheck = options?.integrityCheck;
+  }
+
+  /**
+   * Reader-owned facts a rebuilt failure must keep. Each rebuild chooses its
+   * own cause, cleanup, cancellation and partial observation.
+   */
+  primaryFacts(): Pick<
+    ArtifactReaderFailureOptions,
+    | "userMessage"
+    | "resolvedPath"
+    | "boundary"
+    | "admission"
+    | "readerLimit"
+    | "integrityCheck"
+  > {
+    return {
+      ...(this.userMessage === undefined
+        ? {}
+        : { userMessage: this.userMessage }),
+      ...(this.resolvedPath === undefined
+        ? {}
+        : { resolvedPath: this.resolvedPath }),
+      ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.admission === undefined ? {} : { admission: this.admission }),
+      ...(this.readerLimit === undefined
+        ? {}
+        : { readerLimit: this.readerLimit }),
+      ...(this.integrityCheck === undefined
+        ? {}
+        : { integrityCheck: this.integrityCheck }),
+    };
   }
 
   /** Retain completed facts when a later artifact step fails. */
@@ -324,24 +381,14 @@ export class ArtifactReaderFailure extends Error {
       primary.message,
       {
         cause: primary,
-        userMessage: primary.userMessage,
-        resolvedPath: primary.resolvedPath,
+        // The constrained bound survives cleanup wrapping, or a file-size
+        // refusal would be reported as a memory constraint once a close fails.
+        ...primary.primaryFacts(),
         cancellation: primary.cancellation,
         cleanup: combineCleanup(primary.cleanup, cleanup),
         cleanupLeases:
           cleanupLeases ??
           (cleanup === primary.cleanup ? primary.cleanupLeases : undefined),
-        // The constrained bound survives cleanup wrapping, or a file-size
-        // refusal would be reported as a memory constraint once a close fails.
-        ...(primary.boundary === undefined
-          ? {}
-          : { boundary: primary.boundary }),
-        ...(primary.admission === undefined
-          ? {}
-          : { admission: primary.admission }),
-        ...(primary.readerLimit === undefined
-          ? {}
-          : { readerLimit: primary.readerLimit }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

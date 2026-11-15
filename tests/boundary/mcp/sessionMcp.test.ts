@@ -29,6 +29,7 @@ import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import {
+  LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
@@ -296,9 +297,7 @@ describe("owned-process prerequisite during status discovery", () => {
         reason: "provider_unavailable",
       });
       // Discovery carries the prerequisite owner's repair, not its failure text.
-      expect(apktool?.remediation).toBe(
-        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
-      );
+      expect(apktool?.remediation).toBe(LINUX_PROCESS_OWNERSHIP_REMEDIATION);
       expect(
         availability.groups.find(({ names }) =>
           names.includes("inspect_adb_client"),
@@ -797,9 +796,13 @@ describe("json depth bounds over MCP", () => {
         code: "evidence_integrity_mismatch",
         category: "integrity_mismatch",
         message: expect.stringContaining(
-          `The left Evidence failed validation (at parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.)`,
+          `maximum nesting depth of ${MAX_JSON_DEPTH}`,
         ),
-        details: { reason: "left Evidence failed validation" },
+        details: {
+          reason: "left Evidence failed validation",
+          side: "left",
+          issue_path: ["parameters"],
+        },
       },
     });
     const recovered = await mcp.callTool({

@@ -77,6 +77,22 @@
     },
     {
       "files": [
+        "src/**/*.ts",
+        "scripts/lib/browser-*-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "error" }
+    },
+    {
+      "files": [
+        "src/browser/PlaywrightCdpSession.ts",
+        "src/**/*.test.ts",
+        "src/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "off" }
+    },
+    {
+      "files": [
         "scripts/electron-active-hook*.cjs",
         "tests/conformance/readiness/electron/*.js",
         "website/public/examples/notes-electron/*.js"
@@ -88,8 +104,10 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/provider-failure-classifier": "error",
         "rea/typed-resource-refusal": "error",
         "rea/no-babel-visitor-keys": "error",
+        "rea/no-raw-file-handle-close": "error",
         "typescript/no-misused-promises": "error"
       }
     },
@@ -101,8 +119,10 @@
         "src/**/*.fixture.ts"
       ],
       "rules": {
+        "rea/provider-failure-classifier": "off",
         "rea/typed-resource-refusal": "off",
         "rea/no-babel-visitor-keys": "off",
+        "rea/no-raw-file-handle-close": "off",
         "max-lines": "off",
         "max-lines-per-function": [
           "error",
@@ -113,6 +133,27 @@
           }
         ],
         "typescript/no-misused-promises": "warn"
+      }
+    },
+    {
+      "files": ["src/filesystem/Owned*.ts"],
+      "rules": { "rea/no-raw-file-handle-close": "off" }
+    },
+    {
+      "files": ["src/cli*.ts", "src/cli/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/contracts/toolContracts.js"],
+                "allowTypeImports": true,
+                "message": "CLI startup registers every command without loading the complete tool catalog (tests/boundary/cli/cliStartupImports.test.ts). Import the command's own contract group instead."
+              }
+            ]
+          }
+        ]
       }
     },
     {

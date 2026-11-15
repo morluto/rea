@@ -14,8 +14,13 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -81,11 +86,12 @@ export const readAnalysisSnapshot = async (
     return ok(snapshot);
   } catch (cause: unknown) {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason }),
-      );
+      return err(cancelledBy(READ_OPERATION, signal));
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
 };
@@ -154,7 +160,10 @@ export const writeAnalysisSnapshot = async (
     encoded = serializeAnalysisSnapshot(snapshot);
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
   return writeTextFile(encoded, path, overwrite, resources);
@@ -163,7 +172,8 @@ export const writeAnalysisSnapshot = async (
 const snapshotValidationMessage = (cause: unknown): string => {
   if (cause instanceof z.ZodError)
     return `Analysis snapshot validation failed ${describeValidationFailure(cause)}`;
-  return cause instanceof TypeError
+  // The Evidence format owner's refusal carries the recreate guidance.
+  return cause instanceof TypeError || isUnsupportedEvidenceFormat(cause)
     ? cause.message
     : "Analysis snapshot validation failed";
 };

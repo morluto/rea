@@ -1,16 +1,9 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -41,6 +34,8 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -66,7 +61,19 @@ assert.equal(installation.providerVersion, "12.1.4");
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-riscv-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("riscv");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-riscv-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -83,7 +90,7 @@ for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: schemaVerifierEnvironment(env),
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
@@ -562,20 +569,23 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(`Cleanup unverified; retained workspace: ${workspace}`, {
-    cause: failure,
-  });
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause: failure,
+    },
+  );
 if (failure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `RISC-V verification failed; retained workspace: ${workspace}; MCP stderr: ${stderr}`,
     { cause: failure },
   );
-assert.deepEqual(
-  await readdir(runtime),
-  [],
-  `Runtime resources survived server shutdown; retained workspace: ${workspace}`,
-);
-await rm(workspace, { recursive: true, force: true });
+const survivors = await readdir(runtime);
+if (survivors.length > 0)
+  throw retainWorkspace(
+    `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+  );
+await workspaceFixture.release();
 console.log(
   JSON.stringify(
     {

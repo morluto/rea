@@ -45,7 +45,7 @@ it.each([
     lineEndings: "preserve",
   });
   if (parsed.ok) throw new Error("Expected refusal");
-  expect(parsed.error.reason).toBe("malformed");
+  expect(parsed.error.kind).toBe("malformed");
   expect(parsed.error.cause).toBeDefined();
 });
 
@@ -67,7 +67,7 @@ it.each([
 ])("rejects namespace-invalid XML before DOM projection: %j", (source) => {
   expect(
     parseXmlDocument(source, { doctype: "reject", lineEndings: "preserve" }),
-  ).toMatchObject({ ok: false, error: { reason: "malformed" } });
+  ).toMatchObject({ ok: false, error: { kind: "malformed" } });
 });
 
 it.each([
@@ -95,7 +95,10 @@ it("applies the consumer's explicit DTD policy", () => {
     { doctype: "reject", lineEndings: "preserve" },
   );
   if (parsed.ok) throw new Error("Expected unsupported DTD");
-  expect(parsed.error.reason).toBe("doctype");
+  expect(parsed.error.failure).toMatchObject({
+    kind: "unsupported",
+    field: "doctype",
+  });
 });
 
 it.each([
@@ -126,7 +129,10 @@ it.each([
         doctype: "external",
         lineEndings: "normalize",
       }),
-    ).toMatchObject({ ok: false, error: { reason: "internal-subset" } });
+    ).toMatchObject({
+      ok: false,
+      error: { failure: { kind: "unsupported", field: "internal-subset" } },
+    });
   },
 );
 

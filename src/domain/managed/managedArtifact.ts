@@ -100,10 +100,8 @@ const customAttributeSchema = z.object({
 const managedSignatureSchema = z.object({
   raw_length: z.int().min(0),
   raw_sha256: digestSchema,
-  // Evidence recorded before this field existed reads back as null.
   resolved_sha256: digestSchema
     .nullable()
-    .default(null)
     .describe(
       "SHA-256 of the raw signature with each TypeDef or TypeRef operand replaced by that type's namespace-qualified name; equals raw_sha256 when the signature names no types. Unlike raw_sha256 it does not depend on build-local metadata rows. Null when the signature could not be decoded or names a type REA could not resolve, such as a TypeSpec.",
     ),
@@ -126,15 +124,13 @@ const managedTypeSchema = z.object({
   full_name: z.string(),
   name_sha256: digestSchema
     .nullable()
-    .default(null)
     .describe(
-      "Framed nominal namespace/name/enclosing-name digest, independent of build-local rows. Null for historical Evidence or unresolved nesting; defining assemblies and CLR runtime identity are not established.",
+      "Framed nominal namespace/name/enclosing-name digest, independent of build-local rows. Null for unresolved nesting; defining assemblies and CLR runtime identity are not established.",
     ),
   flags: z.int().min(0).max(0xffff_ffff),
   extends_token: managedMetadataTokenSchema.nullable(),
   enclosing_type_token: managedMetadataTokenSchema
     .nullable()
-    .default(null)
     .describe(
       "Observed enclosing TypeDef from NestedClass; null when no enclosing entry was available, which alone does not establish top-level identity.",
     ),
@@ -172,9 +168,8 @@ const managedFieldSchema = z.object({
   signature: managedSignatureSchema,
   constant: managedFieldConstantSchema
     .nullable()
-    .exactOptional()
     .describe(
-      "Field-owned ECMA-335 Constant declaration and decoded default. Null means neither a declaration nor HasDefault was observed; omission means historical Evidence without this inspection.",
+      "Field-owned ECMA-335 Constant declaration and decoded default. Null means neither a declaration nor HasDefault was observed.",
     ),
 });
 
@@ -190,17 +185,15 @@ const managedExceptionRegionSchema = z.object({
       "Raw build-local catch type token; not a cross-artifact identity",
     ),
   /** Resolved from this artifact's own metadata; raw token remains build-local. */
-  class_type: z.string().nullable().default(null),
+  class_type: z.string().nullable(),
   class_type_name_sha256: digestSchema
     .nullable()
-    .default(null)
     .describe(
       "Nested nominal TypeDef/TypeRef name digest; assembly scope is compared separately and local tokens are not cross-artifact identities",
     ),
   class_type_identity_resolved: z
     .boolean()
     .nullable()
-    .default(null)
     .describe(
       "Whether this artifact's local token identifies the reported catch type; null when unexamined",
     ),
@@ -241,9 +234,8 @@ const managedMethodBodySchema = z.object({
       has_context_dependent_types: z.boolean(),
     })
     .nullable()
-    .default(null)
     .describe(
-      "Validated LocalVarSig blob facts; null when absent or unrecorded. Named types, modifiers and generic variables require metadata or declaring context; equal raw digests do not establish their cross-artifact type identity.",
+      "Validated LocalVarSig blob facts; null when absent. Named types, modifiers and generic variables require metadata or declaring context; equal raw digests do not establish their cross-artifact type identity.",
     ),
   il_size: z.int().min(0),
   il_sha256: digestSchema
@@ -280,8 +272,7 @@ const managedMethodSchema = z.object({
 
 // Declaring types are namespace-qualified like TypeDef `full_name`, nested
 // types keep bare names, and a generic instantiation names its generic type.
-// Evidence recorded before declaring types were named reads them as null.
-const declaringTypeNameSchema = z.string().nullable().default(null);
+const declaringTypeNameSchema = z.string().nullable();
 
 const managedMemberReferenceSchema = z.object({
   token: managedMetadataTokenSchema,
@@ -368,14 +359,21 @@ const managedNativeImplementationSchema = z.object({
   ]),
 });
 
+const targetRowResolvedSchema = z
+  .boolean()
+  .exactOptional()
+  .describe(
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Omitted by historical observations. Does not establish runtime binding.",
+  );
+
 const managedCallEdgeSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   caller_token: managedMetadataTokenSchema,
-  il_offset: offsetSchema.nullable().default(null),
+  il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
     .nullable()
-    .default(null)
     .describe(
-      "Nominal declaring-type/name/signature digest; null when unresolved or unrecorded. Does not establish assembly or runtime binding.",
+      "Nominal declaring-type/name/signature digest; null when unresolved. Does not establish assembly or runtime binding.",
     ),
   caller: z.string().nullable(),
   opcode: z.string(),
@@ -391,13 +389,13 @@ const managedCallEdgeSchema = z.object({
 });
 
 const managedFieldAccessSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   method_token: managedMetadataTokenSchema,
-  il_offset: offsetSchema.nullable().default(null),
+  il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
     .nullable()
-    .default(null)
     .describe(
-      "Nominal declaring-type/name/signature digest; null when unresolved or unrecorded. Does not establish assembly or runtime binding.",
+      "Nominal declaring-type/name/signature digest; null when unresolved. Does not establish assembly or runtime binding.",
     ),
   method: z.string().nullable(),
   opcode: z.string(),
@@ -518,75 +516,90 @@ export const managedArtifactInspectionSchema = z.object({
   limitations: z.array(z.string()),
 });
 
+const UNEXAMINED_MEMBER_COLLECTIONS = [
+  "fields",
+  "methods",
+  "member_refs",
+  "call_edges",
+  "field_accesses",
+] as const;
+
 /** Provider-neutral, execution-free metadata/signature/IL member inspection. */
-export const managedMemberInspectionSchema = z.object({
-  signature_resolution: z
-    .enum(["type-names-v1", "type-names-v2"])
-    .nullable()
-    .default(null)
-    .describe(
-      "Signature type-name resolution was examined, including unresolved operands; v2 also renders readable operand names, v1 retains raw operand text; null means no attestation, including historical or capacity-limited Evidence.",
-    ),
-  artifact: managedArtifactReferenceSchema,
-  module: moduleIdentitySchema.nullable(),
-  assembly: assemblyIdentitySchema.nullable().default(null),
-  metadata: managedMetadataSummarySchema,
-  identity_scope: managedTokenIdentityScopeSchema,
-  types: z.array(managedTypeSchema),
-  // Member Evidence recorded before NestedClass rows were read omits this
-  // field; null is historical uncertainty. False means a current NestedClass
-  // row was unreadable or invalid, not that no nested types exist.
-  nesting_read: z
-    .boolean()
-    .nullable()
-    .default(null)
-    .describe(
-      "Whether all NestedClass rows were read and valid. Null for historical Evidence; false means current nesting is incomplete. Individual name digests can remain unresolved for missing, cyclic or over-deep enclosing chains.",
-    ),
-  // Member Evidence recorded before ExportedType rows were read omits this
-  // field; null means the table was not examined, not that it was empty.
-  exported_types: z.array(managedExportedTypeSchema).nullable().default(null),
-  fields: z.array(managedFieldSchema),
-  methods: z.array(managedMethodSchema),
-  member_refs: z.array(managedMemberReferenceSchema),
-  call_edges: z.array(managedCallEdgeSchema),
-  field_accesses: z.array(managedFieldAccessSchema),
-  // Distinct #US literals loaded by ldstr in the inspected method bodies, in
-  // token order, with their own coverage: #US issues never enter the member
-  // coverage. null means they were not examined, not that there were none.
-  user_strings: z
-    .object({
-      state: z.enum(["complete", "partial"]),
-      literals: z.array(managedUserStringSchema),
+export const managedMemberInspectionSchema = z
+  .object({
+    signature_resolution: z
+      .enum(["type-names-v2"])
+      .nullable()
+      .describe(
+        "Signature type-name resolution was examined, including unresolved operands, and readable operand names are rendered; null means member decoding exceeded capacity and no members were examined.",
+      ),
+    artifact: managedArtifactReferenceSchema,
+    module: moduleIdentitySchema.nullable(),
+    assembly: assemblyIdentitySchema.nullable(),
+    metadata: managedMetadataSummarySchema,
+    identity_scope: managedTokenIdentityScopeSchema,
+    types: z.array(managedTypeSchema),
+    // False means a NestedClass row was unreadable or invalid, not that no
+    // nested types exist.
+    nesting_read: z
+      .boolean()
+      .describe(
+        "Whether all NestedClass rows were read and valid; false means nesting is incomplete. Individual name digests can remain unresolved for missing, cyclic or over-deep enclosing chains.",
+      ),
+    // Null means the table was not examined (member decoding exceeded capacity),
+    // not that it was empty.
+    exported_types: z.array(managedExportedTypeSchema).nullable(),
+    fields: z.array(managedFieldSchema),
+    methods: z.array(managedMethodSchema),
+    member_refs: z.array(managedMemberReferenceSchema),
+    call_edges: z.array(managedCallEdgeSchema),
+    field_accesses: z.array(managedFieldAccessSchema),
+    // Distinct #US literals loaded by ldstr in the inspected method bodies, in
+    // token order, with their own coverage: #US issues never enter the member
+    // coverage. null means they were not examined, not that there were none.
+    user_strings: z
+      .object({
+        state: z.enum(["complete", "partial"]),
+        literals: z.array(managedUserStringSchema),
+        issues: z.array(managedParseIssueSchema),
+      })
+      .nullable(),
+    /** Caller-selected declaring types; null when every type was inspected. */
+    selection: z
+      .object({
+        type_names: z.array(z.string().min(1)).min(1),
+        unmatched_type_names: z.array(z.string().min(1)),
+      })
+      .nullable(),
+    method_rows: z
+      .object({
+        offset: z.int().nonnegative(),
+        count: z.int().nonnegative(),
+        total: z.int().nonnegative(),
+      })
+      .nullable()
+      .describe(
+        "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
+      ),
+    coverage: z.object({
+      state: z.enum(["complete", "partial", "unavailable"]),
       issues: z.array(managedParseIssueSchema),
-    })
-    .nullable()
-    .default(null),
-  /** Caller-selected declaring types; null when every type was inspected. */
-  selection: z
-    .object({
-      type_names: z.array(z.string().min(1)).min(1),
-      unmatched_type_names: z.array(z.string().min(1)),
-    })
-    .nullable()
-    .default(null),
-  method_rows: z
-    .object({
-      offset: z.int().nonnegative(),
-      count: z.int().nonnegative(),
-      total: z.int().nonnegative(),
-    })
-    .nullable()
-    .default(null)
-    .describe(
-      "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
-    ),
-  coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
-    issues: z.array(managedParseIssueSchema),
-  }),
-  limitations: z.array(z.string()),
-});
+    }),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    if (result.signature_resolution !== null) return;
+    // Null resolution means member decoding exceeded capacity, so no member was
+    // examined; a member beside it would carry an unattested signature digest.
+    for (const key of UNEXAMINED_MEMBER_COLLECTIONS)
+      if (result[key].length > 0)
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message:
+            "Members require signature_resolution; null resolution means no members were examined.",
+        });
+  });
 
 /** Provider-neutral managed/native boundary observations from PE/CLI metadata. */
 export const managedNativeBoundaryInspectionSchema = z.object({

@@ -1,15 +1,8 @@
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -33,6 +26,10 @@ import {
   withVerifierCleanup,
   closeVerifierResources,
 } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-raw.mjs");
@@ -54,7 +51,10 @@ const installation = await inspectVerifierGhidraInstallation({
 assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-raw-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-raw-proof-",
+});
+const workspace = workspaceFixture.path;
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -97,7 +97,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: schemaVerifierEnvironment(env),
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-raw-proof", version: "1" });
@@ -109,7 +109,29 @@ let connected = false;
 let verifierRun;
 let report;
 let searchDefinition;
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  assert.equal(
+    fixtureCleaned,
+    true,
+    "Owned Java fixture cleanup remains pending",
+  );
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     await client.connect(transport);
     connected = true;
@@ -594,31 +616,7 @@ await withVerifierCleanup(async () => {
     if (stderr.trim()) process.stderr.write(stderr);
     throw error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-    assert.equal(
-      fixtureCleaned,
-      true,
-      "Owned Java fixture cleanup remains pending",
-    );
-    verifierRun = await completeVerifierRun(run);
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
 assert.deepEqual(verifierRun.process_lineage.descendants, []);
@@ -736,7 +734,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env: {
-      ...env,
+      ...schemaVerifierEnvironment(env),
       REA_GHIDRA_PROJECT_PATH: join(projectDirectory, "Boundary.gpr"),
     },
     stderr: "pipe",

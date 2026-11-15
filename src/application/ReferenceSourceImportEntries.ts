@@ -26,6 +26,7 @@ import type {
 } from "../reference/ReferenceSourceReaderTypes.js";
 import { typescriptEmittedSourceCandidates } from "./TypeScriptEmittedSourceCandidates.js";
 import { appendAll } from "../domain/appendAll.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 export interface ParsedReferenceSourceEntries {
   readonly entries: HistoricalSourceGraphInput["entries"];
@@ -152,7 +153,8 @@ const readPackageMetadata = (
     }
     try {
       const manifest: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes),
+        // npm and Node both accept a BOM-signed package.json.
+        decodeStrictUtf8(entry.bytes, "strip-signature"),
       );
       if (
         typeof manifest !== "object" ||

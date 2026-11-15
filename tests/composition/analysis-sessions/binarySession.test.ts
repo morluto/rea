@@ -37,6 +37,7 @@ import {
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -1959,7 +1960,7 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   ).toEqual(err(failure));
   expect(anotherMutation).not.toHaveBeenCalled();
   // Only the resource owner may acknowledge completed cleanup.
-  failure.resolveCleanup();
+  releaseOwnedCleanup(failure);
   expect((await session.open(target)).ok).toBe(true);
   await session.close();
 });

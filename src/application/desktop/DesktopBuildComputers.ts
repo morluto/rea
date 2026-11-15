@@ -17,18 +17,21 @@ import {
   type AnalysisCapturedOutput,
 } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  COMPUTER_START_TIMING,
   AppDataRefusal,
   ComputerStartFailure,
   computerFailedOnReadiness,
+  type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
 import {
@@ -106,7 +109,8 @@ interface HeldComputer {
   readonly turns: DesktopBuildTurns;
   readonly cleanup: {
     resources: readonly string[];
-    errors: Set<WeakRef<AnalysisError>>;
+    /** Confirmed by a verified teardown; every bound teardown failure reads it. */
+    readonly release: AnalysisCleanupRelease;
   };
   closing: boolean;
 }
@@ -118,9 +122,7 @@ const bindCleanupFailure = (held: HeldComputer, error: AnalysisError): void => {
       return held.cleanup.resources;
     },
   });
-  for (const reference of held.cleanup.errors)
-    if (reference.deref() === undefined) held.cleanup.errors.delete(reference);
-  held.cleanup.errors.add(new WeakRef(error));
+  held.cleanup.release.bind(error);
 };
 
 /** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
@@ -144,8 +146,7 @@ const failure = (
   signal: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal.aborted)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal.aborted) return cancelledBy(operation, signal);
   return new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
     userMessage: cause instanceof Error ? cause.message : String(cause),
     cause,
@@ -282,7 +283,10 @@ const liveComputer = (
         attempt(() => witness.readers.release()),
         attempt(() => judge.close()),
       ]);
-      if (!commands.verified || !readers.verified) {
+      // Reader cleanup can be retried against the live computer. An unsettled
+      // long run cannot: its stop already ended, and the computer teardown is
+      // what removes a descendant the supervisor does not own.
+      if (!readers.verified) {
         const failed = [commands, readers, judgeResult].filter(
           (result) => !result.verified,
         );
@@ -296,10 +300,16 @@ const liveComputer = (
         closedComputer === undefined
           ? await attempt(() => computer.close())
           : closedComputer;
-      if (computerResult.verified) closedComputer = computerResult;
-      const failed = [judgeResult, computerResult].filter(
-        (result) => !result.verified,
-      );
+      if (computerResult.verified) {
+        closedComputer = computerResult;
+        if (!commands.verified)
+          capture.longRuns.resolveAfterVerifiedComputerTeardown();
+      }
+      const failed = [
+        judgeResult,
+        computerResult,
+        ...(!computerResult.verified && !commands.verified ? [commands] : []),
+      ].filter((result) => !result.verified);
       if (failed.length === 0 && computerResult.verified) return computerResult;
       return {
         verified: false,
@@ -316,7 +326,7 @@ const liveComputer = (
       turns,
     },
     turns,
-    cleanup: { resources: [], errors: new Set() },
+    cleanup: { resources: [], release: new AnalysisCleanupRelease() },
     closing: false,
   };
 };
@@ -367,7 +377,6 @@ const startFailure = (
 ): AnalysisError => {
   if (cause instanceof AnalysisError && kept.release.verified) return cause;
   const options = {
-    cause,
     ...(output === undefined ? {} : { capturedOutput: output }),
     ...(kept.release.verified
       ? {}
@@ -380,11 +389,7 @@ const startFailure = (
           remediationAction: `REA keeps this computer's teardown as ${kept.id}; once the reported problem is fixed, call close_build_computer with that computer_id.`,
         }),
   };
-  if (signal.aborted)
-    return new AnalysisCancelledError(START, {
-      ...options,
-      cause: signal.reason,
-    });
+  if (signal.aborted) return cancelledBy(START, signal, options);
   return new ProviderAdapterError(AGENTENV_PROVIDER, START, {
     ...(cause instanceof ComputerStartFailure &&
     cause.remediation !== undefined &&
@@ -393,6 +398,7 @@ const startFailure = (
       : {}),
     userMessage: cause instanceof Error ? cause.message : String(cause),
     ...options,
+    cause,
   });
 };
 
@@ -413,9 +419,15 @@ export class DesktopBuildComputers {
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
+    private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
     this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
     this.#shared = { settle, secrets: this.#secrets };
+  }
+
+  /** How often a computer's start, and a tool call waiting on one, reports progress. */
+  get progressMs(): number {
+    return this.startTiming.progressMs;
   }
 
   /** How results show the secrets typed on this server's computers. */
@@ -510,6 +522,7 @@ export class DesktopBuildComputers {
                 .report({ phase: START, completed: 0, total: null, message })
                 .catch(() => undefined);
             },
+        this.startTiming,
       );
       computer = connected.computer;
       const shot = driverCall("screenshot", input.screenshot ?? {});
@@ -558,7 +571,7 @@ export class DesktopBuildComputers {
         actions: new BuildComputerActionLog(this.#secrets.redact),
         steps: undefined,
         turns: new DesktopBuildTurns(),
-        cleanup: { resources: [], errors: new Set() },
+        cleanup: { resources: [], release: new AnalysisCleanupRelease() },
         closing: true,
       });
       const release = await this.#retire(id);
@@ -715,9 +728,7 @@ export class DesktopBuildComputers {
     const release = await held.turns.close(() => this.#retire(id));
     held.cleanup.resources = release.verified ? [] : release.resources;
     if (release.verified) {
-      for (const reference of held.cleanup.errors)
-        reference.deref()?.resolveCleanup();
-      held.cleanup.errors.clear();
+      held.cleanup.release.confirm();
       return ok({ computer_id: id, teardown: release.teardown });
     }
     const failure = new ProviderCleanupError(

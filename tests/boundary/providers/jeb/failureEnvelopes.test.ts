@@ -121,73 +121,164 @@ const failures: { name: string; payload: JsonValue; message: string }[] = [
   },
 ];
 
-it.each(
-  failures.flatMap((failure) =>
-    (["structured", "json-text"] as const).map((encoding) => ({
-      ...failure,
-      encoding,
-    })),
-  ),
-)(
-  "projects $encoding $name as execution failure with the original envelope",
-  async ({ payload, message, encoding }) => {
-    const producer = await startProducer(payload, encoding);
-    const provider = new JebProvider({
-      environment: { REA_JEB_MCP_URL: producer.endpoint },
+const input = { path: "./selected target/caller-secret.apk" };
+
+/** Serve one refusal to the public open_jeb_project tool and project it. */
+const refuseOpenProject = async (
+  payload: JsonValue,
+  encoding: "structured" | "json-text",
+) => {
+  const producer = await startProducer(payload, encoding);
+  const provider = new JebProvider({
+    environment: { REA_JEB_MCP_URL: producer.endpoint },
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("JEB must not start a deep provider");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { jebAnalysis: provider, environment: {} },
+  );
+  const client = new Client({ name: "jeb-failure-contract", version: "1" });
+  try {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: "open_jeb_project",
+      arguments: input,
     });
-    const session = createTestBinarySession(() => {
-      throw new Error("JEB must not start a deep provider");
-    });
-    const server = createServer(
-      { kind: "session", session },
-      { jebAnalysis: provider, environment: {} },
-    );
-    const client = new Client({ name: "jeb-failure-contract", version: "1" });
-    const input = { path: "./selected target/caller-secret.apk" };
+    expect(result.isError).toBe(true);
+    const text = result.content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("");
+    expect(producer.calls).toEqual([
+      { name: "open_project", arguments: { file_path: input.path } },
+    ]);
+    return { projected: JSON.parse(text), endpoint: producer.endpoint };
+  } finally {
     try {
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "open_jeb_project",
-        arguments: input,
-      });
-      expect(result.isError).toBe(true);
-      const text = result.content
-        .map((block) => (block.type === "text" ? block.text : ""))
-        .join("");
-      const projected = JSON.parse(text);
-      expect(projected.error).toMatchObject({
-        code: "execution_failure",
-        message,
-      });
-      expect(projected.error.details.diagnostics).toEqual({
-        endpoint: producer.endpoint,
-        upstream_response: payload,
-        input,
-      });
-      expect(producer.calls).toEqual([
-        { name: "open_project", arguments: { file_path: input.path } },
-      ]);
+      await client.close();
     } finally {
       try {
-        await client.close();
+        await server.close();
       } finally {
         try {
-          await server.close();
+          await session.close();
         } finally {
           try {
-            await session.close();
+            await provider.close();
           } finally {
-            try {
-              await provider.close();
-            } finally {
-              await producer.close();
-            }
+            await producer.close();
           }
         }
       }
     }
+  }
+};
+
+const encodings = ["structured", "json-text"] as const;
+
+it.each(
+  failures.flatMap((failure) =>
+    encodings.map((encoding) => ({ ...failure, encoding })),
+  ),
+)(
+  "projects $encoding $name as execution failure with the original envelope",
+  async ({ payload, message, encoding }) => {
+    const { projected, endpoint } = await refuseOpenProject(payload, encoding);
+    expect(projected.error).toMatchObject({
+      code: "execution_failure",
+      message,
+    });
+    expect(projected.error.details.diagnostics).toEqual({
+      endpoint,
+      upstream_response: payload,
+      input,
+    });
+  },
+);
+
+const exhaustion: {
+  name: string;
+  payload: JsonValue;
+  resource: string;
+  area: string | null;
+  remediation: RegExp;
+}[] = [
+  {
+    name: "heap space in the nested error",
+    payload: {
+      success: false,
+      error: {
+        code: "ENGINE_FAILURE",
+        message: "java.lang.OutOfMemoryError: Java heap space",
+      },
+    },
+    resource: "memory",
+    area: "heap",
+    remediation: /larger maximum heap \(-Xmx\)/u,
+  },
+  {
+    name: "metaspace in the nested error",
+    payload: {
+      success: false,
+      error: { message: "java.lang.OutOfMemoryError: Metaspace" },
+    },
+    resource: "memory",
+    area: "metaspace",
+    remediation: /-XX:MaxMetaspaceSize; a larger heap \(-Xmx\) does not/u,
+  },
+  {
+    name: "an oversized array in the outer message",
+    payload: {
+      success: false,
+      message:
+        "java.lang.OutOfMemoryError: Requested array size exceeds VM limit",
+    },
+    resource: "memory",
+    area: "array-size",
+    remediation: /does not lift this limit\. Select a smaller input/u,
+  },
+  {
+    name: "an unnamed area in the outer message",
+    payload: { success: false, message: "java.lang.OutOfMemoryError" },
+    resource: "memory",
+    area: null,
+    remediation: /Review the reported out-of-memory line/u,
+  },
+  {
+    name: "native-thread exhaustion",
+    payload: {
+      success: false,
+      message:
+        "java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory",
+    },
+    resource: "capacity",
+    area: "native-thread",
+    remediation: /could not create a native thread/u,
+  },
+];
+
+it.each(
+  exhaustion.flatMap((failure) =>
+    encodings.map((encoding) => ({ ...failure, encoding })),
+  ),
+)(
+  "reports $encoding JVM exhaustion with $name as a resource constraint",
+  async ({ payload, resource, area, remediation, encoding }) => {
+    const { projected, endpoint } = await refuseOpenProject(payload, encoding);
+    expect(projected.error.code).toBe("resource_constraint");
+    expect(projected.error.details).toMatchObject({
+      resource,
+      diagnostics: {
+        endpoint,
+        upstream_response: payload,
+        input,
+        jvm_exhaustion_area: area,
+      },
+    });
+    expect(projected.error.remediation.action).toMatch(remediation);
   },
 );

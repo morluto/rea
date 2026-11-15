@@ -47,8 +47,8 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   });
   if (!parsed.ok)
     throw new CaptureFormatError(
-      parsed.error.reason === "doctype" ? "unsupported" : "malformed",
-      parsed.error.reason === "doctype"
+      parsed.error.kind === "unsupported" ? "unsupported" : "malformed",
+      parsed.error.kind === "unsupported"
         ? "SAZ metadata DTDs are unsupported."
         : "SAZ metadata is not well-formed XML.",
       "",
