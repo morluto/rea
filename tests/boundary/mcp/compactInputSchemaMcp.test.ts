@@ -202,9 +202,12 @@ it("keeps SDK-converted and canonical schemas valid and accepting canonical exam
         arrayItemSchemaError(tool.inputSchema, tool.name),
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
-      expect(
-        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
-      ).toBeUndefined();
+      // Literal portability is a rule of the advertised dialect, which only
+      // the listed (compact) presentation applies.
+      if (profile === "compact")
+        expect(
+          unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
+        ).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),
         `${profile} profile, ${tool.name}: ${ajv.errorsText(ajv.errors)}`,

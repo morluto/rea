@@ -261,18 +261,19 @@ it("retains item annotations when only the unsafe contains maximum leaves", () =
     properties: {
       values: {
         type: "array",
-        contains: { const: false },
+        // No portable regex form exists, so the advertisement omits it.
+        contains: { type: "string", pattern: "^😀$" },
         maxContains: 1,
         unevaluatedItems: false,
       },
     },
   };
   const advertised = presentInputJsonSchema(canonical, () => undefined);
-  const input = { values: [false] };
+  const input = { values: ["😀"] };
   expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
   expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(true);
   expect(advertised).toHaveProperty("properties.values.contains", {
-    type: "boolean",
+    type: "string",
   });
   expect(advertised).toHaveProperty(
     "properties.values.unevaluatedItems",
@@ -345,7 +346,8 @@ it.each(["draft-07", "draft-2020-12"] as const)(
           ? "http://json-schema.org/draft-07/schema#"
           : "https://json-schema.org/draft/2020-12/schema",
       type: "object",
-      definitions: { off: { const: false } },
+      // No portable regex form exists, so the advertisement omits it.
+      definitions: { off: { type: "string", pattern: "^😀$" } },
       default: literal,
       properties: {
         value: { $ref: "#/default/conditional" },

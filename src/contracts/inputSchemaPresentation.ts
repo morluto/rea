@@ -159,35 +159,11 @@ type SchemaNormalization = {
   readonly changed: boolean;
 };
 
-// A branch that also references another schema is not judged by its own
-// keywords: draft-07 ignores a reference's siblings, and the target may admit
-// more than a boolean. Such unions keep the `anyOf` fallback.
+// Draft-07 ignores the siblings of a reference, so relaxing one removes them.
 const hasReference = (schema: Readonly<Record<string, unknown>>): boolean =>
   ["$ref", "$dynamicRef", "$recursiveRef"].some(
     (keyword) => typeof schema[keyword] === "string",
   );
-
-const isBooleanLiteralSchema = (schema: unknown): boolean =>
-  isObject(schema) &&
-  !hasReference(schema) &&
-  (typeof schema.const === "boolean" ||
-    (Array.isArray(schema.enum) &&
-      schema.enum.length > 0 &&
-      schema.enum.every((value) => typeof value === "boolean")));
-
-const isBooleanSchema = (schema: unknown): boolean =>
-  isObject(schema) &&
-  ((schema.type === "boolean" && !hasReference(schema)) ||
-    isBooleanLiteralSchema(schema));
-
-/**
- * Whether a union collapses to `type: "boolean"` once a branch changes. The
- * decision reads the canonical branches, so a branch that becomes boolean only
- * because presentation relaxed its reference keeps the union, and pointers into
- * the union stay resolvable (see `throughRemovableLocation`).
- */
-const collapsesToBoolean = (branches: readonly unknown[]): boolean =>
-  branches.length > 0 && branches.every(isBooleanSchema);
 
 const isObjectKeyword = (key: string) => schemaMaps.has(key);
 const isArrayKeyword = (key: string) => schemaArrays.has(key);
@@ -263,30 +239,6 @@ const referencedDefaultPaths = (
   return kept;
 };
 
-const preserveSharedDefault = (
-  schema: Record<string, unknown>,
-  branches: readonly unknown[],
-): void => {
-  if (schema.default !== undefined) return;
-  const defaults = branches
-    .filter(isObject)
-    .map((branch) => branch.default)
-    .filter((value) => value !== undefined);
-  if (
-    defaults.length > 0 &&
-    defaults.every((value) => isDeepStrictEqual(value, defaults[0]))
-  )
-    schema.default = defaults[0];
-};
-
-const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
-  typeof schema.const === "boolean" ||
-  schema.const === "" ||
-  (Array.isArray(schema.enum) &&
-    ((schema.enum.length > 0 &&
-      schema.enum.every((item) => typeof item === "boolean")) ||
-      schema.enum.includes("")));
-
 /**
  * A pattern the portable projection cannot reproduce exactly widens its site.
  * Exact re-emission keeps the site's meaning, so its dependents stay intact.
@@ -294,13 +246,6 @@ const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
 const hasWidenedPattern = (schema: Readonly<Record<string, unknown>>) =>
   typeof schema.pattern === "string" &&
   projectPortablePattern(schema.pattern).kind !== "exact";
-
-interface NormalizationOptions {
-  /** Rewrite boolean and empty-string literals some gateways refuse. */
-  readonly literals: boolean;
-}
-const INPUT_NORMALIZATION: NormalizationOptions = { literals: true };
-const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
 
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
 /**
@@ -318,10 +263,6 @@ const REMOVABLE_KEYWORDS = new Set([
   "unevaluatedItems",
 ]);
 
-/**
- * Whether a pointer from `root` passes through a keyword normalization may
- * remove. An `anyOf` is removed only when it collapses: every branch boolean.
- */
 /** Keywords a relaxed draft-07 reference keeps; its other siblings go. */
 const DRAFT07_REDUCED_REFERENCE_KEYS = new Set([
   "$id",
@@ -353,14 +294,7 @@ const throughRemovableLocation = (
       !DRAFT07_REDUCED_REFERENCE_KEYS.has(step.keyword)
     )
       return true;
-    if (
-      step.kind === "keyword" &&
-      (REMOVABLE_KEYWORDS.has(step.keyword) ||
-        (step.keyword === "anyOf" &&
-          isObject(value) &&
-          Array.isArray(value.anyOf) &&
-          collapsesToBoolean(value.anyOf)))
-    )
+    if (step.kind === "keyword" && REMOVABLE_KEYWORDS.has(step.keyword))
       return true;
     value =
       typeof value === "object" && value !== null
@@ -370,10 +304,7 @@ const throughRemovableLocation = (
   return false;
 };
 
-const normalizationContext = (
-  root: Readonly<Record<string, unknown>>,
-  options: NormalizationOptions,
-) => {
+const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
   const references = new JsonSchemaReferences(root);
   type Fact = {
     changed: boolean;
@@ -449,9 +380,7 @@ const normalizationContext = (
     if (
       !ignoresSiblings &&
       (opaquePatternChanged ||
-        (sites.get(scope)?.has(schema) &&
-          ((options.literals && hasNormalizedLiteral(schema)) ||
-            hasWidenedPattern(schema))))
+        (sites.get(scope)?.has(schema) && hasWidenedPattern(schema)))
     ) {
       fact.changed = true;
       changed.push(fact);
@@ -555,7 +484,6 @@ const normalizationContext = (
       }
   return {
     references,
-    options,
     changed: (schema: object, scope: JsonSchemaScope | undefined) =>
       indexed.get(scope)?.get(schema)?.changed === true,
     lostEvaluation: (schema: object, scope: JsonSchemaScope | undefined) =>
@@ -565,51 +493,19 @@ const normalizationContext = (
   };
 };
 
-/** Drop boolean and empty-string literals, keeping the node's type. */
-const widenGatewayLiterals = (node: Record<string, unknown>): void => {
-  if (typeof node.const === "boolean") {
-    delete node.const;
-    if (node.type === undefined) node.type = "boolean";
-  }
-  if (node.const === "") {
-    delete node.const;
-    if (node.type === undefined) node.type = "string";
-  }
-  if (
-    Array.isArray(node.enum) &&
-    node.enum.length > 0 &&
-    node.enum.every((item) => typeof item === "boolean")
-  ) {
-    delete node.enum;
-    if (node.type === undefined) node.type = "boolean";
-  }
-  if (Array.isArray(node.enum) && node.enum.includes("")) {
-    // Removing only the empty member would reject a canonical-valid input.
-    // Gemini transports turn const into enum and refuse empty enum members.
-    const values = node.enum;
-    delete node.enum;
-    if (
-      node.type === undefined &&
-      values.every((item) => typeof item === "string")
-    )
-      node.type = "string";
-  }
-};
-
 const normalizeAdvertisedSchema = (
   value: unknown,
-  options: NormalizationOptions,
   context?: ReturnType<typeof normalizationContext>,
   inherited?: JsonSchemaScope,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
-  const owner = context ?? normalizationContext(value, options);
+  const owner = context ?? normalizationContext(value);
   const scope = owner.references.enter(
     value,
     context === undefined ? owner.references.rootScope : inherited,
   );
   const normalize = (child: unknown) =>
-    normalizeAdvertisedSchema(child, options, owner, scope);
+    normalizeAdvertisedSchema(child, owner, scope);
   const node: Record<string, unknown> = { ...value };
   const changed = owner.changed(value, scope);
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
@@ -664,7 +560,6 @@ const normalizeAdvertisedSchema = (
     if (projected.kind === "unexpressible") delete node.pattern;
     else node.pattern = projected.pattern;
   }
-  if (options.literals) widenGatewayLiterals(node);
 
   const negated = Object.hasOwn(value, "not")
     ? normalize(value.not)
@@ -707,13 +602,6 @@ const normalizeAdvertisedSchema = (
     const schemas = normalized.map((result) => result.schema);
     const branchesChanged = normalized.some((result) => result.changed);
     if (combinator === "oneOf" && branchesChanged) {
-      const booleanLiteralsOnly = branches.every(isBooleanLiteralSchema);
-      if (booleanLiteralsOnly) {
-        node.type = "boolean";
-        preserveSharedDefault(node, schemas);
-        delete node.oneOf;
-        continue;
-      }
       // `anyOf` retains branch guidance without allowing widened branches to
       // reject inputs that were accepted by exactly one canonical branch.
       delete node.oneOf;
@@ -723,12 +611,6 @@ const normalizeAdvertisedSchema = (
       } else {
         node.anyOf = schemas;
       }
-      continue;
-    }
-    if (branchesChanged && collapsesToBoolean(branches)) {
-      node.type = "boolean";
-      preserveSharedDefault(node, schemas);
-      delete node[combinator];
       continue;
     }
     node[combinator] = schemas;
@@ -759,10 +641,10 @@ const normalizeAdvertisedSchema = (
   return { schema: node, changed };
 };
 
-// Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root, and
-// clients then drop the tool or advertise it without parameters. Present a
-// root union of strict object groups as one object whose properties are the
-// union of the groups. The canonical Zod schema still enforces the exact group.
+// The advertised dialect's `root-shape` rule requires a plain object root
+// without a combinator. Present a root union of strict object groups as one
+// object whose properties are the union of the groups. The canonical Zod
+// schema still enforces the exact group.
 const flattenRootObjectUnion = (
   root: Record<string, unknown>,
   references: JsonSchemaReferences,
@@ -998,8 +880,10 @@ export const presentInputJsonSchema = (
     describeProperty,
   );
   if (!isObject(described))
-    return normalizeAdvertisedSchema(flattened, INPUT_NORMALIZATION)
-      .schema as Record<string, unknown>;
+    return normalizeAdvertisedSchema(flattened).schema as Record<
+      string,
+      unknown
+    >;
   const {
     dependencies: _dependencies,
     dependentRequired: _dependentRequired,
@@ -1007,18 +891,20 @@ export const presentInputJsonSchema = (
   } = described;
   const dependencies = dependencyGuidance(described);
   if (dependencies.length === 0)
-    return normalizeAdvertisedSchema(presentation, INPUT_NORMALIZATION)
-      .schema as Record<string, unknown>;
+    return normalizeAdvertisedSchema(presentation).schema as Record<
+      string,
+      unknown
+    >;
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
     ...dependencies,
   ].filter((text) => text !== undefined);
-  return normalizeAdvertisedSchema(
-    { ...presentation, description: description.join(" ") },
-    INPUT_NORMALIZATION,
-  ).schema as Record<string, unknown>;
+  return normalizeAdvertisedSchema({
+    ...presentation,
+    description: description.join(" "),
+  }).schema as Record<string, unknown>;
 };
 
 /**
@@ -1033,13 +919,11 @@ export const presentOutputJsonSchema = (
     projection: projectPortablePattern(pattern),
   }));
   if (hasLiteralReference(root))
-    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
-      .schema as Record<string, unknown>;
+    return normalizeAdvertisedSchema(root).schema as Record<string, unknown>;
   // Output schemas reach several megabytes. Exact re-emission changes no
   // dependent, so only a widened pattern needs the dependency analysis.
   if (patterns.some(({ projection }) => projection.kind !== "exact"))
-    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
-      .schema as Record<string, unknown>;
+    return normalizeAdvertisedSchema(root).schema as Record<string, unknown>;
   if (
     patterns.every(
       ({ pattern, projection }) =>
