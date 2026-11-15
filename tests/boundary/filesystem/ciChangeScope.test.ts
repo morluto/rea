@@ -61,9 +61,12 @@ const it = sequentialIt.concurrent;
 let seed:
   | { readonly root: string; readonly directory: string; readonly base: string }
   | undefined;
+// Owned from creation, so a failed seed setup is still removed.
+let workspaceRoot: string | undefined;
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-ci-scope-seed-");
+  workspaceRoot = workspace.root;
   const directory = await workspace.mkdir("repository");
   // No template: every case copies this repository, and sample hooks are
   // never run (fixture Git disables hooks).
@@ -79,7 +82,7 @@ beforeAll(async () => {
 // Case repositories live in the seed workspace and are removed with it. A
 // per-case cleanup hook would bind to whichever concurrent case is current.
 afterAll(async () => {
-  if (seed !== undefined) await removeTestWorkspace(seed.root);
+  if (workspaceRoot !== undefined) await removeTestWorkspace(workspaceRoot);
 });
 
 async function fixture() {
