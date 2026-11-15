@@ -29,7 +29,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       cause.reason === "encoding-mismatch"
     )
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         "SAZ metadata encoding declaration disagrees with its bytes.",
         "",
         cause,
@@ -47,7 +47,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   });
   if (!parsed.ok)
     throw new CaptureFormatError(
-      parsed.error.reason === "doctype" ? "unsupported" : "format",
+      parsed.error.reason === "doctype" ? "unsupported" : "malformed",
       parsed.error.reason === "doctype"
         ? "SAZ metadata DTDs are unsupported."
         : "SAZ metadata is not well-formed XML.",
@@ -57,13 +57,13 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   const document = parsed.value;
   if (document.documentElement?.tagName !== "Session")
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "SAZ metadata must have a Session document element.",
     );
   const visit = (node: Node, depth: number): JsonValue => {
     if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `SAZ metadata exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
       );
     const children: JsonValue[] = [];

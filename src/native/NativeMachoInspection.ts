@@ -1,3 +1,5 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
+import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -100,8 +102,6 @@ interface NativeMachoInspectionContext {
   ) => Promise<MachoCommandNames>;
 }
 
-const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
-
 /**
  * Exact names from the selected slice's chained-fixup import table by import
  * ordinal, or why that table cannot stand in for the symbol-table inventory.
@@ -115,7 +115,7 @@ const readChainedImportNames = async (
 ): Promise<Result<readonly (string | null)[], string> | undefined> => {
   if (context.readSliceRange === undefined) return undefined;
   const fields = binary.commands.find(
-    ({ command }) => command === LC_DYLD_CHAINED_FIXUPS,
+    ({ command }) => command === LC.DYLD_CHAINED_FIXUPS,
   )?.fixedFields;
   const at = fields?.dataoff;
   const length = fields?.datasize;
@@ -133,7 +133,8 @@ const readChainedImportNames = async (
       ),
     );
   } catch (cause) {
-    if (cause instanceof RangeError) return err(cause.message);
+    const failure = parseFailureFromCause(cause);
+    if (failure !== undefined) return err(failure.message);
     throw cause;
   }
 };

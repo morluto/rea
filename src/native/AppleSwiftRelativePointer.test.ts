@@ -1,3 +1,4 @@
+import { ParseFailureError, malformedInput } from "../domain/parseFailure.js";
 import { expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -36,7 +37,7 @@ const readers = (bytes: Buffer) => ({
   ],
   offset: (address: bigint, size = 1) => {
     if (address < 0n || address + BigInt(size) > BigInt(bytes.length))
-      throw new RangeError("outside fixture bytes");
+      throw malformedInput("macho", "outside fixture bytes");
     return Number(address);
   },
 });
@@ -205,7 +206,8 @@ it("keeps a fixup rebase to VM address zero as an address, not null", () => {
       ...readers(bytes),
       resolvePointer: () => ({ kind: "rebase", target: 0n }),
       offset: (address, size = 1) => {
-        if (address === 0n) throw new RangeError("unmapped target address");
+        if (address === 0n)
+          throw malformedInput("macho", "unmapped target address");
         return readers(bytes).offset(address, size);
       },
     },
@@ -278,8 +280,12 @@ it("retains unsafe target addresses as partial decode facts", () => {
 });
 
 it.each([
-  new RangeError("indirect pointer cell is unreadable"),
+  malformedInput("macho", "indirect pointer cell is unreadable"),
   new Error("reader invariant failed"),
+  // Host failures say nothing about the metadata, so they are not partial
+  // decode reasons.
+  new RangeError("Maximum call stack size exceeded"),
+  new RangeError("Invalid string length"),
 ])(
   "distinguishes indirect pointer read failure from a known unmapped target: %s",
   (failure) => {
@@ -297,7 +303,7 @@ it.each([
       budget: budget(),
       result,
     });
-    if (failure instanceof RangeError) {
+    if (failure instanceof ParseFailureError) {
       expect(relative(0x24n, "conformanceProtocol")).toEqual({
         kind: "unknown",
         reason: failure.message,

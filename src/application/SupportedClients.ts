@@ -13,6 +13,10 @@ import {
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  vscodeUserDirectory,
+  xdgConfigHomeOrDefault,
+} from "./ClientConfigRoots.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import {
@@ -145,37 +149,6 @@ interface ClientDefinitionBase {
   ) => NonNullable<SetupClient["geminiSettings"]>;
 }
 
-/** XDG treats an empty config-home value as unset. */
-const xdgConfigHome = ({ home, env }: ClientPathContext): string =>
-  env.XDG_CONFIG_HOME || join(home, ".config");
-
-const vscodeUserDirectory = ({
-  home,
-  platform,
-  env,
-}: ClientPathContext): string => {
-  // Match VS Code's user-data selection before appending the User scope.
-  // Empty overrides are unset; portable storage takes precedence over appdata.
-  const userData = env.VSCODE_PORTABLE
-    ? join(env.VSCODE_PORTABLE, "user-data")
-    : env.VSCODE_APPDATA
-      ? join(env.VSCODE_APPDATA, "Code")
-      : platform === "win32"
-        ? join(windowsAppDataRoots(home, env).roaming, "Code")
-        : platform === "darwin"
-          ? join(home, "Library", "Application Support", "Code")
-          : join(xdgConfigHome({ home, platform, env }), "Code");
-  // The catalog can describe Windows clients on another host; retain its
-  // drive-absolute paths instead of resolving them against that host cwd.
-  const absoluteUserData =
-    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
-      ? userData
-      : isAbsolute(userData)
-        ? resolve(userData)
-        : resolve(env.VSCODE_CWD || process.cwd(), userData);
-  return join(absoluteUserData, "User");
-};
-
 const traeUserDirectory = ({
   home,
   platform,
@@ -185,7 +158,7 @@ const traeUserDirectory = ({
     return join(windowsAppDataRoots(home, env).roaming, "Trae", "User");
   if (platform === "darwin")
     return join(home, "Library", "Application Support", "Trae", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Trae", "User");
+  return join(xdgConfigHomeOrDefault({ home, env }), "Trae", "User");
 };
 
 /** Windows packaging decides which file Claude Desktop reads; see its resolver. */
@@ -196,7 +169,7 @@ const claudeDesktopLocation = (
     return resolveWindowsClaudeDesktopLocation(context.home, context.env);
   const directory =
     context.platform === "linux"
-      ? join(xdgConfigHome(context), "Claude")
+      ? join(xdgConfigHomeOrDefault(context), "Claude")
       : join(context.home, "Library", "Application Support", "Claude");
   return ok({
     configPath: join(directory, "claude_desktop_config.json"),
@@ -216,12 +189,6 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 /** Kimi Code stores MCP declarations beside the rest of its home data. */
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
-
-/** Clients registered with the compact input-schema profile unless one is selected. */
-export const compactInputSchemaByDefault = ({
-  name,
-}: Pick<SetupClient, "name">): boolean =>
-  name === "kimi" || name === "lm_studio";
 
 /**
  * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
@@ -468,13 +435,13 @@ const openCodeOverrideDirectory = (
 
 const opencodeDirectory = (context: ClientPathContext): string =>
   openCodeOverrideDirectory(context.env) ??
-  join(xdgConfigHome(context), "opencode");
+  join(xdgConfigHomeOrDefault(context), "opencode");
 
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
-  const directory = join(xdgConfigHome(context), "opencode");
+  const directory = join(xdgConfigHomeOrDefault(context), "opencode");
   const overrideDirectory = openCodeOverrideDirectory(context.env);
   const paths = [
     join(directory, "config.json"),
@@ -565,7 +532,7 @@ const geminiSettings = ({
 const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
   platform === "win32"
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
-    : join(env.XDG_CONFIG_HOME || join(home, ".config"), "devin");
+    : join(xdgConfigHomeOrDefault({ home, env }), "devin");
 
 /**
  * FreeBuff's own profile directory (its `state.json` root, fixed under

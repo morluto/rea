@@ -14,7 +14,9 @@ import type { Writable } from "node:stream";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
@@ -108,11 +110,11 @@ export class KunaTargetCommands {
       request.releaseRun?.();
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             request.operation,
             request.signal.aborted
-              ? { cause: request.signal.reason }
-              : undefined,
+              ? request.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -125,11 +127,11 @@ export class KunaTargetCommands {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             "kuna:workspace",
             this.lifetime.signal.aborted
-              ? { cause: this.lifetime.signal.reason }
-              : undefined,
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -149,11 +151,11 @@ export class KunaTargetCommands {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             operation,
             this.lifetime.signal.aborted
-              ? { cause: this.lifetime.signal.reason }
-              : undefined,
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -327,7 +329,7 @@ export class KunaTargetCommands {
         return err(failure);
       }
       if (this.#closing && cause instanceof ArtifactReaderFailure)
-        return err(new AnalysisCancelledError(operation, { cause }));
+        return err(cancelledBy(operation, carriedReason(cause)));
       throw cause;
     }
   }
@@ -425,9 +427,7 @@ export class KunaTargetCommands {
         : undefined);
     const primary =
       cancellation !== undefined
-        ? new AnalysisCancelledError("kuna:workspace", {
-            cause: cancellation.reason,
-          })
+        ? cancelledBy("kuna:workspace", carriedReason(cancellation.reason))
         : completion === undefined
           ? new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
               cause: primaryCause,
@@ -482,9 +482,7 @@ export class KunaTargetCommands {
       this.lifetime.signal.aborted
         ? analysisErrorWithCancellation(
             failure,
-            new AnalysisCancelledError("kuna:workspace", {
-              cause: this.lifetime.signal.reason,
-            }),
+            cancelledBy("kuna:workspace", this.lifetime.signal),
           )
         : failure,
     );
