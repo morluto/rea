@@ -39,18 +39,24 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
   },
 );
 
-it("allows raw Playwright CDP sessions only in their owner and tests", async () => {
+it("allows raw Playwright CDP sessions only in their owner and tests, including browser verifier scripts", async () => {
   const root = await createTestTempDirectory("rea-cdp-session-lint-");
   const config = await writeRepositoryOxlintConfiguration(root);
   await mkdir(join(root, "src/browser"), { recursive: true });
+  await mkdir(join(root, "scripts/lib"), { recursive: true });
   const source =
     "export const open = (context: any, page: any) => context.newCDPSession(page);\n";
+  const script =
+    "export const open = (context, page) => context.newCDPSession(page);\n";
   const files = [
     "src/browser/PlaywrightScenarioBrowser.ts",
     "src/browser/PlaywrightCdpSession.ts",
     "src/browser/PlaywrightScenarioBrowser.test.ts",
+    "scripts/lib/browser-screenshot-e2e.mjs",
+    "scripts/verify-browser-dom-destinations.mjs",
   ];
-  for (const file of files) await writeFile(join(root, file), source);
+  for (const file of files)
+    await writeFile(join(root, file), file.endsWith(".mjs") ? script : source);
   const result = spawnSync(
     process.execPath,
     [
@@ -72,5 +78,16 @@ it("allows raw Playwright CDP sessions only in their owner and tests", async () 
     report.diagnostics
       .filter(({ code }) => code.includes("no-raw-cdp-session"))
       .map(({ filename }) => filename.replaceAll("\\", "/")),
-  ).toEqual(["src/browser/PlaywrightScenarioBrowser.ts"]);
+  ).toEqual(
+    expect.arrayContaining([
+      "src/browser/PlaywrightScenarioBrowser.ts",
+      "scripts/lib/browser-screenshot-e2e.mjs",
+      "scripts/verify-browser-dom-destinations.mjs",
+    ]),
+  );
+  expect(
+    report.diagnostics.filter(({ code }) =>
+      code.includes("no-raw-cdp-session"),
+    ),
+  ).toHaveLength(3);
 });
