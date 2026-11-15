@@ -1,6 +1,6 @@
 import pino from "pino";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { registerContractTools } from "../../../src/server/contractToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
@@ -145,7 +145,16 @@ mcpTest(
       undefined,
       createToolResultDelivery(2 * 1024 * 1024),
     );
-    registerErlangTools(server, service, pino({ enabled: false }));
+    registerContractTools(
+      server,
+      {
+        inspect_erlang_beam: {
+          admission: "application",
+          summary: (input, options) => service.inspect(input, options),
+        },
+      },
+      { logger: pino({ enabled: false }) },
+    );
     const client = await mcp.connect(server);
     try {
       for (const delivery of [

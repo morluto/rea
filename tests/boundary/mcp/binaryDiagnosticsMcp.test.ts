@@ -17,7 +17,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerByteEntropyTool } from "../../../src/server/registerByteEntropyTool.js";
+import { registerContractTools } from "../../../src/server/contractToolBindings.js";
 import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
@@ -35,7 +35,6 @@ import {
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
-import { registerNativeExportsTool } from "../../../src/server/registerNativeExportsTool.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
   const root = await createTestTempDirectory("rea-native-export-mcp-limits-");
@@ -103,16 +102,23 @@ it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
       undefined,
       createToolResultDelivery(undefined),
     );
-    if (service instanceof ByteEntropyService)
-      registerByteEntropyTool(
-        server,
-        service,
-        silentLogger,
-        undefined,
-        undefined,
-        undefined,
-      );
-    else registerNativeExportsTool(server, service, silentLogger);
+    registerContractTools(
+      server,
+      service instanceof ByteEntropyService
+        ? {
+            inspect_byte_entropy: {
+              admission: "sdk",
+              summary: (input, options) => service.inspect(input, options),
+            },
+          }
+        : {
+            inspect_native_exports: {
+              admission: "application",
+              summary: (input, options) => service.inspect(input, options),
+            },
+          },
+      { logger: silentLogger },
+    );
     const client = new Client({
       name: "exports-preflight-client",
       version: "1",
@@ -184,13 +190,20 @@ it.each([false, true])(
       recordEvidence,
       createToolResultDelivery(undefined),
     );
-    registerByteEntropyTool(
+    registerContractTools(
       server,
-      service,
-      silentLogger,
-      recordEvidence,
-      evidenceById,
-      admission,
+      {
+        inspect_byte_entropy: {
+          admission: "sdk",
+          summary: (input, options) => service.inspect(input, options),
+        },
+      },
+      {
+        logger: silentLogger,
+        recordEvidence,
+        evidenceById,
+        withAdmittedAnalysis: admission,
+      },
     );
     registerAnalysisViewTool(
       server,

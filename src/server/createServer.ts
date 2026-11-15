@@ -8,43 +8,20 @@ import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
-import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
-import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
 import { serverInstructions } from "./serverInstructions.js";
-import { registerCaptureTools } from "./registerCaptureTools.js";
-import { registerSignalTools } from "./registerSignalTools.js";
-import { registerWasmTools } from "./registerWasmTools.js";
-import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
+import {
+  contractServiceBindings,
+  registerContractTools,
+} from "./contractToolBindings.js";
+import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
+import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
+import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import { ok } from "../domain/result.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
-import { registerElfNotesTool } from "./registerElfNotesTool.js";
-import { registerNativeInitializersTool } from "./registerNativeInitializersTool.js";
-import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
-import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
-import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
-import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
-import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
-import { registerReleaseExposureTool } from "./registerReleaseExposureTool.js";
-import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
-import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
-import { registerPeImportsTool } from "./registerPeImportsTool.js";
-import { registerWindowsShortcutTool } from "./registerWindowsShortcutTool.js";
-import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
-import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
-import { registerEvmTools } from "./registerEvmTools.js";
-import { registerSqliteTools } from "./registerSqliteTools.js";
-import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
-import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerModelArtifactTools } from "./registerModelArtifactTools.js";
-import { registerGoTools } from "./registerGoTools.js";
-import { registerIl2cppTools } from "./registerIl2cppTools.js";
-import { registerRustTools } from "./registerRustTools.js";
-import { registerPythonPycTool } from "./registerPythonPycTool.js";
-import { registerErlangTools } from "./registerErlangTools.js";
-import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
@@ -75,23 +52,14 @@ import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
-import { registerWebModuleTool } from "./registerWebModuleTool.js";
-import { registerWebSourceLocationTool } from "./registerWebSourceLocationTool.js";
 import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
 import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.js";
-import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
-import { registerFirmwareTools } from "./registerFirmwareTools.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
-import { registerApktoolTools } from "./registerApktoolTools.js";
-import { registerPcapTools } from "./registerPcapTools.js";
-import { registerFlutterTools } from "./registerFlutterTools.js";
-import { registerJebTools } from "./registerJebTools.js";
-import { registerAdbTools } from "./registerAdbTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
@@ -400,6 +368,15 @@ export const createServer = (
     recordEvidence,
     withAdmittedAnalysis: analysisAdmission,
   };
+  const contractTools = {
+    logger: toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis: analysisAdmission,
+    evidenceById,
+  };
+  const javascriptRecoveryService = new JavaScriptRecoveryService(
+    javascriptRecovery,
+  );
   registerToolFamilies({
     direct: () => registerOfficialTools(server, analysisOptions),
     enhanced: () =>
@@ -476,244 +453,225 @@ export const createServer = (
       registerBinaryDiagnosticsTools(
         server,
         binaryLayout,
-        createByteEntropyService(artifactResources),
         toolLogger,
         recordEvidence,
         evidenceById,
         analysisAdmission,
       );
-      registerPeResourcesTool(
+      const byteEntropy = createByteEntropyService(artifactResources);
+      registerContractTools(
         server,
-        peResources,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerNativeExportsTool(
-        server,
-        nativeExports,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
-      );
-      registerDevicetreeTool(
-        server,
-        devicetree,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
-      );
-      registerElfNotesTool(
-        server,
-        elfNotes,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerNativeInitializersTool(
-        server,
-        nativeInitializers,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerElfUnwindRangesTool(
-        server,
-        elfUnwindRanges,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerAppleIpsTool(
-        server,
-        appleIps,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerKernelModuleTool(
-        server,
-        kernelModule,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerKernelBuildConfigTool(
-        server,
-        kernelBuildConfig,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerPeLoadConfigTool(
-        server,
-        peLoadConfig,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerReleaseExposureTool(
-        server,
-        releaseExposure,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerBinaryHardeningTool(
-        server,
-        binaryHardening,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerPeCertificatesTool(
-        server,
-        peCertificates,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerPeImportsTool(
-        server,
-        peImports,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerWindowsShortcutTool(
-        server,
-        windowsShortcut,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerRecordedCrashTools(
-        server,
-        recordedCrash,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        {
+          inspect_byte_entropy: {
+            admission: "sdk",
+            summary: (input, options) => byteEntropy.inspect(input, options),
+          },
+          inspect_pe_resources: {
+            admission: "application",
+            run: (input, options) => peResources.inspect(input, options),
+          },
+          inspect_native_exports: {
+            admission: "application",
+            summary: (input, options) => nativeExports.inspect(input, options),
+          },
+          inspect_devicetree: {
+            admission: "application",
+            summary: (input, options) => devicetree.inspect(input, options),
+          },
+          inspect_elf_notes: {
+            admission: "sdk",
+            run: (input, options) => elfNotes.inspect(input, options),
+          },
+          inspect_native_initializers: {
+            admission: "sdk",
+            run: (input, options) => nativeInitializers.inspect(input, options),
+          },
+          inspect_elf_unwind_ranges: {
+            admission: "sdk",
+            run: (input, options) => elfUnwindRanges.inspect(input, options),
+          },
+          inspect_apple_ips: {
+            admission: "sdk",
+            run: (input, options) => appleIps.inspect(input, options),
+          },
+          inspect_kernel_module: {
+            admission: "sdk",
+            run: (input, options) => kernelModule.inspect(input, options),
+          },
+          inspect_kernel_build_config: {
+            admission: "sdk",
+            run: (input, options) => kernelBuildConfig.inspect(input, options),
+          },
+          inspect_pe_load_config: {
+            admission: "sdk",
+            run: (input, options) => peLoadConfig.inspect(input, options),
+          },
+          audit_release_exposure: {
+            admission: "sdk",
+            run: (input, options) => releaseExposure.inspect(input, options),
+          },
+          inspect_binary_hardening: {
+            admission: "sdk",
+            run: (input, options) => binaryHardening.inspect(input, options),
+          },
+          inspect_pe_certificates: {
+            admission: "sdk",
+            run: (input, options) => peCertificates.inspect(input, options),
+          },
+          inspect_pe_imports: {
+            admission: "sdk",
+            run: (input, options) => peImports.inspect(input, options),
+          },
+          inspect_windows_shortcut: {
+            admission: "sdk",
+            run: (input, options) => windowsShortcut.inspect(input, options),
+          },
+          inspect_recorded_crash: {
+            admission: "application",
+            run: (input, options) => recordedCrash.inspect(input, options),
+          },
+        },
+        contractTools,
       );
     },
     artifact: () => {
       registerArtifactTools(server, { ...evidenceOptions, evidenceById });
-      registerDesktopApplicationTool(
+      registerContractTools(
         server,
-        desktopApplication,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          inspect_desktop_application: {
+            admission: "application",
+            summary: (input, options) =>
+              desktopApplication.inspect(input, options),
+          },
+          inspect_model_artifact: {
+            admission: "sdk",
+            run: (input, options) =>
+              modelArtifact.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_gpu_code_objects: {
+            admission: "sdk",
+            run: (input, options) =>
+              gpuCodeObjects.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_evm_interface: {
+            admission: "application",
+            summary: (input, options) => evmInterface.inspect(input, options),
+          },
+          inspect_go_binary: {
+            admission: "application",
+            run: (input, options) =>
+              goBinary.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_il2cpp_metadata: {
+            admission: "application",
+            run: (input, options) =>
+              il2cppMetadata.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_rust_binary: {
+            admission: "application",
+            run: (input, options) =>
+              rustBinary.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_python_pyc: {
+            admission: "application",
+            summary: (input, options) => pythonPyc.inspect(input, options),
+          },
+          inspect_erlang_beam: {
+            admission: "application",
+            summary: (input, options) => erlangBeam.inspect(input, options),
+          },
+          inspect_v8_code_cache: {
+            admission: "sdk",
+            run: (input, options) => v8CodeCache.inspect(input, options),
+          },
+        },
+        contractTools,
       );
-      registerModelArtifactTools(
+      registerContractTools(
         server,
-        modelArtifact,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          compare_wasm_interfaces: {
+            admission: "sdk",
+            run: async (rawInput, options) => {
+              const result = retainAnalysisResultSources(
+                "compare_wasm_interfaces",
+                recordEvidence,
+                await compareWasmInterfaces(rawInput, options, evidenceById),
+                { sourceOwner: "caller" },
+              );
+              return result.ok ? ok(result.value.evidence) : result;
+            },
+          },
+          inspect_wasm_artifact: {
+            admission: "application",
+            summary: (input, options) => wasmArtifact.inspect(input, options),
+          },
+        },
+        contractTools,
       );
-      registerGpuCodeObjectsTools(
+      registerContractTools(
         server,
-        gpuCodeObjects,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          inspect_apk_signature: {
+            admission: "sdk",
+            run: (input, options) =>
+              apkSignature.inspect(input, options, {
+                recordEvidence,
+                evidenceById,
+              }),
+          },
+          inspect_sqlite_database: {
+            admission: "application",
+            run: (input, options) => sqliteDatabase.inspect(input, options),
+          },
+        },
+        contractTools,
       );
-      registerEvmTools(
+      registerContractTools(
         server,
-        evmInterface,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          inspect_packet_capture: {
+            admission: "application",
+            run: (input, options) => packetCapture.inspect(input, options),
+          },
+          inspect_packet_fields: {
+            admission: "sdk",
+            run: (input, options) =>
+              packetCapture.inspectFields(input, options),
+          },
+        },
+        contractTools,
       );
-      registerGoTools(
+      registerContractTools(
         server,
-        goBinary,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerIl2cppTools(
-        server,
-        il2cppMetadata,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerRustTools(
-        server,
-        rustBinary,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerPythonPycTool(
-        server,
-        pythonPyc,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerErlangTools(
-        server,
-        erlangBeam,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerV8CodeCacheTool(
-        server,
-        v8CodeCache,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerWasmTools(
-        server,
-        wasmArtifact,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerApkSignatureTools(
-        server,
-        apkSignature,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      );
-      registerSqliteTools(
-        server,
-        sqliteDatabase,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerCaptureTools(
-        server,
-        packetCapture,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerSignalTools(
-        server,
-        signalRecording,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        {
+          decode_signal_recording: {
+            admission: "application",
+            run: (input, options) => signalRecording.decode(input, options),
+          },
+          inspect_signal_decoders: {
+            admission: "sdk",
+            run: (input, options) =>
+              signalRecording.inspectDecoders(input, options),
+          },
+        },
+        contractTools,
       );
     },
     managed: () => {
@@ -728,12 +686,13 @@ export const createServer = (
         });
     },
     firmware: () =>
-      registerFirmwareTools(
+      registerContractTools(
         server,
-        firmwareAnalysis,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        contractServiceBindings(firmwareAnalysis, [
+          "inspect_firmware_regions",
+          "extract_firmware",
+        ]),
+        contractTools,
       ),
     android: () =>
       registerAndroidTools(
@@ -744,24 +703,43 @@ export const createServer = (
         analysisAdmission,
         evidenceById,
       ),
-    pcap: () =>
-      registerPcapTools(
+    pcap: () => {
+      const pcapService = new PcapAnalysisService(pcap);
+      registerContractTools(
         server,
-        new PcapAnalysisService(pcap),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      ),
-    flutter: () =>
-      registerFlutterTools(
+        {
+          ...contractServiceBindings(pcapService, ["inspect_pcap_client"]),
+          inspect_pcap_capture: {
+            admission: "application",
+            summary: (input, options) =>
+              pcapService.execute("inspect_pcap_capture", input, options),
+          },
+        },
+        contractTools,
+      );
+    },
+    flutter: () => {
+      const flutterService = new FlutterBuildAnalysisService(flutter);
+      registerContractTools(
         server,
-        new FlutterBuildAnalysisService(flutter),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
-      ),
+        {
+          ...contractServiceBindings(flutterService, [
+            "identify_flutter_build",
+          ]),
+          inspect_dart_aot: {
+            admission: "sdk",
+            run: (input, options) =>
+              inspectDartAot(
+                flutterService,
+                input,
+                { recordEvidence, evidenceById },
+                options,
+              ),
+          },
+        },
+        contractTools,
+      );
+    },
     frida: () =>
       registerFridaTools(
         server,
@@ -772,28 +750,55 @@ export const createServer = (
         evidenceById,
       ),
     apktool: () =>
-      registerApktoolTools(
+      registerContractTools(
         server,
-        new ApktoolResourceAnalysisService(apktool),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        contractServiceBindings(new ApktoolResourceAnalysisService(apktool), [
+          "inspect_apktool_client",
+          "decode_android_resources",
+        ]),
+        contractTools,
       ),
     jeb: () =>
-      registerJebTools(
+      registerContractTools(
         server,
-        new JebAnalysisService(jeb),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        contractServiceBindings(new JebAnalysisService(jeb), [
+          "inspect_jeb_client",
+          "open_jeb_project",
+          "list_jeb_units",
+          "decompile_jeb_item",
+        ]),
+        contractTools,
       ),
     adb: () =>
-      registerAdbTools(
+      registerContractTools(
         server,
-        new AdbDeviceAnalysisService(adbDevice),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        contractServiceBindings(new AdbDeviceAnalysisService(adbDevice), [
+          "inspect_adb_client",
+          "list_adb_devices",
+          "inspect_adb_device",
+          "list_adb_packages",
+          "pull_adb_package",
+          "read_adb_logcat",
+          "inspect_adb_package",
+          "pull_adb_file",
+          "push_adb_file",
+          "capture_adb_screen",
+          "list_adb_processes",
+          "list_adb_directory",
+          "list_adb_features",
+          "list_adb_services",
+          "inspect_adb_display",
+          "inspect_adb_window",
+          "read_adb_setting",
+          "collect_adb_bugreport",
+          "resolve_adb_packages",
+          "install_adb_package",
+          "uninstall_adb_package",
+          "start_adb_app",
+          "start_adb_activity",
+          "stop_adb_app",
+        ]),
+        contractTools,
       ),
     browser: () => {
       registerBrowserTools(server, {
@@ -857,25 +862,25 @@ export const createServer = (
         artifactResources,
       );
       registerWebScriptTool(server, { ...common, artifactResources });
-      registerWebModuleTool(
+      registerContractTools(
         server,
-        webModuleTrace,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerWebSourceLocationTool(server, webSourceLocation, {
-        logger: toolLogger,
-        recordEvidence,
-        withAdmittedAnalysis: analysisAdmission,
-        evidenceById,
-      });
-      registerJavaScriptRecoveryTool(
-        server,
-        new JavaScriptRecoveryService(javascriptRecovery),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
+        {
+          trace_web_module_imports: {
+            admission: "application",
+            run: (input, options) => webModuleTrace.trace(input, options),
+          },
+          trace_web_source_location: {
+            admission: "application",
+            summary: (input, options) =>
+              webSourceLocation.trace(input, options),
+          },
+          recover_javascript_sources: {
+            admission: "sdk",
+            run: (input, options) =>
+              javascriptRecoveryService.recover(input, options),
+          },
+        },
+        contractTools,
       );
       registerApplicationTools(server, {
         artifactResources,
