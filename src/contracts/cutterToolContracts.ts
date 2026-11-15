@@ -41,6 +41,7 @@ export const cutterCommandResultSchema = z.strictObject({
 export const CUTTER_TOOL_CONTRACTS = [
   {
     name: "list_cutter_sessions",
+    cli: true,
     ...toolContractMetadata("list_cutter_sessions"),
     kind: "native-provider",
     description:
@@ -51,6 +52,7 @@ export const CUTTER_TOOL_CONTRACTS = [
   },
   {
     name: "cutter_command",
+    cli: true,
     ...toolContractMetadata("cutter_command"),
     kind: "native-provider",
     description:

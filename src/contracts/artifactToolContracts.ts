@@ -89,6 +89,7 @@ const artifact = <
     ...toolContractMetadata(name),
     description,
     kind: "artifact-provider",
+    cli: true,
     requiresActiveTarget: true,
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,

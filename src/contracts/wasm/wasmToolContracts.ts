@@ -19,6 +19,7 @@ export const wasmArtifactInspectionInputSchema =
 /** Optional caller-supplied WABT capability with target-free CLI/MCP parity. */
 export const INSPECT_WASM_ARTIFACT_CONTRACT = {
   name: "inspect_wasm_artifact",
+  cli: true,
   ...toolContractMetadata("inspect_wasm_artifact"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

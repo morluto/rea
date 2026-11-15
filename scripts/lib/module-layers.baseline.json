@@ -10,13 +10,11 @@
   },
   "cycles": [
     "application <-> artifacts",
-    "application <-> dotnet",
     "artifacts <-> gpu",
     "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
     "cli <-> cliEvidenceCommands.ts",
-    "cli <-> cliObservationOptions.ts",
     "cli <-> cliOutput.ts",
     "main <-> server"
   ],
@@ -55,7 +53,6 @@
     "application -> artifacts": 11,
     "application -> browser": 2,
     "application -> desktop": 41,
-    "application -> dotnet": 3,
     "application -> frida": 2,
     "application -> reference": 8
   }

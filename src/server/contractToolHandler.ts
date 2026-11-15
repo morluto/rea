@@ -136,7 +136,10 @@ export const createRetainedSummaryToolHandler = <
   )(contract);
 };
 
-/** Bind a named Evidence-producing operation to shared logging and delivery. */
+/**
+ * Bind a named Evidence-producing operation to shared logging and delivery.
+ * The operation receives the request signal and its MCP progress reporter.
+ */
 export const createEvidenceToolHandler =
   (
     server: EvidenceMcpServer,
@@ -155,7 +158,7 @@ export const createEvidenceToolHandler =
       contract,
       undefined,
       { input, context },
-      (selected, { signal }) => operation(selected, { signal }),
+      operation,
     );
 
 /** One owner for optional-provider admission, execution, recording and delivery. */

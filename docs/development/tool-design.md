@@ -616,6 +616,10 @@ A CLI command for a tool contract is described by `describeContractCommand` in
 [`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
 and rendered for the CLI framework by `registerContractCommand` in
 [`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field

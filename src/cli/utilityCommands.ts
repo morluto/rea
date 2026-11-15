@@ -1,6 +1,5 @@
 import { contractNamed } from "./contractCliDescription.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
 
@@ -25,9 +24,8 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import { nativeCommandTimeoutField } from "../domain/native/nativeDeadlines.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
@@ -73,7 +71,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "observe_native_ui"),
     {
-      command: CLI_COMMANDS.observeNativeUi,
       description:
         "Observe one already-running native application window by PID and window ID",
       sessionTarget,
@@ -86,7 +83,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "capture_native_ui_scenario"),
     {
-      command: CLI_COMMANDS.captureNativeUiScenario,
       description:
         "Run declarative AX actions or waits in one exact native application window",
       sessionTarget,
@@ -134,16 +130,15 @@ const registerNativeCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_macho"),
     {
-      command: CLI_COMMANDS.inspectMacho,
       description: "Run inspect_macho without launching Hopper",
       sessionTarget: machoTarget,
-      omit: { detail: "The CLI returns the complete inspection Evidence" },
+      evidenceDelivery: true,
     },
     run,
   );
   for (const [command, tool] of [
-    [CLI_COMMANDS.inspectSignature, "inspect_signature"],
-    [CLI_COMMANDS.listArchitectures, "list_architectures"],
+    [cliCommandFor("inspect_signature"), "inspect_signature"],
+    [cliCommandFor("list_architectures"), "list_architectures"],
   ] as const)
     registerContractCommand(
       cli,
@@ -156,45 +151,28 @@ const registerNativeCommands = (
       },
       run,
     );
-  // inspect_plist reports a plist the target itself selects under the
-  // contract's `path` field, which this command spells --relative-path, so
-  // it keeps its own option until that producer names the target apart.
-  cli.command(CLI_COMMANDS.inspectPlist, {
-    description: "Parse app plist metadata without launching Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe("App or Mach-O path"),
-    }),
-    options: z.object({
-      relativePath: localPathStringSchema
-        .optional()
-        .describe(
-          "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
-        ),
-      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-plist", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_plist",
-          {
-            ...(options.relativePath === undefined
-              ? {}
-              : { path: options.relativePath }),
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_plist"),
+    {
+      description: "Parse app plist metadata without launching Hopper",
+      sessionTarget: { description: "App, Mach-O or plist path" },
+      fields: {
+        path: {
+          name: "relativePath",
+          description:
+            "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
+        },
+      },
+    },
+    run,
+  );
   registerContractCommand(
     cli,
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "demangle_swift"),
     {
-      command: CLI_COMMANDS.demangleSwift,
       description: "Demangle Swift symbols without Hopper",
       sessionTarget: {
         description: "Artifact path used for evidence identity",

@@ -12,6 +12,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 export const PLAYWRIGHT_TRACE_TOOL_CONTRACTS = [
   {
     name: "inspect_playwright_trace",
+    cli: true,
     ...toolContractMetadata("inspect_playwright_trace"),
     kind: "application",
     description:

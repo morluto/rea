@@ -2,9 +2,18 @@ import { Cli, z } from "incur";
 
 import {
   captureProcessScenarioFile,
-  compareProcessEvidenceFiles,
+  projectCaptureFileFailure,
   projectProcessCliInputCleanupError,
 } from "../application/process/ProcessCli.js";
+import {
+  compareParsedProcessEvidence,
+  readProcessComparisonSource,
+} from "../application/process/ProcessComparisonService.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -31,25 +40,60 @@ export const registerProcessCommands = (
         ),
       ),
   });
-  cli.command(CLI_COMMANDS.compareProcessCaptures, {
-    description: "Compare two process capture Evidence JSON files",
-    args: z.object({
-      left: localPathStringSchema.describe("Left capture Evidence JSON path"),
-      right: localPathStringSchema.describe("Right capture Evidence JSON path"),
-      traceSpec: localPathStringSchema
-        .optional()
-        .describe("Optional partial-order or finite-trace specification path"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "compare-process-captures", () =>
-          compareProcessEvidenceFiles(
-            args.left,
-            args.right,
-            args.traceSpec,
-            signal,
-          ).catch(projectProcessCliInputCleanupError),
-        ),
-      ),
-  });
+  registerContractCommand(
+    cli as CliInstance,
+    logger,
+    contractNamed(SESSION_TOOL_CONTRACTS, "compare_process_captures"),
+    {
+      description: "Compare two process capture Evidence JSON files",
+      positionals: ["left", "right", "trace_spec"],
+      jsonInputs: {
+        left: "left must be capture Evidence JSON or a JSON file path",
+        right: "right must be capture Evidence JSON or a JSON file path",
+        trace_spec: "traceSpec must be JSON or a JSON file path",
+      },
+      // Authenticate the left capture before the right one is read, and the
+      // right one before the trace specification.
+      jsonInputChecks: {
+        left: (value) =>
+          readProcessComparisonSource("left", value, projectCaptureFileFailure),
+        right: (value) =>
+          readProcessComparisonSource(
+            "right",
+            value,
+            projectCaptureFileFailure,
+          ),
+      },
+      fields: {
+        left: { description: "Left capture Evidence JSON path" },
+        right: { description: "Right capture Evidence JSON path" },
+        trace_spec: {
+          name: "traceSpec",
+          description:
+            "Optional partial-order or finite-trace specification path",
+        },
+        max_capture_age_ms: {
+          description:
+            "Refuse a capture completed more than this many milliseconds ago; omitted applies no age limit",
+        },
+      },
+    },
+    async (_input, { checked, parsed }) => {
+      const result = compareParsedProcessEvidence(
+        checked.left!,
+        checked.right!,
+        {
+          ...(parsed?.max_capture_age_ms === undefined
+            ? {}
+            : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
+          ...(parsed?.trace_spec === undefined
+            ? {}
+            : { traceSpecification: parsed.trace_spec }),
+        },
+      );
+      return result.ok
+        ? result.value.evidence
+        : projectAnalysisError(result.error);
+    },
+  );
 };

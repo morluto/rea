@@ -4,7 +4,7 @@ import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
 import { artifactComparisonInputSchema } from "../../../src/contracts/artifactComparisonContracts.js";
 import {
   compareApplicationVersionsRequestSchema,
@@ -36,7 +36,7 @@ import {
   jsonInputArgument,
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
-import { cliJsonCallerPathSchema } from "../../../src/cliJsonInput.js";
+import { cliJsonCallerPathSchema } from "../../../src/cli/cliJsonInput.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
@@ -59,48 +59,48 @@ const documents: readonly {
   readonly callerPaths?: readonly (readonly string[])[];
 }[] = [
   {
-    command: CLI_COMMANDS.traceApplicationFeature,
+    command: cliCommandFor("trace_application_feature"),
     schema: frame(traceApplicationFeatureRequestSchema),
   },
   {
-    command: CLI_COMMANDS.traceJavaScriptSemantics,
+    command: cliCommandFor("trace_javascript_semantics"),
     schema: frame(traceJavaScriptSemanticsRequestSchema),
   },
   {
-    command: CLI_COMMANDS.compareApplicationVersions,
+    command: cliCommandFor("compare_application_versions"),
     schema: frame(compareApplicationVersionsRequestSchema),
   },
   {
-    command: CLI_COMMANDS.compareStaticAndObservedEndpoints,
+    command: cliCommandFor("compare_static_and_observed_endpoints"),
     schema: frame(compareStaticObservedEndpointsFactsSchema),
   },
   {
-    command: CLI_COMMANDS.compareSourceToBundle,
+    command: cliCommandFor("compare_source_to_bundle"),
     schema: frame(compareSourceToBundleRequestSchema.omit({ view: true })),
     callerPaths: [["reference", "path"]],
   },
   {
-    command: CLI_COMMANDS.compareJavaScriptExportShapes,
+    command: cliCommandFor("compare_javascript_export_shapes"),
     schema: frame(compareJavaScriptExportShapesRequestSchema),
   },
   {
-    command: CLI_COMMANDS.buildReconstructionObligationLedger,
+    command: cliCommandFor("build_reconstruction_obligation_ledger"),
     schema: reconstructionObligationLedgerInputSchema,
   },
   {
-    command: CLI_COMMANDS.evaluateReconstructionCoverage,
+    command: cliCommandFor("evaluate_reconstruction_coverage"),
     schema: reconstructionCoverageEvaluationInputSchema,
   },
   {
-    command: CLI_COMMANDS.projectAndroidApplicationGraph,
+    command: cliCommandFor("project_android_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
-    command: CLI_COMMANDS.projectAppleApplicationGraph,
+    command: cliCommandFor("project_apple_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
-    command: CLI_COMMANDS.projectHarmonyApplicationGraph,
+    command: cliCommandFor("project_harmony_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
@@ -108,12 +108,12 @@ const documents: readonly {
     schema: inspectEvidenceBundleCliInputSchema,
   },
   {
-    command: CLI_COMMANDS.inspectAnalysisView,
+    command: cliCommandFor("inspect_analysis_view"),
     schema: inspectAnalysisViewInputSchema,
     callerPaths: [["source", "path"]],
   },
   {
-    command: CLI_COMMANDS.captureElectronScenario,
+    command: cliCommandFor("capture_electron_scenario"),
     schema: electronActiveObservationInputSchema,
     callerPaths: [
       ["executable_path"],
@@ -122,27 +122,27 @@ const documents: readonly {
     ],
   },
   {
-    command: CLI_COMMANDS.reconcileJavaScriptRuntime,
+    command: cliCommandFor("reconcile_javascript_runtime"),
     schema: frame(reconcileJavaScriptRuntimeRequestSchema),
   },
   {
-    command: CLI_COMMANDS.observeNativeCalls,
+    command: cliCommandFor("observe_native_calls"),
     schema: nativeCallObservationInputSchema,
   },
   {
-    command: CLI_COMMANDS.importManagedReconstruction,
+    command: cliCommandFor("import_managed_reconstruction"),
     schema: frame(managedReconstructionImportRequestSchema),
   },
   {
-    command: CLI_COMMANDS.verifyManagedNativeBoundaries,
+    command: cliCommandFor("verify_managed_native_boundaries"),
     schema: frame(managedNativeVerificationRequestSchema),
   },
   {
-    command: CLI_COMMANDS.projectManagedApplicationGraph,
+    command: cliCommandFor("project_managed_application_graph"),
     schema: frame(managedApplicationGraphReferenceInputSchema),
   },
   {
-    command: CLI_COMMANDS.compareArtifacts,
+    command: cliCommandFor("compare_artifacts"),
     schema: artifactComparisonInputSchema,
     callerPaths: [
       ["left", "path"],
@@ -150,15 +150,15 @@ const documents: readonly {
     ],
   },
   {
-    command: CLI_COMMANDS.compareWasmInterfaces,
+    command: cliCommandFor("compare_wasm_interfaces"),
     schema: frame(COMPARE_WASM_INTERFACES_CONTRACT.inputSchema),
   },
   {
-    command: CLI_COMMANDS.matchNativeFunctions,
+    command: cliCommandFor("match_native_functions"),
     schema: frame(matchNativeFunctionsInputSchema),
   },
   {
-    command: CLI_COMMANDS.captureBrowserScenario,
+    command: cliCommandFor("capture_browser_scenario"),
     schema: browserScenarioSchema,
     callerPaths: [["browser", "executable_path"]],
   },
@@ -300,8 +300,13 @@ it("advertises the parsed document for every JSON-input command", async () => {
 
 it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
   const input = advertisedInput(
-    (await serve([CLI_COMMANDS.compareSourceToBundle, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("compare_source_to_bundle"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   const validate = new Ajv2020({
     strict: false,
@@ -321,7 +326,7 @@ it("validates representative parsed documents with the advertised schema", async
   const input = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.evaluateReconstructionCoverage,
+        cliCommandFor("evaluate_reconstruction_coverage"),
         "--schema",
         "--json",
       ])
@@ -376,8 +381,13 @@ it("validates representative parsed documents with the advertised schema", async
 
 it("names the feature-trace, semantic-query, and browser-scenario fields", async () => {
   const trace = advertisedInput(
-    (await serve([CLI_COMMANDS.traceApplicationFeature, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("trace_application_feature"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(trace.description).toBe("Inline workflow JSON or JSON file path");
   expect(Object.keys(trace.contentSchema?.properties ?? {})).toEqual([
@@ -390,8 +400,13 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   expect(trace.contentSchema?.required).toEqual(["seed", "application"]);
 
   const semantic = advertisedInput(
-    (await serve([CLI_COMMANDS.traceJavaScriptSemantics, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("trace_javascript_semantics"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(Object.keys(semantic.contentSchema?.properties ?? {})).toEqual([
     "application",
@@ -400,8 +415,13 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   expect(semantic.contentSchema?.required).toEqual(["application", "query"]);
 
   const browser = advertisedInput(
-    (await serve([CLI_COMMANDS.captureBrowserScenario, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("capture_browser_scenario"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(browser.description).toBe(
     "Inline browser scenario JSON, JSON file path, or '-' for stdin",
@@ -422,7 +442,7 @@ it("advertises the reconstruction documents their readers admit", async () => {
   const coverage = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.evaluateReconstructionCoverage,
+        cliCommandFor("evaluate_reconstruction_coverage"),
         "--schema",
         "--json",
       ])
@@ -444,7 +464,7 @@ it("advertises the reconstruction documents their readers admit", async () => {
   const ledger = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.buildReconstructionObligationLedger,
+        cliCommandFor("build_reconstruction_obligation_ledger"),
         "--schema",
         "--json",
       ])
@@ -465,7 +485,7 @@ it("advertises the reconstruction documents their readers admit", async () => {
 
 it("prints the nested document in the default schema format", async () => {
   const served = await serve([
-    CLI_COMMANDS.traceApplicationFeature,
+    cliCommandFor("trace_application_feature"),
     "--schema",
   ]);
   expect(served.exitCode, served.stdout).toBe(0);

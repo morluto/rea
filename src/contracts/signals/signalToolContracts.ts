@@ -13,6 +13,7 @@ export const SIGNAL_TOOL_CONTRACTS = [
   {
     name: "inspect_signal_decoders",
     availability: { host: "signalRecording" },
+    cli: true,
     ...toolContractMetadata("inspect_signal_decoders"),
     kind: "artifact-provider",
     requiresActiveTarget: true,
@@ -31,6 +32,7 @@ export const SIGNAL_TOOL_CONTRACTS = [
   {
     name: "decode_signal_recording",
     availability: { host: "signalRecording" },
+    cli: true,
     ...toolContractMetadata("decode_signal_recording"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

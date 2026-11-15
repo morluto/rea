@@ -72,7 +72,7 @@ it("keeps JEB CLI correction details aligned with canonical list-unit validation
   ]);
   expect(invalid.output).toMatchObject({
     code: "VALIDATION_ERROR",
-    fieldErrors: [{ path: "parent-unit-path", code: "too_small" }],
+    fieldErrors: [{ path: "parentUnitPath", code: "too_small" }],
   });
   expect(invalid.requests).toEqual([]);
 
@@ -93,12 +93,10 @@ it("advertises the canonical minimum for a JEB parent unit path", async () => {
   const schema = output.options as Parameters<Ajv2020["compile"]>[0];
   const validate = new Ajv2020({ strict: false }).compile(schema);
   expect(validate({ index: 0, count: 100 })).toBe(true);
-  expect(validate({ index: 0, count: 100, "parent-unit-path": "" })).toBe(
-    false,
+  expect(validate({ index: 0, count: 100, parentUnitPath: "" })).toBe(false);
+  expect(validate({ index: 0, count: 100, parentUnitPath: "sample.dex" })).toBe(
+    true,
   );
-  expect(
-    validate({ index: 0, count: 100, "parent-unit-path": "sample.dex" }),
-  ).toBe(true);
 });
 
 it("advertises the canonical nonempty, NUL-free JEB project path", async () => {

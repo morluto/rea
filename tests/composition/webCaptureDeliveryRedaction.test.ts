@@ -209,7 +209,6 @@ it.each([true, false])(
       await publishCliAnalysisEvidence(
         { ok: false, error: failure, sourceEvidence: [source] },
         {
-          providerId: "fixture",
           operation: "derived_fixture",
           signal: new AbortController().signal,
           detail: "complete",

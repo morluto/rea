@@ -9,10 +9,11 @@ import {
   writeIdaDiagnostic,
   type IdaDiagnosticMatch,
 } from "./IdaDiagnosticWriter.js";
+import { idaExplicitSensitiveValues } from "./IdaRegistrationIdentity.js";
 import {
-  isIdaAuthenticationHeader,
-  idaExplicitSensitiveValues,
-} from "./IdaRegistrationIdentity.js";
+  explicitValueSpans,
+  isTransportCredentialHeader,
+} from "../domain/explicitSensitiveValues.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
@@ -155,58 +156,30 @@ export const createIdaDiagnosticRedactor = (
       ? Object.entries(config.headers)
       : [];
   const values = headers.flatMap(([name, value]) => {
-    if (!isIdaAuthenticationHeader(name)) return [];
+    if (!isTransportCredentialHeader(name)) return [];
     // Fetch normalizes surrounding HTTP whitespace before sending headers.
     const normalized = value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
     if (normalized.length === 0) return [];
+    const field = name.toLowerCase();
     return [
       value,
       normalized,
-      ...(name.toLowerCase() === "cookie"
+      ...(field === "cookie"
         ? cookiePayloads(normalized)
-        : authorizationPayloads(normalized)),
+        : field === "set-cookie"
+          ? // RFC 6265 4.1: only the leading cookie-pair carries the credential;
+            // attributes such as Path=/ are not secrets.
+            cookiePayloads(normalized.split(";", 1)[0] ?? "")
+          : authorizationPayloads(normalized)),
     ];
   });
-  const secrets = [
-    ...new Set(
-      [...values, ...idaExplicitSensitiveValues(config)].filter(
-        (value) => value.length > 0,
-      ),
-    ),
-  ].sort((left, right) => right.length - left.length);
+  const secrets = [...values, ...idaExplicitSensitiveValues(config)].filter(
+    (value) => value.length > 0,
+  );
   const replacement =
     secrets.length === 0 ? IDA_REDACTION_MARKER : redactionMarker(secrets);
-  const alternatives = secrets
-    .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
-    .join("|");
-  // Look ahead at each source position; a global consuming match loses overlap.
-  // Longest-first alternatives cover every shorter match at the same position.
-  const pattern =
-    alternatives.length === 0
-      ? undefined
-      : new RegExp("(?=(" + alternatives + "))", "gu");
-  const matches = function* (value: string): Iterable<IdaDiagnosticMatch> {
-    if (pattern === undefined) return;
-    let pending: IdaDiagnosticMatch | undefined;
-    for (const match of value.matchAll(pattern)) {
-      const credential = match[1];
-      if (credential === undefined || credential.length === 0)
-        throw new AnalysisProtocolError(
-          "IDA diagnostic matching omitted its credential span.",
-        );
-      const span = { start: match.index, end: match.index + credential.length };
-      if (pending !== undefined && span.start < pending.end) {
-        pending = {
-          start: pending.start,
-          end: Math.max(pending.end, span.end),
-        };
-      } else {
-        if (pending !== undefined) yield pending;
-        pending = span;
-      }
-    }
-    if (pending !== undefined) yield pending;
-  };
+  const matches = (value: string): Iterable<IdaDiagnosticMatch> =>
+    explicitValueSpans(value, secrets);
   const text = boundedDiagnostic((message) =>
     writeIdaDiagnostic(message, matches(message), replacement),
   );
