@@ -279,10 +279,8 @@ class RizinFrameTimeoutError extends Error {
 export class RizinDebugSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<RizinDebugSession>;
   readonly #ttyResources = new ArtifactResourceScope();
-  #activeStarts = 0;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   #closingAll = false;
-  readonly #startDrainWaiters: Array<() => void> = [];
   readonly #command: string;
   readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
@@ -399,16 +397,12 @@ export class RizinDebugSessionManager {
           },
         ),
       );
-    this.#activeStarts += 1;
     const releaseReservation = this.#sessions.reserve();
-    try {
-      return await this.#start(input, signal, releaseReservation);
-    } finally {
-      releaseReservation();
-      this.#activeStarts -= 1;
-      if (this.#activeStarts === 0)
-        for (const resolve of this.#startDrainWaiters.splice(0)) resolve();
-    }
+    return this.#sessions
+      .start("start_rizin_debug_session", signal, (started) =>
+        this.#start(input, started, releaseReservation),
+      )
+      .finally(releaseReservation);
   }
 
   async #start(
@@ -1190,10 +1184,7 @@ export class RizinDebugSessionManager {
 
   async closeAll(): Promise<void> {
     this.#closingAll = true;
-    if (this.#activeStarts > 0)
-      await new Promise<void>((resolve) =>
-        this.#startDrainWaiters.push(resolve),
-      );
+    await this.#sessions.abortStarts();
     const outcomes = await Promise.allSettled([
       this.#sessions.closeAll(),
       this.#ttyResources.close(),
