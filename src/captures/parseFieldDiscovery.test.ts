@@ -1,0 +1,134 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  inspectPacketFieldsInputSchema,
+  type InspectPacketFieldsInput,
+} from "../domain/captures/packetFields.js";
+import {
+  FieldDiscoveryBudgetError,
+  parseFieldDiscovery,
+  parseFieldGlossary,
+  selectFieldRecords,
+} from "./parseFieldDiscovery.js";
+
+const GLOSSARY = [
+  "P\tframe\tframe",
+  "P\tip\tip",
+  "P\ttcp\ttcp",
+  "F\tip.addr\tip.addr\tFT_IPv4\tip\t0x0\t0\tSource or Destination Address",
+  "F\tip.src\tip.src\tFT_IPv4\tip\t0x0\t0\tSource Address",
+  "F\tip.dst\tip.dst\tFT_IPv4\tip\t0x0\t0\tDestination Address",
+  "F\ttcp.port\ttcp.port\tFT_UINT16\ttcp\t0x0\t0\tSource or Destination Port",
+  "F\ttcp.srcport\ttcp.srcport\tFT_UINT16\ttcp\t0x0\t0\tSource Port",
+].join("\n");
+
+const input = (
+  overrides: Partial<InspectPacketFieldsInput> = {},
+): InspectPacketFieldsInput => inspectPacketFieldsInputSchema.parse(overrides);
+
+describe("parseFieldDiscovery", () => {
+  it("returns the first page of protocols by default", () => {
+    const result = parseFieldDiscovery(GLOSSARY, input());
+    expect(result.records.map((record) => record.abbreviation)).toEqual([
+      "frame",
+      "ip",
+      "tcp",
+    ]);
+    expect(result.output_window).toEqual({
+      examined: 3,
+      matching: 3,
+      returned: 3,
+      has_more: false,
+    });
+  });
+
+  it("pages fields across requests", () => {
+    const first = parseFieldDiscovery(
+      GLOSSARY,
+      input({ kind: "fields", limit: 2, offset: 0 }),
+    );
+    expect(first.records.map((record) => record.abbreviation)).toEqual([
+      "ip.addr",
+      "ip.src",
+    ]);
+    expect(first.output_window).toEqual({
+      examined: 5,
+      matching: 5,
+      returned: 2,
+      has_more: true,
+    });
+    const rest = parseFieldDiscovery(
+      GLOSSARY,
+      input({ kind: "fields", limit: 2, offset: 4 }),
+    );
+    expect(rest.records.map((record) => record.abbreviation)).toEqual([
+      "tcp.srcport",
+    ]);
+    expect(rest.output_window.has_more).toBe(false);
+  });
+
+  it("filters by protocol and case-insensitive literal query", () => {
+    const byProtocol = parseFieldDiscovery(
+      GLOSSARY,
+      input({ kind: "fields", protocol: "ip" }),
+    );
+    expect(byProtocol.records.map((record) => record.abbreviation)).toEqual([
+      "ip.addr",
+      "ip.src",
+      "ip.dst",
+    ]);
+    expect(byProtocol.output_window.examined).toBe(5);
+    const byQuery = parseFieldDiscovery(
+      GLOSSARY,
+      input({ kind: "fields", query: "SOURCE" }),
+    );
+    expect(byQuery.records.map((record) => record.abbreviation)).toEqual([
+      "ip.addr",
+      "ip.src",
+      "tcp.port",
+      "tcp.srcport",
+    ]);
+  });
+
+  it("selects from parsed records identically to the single-pass scan", () => {
+    const records = parseFieldGlossary(GLOSSARY);
+    for (const overrides of [
+      {},
+      { kind: "fields" as const, limit: 2, offset: 1 },
+      { kind: "fields" as const, protocol: "tcp", query: "port" },
+      { kind: "protocols" as const, query: "t" },
+      { kind: "fields" as const, limit: null },
+    ]) {
+      const parsed = input(overrides);
+      expect(selectFieldRecords(records, parsed)).toEqual(
+        parseFieldDiscovery(GLOSSARY, parsed),
+      );
+    }
+  });
+
+  it("does not leak the retained source-line size into returned records", () => {
+    const result = parseFieldDiscovery(
+      GLOSSARY,
+      input({ kind: "fields", limit: 1 }),
+    );
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).not.toHaveProperty("sourceByteLength");
+    expect(parseFieldGlossary(GLOSSARY)[0]).toHaveProperty("sourceByteLength");
+  });
+
+  it("rejects a page over the record budget", () => {
+    const wide = `F\tx.y\tx.y\tFT_STRING\tx\t0x0\t0\t${"a".repeat(1_500_000)}`;
+    expect(() => parseFieldDiscovery(wide, input({ kind: "fields" }))).toThrow(
+      FieldDiscoveryBudgetError,
+    );
+  });
+
+  it("rejects malformed and empty glossaries", () => {
+    expect(() => parseFieldDiscovery("P\tbroken", input())).toThrow(
+      /Malformed TShark field glossary record at line 1/,
+    );
+    expect(() => parseFieldDiscovery("", input())).toThrow(
+      "TShark returned an empty field glossary",
+    );
+  });
+});

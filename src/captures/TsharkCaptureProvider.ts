@@ -14,10 +14,15 @@ import {
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
-  parseFieldDiscovery,
+  parseFieldGlossary,
+  selectFieldRecords,
   FieldDiscoveryBudgetError,
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
+import {
+  createFieldGlossaryCache,
+  type FieldGlossaryIdentity,
+} from "./fieldGlossaryCache.js";
 import {
   prlimitArgumentVector,
   readLinuxResourceLimits,
@@ -101,6 +106,7 @@ export const tsharkHostSupported = (platform: NodeJS.Platform): boolean =>
 /** Inspect selected capture files only, retaining cleanup ownership across failures. */
 export class TsharkCaptureProvider implements PacketCapturePort {
   readonly #resources: ArtifactAnalysisResources;
+  readonly #fieldGlossaryCache = createFieldGlossaryCache();
   constructor(
     readonly environment: Readonly<NodeJS.ProcessEnv> = process.env,
     readonly launcher?: Launcher,
@@ -142,6 +148,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     );
   }
   close(): Promise<void> {
+    this.#fieldGlossaryCache.clear();
     return this.#resources.close();
   }
   async #executeRequest(
@@ -325,11 +332,33 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       if (!("path" in input)) {
         phase = "producer";
         const args = ["-G", "fields"];
-        const output = await execute(args);
+        // The glossary depends only on the selected installation, never on
+        // capture traffic, so a parsed glossary is reused across pages until
+        // the tool identity changes. The version probe still runs every
+        // request: it validates the 4.x requirement and keys the cache.
+        const glossaryIdentity: FieldGlossaryIdentity = {
+          path: command,
+          sha256: tool.sha256,
+          versionBanner: version.stdout.text,
+        };
+        const cachedGlossary =
+          this.#fieldGlossaryCache.lookup(glossaryIdentity);
+        let selection: ReturnType<typeof selectFieldRecords>;
+        let fieldsDiagnostics: string;
+        if (cachedGlossary !== undefined) {
+          selection = selectFieldRecords(cachedGlossary, input);
+          fieldsDiagnostics = "";
+        } else {
+          const output = await execute(args);
+          const records = parseFieldGlossary(output.stdout.text);
+          this.#fieldGlossaryCache.store(glossaryIdentity, records);
+          selection = selectFieldRecords(records, input);
+          fieldsDiagnostics = output.stderr.text;
+        }
         const report = packetFieldsCatalogSchema.parse({
           selection: input,
-          ...parseFieldDiscovery(output.stdout.text, input),
-          ...metadata(args, output.stderr.text),
+          ...selection,
+          ...metadata(args, fieldsDiagnostics),
           limits: {
             ...limits,
             ...effectiveLimits,
@@ -342,7 +371,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             subject: { path: command, sha256: tool.sha256, format: "file" },
             limitations: [
               "Protocol and field registrations describe the selected installation, not traffic observed in a capture. Duplicate abbreviations remain distinct producer records with source line numbers.",
-              "Each request probes again without caching. The private empty personal profile does not fingerprint or isolate installed libraries, global configuration or plugins; they remain trusted.",
+              "The field glossary is cached in memory for the selected TShark identity (path, digest, version banner) and reused across pages until the tool changes. The private empty personal profile does not fingerprint or isolate installed libraries, global configuration or plugins; they remain trusted.",
               "No capture file, interface or device is opened. Resource ceilings do not constitute an OS sandbox. Selected producer output budget is reported in limits.output_bytes and can be changed with producer_limits.output_bytes. Selected record representation remains independently capped at 8 MiB before expansion.",
             ],
           }),
