@@ -98,9 +98,6 @@ export const inspectPacketCaptureInputSchema =
   packetCaptureSelectionSchema.safeExtend({
     path: absoluteLocalPathStringSchema.describe("Absolute local capture path"),
   });
-export const packetCaptureOptionsSchema = captureInputShape
-  .omit({ path: true })
-  .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue);
 export type InspectPacketCaptureInput = z.infer<
   typeof inspectPacketCaptureInputSchema
 >;
