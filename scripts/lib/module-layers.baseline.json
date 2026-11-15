@@ -12,7 +12,6 @@
   ],
   "crossProvider": {
     "android -> artifacts": 2,
-    "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
     "artifacts -> native": 1,
