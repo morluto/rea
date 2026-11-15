@@ -27,7 +27,7 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {
@@ -35,13 +35,7 @@ import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
-import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import type { createCatalogIdentity } from "../catalogIdentity.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -73,7 +67,7 @@ import {
 } from "../config/mcpToolsListPageBudget.js";
 import { paginateToolsList } from "./toolListPagination.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
-import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
@@ -285,6 +279,12 @@ export const forgetPendingMcpRequest = (
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import { isRecord } from "../domain/isRecord.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {

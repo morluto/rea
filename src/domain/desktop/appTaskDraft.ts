@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../excerpt.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
@@ -61,7 +62,7 @@ const bounded = (
   const visit = (node: JsonValue): JsonValue => {
     if (typeof node === "string" && node.length > MAX_CHARS) {
       cut = true;
-      return `${node.slice(0, MAX_CHARS)}…`;
+      return ellipsisExcerpt(node, MAX_CHARS);
     }
     if (Array.isArray(node)) {
       cut ||= node.length > MAX_ITEMS;

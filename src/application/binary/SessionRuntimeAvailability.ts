@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import type { Result } from "../../domain/result.js";
-import type { CapabilityDescriptor } from "../AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../ports/AnalysisProvider.js";
 
 /** Failures of the provider adapter or process rather than of one request. */
 const PROVIDER_WIDE_FAILURES: ReadonlySet<string> = new Set([

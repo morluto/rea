@@ -1,5 +1,5 @@
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,

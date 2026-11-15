@@ -14,11 +14,11 @@ import { parsePlistBinary } from "./plist.js";
 const decoder = vi.hoisted(() => ({ broken: false }));
 
 vi.mock(
-  "../../artifacts/apple/BinaryPlistMaterializer.js",
+  "../../domain/apple/binaryPlistMaterializer.js",
   async (importOriginal) => {
     const actual =
       await importOriginal<
-        typeof import("../../artifacts/apple/BinaryPlistMaterializer.js")
+        typeof import("../../domain/apple/binaryPlistMaterializer.js")
       >();
     return {
       ...actual,

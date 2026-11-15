@@ -1,6 +1,8 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import {
+  ArtifactReaderFailure,
+  type readStableArtifact,
+  stableArtifactInputRecovery,
+} from "../resources/index.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

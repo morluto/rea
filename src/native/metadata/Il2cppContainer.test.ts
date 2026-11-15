@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { createRustImageWithGoSection } from "../../../tests/fixtures/rust/image.js";
 import { openImageSteps } from "../../il2cpp/Il2cppBinaryImage.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 
 it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
   "keeps IL2CPP admission independent of a Mach-O Go build-info %s failure",

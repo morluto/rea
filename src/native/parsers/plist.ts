@@ -1,4 +1,4 @@
-import { decodeBinaryPropertyList } from "../../artifacts/apple/BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import {
   plistDuplicateKeyLimitations,
   type PlistDuplicateKeys,
@@ -33,12 +33,12 @@ import {
   resolvePlistNumberSource,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
-import { UnsupportedBinaryPlistUidError } from "../../artifacts/apple/PlistScalars.js";
+import { UnsupportedBinaryPlistUidError } from "../../domain/apple/plistScalars.js";
 import {
   estimateBinaryPlistExpansion,
   isPlistDecodeBudgetFailure,
   preflightPropertyListDecode,
-} from "../../artifacts/apple/PropertyListDecodeBudget.js";
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   decodeXmlPlistText,

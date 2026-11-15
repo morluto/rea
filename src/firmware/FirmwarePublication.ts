@@ -1,4 +1,9 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
@@ -8,10 +13,7 @@ import {
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";

@@ -46,7 +46,7 @@ import {
 } from "../../desktop/BuildComputerEnvironment.js";
 import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
@@ -422,7 +422,9 @@ export class DesktopBuildComputers {
     private readonly defaults: BuildComputerDefaults = {},
     private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
-    this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
+    this.#secrets = new DesktopBuildSecrets(
+      buildSecretsDirectory(environment, HOST_PLATFORM.platform),
+    );
     this.#shared = { settle, secrets: this.#secrets };
   }
 

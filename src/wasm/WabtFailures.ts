@@ -1,9 +1,12 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  artifactFilePrimaryFacts,
+} from "../resources/index.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -19,7 +22,7 @@ import type { ProviderFailureDialect } from "../providers/classifyProviderFailur
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
@@ -151,11 +154,7 @@ export const wabtFailureDialect = (
     (kind: ProviderOutcome["kind"]) => (snapshot: ProviderProcessSnapshot) =>
       kind === "output-limit"
         ? outputLimitExcerpt(snapshot)
-        : {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: snapshot.diagnosticTruncated ?? false,
-          };
+        : capturedProviderOutput(snapshot);
   return {
     providerId: WABT_PROVIDER_IDENTITY.id,
     operation: OPERATION,
@@ -268,9 +267,9 @@ export const wabtFailureDialect = (
           ...(outcome.output === undefined
             ? {}
             : {
-                captured_output: capturedOutput(outcome.kind)(
-                  outcome.output.snapshot,
-                ),
+                captured_output: {
+                  ...capturedOutput(outcome.kind)(outcome.output.snapshot),
+                },
               }),
         },
         { operation: OPERATION, cause: command },

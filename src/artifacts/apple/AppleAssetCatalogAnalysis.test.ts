@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import * as processOutput from "../../process/ExecFileOutput.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {

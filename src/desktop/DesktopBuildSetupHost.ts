@@ -4,18 +4,20 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { DoctorHost } from "../application/Doctor.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { assertSetupActive } from "../application/SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type {
+  DesktopBuildRegistrationReader,
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
-} from "../application/SetupDesktopBuild.js";
+} from "../ports/DesktopBuildHost.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import {
   execFileOutput,
@@ -48,7 +50,7 @@ const ARCHIVE = "REA_BUILD_COMPUTER_REA_ARCHIVE";
 interface SetupContext {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly platform: NodeJS.Platform;
-  readonly registrations: DoctorHost["clientRegistrations"];
+  readonly registrations: DesktopBuildRegistrationReader | undefined;
   probe(
     command: string,
     arguments_: readonly string[],
@@ -71,7 +73,7 @@ const failureReason = (cause: unknown): string => {
 export const systemDesktopBuildSetupHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-  registrations: DoctorHost["clientRegistrations"],
+  registrations: DesktopBuildRegistrationReader | undefined,
   resources: ArtifactResourceScope,
 ): DesktopBuildSetupHost => {
   const run = (
@@ -159,11 +161,11 @@ export const systemDesktopBuildSetupHost = (
                 );
                 cleanupFailure.bindCleanupResourceOwner(lease);
                 lease.bindCleanupError(cleanupFailure);
-                throw analysisErrorWithCleanupFailure(
+                throw analysisErrorWithCleanupDependencies(
                   cause,
                   cleanupFailure,
                   "setup",
-                ).bindCleanupDependencies([cause, cleanupFailure]);
+                );
               }
               return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
             }

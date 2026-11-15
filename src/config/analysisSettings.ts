@@ -33,7 +33,7 @@ import {
   windowsChangeTimeSettleMaxPollsSchema,
   windowsChangeTimeSettlePollMsSchema,
 } from "./windowsChangeTimeSettle.js";
-import { pwntoolsInputBytesSchema } from "../native/pwntools/PwntoolsInputLimit.js";
+import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,

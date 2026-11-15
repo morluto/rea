@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";

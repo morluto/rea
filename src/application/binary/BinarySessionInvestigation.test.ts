@@ -12,7 +12,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
-import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
+import type { AnalysisProviderCandidate } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";

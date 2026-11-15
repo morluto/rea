@@ -2,7 +2,7 @@ import {
   createCapabilityServices,
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -20,21 +20,14 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
+import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
-import {
-  parseMcpOutputSchemaProfile,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import {
-  COMPACT_INPUT_SCHEMA_PRESENTATION,
-  parseMcpInputSchemaProfile,
-} from "../config/mcpInputSchemaProfile.js";
+import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import { parseMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -45,15 +38,11 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
-import { registerWebScriptTool } from "./registerWebScriptTool.js";
-import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
-import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
-import { registerAndroidTools } from "./registerAndroidTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
@@ -74,6 +63,11 @@ import { registerReverseEngineeringTools } from "./registerReverseEngineeringToo
 import { registerCutterTools } from "./registerCutterTools.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import {
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly analysisSettings?: AnalysisSettings;
@@ -86,6 +80,12 @@ export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: Logger;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  /**
+   * The host the server's integrations run on: it decides environment-name
+   * rules, host-restricted availability and execution checks. Defaults to the
+   * running host; tests select another host here.
+   */
+  readonly host?: HostPlatform;
 }
 
 const createMcpServer = (
@@ -141,9 +141,10 @@ export const createServer = (
 ): EvidenceMcpServer => {
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
+  const host = options.host ?? HOST_PLATFORM;
   const environment = snapshotEnvironment(
     options.environment ?? process.env,
-    HOST_PLATFORM.platform,
+    host.platform,
   );
   const analysisSettings =
     options.analysisSettings ?? new AnalysisSettings(environment);
@@ -158,6 +159,7 @@ export const createServer = (
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
     environment,
+    host.platform,
   );
   const baseDelivery = selectToolResultDelivery(environment, options.delivery);
   const delivery =
@@ -171,8 +173,8 @@ export const createServer = (
     providerEnvironment,
     settings: analysisSettings.read,
     options,
-    platform: process.platform,
-    arch: process.arch,
+    platform: host.platform,
+    arch: host.architecture,
   });
   const {
     evmInterface,
@@ -267,6 +269,7 @@ export const createServer = (
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },
+            host.platform,
           );
           return {
             policy: (): AvailabilityPolicy => {
@@ -460,6 +463,7 @@ export const createServer = (
       registerServiceTools(
         server,
         {
+          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -519,13 +523,12 @@ export const createServer = (
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
     android: () =>
-      registerAndroidTools(
+      registerServiceTools(
         server,
-        new AndroidAnalysisService(android, recordEvidence),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+        },
+        contractTools,
       ),
     pcap: () => {
       registerServiceTools(
@@ -582,20 +585,10 @@ export const createServer = (
         loadFailure:
           options.optionalProviderLoadFailures?.browserScenarioCapture,
       });
-      registerWebRuntimeTools(
+      registerServiceTools(
         server,
-        webRuntime,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerWebNetworkCaptureTool(
-        server,
-        webNetworkCapture,
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        { webRuntime, webNetworkCapture },
+        contractTools,
       );
     },
     electron: () =>
@@ -629,10 +622,11 @@ export const createServer = (
         analysisAdmission,
         artifactResources,
       );
-      registerWebScriptTool(server, { ...common, artifactResources });
       registerServiceTools(
         server,
         {
+          webScripts: artifactResources,
+          guidance: artifactResources,
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
@@ -653,6 +647,7 @@ export const createServer = (
       if (session === undefined) return;
       registerSessionTools(server, session, toolLogger, {
         environment,
+        platform: host.platform,
         artifactResources,
         ...(availability === undefined
           ? {}

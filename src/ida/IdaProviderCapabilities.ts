@@ -3,7 +3,7 @@ import {
   IDA_OPERATIONS,
 } from "./IdaProviderMetadata.js";
 import type { IdaCompatibilityProfile } from "./IdaConfiguration.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
 
 export type IdaOperation = (typeof IDA_OPERATIONS)[number];

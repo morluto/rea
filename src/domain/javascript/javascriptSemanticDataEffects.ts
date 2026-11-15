@@ -1,4 +1,8 @@
 import * as t from "@babel/types";
+import {
+  bindingAssignmentMayPrecede,
+  bindingInitializersMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 
 import type {
   JavaScriptSemanticBoundaryOperation,
@@ -22,10 +26,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectIdentity,
   dataEffectArgumentBindingId as argumentBindingId,
@@ -318,8 +319,10 @@ const soleWriteReachesRead = (
 ): boolean => {
   if (binding === undefined || request === undefined) return false;
   const snapshot = semanticBindingAtRead(binding, read, context.state);
-  const initializers = snapshot.binding.initializers.filter(
-    ({ node }) => semanticEffectTiming(read, node, context.state) !== "after",
+  const initializers = bindingInitializersMayPrecede(
+    context.state,
+    snapshot.binding,
+    read,
   );
   const [initializer] = initializers;
   if (initializers.length !== 1 || initializer === undefined) return false;
@@ -330,11 +333,7 @@ const soleWriteReachesRead = (
     source = unwrapJavaScriptExpression(source.argument).node;
   return (
     source === request &&
-    !snapshot.binding.referenceInitializers.some(
-      ({ assignment, node }) =>
-        assignment &&
-        semanticEffectTiming(read, node, context.state) !== "after",
-    ) &&
+    !bindingAssignmentMayPrecede(context.state, snapshot.binding, read) &&
     (semanticStableInitializer(binding, context.state) !== undefined ||
       snapshot.hasDefiniteInitializer)
   );

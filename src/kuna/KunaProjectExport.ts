@@ -1,10 +1,10 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -212,11 +212,11 @@ export const kunaExportFailureDialect = (
     const { completion } = kunaCopyFailureFacts(read);
     if (completion !== undefined && completion.cancellation === undefined)
       return cleanup;
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       projectCacheReadFailure(read),
       cleanup,
       KUNA_EXPORT_OPERATION,
-    ).bindCleanupDependencies([cleanup]);
+    );
   },
   unclassified: (cause) => {
     if (cause instanceof ArtifactReaderFailure)

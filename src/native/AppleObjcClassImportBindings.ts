@@ -1,5 +1,5 @@
-import type { PointerFixups } from "./AppleMachoFixups.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
+import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import type { MachoImportBinding } from "../domain/native/objcSwiftMetadata.js";
 
 export interface ObjcClassImportBindingScan {

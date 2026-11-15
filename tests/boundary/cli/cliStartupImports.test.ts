@@ -55,11 +55,11 @@ const DEFERRED_IMPORTS = [
   },
   {
     name: "catalog-identity",
-    path: "/dist/catalogIdentity.js",
+    path: "/dist/contracts/catalog/catalogIdentity.js",
   },
   {
     name: "server-identity",
-    path: "/dist/serverIdentity.js",
+    path: "/dist/process/ServerIdentity.js",
   },
   {
     name: "tool-contracts",
@@ -216,7 +216,7 @@ describe("CLI startup imports", () => {
     await expect(
       resolvedPackages(
         evaluate(
-          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/artifacts/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
+          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/resources/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
         ),
       ),
     ).resolves.toContain("isomorphic-git");

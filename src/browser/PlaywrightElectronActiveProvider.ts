@@ -1,15 +1,18 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
 } from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -19,11 +22,11 @@ import type { _electron as electron } from "playwright-core";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "../application/javascript/ElectronActiveObservationPort.js";
+} from "../ports/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import {
   AnalysisError,
@@ -94,6 +97,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
+    // The host the application launches and is cleaned up on.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -191,7 +196,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executablePath: paths.executable,
         cwd: paths.root,
         env: {
-          ...safeElectronEnvironment(this.environment, runId),
+          ...safeElectronEnvironment(this.environment, runId, this.platform),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
             sha256: createHash("sha256")
@@ -292,7 +297,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       outcome = err(error);
     }
     if (application !== undefined) {
-      const owner = new ElectronCaptureCleanup(application, ownership, lineage);
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        this.platform,
+      );
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
       outcome = captureOutcomeWithCancellation(outcome, options.signal);
@@ -437,7 +447,7 @@ const cancelledCapture = (
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[

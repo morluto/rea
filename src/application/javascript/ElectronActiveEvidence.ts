@@ -1,5 +1,5 @@
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import type { Evidence, EvidenceObservation } from "../../domain/evidence.js";
 import { createEvidence } from "../../domain/evidence.js";
 import type {
@@ -7,7 +7,7 @@ import type {
   ElectronActiveObservationResult,
 } from "../../domain/javascript/electronActiveObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import type { CanonicalElectronActiveObservationInput } from "./ElectronActiveObservationPort.js";
+import type { CanonicalElectronActiveObservationInput } from "../../ports/javascript/ElectronActiveObservationPort.js";
 
 /** Commit the selected Electron experiment and its observed result. */
 export const createElectronActiveEvidence = (

@@ -2,7 +2,6 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
@@ -11,6 +10,7 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 describe("Evidence input SDK boundaries", () => {
   it("borrows SDK Evidence inputs while leaving ordinary request constraints active", async () => {

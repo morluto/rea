@@ -62,7 +62,7 @@ it("names max_heap_mb, its range, and the budgets it does not raise", () => {
   expect(projected.remediation.action).toContain(
     String(JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM),
   );
-  expect(projected.remediation.action).toContain("--max-heap-mb");
+  expect(projected.remediation.action).not.toContain("--");
   expect(projected.remediation.action).toContain("next analysis");
   expect(projected.remediation.action).toContain("new worker");
   expect(projected.remediation.action).toContain("parent result budget");
@@ -127,7 +127,7 @@ it("attributes V8 heap exhaustion to max_heap_mb only when that flag is enforced
     "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
   );
   expect(node.remediationAction).toContain("max_heap_mb");
-  expect(node.remediationAction).toContain("--max-heap-mb");
+  expect(node.remediationAction).not.toContain("--");
   const bun = javaScriptWorkerHeapExhaustionRecovery({
     heapFlagsEnforced: false,
     heapMb: 1024,
