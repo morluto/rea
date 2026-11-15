@@ -1,6 +1,6 @@
 import {
+  AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-  type AnalysisCleanupLease,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -12,9 +12,12 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
+  AnalysisTimeoutError,
   cancelledBy,
   isAborted,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
+import type { Deadline } from "../domain/deadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -33,7 +36,10 @@ export type CleanupOutcome =
  * - cancellation observed after commit keeps the completed value;
  * - unconfirmed cleanup never replaces the primary. A completed value whose
  *   cleanup is unconfirmed is a `cleanup_incomplete` error that keeps the
- *   value (the documented one-shot contract).
+ *   value (the documented one-shot contract);
+ * - an elapsed work budget is a timeout, not a cancellation, and keeps a
+ *   completed value the way a pre-commit cancellation does; a caller abort
+ *   stays a cancellation even when the budget also elapsed.
  */
 export type Finalized<Value> =
   | {
@@ -101,6 +107,16 @@ interface RunOwnedBaseOptions<Value> {
   readonly providerId: string;
   readonly operation: string;
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Bounds the work by its work budget and `close` by its finalize budget.
+   * The work's signal aborts with `OwnerCancellation.deadlineElapsed` when the
+   * work budget elapses, and the outcome is an `AnalysisTimeoutError`. A
+   * close that outlasts the finalize budget leaves cleanup incomplete: the
+   * leases stay retained (or, without leases, the close still running is the
+   * lease) and their confirmed release later resolves it. Publication
+   * (`commit`) is outside both budgets.
+   */
+  readonly deadline?: Deadline | undefined;
   /** Releases everything the work acquired; awaited before the signal is read. */
   readonly close: () => Promise<void>;
   /** Names the owned resources when a non-REA close failure names none. */
@@ -173,14 +189,104 @@ const closeFailure = (
   );
 };
 
+/** The work's signal: the caller's, plus the work budget when one is set. */
+const boundWork = (
+  signal: AbortSignal | undefined,
+  deadline: Deadline | undefined,
+): {
+  readonly signal: AbortSignal | undefined;
+  readonly elapsed: () => boolean;
+  readonly stop: () => void;
+} => {
+  if (deadline === undefined)
+    return { signal, elapsed: () => false, stop: () => undefined };
+  const budget = new AbortController();
+  const timer = setTimeout(
+    () => budget.abort(OwnerCancellation.deadlineElapsed),
+    deadline.remainingMs(),
+  );
+  return {
+    signal:
+      signal === undefined
+        ? budget.signal
+        : AbortSignal.any([signal, budget.signal]),
+    elapsed: () => budget.signal.aborted,
+    stop: () => clearTimeout(timer),
+  };
+};
+
+/**
+ * Await close within the finalize budget. When the budget elapses first, the
+ * close keeps running and the returned failure stays incomplete until the
+ * exact leases (or, without them, that close) confirm release.
+ */
+const closeWithin = async (
+  options: Pick<
+    RunOwnedBaseOptions<unknown>,
+    | "close"
+    | "deadline"
+    | "cleanupLeases"
+    | "providerId"
+    | "operation"
+    | "fallbackResource"
+  >,
+): Promise<AnalysisError | undefined> => {
+  const closing = options.close();
+  const deadline = options.deadline;
+  if (deadline === undefined) {
+    await closing;
+    return undefined;
+  }
+  const finalize = deadline.beginFinalize();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => resolve("expired"), finalize.remainingMs());
+  });
+  try {
+    if ((await Promise.race([closing, expired])) !== "expired")
+      return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+  let pending: Promise<void> | undefined = closing;
+  const leases = options.cleanupLeases ?? [
+    new AnalysisCleanupLease(() => {
+      // The first release waits for the close still running; a retry
+      // closes again.
+      const attempt = pending ?? options.close();
+      pending = undefined;
+      return attempt;
+    }, [options.fallbackResource ?? `${options.operation} resources`]),
+  ];
+  const resources = leases.flatMap((lease) => lease.cleanupResources ?? []);
+  const failure = new ProviderCleanupError(
+    options.providerId,
+    resources.length > 0
+      ? resources
+      : [options.fallbackResource ?? `${options.operation} resources`],
+    {
+      reason: `Cleanup did not finish within its ${String(finalize.workMs)} ms finalize budget`,
+    },
+    { operation: options.operation },
+  );
+  new AnalysisCleanupLeaseGroup(failure, leases);
+  if (options.cleanupLeases === undefined)
+    void leases[0]!.release().catch(() => undefined);
+  else void closing.catch(() => undefined);
+  return failure;
+};
+
 /** Run owned work, close its owner, and apply the finalization precedence once. */
 export const runOwned = async <Value>(
-  work: () => Promise<Result<Value, AnalysisError>>,
+  work: (
+    signal: AbortSignal | undefined,
+  ) => Promise<Result<Value, AnalysisError>>,
   options: RunOwnedOptions<Value>,
 ): Promise<Finalized<Value>> => {
+  const bound = boundWork(options.signal, options.deadline);
   let primary: Result<Value, AnalysisError>;
   try {
-    primary = await work();
+    primary = await work(bound.signal);
   } catch (cause) {
     primary = {
       ok: false,
@@ -192,6 +298,9 @@ export const runOwned = async <Value>(
             }),
     };
   }
+  bound.stop();
+  // A caller abort stays a cancellation even when the budget also elapsed.
+  const workTimedOut = bound.elapsed() && !isAborted(options.signal);
   let committed = false;
   const commit = async (
     value: Value,
@@ -214,7 +323,12 @@ export const runOwned = async <Value>(
       };
     }
   };
-  if (primary.ok && options.commit !== undefined && !isAborted(options.signal))
+  if (
+    primary.ok &&
+    options.commit !== undefined &&
+    !isAborted(options.signal) &&
+    !workTimedOut
+  )
     primary = await commit(primary.value);
   options.inspectPrimary?.(primary);
   const hadIncompleteCleanup = !primary.ok && primary.error.cleanupIncomplete;
@@ -222,7 +336,9 @@ export const runOwned = async <Value>(
   try {
     // Owners may resolve the primary's retained cleanup during close; only
     // they can confirm it, so its status is read again afterwards.
-    await options.close();
+    const unfinished = await closeWithin(options);
+    if (unfinished !== undefined)
+      cleanup = { kind: "retained", failure: unfinished };
   } catch (cause) {
     const failure = closeFailure(cause, options);
     const leases =
@@ -267,7 +383,8 @@ export const runOwned = async <Value>(
     outcome.ok &&
     !primary.ok &&
     options.commit !== undefined &&
-    !isAborted(signal)
+    !isAborted(signal) &&
+    !workTimedOut
   ) {
     const publication = await commit(outcome.value);
     if (!publication.ok) {
@@ -287,6 +404,44 @@ export const runOwned = async <Value>(
     outcome.error.cleanupIncomplete
   )
     cleanup = { kind: "retained", failure: outcome.error };
+  if (workTimedOut && options.deadline !== undefined) {
+    const timeout = (
+      replaced: Partial<
+        Pick<AnalysisError, "partialObservation" | "diagnostics">
+      >,
+      cause?: unknown,
+    ): AnalysisTimeoutError =>
+      new AnalysisTimeoutError(options.operation, options.deadline!.workMs, {
+        ...(cause === undefined ? {} : { cause }),
+        ...(replaced.partialObservation === undefined
+          ? {}
+          : { partialObservation: replaced.partialObservation }),
+        ...(replaced.diagnostics === undefined
+          ? {}
+          : { diagnostics: replaced.diagnostics }),
+      });
+    if (outcome.ok && !committed) {
+      // The value arrived after the budget elapsed and was not published.
+      const kept = keepCompleted(options, outcome.value, "failure");
+      outcome = {
+        ok: false,
+        error: timeout(
+          "partialObservation" in kept
+            ? { partialObservation: kept.partialObservation }
+            : { diagnostics: { ...outcome.diagnostics, ...kept.diagnostics } },
+        ),
+      };
+    } else if (
+      !outcome.ok &&
+      primaryAnalysisError(outcome.error) instanceof AnalysisCancelledError
+    )
+      // The work observed the budget's abort; that cancellation is the
+      // timeout's cause, and any cleanup it retains composes below.
+      outcome = {
+        ok: false,
+        error: timeout(outcome.error, outcome.error),
+      };
+  }
   // The kind follows the primary failure, so a producer's composite whose
   // primary is a cancellation is cancelled, and a failure that only retains a
   // later cancellation as a secondary stays failed.
