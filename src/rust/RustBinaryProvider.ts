@@ -306,6 +306,7 @@ const retainCompilerPathsWithinReport = (
     report.limitations = withGuidance;
     return;
   }
+  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
   const limitation =
     "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {
@@ -323,18 +324,14 @@ const retainCompilerPathsWithinReport = (
     Buffer.byteLength(JSON.stringify({ ...baseline, rustc_commit: empty }));
   let retainedBytes = 0;
   let count = 0;
-  for (const hash of commit.hashes) {
+  // The complete record does not fit, so trimming removes at least one path
+  // and the byte coverage it records stays true.
+  for (const hash of commit.hashes.slice(0, -1)) {
     const bytes =
       Buffer.byteLength(JSON.stringify(hash)) + (count === 0 ? 0 : 1);
     if (bytes > available - retainedBytes) break;
     retainedBytes += bytes;
     count++;
-  }
-  if (count === commit.hashes.length) {
-    if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
-    // Keeping every path needs the shorter trimming record; drop one so the
-    // byte coverage it records is true.
-    count -= 1;
   }
   if (count === 0) {
     // The control stays recorded although no compiler record survives.
