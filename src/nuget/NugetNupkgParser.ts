@@ -391,6 +391,24 @@ const parseNuspecDocument = (
   };
 };
 
+/**
+ * Collect the distinct members the manifest targets resolve to, stopping at
+ * the second. Many package-controlled targets can each hit one large
+ * case-folded bucket, so the matches are never materialized together.
+ */
+export const distinctTargetMatches = <T>(
+  targets: readonly string[],
+  match: (target: string) => readonly T[],
+): T[] => {
+  const found = new Set<T>();
+  for (const target of targets)
+    for (const member of match(target)) {
+      found.add(member);
+      if (found.size > 1) return [...found];
+    }
+  return [...found];
+};
+
 const findNuspec = (
   files: readonly { readonly entry: FileEntry; readonly name: string }[],
   relsXml: string | undefined,
@@ -420,7 +438,7 @@ const findNuspec = (
     exactNames.get(target) ?? foldedNames.get(target.toLowerCase()) ?? [];
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
-    const resolved = [...new Set(targets.flatMap(matchTarget))];
+    const resolved = distinctTargetMatches(targets, matchTarget);
     if (resolved.length > 1) {
       limitations.push(
         "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",

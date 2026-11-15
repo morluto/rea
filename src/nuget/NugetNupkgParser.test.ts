@@ -20,7 +20,11 @@ import {
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
+import {
+  NUPKG_LIMITATIONS,
+  distinctTargetMatches,
+  parseNugetNupkg,
+} from "./NugetNupkgParser.js";
 import { NugetNupkgCapacityFailure } from "./NugetNupkg.errors.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
@@ -567,4 +571,23 @@ it("reports unknown coverage when the central directory leaves bytes unaccounted
       line.includes("does not account for 64 byte"),
     ),
   ).toBe(true);
+});
+
+it("stops resolving manifest targets once a second distinct member is found", () => {
+  const bucket = Array.from({ length: 10_000 }, (_, index) => ({ index }));
+  const match = vi.fn((_target: string) => bucket);
+  const targets = Array.from(
+    { length: 10_000 },
+    (_, index) => `T${index}.nuspec`,
+  );
+  expect(distinctTargetMatches(targets, match)).toEqual([bucket[0], bucket[1]]);
+  expect(match).toHaveBeenCalledTimes(1);
+});
+
+it("keeps one member when every manifest target resolves to it", () => {
+  const member = { name: "Only.nuspec" };
+  const match = vi.fn((_target: string) => [member]);
+  const targets = Array.from({ length: 1_000 }, () => "ONLY.nuspec");
+  expect(distinctTargetMatches(targets, match)).toEqual([member]);
+  expect(match).toHaveBeenCalledTimes(1_000);
 });
