@@ -60,7 +60,8 @@ const composeDeepBinarySession = (
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
 ): BinarySession => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const platform = HOST_PLATFORM.platform;
+  const environment = snapshotEnvironment(selectedEnvironment, platform);
   const hopper = new HopperProvider(config, logger, environment);
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment);
@@ -70,7 +71,7 @@ const composeDeepBinarySession = (
   });
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
-    HOST_PLATFORM.platform,
+    platform,
     settings,
   );
   const nativeInspectionAvailable =
@@ -89,7 +90,7 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, HOST_PLATFORM.platform, settings),
+    createBundleResourceFactory(environment, platform, settings),
   );
 };
 

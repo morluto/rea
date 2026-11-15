@@ -69,6 +69,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
       /** Selected tools/list page budget; absent keeps the default page. */
       readonly toolsListPageBudget?: McpToolsListPageBudget | undefined;
+      // Recorded tools carry complete output schemas; `off` omits them from
+      // listings while the runtime still validates structured results.
+      readonly outputSchemaProfile?: "full" | "off" | undefined;
+      readonly identity?: RecordedMcpCatalog["identity"] | undefined;
     } = {},
   ) {
     super(
@@ -83,9 +87,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       options.compactPresentation,
-      // `main.ts` only defers the exact full advertisement catalog.
-      "full",
-      catalog.identity,
+      options.outputSchemaProfile ?? "full",
+      options.identity ?? catalog.identity,
       undefined,
       options.toolsListPageBudget,
     );
@@ -220,6 +223,21 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
 
   closePartialRuntime(): Promise<void> {
     return this.partialClose?.() ?? Promise.resolve();
+  }
+
+  /**
+   * Recorded tools already list their presented description; keep it rather
+   * than project every canonical input schema when the runtime materializes.
+   */
+  protected override describeTool(
+    name: string,
+    description: string | undefined,
+    guidance: () => readonly string[],
+  ): { description?: string } {
+    const recorded = this.tools.get(name)?.registered.description;
+    if (this.materializing && recorded !== undefined)
+      return { description: recorded };
+    return super.describeTool(name, description, guidance);
   }
 
   protected override bindTool(

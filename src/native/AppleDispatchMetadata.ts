@@ -47,11 +47,11 @@ import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
 import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { parseMachoLayout } from "./AppleMachoSelection.js";
 import {
-  parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
+  selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./AppleMachoSelection.js";
+} from "./metadata/MachoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,
@@ -76,7 +76,25 @@ export function* decodeAppleDispatchMetadataSteps(
   objcClassImportAddressesComplete = true,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
-  const layout = parseMachoLayout(bytes, architecture, admittedSlice);
+  const selected = selectMachoSlice(bytes, {
+    mode: "admitted",
+    architecture,
+    slice: admittedSlice,
+  });
+  if (!selected.ok) {
+    if (selected.error.kind === "malformed")
+      throw malformedInput("macho", selected.error.message);
+    // Admission bound this architecture and slice to these exact bytes, so a
+    // refusal is an inconsistency inside REA, not the caller's selection.
+    throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
+      diagnostics: {
+        target_path: provenance.path,
+        refusal: selected.error.kind,
+        reason: selected.error.message,
+      },
+    });
+  }
+  const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
@@ -466,6 +484,15 @@ const appleDispatchMetadataPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
+    // A recognized Mach-O class this reader cannot decode still holds metadata
+    // another reader may recover.
+    if (cause instanceof BinaryFormatFailure && cause.undecodedContent)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
     if (cause instanceof BinaryFormatFailure)
       return new AnalysisUnsupportedTargetError(
         OPERATION,
@@ -478,13 +505,6 @@ const appleDispatchMetadataPrimaryFailure = (
               ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },
-      );
-    if (cause instanceof UnsupportedMachoMetadataFormatError)
-      return new AnalysisCapabilityUnavailableError(
-        IDENTITY.id,
-        OPERATION,
-        cause.message,
-        { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
       return cancelledBy(

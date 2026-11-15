@@ -156,18 +156,33 @@ export const fixedProjectLocation =
       ),
     };
   };
-export const mcporterLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const root = join(context.home, ".mcporter");
-  const primary = join(root, "mcporter.json");
-  return location(
-    await firstExisting([primary, join(root, "mcporter.jsonc")], primary),
-    root,
-  );
-};
-
+/**
+ * fx's profile folder: `$FX_HOME` when set, which fx admits only as an
+ * absolute path other than the root and the home folder (`useFxHome`), else
+ * `~/.fx`. fx refuses an invalid value, so registration does too.
+ */
 export const fxLocation = async (
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".fx", "mcp.json"));
+): Promise<McpRegistrationGlobalLocation> => {
+  const value = context.environment.FX_HOME;
+  if (!value) return location(join(context.home, ".fx", "mcp.json"));
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === context.home.replace(/[\\/]+$/u, "")
+  )
+    throw new ConfigurationError(
+      "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before registering; no settings were written.",
+    );
+  return location(pathApi.join(trimmed, "mcp.json"));
+};

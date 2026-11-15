@@ -208,6 +208,9 @@ const redactFailure = (
         ? {}
         : { systemCode: error.systemCode }),
       ...(retainedPath === undefined ? {} : { path: retainedPath }),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detectedKind: error.detectedKind }),
       ...(error.userMessage === undefined
         ? {}
         : { userMessage: text(error.userMessage) }),

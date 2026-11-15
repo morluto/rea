@@ -1,3 +1,4 @@
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,10 +28,21 @@ const answerSchema = z.object({
   description: z.string(),
 });
 
+/** A failure whose cleanup completes when its owner's lease is released. */
 interface Retained {
-  readonly owner: RetainedCommandCleanup;
+  readonly lease: AnalysisCleanupLease;
   readonly failure: ProviderCleanupError;
 }
+
+const retained = (
+  owner: RetainedCommandCleanup,
+  failure: ProviderCleanupError,
+): Retained => {
+  failure.bindCleanupResourceOwner(owner);
+  const lease = AnalysisCleanupLease.forCloseOwner(owner, "screen-judge");
+  lease.bindCleanupError(failure);
+  return { lease, failure };
+};
 
 /** A complete answer remains evidence even when subsequent process cleanup fails. */
 const completedAnswer = (
@@ -177,9 +189,9 @@ export class ScreenJudgeProcess {
             "Close the build computer to retry screenshot cleanup.",
         },
       );
-      const owner = new RetainedCommandCleanup(folder, undefined);
-      failure.bindCleanupResourceOwner(owner);
-      this.#retained.add({ owner, failure });
+      this.#retained.add(
+        retained(new RetainedCommandCleanup(folder, undefined), failure),
+      );
       throw failure;
     }
   }
@@ -221,8 +233,7 @@ export class ScreenJudgeProcess {
         remediationAction: "Close the build computer to retry judge cleanup.",
       },
     );
-    failure.bindCleanupResourceOwner(owner);
-    this.#retained.add({ owner, failure });
+    this.#retained.add(retained(owner, failure));
     return failure;
   }
 
@@ -232,12 +243,11 @@ export class ScreenJudgeProcess {
     const resources: string[] = [];
     for (const item of this.#retained) {
       try {
-        await item.owner.close();
+        await item.lease.release();
         this.#retained.delete(item);
-        item.failure.resolveCleanup();
       } catch (cause: unknown) {
         failures.push(cause instanceof Error ? cause.message : String(cause));
-        resources.push(...item.owner.cleanupResources);
+        resources.push(...(item.lease.cleanupResources ?? []));
       }
     }
     return failures.length === 0

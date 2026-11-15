@@ -33,7 +33,10 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { assertSetupActive } from "./SetupCancellation.js";
 import type {
@@ -159,8 +162,7 @@ export const runSetup = async (
   }
   // Cancellation observed only during the final doctor or cleanup is not success.
   if (options.signal?.aborted === true) {
-    const cancelled = new AnalysisCancelledError("setup", {
-      cause: options.signal.reason,
+    const cancelled = cancelledBy("setup", options.signal, {
       diagnostics: { setup_result: jsonValueSchema.parse(result) },
     });
     if (cleanup !== undefined)
