@@ -745,8 +745,10 @@ export const systemUninstallHost = (
               );
           }
         }
+        // OpenCode and Kilo merge every layer, so removing REA's entries can
+        // expose or change an entry another layer keeps.
         if (
-          client.format === "opencode" &&
+          (client.format === "opencode" || client.format === "kilo") &&
           (removal.value.removeNative || removal.value.legacyPath !== undefined)
         ) {
           const originalLayers: ClientConfigurationSource[] = [];
@@ -786,6 +788,13 @@ export const systemUninstallHost = (
               sourcePath: configPath,
             });
           }
+          // REA never edits the inline layer, so it survives removal.
+          const inline = client.inlineConfiguration;
+          if (inline !== undefined) {
+            const layer = { ...inline.parsed, inlineOrigin: inline.origin };
+            originalLayers.push(layer);
+            remainingLayers.push(layer);
+          }
           const selected =
             effectiveClientConfiguration(originalLayers)?.servers[
               PRODUCT_IDENTITY.mcpServerKey
@@ -802,7 +811,9 @@ export const systemUninstallHost = (
             return item(
               client.name,
               "failed",
-              "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall.",
+              client.format === "opencode"
+                ? "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall."
+                : `Removing REA's registration would activate or change a registration that another Kilo configuration layer${inline === undefined ? "" : ` or ${inline.origin}, which REA does not edit,`} keeps in effect; no change was made. Remove or replace that registration manually, then rerun uninstall.`,
             );
         }
         // REA writes only the user layer. If the read-only lower layers alone
