@@ -6,7 +6,7 @@ import {
   createModelArtifactEvidence,
   createModelArtifactPartialEvidence,
 } from "../domain/model/modelArtifactEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ModelArtifact,
   ModelArtifactPartial,

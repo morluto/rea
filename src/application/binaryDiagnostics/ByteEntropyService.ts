@@ -3,7 +3,7 @@ import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {

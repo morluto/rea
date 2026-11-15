@@ -37,7 +37,7 @@ import {
   type AnalysisClientContext,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import {
   ghidraSeedCommitmentSchema,

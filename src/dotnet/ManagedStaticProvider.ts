@@ -6,7 +6,7 @@ import {
   type CapabilityDescriptor,
   type ExecutionOptions,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";

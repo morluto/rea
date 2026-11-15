@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,

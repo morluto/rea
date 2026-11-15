@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { EvmInterfaceExecution } from "../../../src/application/evm/EvmInterfacePort.js";
 import type { EvmInterface } from "../../../src/domain/evm/evmInterface.js";
 

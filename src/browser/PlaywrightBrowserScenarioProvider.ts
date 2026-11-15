@@ -12,7 +12,7 @@ import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioC
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import {
   BROWSER_SCENARIO_START_STEP_ID,

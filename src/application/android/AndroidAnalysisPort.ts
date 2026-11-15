@@ -2,7 +2,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderAvailability,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AndroidRequest } from "../../domain/android/androidAnalysis.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";

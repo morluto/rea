@@ -4,7 +4,7 @@ import type { Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 /** Typed boundary for upstream source recovery without exposing its protocol. */
 export interface JavaScriptRecoveryPort {

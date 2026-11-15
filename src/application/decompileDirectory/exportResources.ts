@@ -27,7 +27,7 @@ import {
   stableFileHashCause,
 } from "../../filesystem/StableFileHash.js";
 import type { OwnedLease } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 
 /** Publication committed before its staging cleanup failed. */
 export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {

@@ -36,7 +36,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {

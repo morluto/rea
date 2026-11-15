@@ -58,7 +58,7 @@ import {
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   NATIVE_TOOL_CONTRACTS,
   type NativeToolName,

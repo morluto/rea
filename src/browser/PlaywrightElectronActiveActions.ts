@@ -2,7 +2,7 @@ import type { ElectronApplication, JSHandle, Page } from "playwright-core";
 import { z } from "zod";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,

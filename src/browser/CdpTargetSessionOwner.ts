@@ -16,7 +16,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {

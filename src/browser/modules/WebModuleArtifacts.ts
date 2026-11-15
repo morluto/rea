@@ -3,7 +3,7 @@ import type {
   WebModuleArtifacts,
 } from "../../application/WebModulePorts.js";
 import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";

@@ -8,7 +8,7 @@ import type {
   WebModuleTraceInput,
 } from "../domain/webModuleTrace.js";
 import type { SelectedWebScriptArtifacts } from "../domain/webScriptArtifacts.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 
 type JsonObject = Record<string, JsonValue>;
 

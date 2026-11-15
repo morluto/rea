@@ -31,7 +31,7 @@ import {
 } from "../domain/webSourceLocation.js";
 import type { WebTraceObservation } from "../domain/webTraceObservation.js";
 import { resolveWebSourcePosition } from "../domain/webSourcePosition.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,

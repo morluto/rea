@@ -1,6 +1,6 @@
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { AndroidAnalysisExecution } from "../application/android/AndroidAnalysisPort.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import {

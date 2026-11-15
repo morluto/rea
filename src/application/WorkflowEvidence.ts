@@ -10,7 +10,7 @@ import {
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { err, ok } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";

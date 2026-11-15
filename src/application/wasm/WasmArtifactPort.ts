@@ -1,7 +1,7 @@
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { InspectWasmArtifactInput } from "../../domain/wasm/wasmArtifact.js";
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";

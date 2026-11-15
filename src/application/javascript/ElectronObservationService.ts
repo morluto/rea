@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElectronObservationPort } from "./ElectronObservationPort.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type {

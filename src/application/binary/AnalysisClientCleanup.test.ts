@@ -7,7 +7,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err } from "../../domain/result.js";
-import type { AnalysisClient } from "../AnalysisProvider.js";
+import type { AnalysisClient } from "../../ports/AnalysisProvider.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 

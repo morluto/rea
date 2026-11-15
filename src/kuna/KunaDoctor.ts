@@ -10,7 +10,7 @@ import {
   admitKunaCommand,
   type KunaAdmissionRefusal,
 } from "./KunaAdmission.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
 import {

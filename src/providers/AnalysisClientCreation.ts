@@ -8,7 +8,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,

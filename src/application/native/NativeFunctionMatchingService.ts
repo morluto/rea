@@ -21,7 +21,7 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import { err, ok, type Result } from "../../domain/result.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveNativeMatchingSources } from "./NativeMatchingSources.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { NativeMatchingAllowance } from "../../config/nativeMatchingAllowance.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
 

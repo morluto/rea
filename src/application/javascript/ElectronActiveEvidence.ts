@@ -1,5 +1,5 @@
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import type { Evidence, EvidenceObservation } from "../../domain/evidence.js";
 import { createEvidence } from "../../domain/evidence.js";
 import type {

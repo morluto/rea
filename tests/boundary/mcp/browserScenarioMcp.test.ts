@@ -8,7 +8,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
 import type { BrowserScenario } from "../../../src/domain/browserScenario.js";

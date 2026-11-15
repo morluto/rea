@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   Il2cppSeedWriterPort,
   Il2cppSeedOutput,

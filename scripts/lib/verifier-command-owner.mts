@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import {

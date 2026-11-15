@@ -15,7 +15,7 @@ import {
   createAnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   EvmInterfaceExecution,
   EvmInterfacePort,

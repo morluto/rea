@@ -15,8 +15,8 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../domain/jeb/jebAnalysis.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
 import {

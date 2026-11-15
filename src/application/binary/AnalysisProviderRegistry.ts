@@ -46,7 +46,7 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,

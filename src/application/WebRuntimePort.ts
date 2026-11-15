@@ -1,4 +1,7 @@
-import type { ExecutionOptions, ProviderIdentity } from "./AnalysisProvider.js";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import type {

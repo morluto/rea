@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Il2cppMetadata } from "../../domain/il2cpp/il2cppMetadata.js";
 import type { Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 
 /** Explicit file output, separate from read-only metadata inspection. */
 export interface Il2cppSeedOutput {

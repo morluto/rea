@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { WebRuntimePort } from "./WebRuntimePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";

@@ -120,7 +120,7 @@ import { existingGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";

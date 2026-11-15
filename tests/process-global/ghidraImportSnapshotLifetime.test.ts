@@ -81,7 +81,7 @@ import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../src/logger.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {

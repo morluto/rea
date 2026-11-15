@@ -12,7 +12,7 @@ import type {
   ReleaseExposureScanVisitor,
   ReleaseExposureTextVisitor,
 } from "../application/releaseExposure/ReleaseExposurePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,

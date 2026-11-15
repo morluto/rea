@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { AnalysisProvider } from "../AnalysisProvider.js";
+import type { AnalysisProvider } from "../../ports/AnalysisProvider.js";
 import { BinarySession } from "./BinarySession.js";
 import { toolSessionEffects } from "../../contracts/toolEffects.js";
 import { ok } from "../../domain/result.js";

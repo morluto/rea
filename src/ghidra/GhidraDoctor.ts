@@ -1,6 +1,6 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,

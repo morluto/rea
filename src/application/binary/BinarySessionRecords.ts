@@ -34,7 +34,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";

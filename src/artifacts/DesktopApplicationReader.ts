@@ -23,7 +23,7 @@ import {
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
 import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   DesktopApplication,
   DesktopFact,

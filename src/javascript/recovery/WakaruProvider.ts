@@ -7,7 +7,7 @@ import type { JavaScriptRecoveryPort } from "../../application/javascript/JavaSc
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../../application/AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";

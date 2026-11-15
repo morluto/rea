@@ -2,7 +2,7 @@ import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssuePr
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import { summarizeRetainedAndroidSearch } from "./AndroidSearchEvidenceSummary.js";
 import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import {
   androidRequestSchema,

@@ -1,7 +1,7 @@
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { constants as bufferConstants } from "node:buffer";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   createAnalysisExecutionEvidence,

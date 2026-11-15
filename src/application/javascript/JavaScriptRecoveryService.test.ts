@@ -3,7 +3,7 @@ import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCo
 import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { JavaScriptRecoveryService } from "./JavaScriptRecoveryService.js";
 
 const artifact = { path: "/tmp/bundle.js", sha256: "a".repeat(64), bytes: 20 };

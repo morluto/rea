@@ -6,7 +6,7 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
 import {
   electronPageInspectionSchema,

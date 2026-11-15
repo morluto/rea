@@ -1,6 +1,6 @@
-import type { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
+import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
-import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { TargetApplicability } from "../domain/targetApplicability.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
@@ -27,7 +27,7 @@ import {
   analysisSourceDescriptorSchema,
   type AnalysisSourceDescriptor,
 } from "../domain/analysisSource.js";
-import type { ProgressReporter } from "../ports/ProgressReporter.js";
+import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";

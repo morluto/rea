@@ -2,7 +2,7 @@ import type {
   AnalysisClient,
   AnalysisOperation,
   CapabilityDescriptor,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { err, ok } from "../../domain/result.js";

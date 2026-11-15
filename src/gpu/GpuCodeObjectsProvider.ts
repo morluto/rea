@@ -6,7 +6,7 @@ import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
 } from "../domain/gpu/gpuCodeObjectsEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
   GpuCodeObjectsInput,

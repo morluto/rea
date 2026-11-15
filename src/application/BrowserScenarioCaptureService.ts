@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
 import {

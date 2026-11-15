@@ -45,7 +45,7 @@ import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
   ProviderAvailability,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";

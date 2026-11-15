@@ -5,7 +5,7 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 
 it.each([

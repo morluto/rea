@@ -6,7 +6,7 @@ import type {
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
 } from "./Il2cppSeedWriterPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,

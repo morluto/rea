@@ -16,7 +16,7 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 

@@ -1,4 +1,7 @@
-import type { ExecutionOptions, ProviderIdentity } from "./AnalysisProvider.js";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioCapture } from "../domain/browserScenarioCapture.js";

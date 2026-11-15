@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { ElectronFusePort } from "../application/electron/ElectronFusePort.js";
 import { createElectronFuseEvidence } from "../domain/electron/electronFuseEvidence.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";

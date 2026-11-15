@@ -9,7 +9,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 
 it("retains the selected subject in bounded search Evidence", () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };

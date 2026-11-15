@@ -6,7 +6,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type {
   RetainedResourceScope,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { chmod, copyFile } from "node:fs/promises";

@@ -2,7 +2,7 @@ import type { BrowserObservationPort } from "../application/BrowserObservationPo
 import type {
   ProviderIdentity,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,

@@ -10,7 +10,7 @@ import type {
   webArtifactFileSchema,
 } from "../domain/webScriptArtifacts.js";
 import type { z } from "zod";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 
 /** Actual selected source and local map bytes; no provider URL fetching. */
 export interface WebSourceLocationArtifacts extends SelectedWebScriptArtifacts {

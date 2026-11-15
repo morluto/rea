@@ -13,7 +13,7 @@ import {
   kunaInstallationCancellation,
 } from "../../../../src/kuna/KunaInstallation.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";

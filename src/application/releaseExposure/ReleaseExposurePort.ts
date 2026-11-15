@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
 import type { ReleaseExposureScan } from "../../domain/releaseExposure.js";

@@ -4,7 +4,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
 import { accessSync, constants, statSync } from "node:fs";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type {
   AnalysisClient,
   AnalysisOperation,
@@ -16,7 +16,7 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";

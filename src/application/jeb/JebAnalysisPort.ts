@@ -2,7 +2,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderAvailability,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../../domain/jeb/jebAnalysis.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";

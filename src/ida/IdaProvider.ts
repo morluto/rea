@@ -26,7 +26,7 @@ import type {
   ProviderAvailability,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";

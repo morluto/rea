@@ -41,7 +41,7 @@ import type {
   AnalysisOperationPort,
   ProviderIdentity,
   AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   BinarySessionPort,
   BinaryOpenResult,

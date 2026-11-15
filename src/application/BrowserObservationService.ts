@@ -33,7 +33,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { BrowserObservationPort } from "./BrowserObservationPort.js";
 import { createBrowserEvidence } from "./BrowserEvidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";

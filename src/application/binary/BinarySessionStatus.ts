@@ -12,7 +12,7 @@ import type {
   ProviderIdentity,
   ProviderRequestActivitySnapshot,
   ProviderRuntimeLineageSnapshot,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   PROVIDER_EFFECT_NAMES,
   providerCapabilitySet,
