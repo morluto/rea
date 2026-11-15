@@ -48,6 +48,7 @@ import { IdaSessionClient } from "./IdaSessionClient.js";
 import {
   admitIdaConfiguration,
   IDA_WORKSPACE_ROOT_REMEDIATION,
+  type IdaAdmission,
 } from "./IdaAdmission.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -238,36 +239,10 @@ export class IdaProvider implements AnalysisProviderCandidate {
       });
     }
     const admission = await admitIdaConfiguration(config.value);
-    if (!admission.admitted) {
-      const { refusal } = admission;
+    if (!admission.admitted)
       return unavailable(
-        refusal.kind === "private_workspace_unavailable"
-          ? {
-              status: "unavailable",
-              code: refusal.privacy.code,
-              reason: refusal.privacy.reason,
-              remediation: refusal.privacy.remediation,
-              diagnostics: {
-                ...registrationDiagnostics,
-                mode: "headless",
-                private_workspace_available: false,
-                windows_native_failure: { stage: refusal.privacy.failureStage },
-              },
-            }
-          : {
-              status: "unavailable",
-              code: "open_options_invalid",
-              reason: refusal.reason,
-              remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
-              diagnostics: {
-                ...registrationDiagnostics,
-                mode: "headless",
-                workspace_root: admission.workspaceRoot ?? null,
-                private_workspace_available: false,
-              },
-            },
+        idaRefusalAvailability(admission, registrationDiagnostics),
       );
-    }
     return {
       availability: {
         status: "available" as const,
@@ -461,3 +436,43 @@ const readIdaConfigurationNotConfigured = () =>
       "Set REA_IDA_MCP_CONFIG to an upstream IDA MCP JSON registration; see docs/providers/ida-provider.md.",
     ),
   );
+
+/** Project IDA's admission refusal into provider availability. */
+const idaRefusalAvailability = (
+  admission: Extract<IdaAdmission, { readonly admitted: false }>,
+  registrationDiagnostics: Readonly<Record<string, unknown>>,
+): Extract<ProviderAvailability, { status: "unavailable" }> => {
+  const { refusal } = admission;
+  switch (refusal.kind) {
+    case "private_workspace_unavailable":
+      return {
+        status: "unavailable",
+        code: refusal.privacy.code,
+        reason: refusal.privacy.reason,
+        remediation: refusal.privacy.remediation,
+        diagnostics: {
+          ...registrationDiagnostics,
+          mode: "headless",
+          private_workspace_available: false,
+          windows_native_failure: { stage: refusal.privacy.failureStage },
+        },
+      };
+    case "workspace_unusable":
+      return {
+        status: "unavailable",
+        code: "open_options_invalid",
+        reason: refusal.reason,
+        remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
+        diagnostics: {
+          ...registrationDiagnostics,
+          mode: "headless",
+          workspace_root: admission.workspaceRoot ?? null,
+          private_workspace_available: false,
+        },
+      };
+    default: {
+      const unreachable: never = refusal;
+      return unreachable;
+    }
+  }
+};

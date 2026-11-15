@@ -88,31 +88,39 @@ const privateWorkspaceChecks = (
           },
         ];
   const { refusal } = admission;
-  if (refusal.kind === "workspace_unusable")
-    return [
-      {
-        name: "private_workspace",
-        ok: false,
-        code: "invalid_configuration",
-        detail: refusal.reason,
-        remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
-        classification: "config_drift",
-      },
-    ];
-  const { privacy } = refusal;
-  return [
-    {
-      name: "private_workspace",
-      ok: false,
-      code: privacy.code,
-      detail: privacy.reason,
-      remediation: privacy.remediation,
-      classification:
-        privacy.code === "runtime_missing"
-          ? "missing_dependency"
-          : privacy.code === "runtime_unavailable"
-            ? "runtime_failure"
-            : "unsupported_host",
-    },
-  ];
+  switch (refusal.kind) {
+    case "workspace_unusable":
+      return [
+        {
+          name: "private_workspace",
+          ok: false,
+          code: "invalid_configuration",
+          detail: refusal.reason,
+          remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
+          classification: "config_drift",
+        },
+      ];
+    case "private_workspace_unavailable": {
+      const { privacy } = refusal;
+      return [
+        {
+          name: "private_workspace",
+          ok: false,
+          code: privacy.code,
+          detail: privacy.reason,
+          remediation: privacy.remediation,
+          classification:
+            privacy.code === "runtime_missing"
+              ? "missing_dependency"
+              : privacy.code === "runtime_unavailable"
+                ? "runtime_failure"
+                : "unsupported_host",
+        },
+      ];
+    }
+    default: {
+      const unreachable: never = refusal;
+      return unreachable;
+    }
+  }
 };
