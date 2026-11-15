@@ -1,9 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+
+import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
+import { VerifierFixture, withVerifierFixture } from "./verifier-fixture.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -40,7 +40,10 @@ const advertisedProfiles = async () => {
 /** List tools from the packaged stdio entry, as an installed client does. */
 const listPackagedTools = async (profile, packageRoot) => {
   // The listing must not depend on the developer's account or configuration.
-  const home = await mkdtemp(join(tmpdir(), "rea-advertised-catalog-"));
+  const fixture = await VerifierFixture.open({
+    prefix: "rea-advertised-catalog-",
+  });
+  const home = fixture.path;
   const environment = {
     PATH: process.env.PATH ?? "",
     HOME: home,
@@ -54,30 +57,29 @@ const listPackagedTools = async (profile, packageRoot) => {
   };
   if (process.env.SystemRoot !== undefined)
     environment.SystemRoot = process.env.SystemRoot;
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [join(packageRoot, "scripts/rea.mjs"), "mcp"],
-    cwd: home,
-    env: environment,
-    stderr: "pipe",
+  return withVerifierFixture(fixture, async () => {
+    // The process owner stops the server's whole process tree on close, and
+    // the fixture keeps its home until that cleanup confirms.
+    const transport = await createOwnedMcpStdioTransport({
+      command: process.execPath,
+      arguments: [join(packageRoot, "scripts/rea.mjs"), "mcp"],
+      cwd: home,
+      hostEnvironment: environment,
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    });
+    const client = new Client({ name: "rea-advertised-catalog", version: "1" });
+    fixture.releaseAfter(() => client.close());
+    try {
+      await client.connect(transport);
+      return (await client.listTools()).tools;
+    } catch (cause) {
+      throw new Error(
+        `packaged MCP listing failed for ${describeProfile(profile)}: ${String(cause)}\n${transport.diagnostics()?.stderr ?? ""}`,
+        { cause },
+      );
+    }
   });
-  let stderr = "";
-  transport.stderr?.on("data", (chunk) => {
-    if (stderr.length < 16_384) stderr += chunk.toString("utf8");
-  });
-  const client = new Client({ name: "rea-advertised-catalog", version: "1" });
-  try {
-    await client.connect(transport);
-    return (await client.listTools()).tools;
-  } catch (cause) {
-    throw new Error(
-      `packaged MCP listing failed for ${describeProfile(profile)}: ${String(cause)}\n${stderr}`,
-      { cause },
-    );
-  } finally {
-    await client.close();
-    await rm(home, { recursive: true, force: true });
-  }
 };
 
 /** `input/output/catalog`, as reported beside every finding. */

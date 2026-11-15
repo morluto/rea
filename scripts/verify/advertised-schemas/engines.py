@@ -1,10 +1,10 @@
 """Compile advertised regular expressions with the engines clients use.
 
-Reads ``{"patterns": [...]}`` as JSON on stdin and writes one result per
-engine as JSON on stdout; each failure indexes ``patterns``. A package that is
-not installed is reported as unavailable, never as passing; the caller decides
-whether that is allowed. Run with ``python3 -I`` so nothing is imported from
-the working directory.
+Reads ``{"patterns": [...]}`` as JSON from the file named by the first
+argument and writes one result per engine as JSON on stdout; each failure
+indexes ``patterns``. A package that is not installed is reported as
+unavailable, never as passing; the caller decides whether that is allowed.
+Run with ``python3 -I`` so nothing is imported from the working directory.
 """
 
 import json
@@ -43,7 +43,8 @@ def unavailable(engine, kind, reason):
 
 
 def main():
-    request = json.load(sys.stdin)
+    with open(sys.argv[1], encoding="utf-8") as request_file:
+        request = json.load(request_file)
     patterns = request["patterns"]
     results = [
         check("python re", "pattern", sys.version.split()[0], re.compile, patterns)

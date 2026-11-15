@@ -1,6 +1,7 @@
 // Compile advertised regular expressions with Go's RE2 engine, as Go MCP
-// clients and gateways do. Reads {"patterns": [...]} as JSON on stdin and
-// writes one engine result as JSON on stdout. Standard library only.
+// clients and gateways do. Reads {"patterns": [...]} as JSON from the file
+// named by the first argument and writes one engine result as JSON on stdout.
+// Standard library only.
 package main
 
 import (
@@ -26,7 +27,12 @@ func main() {
 	var input struct {
 		Patterns []string `json:"patterns"`
 	}
-	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+	request, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		os.Stderr.WriteString("unreadable pattern input: " + err.Error() + "\n")
+		os.Exit(2)
+	}
+	if err := json.Unmarshal(request, &input); err != nil {
 		os.Stderr.WriteString("invalid pattern input: " + err.Error() + "\n")
 		os.Exit(2)
 	}
