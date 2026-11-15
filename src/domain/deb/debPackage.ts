@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { coverageStatusSchema } from "../coverage.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 
@@ -438,7 +439,7 @@ export const debPackageSchema = z.strictObject({
   md5sums_cross_check: md5CrossCheckSchema,
   issues: z.array(debIssueSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: coverageStatusSchema,
     ar_members: uint,
     control_entries: uint,
     data_entries: uint,
