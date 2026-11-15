@@ -28,7 +28,8 @@ import {
   EVIDENCE_FORMAT_REVISION,
   evidenceFormatSchema,
   RECREATE_EVIDENCE_GUIDANCE,
-  UnsupportedEvidenceFormatError,
+  isUnsupportedEvidenceFormat,
+  type UnsupportedEvidenceFormat,
 } from "./evidenceFormat.js";
 
 const artifactManifestBaseSchema = z.strictObject({
@@ -266,7 +267,7 @@ export const referencedEvidenceIds = (
 ];
 
 type EvidenceBundleValidationFailure =
-  | UnsupportedEvidenceFormatError
+  | UnsupportedEvidenceFormat
   | z.ZodError
   | DuplicateEvidenceRecordError
   | InvalidResidualUnknownGraphError
@@ -294,7 +295,7 @@ const describeEvidenceBundleFailure = (
     if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
     // The format owner decides earlier bundles once; its message carries the
     // recreate guidance instead of per-field schema failures.
-    if (cause instanceof UnsupportedEvidenceFormatError)
+    if (isUnsupportedEvidenceFormat(cause))
       return { kind: "unsupported-format", cause, message: cause.message };
     return {
       kind: "invalid-bundle",
@@ -372,7 +373,7 @@ const readBundle = (
     );
   } catch (cause: unknown) {
     if (
-      !(cause instanceof UnsupportedEvidenceFormatError) &&
+      !isUnsupportedEvidenceFormat(cause) &&
       !(cause instanceof z.ZodError) &&
       !(cause instanceof DuplicateEvidenceRecordError) &&
       !(cause instanceof InvalidResidualUnknownGraphError) &&
