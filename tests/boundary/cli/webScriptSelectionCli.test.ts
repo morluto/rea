@@ -146,7 +146,7 @@ cliTest.skipIf(process.platform === "win32")(
         operation: "export_web_scripts",
         issues: [
           {
-            path: ["capture_path"],
+            path: ["capturePath"],
             reason: "invalid_value",
             message: expect.stringContaining("regular file"),
           },
@@ -198,7 +198,7 @@ cliTest(
           operation: "export_web_scripts",
           issues: [
             {
-              path: ["output_directory"],
+              path: ["outputDirectory"],
               reason: "invalid_value",
               message: "Output root already exists",
             },

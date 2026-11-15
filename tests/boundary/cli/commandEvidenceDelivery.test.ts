@@ -88,7 +88,8 @@ const fixture = async (kind: (typeof kinds)[number]) => {
         : CLI_COMMANDS.listObjdumpArchitectures;
   const command = Cli.toCommands.get(cli)?.get(commandName);
   if (command === undefined) throw new Error("CLI command was not registered");
-  const argsSchema = Reflect.get(command, "args");
+  // A command without positionals registers no argument schema.
+  const argsSchema: unknown = Reflect.get(command, "args") ?? z.object({});
   const optionsSchema = Reflect.get(command, "options");
   const execute = Reflect.get(command, "run");
   if (
