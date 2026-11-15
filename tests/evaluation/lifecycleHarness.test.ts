@@ -20,6 +20,17 @@ it("hands an early rejection to the later hold without an unhandled rejection", 
   }
 });
 
+it("gives each hold its own promise, so an unhandled held rejection is still reported", async () => {
+  const gate = phaseGate<void, number>();
+  const first = gate.hold();
+  const second = gate.hold();
+  // The gate's internal guard against an early rejection must not mark the
+  // promise the code under test receives as handled.
+  expect(first).not.toBe(second);
+  gate.release(1);
+  expect(await Promise.all([first, second])).toEqual([1, 1]);
+});
+
 it("releases every hold with the first value", async () => {
   const gate = phaseGate<string, number>();
   const operation = gate.hold("arrived");

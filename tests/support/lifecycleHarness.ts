@@ -75,9 +75,12 @@ export const phaseGate = <T = void, R = void>(): PhaseGate<T, R> => {
   // A rejection before any `hold` is observed by that later `hold`, not here.
   released.catch(() => {});
   return {
+    // Each hold gets its own promise, so code under test that leaves a held
+    // rejection unhandled is still reported; the guard above covers only the
+    // gate's shared outcome.
     hold: (value) => {
       arrival.arrive(value);
-      return released;
+      return released.then((outcome) => outcome);
     },
     reached: arrival.reached,
     release,
