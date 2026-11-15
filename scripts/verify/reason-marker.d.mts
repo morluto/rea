@@ -4,7 +4,7 @@ export function unmarkedMatchCount(
   names: readonly string[],
   counts?: (match: RegExpMatchArray) => boolean,
 ): number;
-export function markedCodeLines(
+export function markedLineNumbers(
   raw: string,
   names: readonly string[],
-): string[];
+): Set<number>;

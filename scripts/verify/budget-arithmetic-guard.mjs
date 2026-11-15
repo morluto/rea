@@ -15,24 +15,18 @@
 // compared with a limit are not allowances and are not counted. A cursor or
 // tally that is compared with a limit without being one (a scan position, an
 // observed total, a ring buffer's retained length) is exempt when its field
-// declaration carries `// not-an-allowance: <reason>` (#11408).
+// declaration carries `// not-an-allowance: <reason>` (#11408). The exemption
+// belongs to that field of that top-level class only.
 
-import { markedCodeLines } from "./reason-marker.mjs";
+import { markedLineNumbers } from "./reason-marker.mjs";
 
 const NOT_AN_ALLOWANCE = ["not-an-allowance"];
 
-// `#field = 0;`, `private readonly field: number = 0;` and similar.
-const fieldDeclaration =
-  /^\s*(?:(?:private|protected|public|readonly|static|declare)\s+)*(#?\w+)\s*[?!]?\s*[:=]/u;
-
-/** Fields whose declaration carries a not-an-allowance marker. */
-const exemptFields = (raw) =>
-  new Set(
-    markedCodeLines(raw, NOT_AN_ALLOWANCE).flatMap((line) => {
-      const name = fieldDeclaration.exec(line)?.[1];
-      return name === undefined ? [] : [name];
-    }),
-  );
+// A class member declaration at member depth (two-space indent, as formatted):
+// `#field = 0;`, `private readonly field: number = 0;`. Deeper lines, such as
+// object literal properties, are not class fields.
+const memberDeclaration =
+  /^ {2}(?:(?:private|protected|public|readonly|static|declare)\s+)*(#?\w+)\s*[?!]?\s*[:=]/u;
 const namedAllowance =
   /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu;
 
@@ -85,28 +79,61 @@ const limitedFields = (scope, exempt) => {
   return limited.size;
 };
 
+const newlines = (text) => text.split("\n").length - 1;
+
+/** Per top-level class, the fields whose declaration carries a marker. */
+const exemptClassFields = (raw) => {
+  const marked = markedLineNumbers(raw, NOT_AN_ALLOWANCE);
+  const lines = raw.split("\n");
+  const exempt = new Map();
+  for (const match of raw.matchAll(topLevelClass)) {
+    const first = newlines(raw.slice(0, match.index));
+    const last = first + newlines(match[0]);
+    const fields = new Set();
+    for (let line = first + 1; line < last; line += 1) {
+      const name = marked.has(line)
+        ? memberDeclaration.exec(lines[line])?.[1]
+        : undefined;
+      if (name !== undefined) fields.add(name);
+    }
+    if (fields.size > 0) exempt.set(match[1], fields);
+  }
+  return exempt;
+};
+
+const fieldOf = (text) => /this\.(#?\w+)/u.exec(text)?.[1];
+
+/** Named-allowance arithmetic in one scope, skipping its exempt fields. */
+const namedAllowances = (scope, exempt) =>
+  [...scope.matchAll(namedAllowance)].filter(
+    (match) => !exempt.has(fieldOf(match[0])),
+  ).length;
+
+const NONE = new Set();
+
 /**
  * @param {string} content comment-stripped source
  * @param {{ readonly source: string } | undefined} file the raw source, read
  *   for not-an-allowance markers
  */
 export const budgetArithmeticCount = (content, file) => {
-  const exempt = file === undefined ? new Set() : exemptFields(file.source);
-  const fieldOf = (text) => /this\.(#?\w+)/u.exec(text)?.[1];
-  let count = [...content.matchAll(namedAllowance)].filter(
-    (match) => !exempt.has(fieldOf(match[0])),
-  ).length;
+  const exempt =
+    file === undefined ? new Map() : exemptClassFields(file.source);
+  let count = 0;
   let outside = content;
   for (const [whole, name, body] of content.matchAll(topLevelClass)) {
     outside = outside.replace(whole, "");
+    const fields = exempt.get(name) ?? NONE;
+    count += namedAllowances(body, fields);
     if (name.endsWith("Budget")) {
       for (const match of body.matchAll(adjusted)) {
-        // Already counted as a named allowance.
         const field = match[1] ?? match[2];
-        if (isNamedAllowance(match[0]) || exempt.has(field)) continue;
+        // Named allowances are counted above.
+        if (isNamedAllowance(match[0]) || fields.has(field)) continue;
         if (comparedIn(body, field)) count += 1;
       }
-    } else count += limitedFields(body, exempt);
+    } else count += limitedFields(body, fields);
   }
-  return count + limitedFields(outside, exempt);
+  // Markers exempt class fields only.
+  return count + namedAllowances(outside, NONE) + limitedFields(outside, NONE);
 };

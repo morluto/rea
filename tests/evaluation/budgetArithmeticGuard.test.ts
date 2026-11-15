@@ -168,3 +168,43 @@ describe("not-an-allowance markers", () => {
     expect(count(reader(declaration))).toBe(2);
   });
 });
+
+it("binds a marker to its own class field", () => {
+  const source = [
+    "class Tally {",
+    "  // not-an-allowance: observed total for the truncation flag.",
+    "  #bytes = 0;",
+    "  read(size: number): void {",
+    "    this.#bytes += size;",
+    "    if (this.#bytes > LIMIT) this.#cut = true;",
+    "  }",
+    "}",
+    "class Allowance {",
+    "  #bytes = 0;",
+    "  read(size: number): void {",
+    "    this.#bytes += size;",
+    "    if (this.#bytes > LIMIT) throw failure();",
+    "  }",
+    "}",
+  ].join("\n");
+  expect(budgetArithmeticCount(source, { source })).toBe(1);
+});
+
+it("does not exempt a class field through a marked object property", () => {
+  const source = [
+    "class Reader {",
+    "  bytes = 0;",
+    "  options(): object {",
+    "    return {",
+    "      // not-an-allowance: an option, not the field.",
+    "      bytes: 0,",
+    "    };",
+    "  }",
+    "  read(size: number): void {",
+    "    this.bytes += size;",
+    "    if (this.bytes > LIMIT) throw failure();",
+    "  }",
+    "}",
+  ].join("\n");
+  expect(budgetArithmeticCount(source, { source })).toBe(1);
+});

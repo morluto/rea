@@ -46,17 +46,19 @@ const exempted = ({ codeLines, lineComments }, index, names) => {
 };
 
 /**
- * The code of each line a marker exempts, comments blanked.
+ * The zero-based numbers of the code lines a marker exempts.
  * @param {string} raw
  * @param {readonly string[]} names
- * @returns {string[]}
+ * @returns {Set<number>}
  */
-export const markedCodeLines = (raw, names) => {
+export const markedLineNumbers = (raw, names) => {
   const { code, lineComments } = scan(raw);
   const source = { codeLines: code.split("\n"), lineComments };
-  return source.codeLines.filter(
-    (text, index) => text.trim() !== "" && exempted(source, index, names),
-  );
+  const marked = new Set();
+  source.codeLines.forEach((text, index) => {
+    if (text.trim() !== "" && exempted(source, index, names)) marked.add(index);
+  });
+  return marked;
 };
 
 /**
