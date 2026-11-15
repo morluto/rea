@@ -21,7 +21,8 @@ import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
+import { readJsonObjectMembersFile } from "../JsonFiles.js";
+import { writeTextFile } from "../../resources/TextFileWrite.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 

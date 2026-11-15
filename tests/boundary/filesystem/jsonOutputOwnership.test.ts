@@ -11,7 +11,7 @@ import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
