@@ -16,6 +16,7 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { Deadline } from "../domain/deadline.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, err, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned, type Finalized } from "./runOwned.js";
 
@@ -32,9 +33,14 @@ const failure = <Value>(finalized: Finalized<Value>): AnalysisError => {
   return result.error;
 };
 
-/** Work that runs until its signal aborts, then reports that cancellation. */
+/**
+ * Work that runs until its signal aborts, then reports that cancellation with
+ * any `diagnostics` it observed. A signal that aborted before the work started
+ * is reported at once.
+ */
 const untilAborted = (
   signal: AbortSignal | undefined,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): Promise<Result<{ readonly count: number }, AnalysisError>> =>
   new Promise((resolve) => {
     if (signal === undefined) throw new Error("expected a work signal");
@@ -43,6 +49,7 @@ const untilAborted = (
         err(
           cancelledBy(operation, signal as AbortSignal & { aborted: true }, {
             partialObservation: project({ count: 1 }),
+            ...(diagnostics === undefined ? {} : { diagnostics }),
           }),
         ),
       );
@@ -147,22 +154,7 @@ it.each([
 
 it("adds the recovery's diagnostics to the replaced outcome's own", async () => {
   const finalized = await runOwned(
-    async (signal) =>
-      new Promise<Result<{ readonly count: number }, AnalysisError>>(
-        (resolve) =>
-          signal?.addEventListener(
-            "abort",
-            () =>
-              resolve(
-                err(
-                  cancelledBy(operation, OwnerCancellation.deadlineElapsed, {
-                    diagnostics: { observed_frames: 2 },
-                  }),
-                ),
-              ),
-            { once: true },
-          ),
-      ),
+    (signal) => untilAborted(signal, { observed_frames: 2 }),
     {
       providerId: "fixture",
       operation,
