@@ -104,7 +104,7 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 
 export type GhidraTargetSnapshot =
   | { readonly kind: "captured"; readonly bytes: Buffer }
@@ -1537,15 +1537,9 @@ export class GhidraClient {
   }
 
   #redactAuthentication(value: string, incomplete = false): string {
-    for (const token of this.#authenticationTokens) {
-      const bytes = Buffer.byteLength(value);
-      value = redactCapturedTransportCredential(
-        { text: value, bytes, observedBytes: bytes + (incomplete ? 1 : 0) },
-        token,
-        "[REDACTED]",
-      );
-    }
-    return value;
+    return redactExplicitText(value, [...this.#authenticationTokens], {
+      cutOff: incomplete,
+    });
   }
 
   #onProcessDiagnostic(event: ProviderProcessDiagnostic): void {

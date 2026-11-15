@@ -111,7 +111,7 @@ export class Il2cppMetadataService {
               path: ["ghidra_seeds"],
               reason: "invalid_value",
               message:
-                "--ghidra-seeds needs --binary to link method addresses.",
+                "Ghidra seed output links method addresses in binary_path.",
             },
           ]),
         );
