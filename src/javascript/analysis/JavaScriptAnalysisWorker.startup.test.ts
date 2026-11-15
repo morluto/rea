@@ -45,33 +45,6 @@ const standInWorker = (script: string) => {
   return { launcher, pids };
 };
 
-it("reports a JavaScript worker that fails to launch and launches a fresh worker on the next analysis", async () => {
-  let launches = 0;
-  const launchFailure = Object.assign(new Error("spawn EAGAIN"), {
-    code: "EAGAIN",
-  });
-  const worker = new JavaScriptAnalysisWorker(
-    { heapMb: 128, timeoutMs: 30_000 },
-    async (options) => {
-      launches += 1;
-      if (launches === 1) throw launchFailure;
-      return spawnOwnedProviderProcess(options);
-    },
-  );
-  onTestFinished(() => worker.close());
-
-  const refused = await worker.analyze(file, budget);
-  if (refused.ok) throw new Error("Expected a worker launch failure");
-  const primary = primaryAnalysisError(refused.error.error);
-  expect(primary.userCategory).not.toBe("cancelled");
-  expect(primary.cause).toBe(launchFailure);
-  expect(refused.error.error.cleanupIncomplete).toBe(false);
-
-  const analyzed = await worker.analyze(file, budget);
-  if (!analyzed.ok) throw analyzed.error.error;
-  expect(launches).toBe(2);
-});
-
 it("refuses a worker that emits facts before its ready frame and stops it", async () => {
   const fixture = standInWorker(
     `process.stdout.write(JSON.stringify({ kind: "phase", id: "00000000-0000-4000-8000-000000000000", phase: "parse" }) + "\\n"); setInterval(() => {}, 1000);`,
@@ -89,7 +62,7 @@ it("refuses a worker that emits facts before its ready frame and stops it", asyn
   expect(primary.message).toContain("before its startup handshake");
   expect(refused.error.error.cleanupIncomplete).toBe(false);
   expect(worker.canReuse()).toBe(false);
-  await worker.close();
+  // The refusal itself stops the child; close() is only teardown.
   expect(fixture.pids).toHaveLength(1);
   expect(fixture.pids.filter(alive)).toEqual([]);
 });
@@ -108,7 +81,7 @@ it("times out a worker whose ready frame never arrives and stops it", async () =
     AnalysisTimeoutError,
   );
   expect(refused.error.error.cleanupIncomplete).toBe(false);
-  await worker.close();
+  // The refusal itself stops the child; close() is only teardown.
   expect(fixture.pids).toHaveLength(1);
   expect(fixture.pids.filter(alive)).toEqual([]);
 });

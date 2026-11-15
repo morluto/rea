@@ -1301,7 +1301,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     stages: {
       launch: covered(
         test(
-          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "tests/boundary/javascript/javascriptAnalysisWorkerLaunch.test.ts",
           "reports a JavaScript worker that fails to launch and launches a fresh worker on the next analysis",
         ),
       ),
