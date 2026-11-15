@@ -393,12 +393,19 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
     engine,
+    target_definition: "defined",
     class_name: "fixture.Target",
     method_name: null,
     overload_index: null,
     reported_signature: null,
     dex_descriptor: null,
     total: 1,
+    direct_invokes_coverage: {
+      complete_using_nodes: 0,
+      partial_using_nodes: 0,
+      unknown_using_nodes: 1,
+      recorded_sites: 0,
+    },
     references: [
       {
         kind: "method",

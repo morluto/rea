@@ -3,6 +3,7 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   closeOwnedDebuggerSessions,
   retainedDebuggerCleanupFailure,
@@ -23,8 +24,6 @@ export interface OwnedDebuggerSessionRegistryOptions<Session> {
   readonly provider: string;
   /** Debugger name shown in cleanup failures, such as "GDB". */
   readonly displayName: string;
-  /** Operation a retained failure names when no caller operation applies. */
-  readonly closeOperation: string;
   /** Seal the session against new commands; runs on every stop request. */
   readonly sealSession: (session: Session) => void;
   /** Stop the owned debugger process; protocol hooks stay with the adapter. */
@@ -45,7 +44,14 @@ export class OwnedDebuggerSessionRegistry<
 > {
   readonly #options: OwnedDebuggerSessionRegistryOptions<Session>;
   readonly #sessions = new Map<string, Session>();
-  readonly #cleanupFailures = new WeakMap<Session, Set<AnalysisError>>();
+  /**
+   * Each session's unconfirmed stop: the release its retained failures read,
+   * and the latest of them.
+   */
+  readonly #cleanupFailures = new WeakMap<
+    Session,
+    { readonly release: AnalysisCleanupRelease; latest: AnalysisError }
+  >();
   readonly #stopAttempts = new WeakMap<
     Session,
     Promise<OwnedDebuggerStopResult>
@@ -116,9 +122,8 @@ export class OwnedDebuggerSessionRegistry<
       }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
-          const retained = this.#cleanupFailures.get(session);
-          for (const failure of retained ?? []) failure.resolveCleanup();
-          retained?.clear();
+          this.#cleanupFailures.get(session)?.release.confirm();
+          this.#cleanupFailures.delete(session);
         }
         return stopped;
       })
@@ -132,13 +137,13 @@ export class OwnedDebuggerSessionRegistry<
 
   /** Keep a failure whose cleanup is incomplete until a stop is confirmed. */
   retain(session: Session, failure: AnalysisError): AnalysisError {
-    let retained = this.#cleanupFailures.get(session);
-    if (retained === undefined) {
-      retained = new Set();
-      this.#cleanupFailures.set(session, retained);
-    }
-    retained.add(failure);
-    return failure;
+    const retained = this.#cleanupFailures.get(session) ?? {
+      release: new AnalysisCleanupRelease(),
+      latest: failure,
+    };
+    retained.latest = failure;
+    this.#cleanupFailures.set(session, retained);
+    return retained.release.bind(failure);
   }
 
   /** Retain the failure of an operation that could not confirm the stop. */
@@ -174,17 +179,9 @@ export class OwnedDebuggerSessionRegistry<
   ): Promise<Result<null, AnalysisError>> {
     for (const session of this.#sessions.values()) {
       const retained = this.#cleanupFailures.get(session);
-      if (retained === undefined || retained.size === 0) continue;
+      if (retained === undefined) continue;
       const stopped = await this.stop(session);
-      if (stopped.status === "incomplete")
-        return err(
-          [...retained].at(-1) ??
-            this.retainCleanupFailure(
-              session,
-              this.#options.closeOperation,
-              stopped.reason,
-            ),
-        );
+      if (stopped.status === "incomplete") return err(retained.latest);
       if (!keepAddressable(session)) this.remove(session);
     }
     return ok(null);

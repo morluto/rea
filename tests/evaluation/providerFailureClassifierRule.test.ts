@@ -8,6 +8,10 @@ import rule from "../../scripts/lint/rules/provider-failure-classifier.mjs";
 const baselinedFile = fileURLToPath(
   new URL("../../src/adb/AdbProvider.ts", import.meta.url),
 );
+/** The shared classifier owner, which may examine raw failures. */
+const ownerFile = fileURLToPath(
+  new URL("../../src/providers/classifyProviderFailure.ts", import.meta.url),
+);
 const classifier = "const failure = (cause: unknown): AnalysisError => error;";
 
 RuleTester.describe = describe;
@@ -23,6 +27,7 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       "const recover = (cause: unknown): Result<number, AnalysisError> => ok(1);",
       "function dialect(outcome: ProviderDialectOutcome, details: AnalysisErrorOptions): AnalysisError { return error; }",
       { code: classifier, filename: baselinedFile },
+      { code: classifier, filename: ownerFile },
     ],
     invalid: [
       {
@@ -57,8 +62,10 @@ it("keeps the classifier baseline to existing source files", async () => {
       "scripts/lint/rules/provider-failure-classifier-baseline.json",
       "utf8",
     ),
-  ) as Record<string, number>;
-  for (const [file, count] of Object.entries(baseline)) {
+  ) as { owners: string[]; counts: Record<string, number> };
+  for (const owner of baseline.owners)
+    await expect(readFile(owner, "utf8")).resolves.toBeTypeOf("string");
+  for (const [file, count] of Object.entries(baseline.counts)) {
     expect(file).toMatch(/^src\/.+\.ts$/u);
     expect(count).toBeGreaterThan(0);
     // The lint run reports an entry above a file's real count as stale; this

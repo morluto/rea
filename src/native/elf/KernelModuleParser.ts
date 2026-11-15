@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
@@ -154,11 +155,6 @@ interface SectionUse {
   readonly namesComplete: boolean;
   readonly limitations: Limitations;
 }
-
-const sectionsNamed = (
-  sections: readonly ElfSection[],
-  name: string,
-): readonly ElfSection[] => sections.filter((section) => section.name === name);
 
 const parseModinfo = (
   bytes: Buffer,
@@ -542,15 +538,19 @@ export const parseKernelModule = (
   const use = { namesComplete, limitations };
   const examined = { count: 0 };
   let duplicateSections = false;
+  const byName = keyedBy(sections, ({ name }) => name);
   const firstNamedSection = (name: string): ElfSection | undefined => {
-    const found = sectionsNamed(sections, name);
-    if (found.length > 1) {
+    if (allKeyed(byName, name).length > 1) {
       duplicateSections = true;
       limitations.push(
         `Multiple ${name} sections are declared; the first is examined.`,
       );
     }
-    return found[0];
+    return firstKeyed(
+      byName,
+      name,
+      "Linux's module loader (find_sec) reads the first section with the name.",
+    );
   };
   const modinfo = parseModinfo(
     bytes,

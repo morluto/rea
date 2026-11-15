@@ -3,6 +3,7 @@ import {
   schemaDepth,
   serializedBytes,
 } from "./compactJsonSchema.js";
+import { isRecord } from "../domain/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -337,9 +338,6 @@ export const portablePatternViolations = (
 // ---- Schema walk ------------------------------------------------------------
 
 type SchemaKind = "input" | "output";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Visit every schema position; instance literals stay opaque. */
 const visitSchemas = (

@@ -1013,7 +1013,11 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
+(currently `1`). Import, comparison and every other bundle reader refuse a
+bundle without it, or with another revision, as an integrity mismatch whose
+recovery is to recreate the observations with the current release;
+re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint

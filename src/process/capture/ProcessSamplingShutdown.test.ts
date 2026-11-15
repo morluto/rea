@@ -109,6 +109,7 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
       throw new Error("Unexpected process signal");
     });
     const stop = startProcessSampler({
+      platform: process.platform,
       rootPid: 42,
       runId: "authored",
       started: 0,

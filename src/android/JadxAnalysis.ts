@@ -1,7 +1,6 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
-import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
 import {
   type AndroidMappingQuery,
   type AndroidMappingSource,
@@ -63,11 +62,6 @@ export interface JadxAnalysisContext {
     readonly libraries: () => Promise<AndroidJniLibraries>;
   };
 }
-
-const observedPackageSchema =
-  androidResultSchemas.inspect_android_package.extend({
-    components: observedAndroidManifestComponentsSchema,
-  });
 
 const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
   const seen = new Map<string, number>();
@@ -276,7 +270,7 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
-  return observedPackageSchema.parse({
+  return androidResultSchemas.inspect_android_package.parse({
     engine,
     package_name: app.package || null,
     version_name: app.version_name || null,

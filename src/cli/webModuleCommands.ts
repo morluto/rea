@@ -8,6 +8,8 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 const importMapInputSchema =
@@ -24,7 +26,9 @@ export const registerWebModuleCommands = (
     description:
       "Trace one captured script's native imports to URLs and captured source candidates",
     args: z.object({
-      manifestPath: webModuleTraceInputSchema.shape.manifest_path,
+      manifestPath: localPathStringSchema.describe(
+        "export_web_scripts manifest path; a relative path resolves against the current directory",
+      ),
       scriptIndex: cliDecimalField(
         webModuleTraceInputSchema.shape.script_index.describe(
           "Zero-based manifest script index",
@@ -49,7 +53,7 @@ export const registerWebModuleCommands = (
             () =>
               service.trace(
                 {
-                  manifest_path: args.manifestPath,
+                  manifest_path: absoluteCallerPath(args.manifestPath),
                   script_index: args.scriptIndex,
                   ...(options.importerUrl === undefined
                     ? {}

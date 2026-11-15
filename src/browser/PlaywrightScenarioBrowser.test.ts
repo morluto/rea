@@ -1408,7 +1408,11 @@ it("applies command_timeout_ms to the primary connect handshake when service wor
     (failure as { remediationAction?: string }).remediationAction,
   ).not.toContain("--command-timeout-ms");
   expect(timeout).toBe(50);
-  expect(performance.now() - started).toBeLessThan(2_000);
+  // The fake ignores Playwright's timeout; only REA's own 50 ms deadline can
+  // stop the handshake before the default it would otherwise wait for.
+  expect(performance.now() - started).toBeLessThan(
+    DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  );
 });
 
 it("applies command_timeout_ms to primary target lookup when service workers are allowed", async () => {
@@ -1459,7 +1463,10 @@ it("applies command_timeout_ms to primary target lookup when service workers are
     reason: "timeout",
     userMessage: expect.stringContaining("Target.getTargetInfo"),
   });
-  expect(performance.now() - started).toBeLessThan(2_000);
+  // A lookup bounded by the default instead of command_timeout_ms ends later.
+  expect(performance.now() - started).toBeLessThan(
+    DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  );
 });
 
 it("closes a context that launches after its deadline before removing the profile", async () => {
