@@ -57,6 +57,7 @@ import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
+import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
@@ -1015,12 +1016,21 @@ const backupClientConfiguration = async (
       `Configuration could not be backed up, so no change was made. ${detail}`,
     );
   try {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-      options,
-    );
+    const preserved =
+      client.privateProfile === undefined
+        ? await preserveCurrentRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options,
+          )
+        : // A private profile's backup stays owner-only (0600).
+          await preservePrivateRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options.resources,
+          );
     if (preserved.ok) return preserved.value;
     if (preserved.error.kind === "occupied")
       return failed(

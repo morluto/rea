@@ -3,6 +3,7 @@ import {
   mkdir,
   readFile,
   rm,
+  readdir,
   rename,
   stat,
   symlink,
@@ -409,5 +410,49 @@ it.skipIf(platform === "win32")(
     } finally {
       close.mockRestore();
     }
+  },
+);
+
+it.skipIf(platform === "win32")(
+  "keeps fx's backups owner-only when its profile file is a link",
+  async () => {
+    const home = await createTestTempDirectory("rea-fx-private-backup-");
+    const row = supportedClients(home, platform, {}).find(
+      ({ name }) => name === "fx",
+    );
+    if (row === undefined) throw new Error("fx has no table row");
+    // ~/.fx/mcp.json links to a readable file inside a private folder, so the
+    // backups beside the link are not protected by the folder setup secures.
+    const target = join(home, "private", "mcp.json");
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    await writeFile(target, `${JSON.stringify({ mcpServers: {} })}\n`, {
+      mode: 0o644,
+    });
+    await mkdir(dirname(row.configPath), { recursive: true });
+    await chmod(dirname(row.configPath), 0o755);
+    await symlink(target, row.configPath);
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    const backupMode = async () =>
+      (await stat(`${row.configPath}.rea.backup`)).mode & 0o777;
+    expect(await backupMode()).toBe(0o600);
+
+    const uninstall = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, {}, platform),
+    );
+    expect(uninstall.items).toContainEqual(
+      expect.objectContaining({ name: "fx", status: "removed" }),
+    );
+    // Uninstall's backup of the registered file is owner-only too.
+    const backups = (await readdir(dirname(row.configPath))).filter((name) =>
+      name.startsWith("mcp.json.rea"),
+    );
+    expect(backups.length).toBeGreaterThan(1);
+    for (const name of backups)
+      expect(
+        (await stat(join(dirname(row.configPath), name))).mode & 0o777,
+      ).toBe(0o600);
   },
 );
