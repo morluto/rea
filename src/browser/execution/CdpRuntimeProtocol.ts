@@ -18,17 +18,3 @@ export const runtimeStackSchema = z.object({
     .object({ id: z.string(), debuggerId: z.string().optional() })
     .optional(),
 });
-/** Native listener descriptors omit live remote handles from portable evidence. */
-export const runtimeListenersSchema = z.object({
-  listeners: z.array(
-    z.object({
-      type: z.string(),
-      useCapture: z.boolean(),
-      passive: z.boolean(),
-      once: z.boolean(),
-      scriptId: z.string(),
-      lineNumber: integer,
-      columnNumber: cdpResourceColumnSchema,
-    }),
-  ),
-});

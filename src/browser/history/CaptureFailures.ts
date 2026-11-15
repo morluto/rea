@@ -37,9 +37,52 @@ import {
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { providerOutcomeOf } from "../../process/ProviderOutcome.js";
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../../process/RuntimeExhaustion.js";
 import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
+import {
+  CAPTURE_LIMITS,
+  type CaptureFormatError,
+} from "./CaptureFormatError.js";
 const OPERATION = "inspect_web_network_capture";
+
+/** A refused protobuf body decode; a limit names the budget that owns it. */
+export const protobufCaptureFailure = (
+  input: InspectWebNetworkCaptureInput,
+  cause: CaptureFormatError,
+): AnalysisError => {
+  const { limit } = cause;
+  if (limit === undefined)
+    return new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["protobuf"],
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ]);
+  const { parameter, expected } = CAPTURE_LIMITS[limit.name];
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    cause.message,
+    { [expected]: limit.maximum },
+    {
+      retryable: false,
+      ...(parameter === null
+        ? {}
+        : {
+            remediationAction: webNetworkCaptureBudgetRecovery(
+              input,
+              parameter,
+            ),
+          }),
+    },
+  );
+};
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
@@ -113,6 +156,17 @@ export const historicalCaptureFailure = (
         webNetworkCaptureTimeoutRecovery(timeoutMs),
       );
     }
+    // The supervisor observed V8's heap report as output streamed, so a
+    // retention budget or a stack trace that overflowed it cannot hide it.
+    const outcome = providerOutcomeOf(cause);
+    if (phase === "decoder" && outcome.kind === "runtime-exhausted")
+      return captureMemoryFailure(
+        input,
+        `The ${input.format} decoder exhausted its ${String(heap.oldGenerationMiB)} MiB V8 old-generation heap (source ${heap.source})`,
+        cause,
+        heap,
+        outcome.exhaustion,
+      );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message);
     // The job's own notification is runtime-independent; Bun's exit status
@@ -125,20 +179,6 @@ export const historicalCaptureFailure = (
       return captureMemoryFailure(
         input,
         CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
-        cause,
-        heap,
-      );
-    if (
-      phase === "decoder" &&
-      input.format !== "mitmproxy" &&
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGABRT" ||
-        (cause.snapshot?.signal === null && cause.snapshot.exitCode === 134)) &&
-      /FATAL ERROR:[^\r\n]*heap out of memory/u.test(cause.snapshot.stderr.text)
-    )
-      return captureMemoryFailure(
-        input,
-        `The ${input.format} decoder exhausted its ${String(heap.oldGenerationMiB)} MiB V8 old-generation heap (source ${heap.source})`,
         cause,
         heap,
       );
@@ -293,6 +333,8 @@ export const captureMemoryFailure = (
   reason: string,
   cause?: unknown,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
+  /** The runtime's own report, which may lie beyond the retained output. */
+  exhaustion?: RuntimeExhaustion,
 ): AnalysisResourceConstraintError => {
   const processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
     heap.oldGenerationMiB,
@@ -330,6 +372,13 @@ export const captureMemoryFailure = (
     },
     {
       cause,
+      ...(exhaustion === undefined
+        ? {}
+        : {
+            diagnostics: {
+              runtime_exhaustion_report: runtimeExhaustionReport(exhaustion),
+            },
+          }),
       ...(input.format !== "mitmproxy" &&
       (NODE_CAPTURE_HEAP_ENFORCED || processMemoryLimitBytes !== null)
         ? {

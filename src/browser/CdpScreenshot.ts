@@ -17,11 +17,6 @@ import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
-  recordValue,
-  cdpStringValue,
-  numberValue,
-} from "./CdpCaptureValues.js";
-import {
   observeCdpFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
@@ -228,39 +223,22 @@ export const captureCdpScreenshot = async (
 
 /** Parse CSS clip geometry and device-pixel coverage at their owning boundary. */
 const readScreenshotViewport = async (context: ScreenshotContext) => {
-  const metrics = recordValue(
-    await context.connection.send(
-      "Page.getLayoutMetrics",
-      {},
-      context.sessionId,
-      context.signal,
-    ),
+  const { visualViewport, cssVisualViewport } = await context.connection.send(
+    "Page.getLayoutMetrics",
+    {},
+    context.sessionId,
+    context.signal,
   );
-  const visualViewport = recordValue(metrics?.visualViewport);
-  const cssViewport = recordValue(metrics?.cssVisualViewport);
-  const pageX = numberValue(cssViewport?.pageX);
-  const pageY = numberValue(cssViewport?.pageY);
-  const width = numberValue(cssViewport?.clientWidth);
-  const height = numberValue(cssViewport?.clientHeight);
-  const scale = numberValue(cssViewport?.scale);
-  const pixelWidth = numberValue(visualViewport?.clientWidth);
-  const pixelHeight = numberValue(visualViewport?.clientHeight);
-  const pixelScale = numberValue(visualViewport?.scale);
-  if (
-    pageX === undefined ||
-    pageY === undefined ||
-    width === undefined ||
-    height === undefined ||
-    scale === undefined ||
-    pixelWidth === undefined ||
-    pixelHeight === undefined ||
-    pixelScale !== scale ||
-    width <= 0 ||
-    height <= 0 ||
-    scale <= 0 ||
-    pixelWidth <= 0 ||
-    pixelHeight <= 0
-  )
+  const {
+    pageX,
+    pageY,
+    clientWidth: width,
+    clientHeight: height,
+    scale,
+  } = cssVisualViewport;
+  const { clientWidth: pixelWidth, clientHeight: pixelHeight } = visualViewport;
+  // Both viewports describe one page zoom; disagreement is incoherent geometry.
+  if (visualViewport.scale !== scale)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   // Keep ordinary surface captures, including their scrollbars and pixel
   // density. The visual viewport excludes scrollbars and supplies only a
@@ -321,36 +299,32 @@ const captureScreenshotImage = async (
   context: ScreenshotContext,
   clip?: ScreenshotClip,
 ) => {
-  const result = recordValue(
-    await context.connection.send(
-      "Page.captureScreenshot",
-      {
-        format: "png",
-        fromSurface: true,
-        captureBeyondViewport: clip !== undefined,
-        ...(clip === undefined ? {} : { clip }),
-      },
-      context.sessionId,
-      context.signal,
-    ),
+  const { data } = await context.connection.send(
+    "Page.captureScreenshot",
+    {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: clip !== undefined,
+      ...(clip === undefined ? {} : { clip }),
+    },
+    context.sessionId,
+    context.signal,
   );
-  const screenshot = decodeScreenshot(result);
+  const screenshot = decodeScreenshot(data);
   if (screenshot === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   return screenshot;
 };
 
 const decodeScreenshot = (
-  result: ReturnType<typeof recordValue>,
+  encoded: string,
 ):
   | {
       readonly bytes: Buffer;
       readonly dimensions: { width: number; height: number };
     }
   | undefined => {
-  const encoded = cdpStringValue(result?.data);
-  const bytes =
-    encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
+  const bytes = decodeCanonicalBase64(encoded);
   if (bytes === undefined) return undefined;
   const dimensions = readPngHeaderDimensions(bytes);
   return dimensions === undefined ? undefined : { bytes, dimensions };

@@ -372,6 +372,36 @@ describe("runtime source and listener identity", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["DOM.getDocument", { root: {} }, "/root/nodeId"],
+    ["DOM.querySelector", { nodeId: -1 }, "/nodeId"],
+    ["DOM.describeNode", { node: { backendNodeId: 22 } }, "/node/nodeName"],
+    ["DOM.resolveNode", { object: { objectId: "" } }, "/object/objectId"],
+    ["DOMDebugger.getEventListeners", { listeners: "none" }, "/listeners"],
+  ] as const)(
+    "reports a malformed %s reply as a protocol error and releases the session",
+    async (method, reply, pointer) => {
+      const { browser, provider, listeners } = await fixture({
+        commandResult: (command) =>
+          command.method === method ? reply : undefined,
+      });
+      const result = await provider.inspectEventListeners(listeners);
+      if (result.ok) throw new Error("A malformed DOM reply must fail");
+      expect(result.error).toMatchObject({
+        _tag: "BrowserObservationError",
+        operation: "inspect_web_event_listeners",
+        reason: "protocol_error",
+        command: method,
+        pointer,
+      });
+      expect(
+        browser.commands.some(
+          (command) => command.method === "Target.detachFromTarget",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("inspects listener source and releases only its owned object group", async () => {
     const { browser, provider, listeners } = await fixture();
     const result = await provider.inspectEventListeners(listeners);

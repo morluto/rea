@@ -23,7 +23,48 @@ import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 
 const PRLIMIT_COMMAND_ENV = "REA_TSHARK_PRLIMIT_COMMAND";
 /** Repair for an unusable selected capture limiter; readiness and admission share it. */
-const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
+export const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
+/** Which stage an unsuccessful limited capture command's exit belongs to. */
+export type PcapLimitedExitStage =
+  | { readonly stage: "tool" }
+  | { readonly stage: "tool-launch"; readonly refusal: "missing" | "denied" }
+  | { readonly stage: "limiter" };
+
+/**
+ * Attribute an unsuccessful exit of a command run through util-linux prlimit.
+ * prlimit sets the limits and then replaces itself with the tool (execvp), so
+ * once that succeeds the exit status and output are the tool's own. Before
+ * that, prlimit reports its own failure through err(3) on stderr, prefixed
+ * with its invocation name: a failed exec exits 127 (ENOENT) or 126, any
+ * other prlimit failure exits 1. Commands run with LC_ALL=C, so the message
+ * is untranslated.
+ */
+export const attributePcapLimitedExit = (
+  limiterInvocationPath: string,
+  exit: {
+    readonly exitCode: number | null | undefined;
+    readonly signal: string | null | undefined;
+    readonly stderr: string;
+  },
+): PcapLimitedExitStage => {
+  const prefix = `${basename(limiterInvocationPath)}: `;
+  // A signal or output without prlimit's own prefix belongs to the tool.
+  if (
+    (exit.signal !== null && exit.signal !== undefined) ||
+    !exit.stderr.startsWith(prefix)
+  )
+    return { stage: "tool" };
+  if (
+    (exit.exitCode === 126 || exit.exitCode === 127) &&
+    exit.stderr.startsWith(`${prefix}failed to execute `)
+  )
+    return {
+      stage: "tool-launch",
+      refusal: exit.exitCode === 127 ? "missing" : "denied",
+    };
+  return exit.exitCode === 1 ? { stage: "limiter" } : { stage: "tool" };
+};
+
 /** Capture CPU ceiling, in seconds. */
 const PCAP_CPU_SECONDS = 300;
 

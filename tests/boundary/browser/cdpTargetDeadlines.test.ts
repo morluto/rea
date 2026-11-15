@@ -190,7 +190,7 @@ it.each(["success", "rejection", "abort", "disconnect"])(
     );
     try {
       const pending = connection.send(
-        outcome === "rejection" ? "Fixture.unmodeledMethod" : "Runtime.enable",
+        outcome === "rejection" ? "Storage.getStorageKey" : "Runtime.enable",
         {},
         undefined,
         controller.signal,
