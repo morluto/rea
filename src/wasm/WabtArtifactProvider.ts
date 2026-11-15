@@ -512,10 +512,21 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }
       }
       phase = "producer";
+      const signal = options?.signal;
       await writeFile(snapshotPath, selected.bytes, {
         flag: "wx",
         mode: 0o400,
-        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        ...(signal === undefined ? {} : { signal }),
+      }).catch((cause: unknown) => {
+        // Node rejects a write this signal aborted with an envelope that
+        // carries the signal's own reason; any other failure stays itself.
+        if (
+          isAborted(signal) &&
+          cause instanceof Error &&
+          cause.cause === signal.reason
+        )
+          throw cancelledBy(OPERATION, signal);
+        throw cause;
       });
       snapshotHash = selected.sha256;
       phase = "producer";
