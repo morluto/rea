@@ -234,3 +234,59 @@ it("refuses Kilo's location while KILO_CONFIG_CONTENT cannot be parsed", async (
     "KILO_CONFIG_CONTENT cannot be admitted",
   );
 });
+
+/** Uninstall's Kilo outcome, and every action detail it reported. */
+const uninstallKilo = async (home: string, environment: NodeJS.ProcessEnv) => {
+  const result = await runUninstall(
+    false,
+    systemUninstallHost(home, undefined, environment, platform),
+  );
+  const kilo = result.items.find(({ name }) => name === "kilo");
+  return {
+    kilo,
+    details: [kilo?.detail, ...(kilo?.actions ?? []).map((a) => a.detail)].join(
+      "\n",
+    ),
+  };
+};
+
+it("refuses to uninstall when removal would expose a lower Kilo layer's unowned entry", async () => {
+  const home = await createTestTempDirectory("rea-kilo-uninstall-lower-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const lower = join(root, "kilo.json");
+  const unowned = JSON.stringify({
+    mcp: { rea: { type: "local", command: ["/opt/other/rea", "mcp"] } },
+  });
+  await writeFile(lower, unowned);
+  await mkdir(join(home, ".kilo"));
+  const upper = join(home, ".kilo", "kilo.json");
+  const owned = JSON.stringify({
+    mcp: { rea: { type: "local", command, enabled: true } },
+  });
+  await writeFile(upper, owned);
+  const { kilo, details } = await uninstallKilo(home, {});
+  expect(kilo?.status).toBe("failed");
+  expect(details).toContain("another Kilo configuration layer");
+  expect(await readFile(lower, "utf8")).toBe(unowned);
+  expect(await readFile(upper, "utf8")).toBe(owned);
+});
+
+it("refuses to uninstall while KILO_CONFIG_CONTENT keeps REA's entry in effect", async () => {
+  const home = await createTestTempDirectory("rea-kilo-uninstall-inline-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const target = join(root, "kilo.json");
+  const owned = JSON.stringify({
+    mcp: { rea: { type: "local", command, enabled: true } },
+  });
+  await writeFile(target, owned);
+  const { kilo, details } = await uninstallKilo(home, {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { type: "local", command } },
+    }),
+  });
+  expect(kilo?.status).toBe("failed");
+  expect(details).toContain("KILO_CONFIG_CONTENT, which REA does not edit");
+  expect(await readFile(target, "utf8")).toBe(owned);
+});
