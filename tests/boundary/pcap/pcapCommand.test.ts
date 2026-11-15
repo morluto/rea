@@ -279,15 +279,16 @@ it.each([
 );
 
 posixIt(
-  "reports a selected tool the kernel cannot execute as an unavailable tool",
+  "names the selected tool on a launch refusal Node throws synchronously",
   async () => {
-    // Node throws ENOEXEC synchronously with a bare `spawn` syscall rather
-    // than emitting `spawn <path>`.
-    const directory = await createTestTempDirectory("rea-pcap-enoexec-");
-    const command = join(directory, "tshark");
-    await writeFile(command, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]), {
-      mode: 0o755,
-    });
+    // Node throws ENOTDIR synchronously with a bare `spawn` syscall rather
+    // than emitting `spawn <path>`. A path through a regular file refuses
+    // the same way on every POSIX host; ENOEXEC does not, because Linux
+    // libc may retry a headerless file through /bin/sh.
+    const directory = await createTestTempDirectory("rea-pcap-enotdir-");
+    const file = join(directory, "not-a-directory");
+    await writeFile(file, "");
+    const command = join(file, "tshark");
     const failure = await runPcapCommand({
       operation: "inspect_pcap_client",
       command,
@@ -302,9 +303,7 @@ posixIt(
     }).catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
-      message: expect.stringContaining(
-        "exists but could not be executed (ENOEXEC)",
-      ),
+      message: expect.stringContaining("was not found (ENOTDIR)"),
     });
   },
 );
