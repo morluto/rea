@@ -12,6 +12,7 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webCaptureDiffSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
+import { receiveCdpEvent } from "../../../src/browser/CdpConnection.js";
 
 const ORIGIN = "https://example.test";
 const CAPTURE_TIME = "2026-01-01T00:00:00.000Z";
@@ -430,35 +431,41 @@ const captureBody = (
     new Set([ORIGIN]),
   );
   events.beginAuthorizedFrame({ frameId: "main" });
-  events.ingest({
-    method: "Network.requestWillBeSent",
-    params: {
-      requestId: "request-1",
-      type: "Fetch",
-      request: { url: `${ORIGIN}/api`, ...request },
-      initiator: { type: "script" },
-    },
-  });
-  const responseBody = source === "request" ? "{}" : body;
-  events.ingest({
-    method: "Network.responseReceived",
-    params: {
-      requestId: "request-1",
-      response: {
-        url: `${ORIGIN}/api`,
-        status: 200,
-        mimeType: "application/json",
-        headers: {},
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "request-1",
+        type: "Fetch",
+        request: { url: `${ORIGIN}/api`, ...request },
+        initiator: { type: "script" },
       },
-    },
-  });
-  events.ingest({
-    method: "Network.loadingFinished",
-    params: {
-      requestId: "request-1",
-      encodedDataLength: Buffer.byteLength(responseBody),
-    },
-  });
+    }),
+  );
+  const responseBody = source === "request" ? "{}" : body;
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.responseReceived",
+      params: {
+        requestId: "request-1",
+        response: {
+          url: `${ORIGIN}/api`,
+          status: 200,
+          mimeType: "application/json",
+          headers: {},
+        },
+      },
+    }),
+  );
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.loadingFinished",
+      params: {
+        requestId: "request-1",
+        encodedDataLength: Buffer.byteLength(responseBody),
+      },
+    }),
+  );
   const candidate = events.responseBodyRequests()[0];
   expect(candidate?.requestId).toBe("request-1");
   expect(candidate).toBeDefined();
