@@ -360,7 +360,7 @@ checkCounted(
   "PATH split outside the executable search owner (use posixPathCandidates from src/process/executableSearch)",
   "path-search-split",
   files,
-  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)/gu,
+  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)/gu,
   ["src/process/executableSearch.ts"],
 );
 

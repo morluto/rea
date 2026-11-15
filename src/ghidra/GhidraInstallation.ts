@@ -18,6 +18,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
@@ -569,10 +570,11 @@ const installationCoordinates = async (
         command: platform === "win32" ? "java.exe" : "java",
       };
     // Check the caller's PATH, never a file named java in the working directory.
-    const javaOnPath = options.environment.PATH?.split(":")
-      .filter((directory) => path.isAbsolute(directory))
-      .map((directory) => absoluteCallerPath(`${directory}/java`, { platform }))
-      .find((candidate) => host.executable(candidate));
+    const javaOnPath = posixPathCandidates(
+      "java",
+      options.environment.PATH ?? "",
+      { relativeEntries: "skip" },
+    ).find(({ path: candidate }) => host.executable(candidate))?.path;
     if (javaOnPath !== undefined)
       return { source: "path", command: javaOnPath };
     const homebrew = homebrewJavaCandidates()[0];
