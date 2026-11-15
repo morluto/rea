@@ -17,7 +17,6 @@
   "entry": {
     "application -> browser": 2,
     "application -> desktop": 41,
-    "application -> frida": 2,
     "application -> reference": 8
   }
 }
