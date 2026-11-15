@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { adbInputSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { artifactComparisonInputSchema } from "../../../src/contracts/artifactComparisonContracts.js";
 import {
   compareApplicationVersionsRequestSchema,
@@ -50,6 +51,18 @@ const inventoryDocumentSchema = frame(
 
 /** Every positional JSON document and the schema its handler parses. */
 const documents = [
+  {
+    command: CLI_COMMANDS.inspectAdbUi,
+    schema: adbInputSchemas.inspect_adb_ui,
+  },
+  {
+    command: CLI_COMMANDS.findAdbUiElements,
+    schema: adbInputSchemas.find_adb_ui_elements,
+  },
+  {
+    command: CLI_COMMANDS.waitForAdbUi,
+    schema: adbInputSchemas.wait_for_adb_ui,
+  },
   {
     command: CLI_COMMANDS.traceApplicationFeature,
     schema: frame(traceApplicationFeatureRequestSchema),
@@ -220,6 +233,42 @@ it("advertises the parsed document for every JSON-input command", async () => {
     ).not.toThrow();
   }
 });
+
+it.each([
+  { command: CLI_COMMANDS.inspectAdbUi, extra: {} },
+  {
+    command: CLI_COMMANDS.findAdbUiElements,
+    extra: { selector: { text: { value: "Continue" } } },
+  },
+  {
+    command: CLI_COMMANDS.waitForAdbUi,
+    extra: { selector: {}, condition: "present" },
+  },
+])(
+  "advertises canonical UI document validation for $command",
+  async ({ command, extra }) => {
+    const served = await serve([command, "--schema", "--json"]);
+    expect(served.exitCode, served.stdout).toBe(0);
+    const input = advertisedInput(served.stdout);
+    const validate = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(input.contentSchema as AnySchema);
+    const accepted = {
+      serial: "emulator-5554",
+      package: "com.example.app",
+      ...extra,
+    };
+    expect(validate(accepted), JSON.stringify(validate.errors)).toBe(true);
+    for (const rejected of [
+      { ...accepted, serial: "two words" },
+      { ...accepted, timeout_ms: 30001 },
+      { ...accepted, unknown: true },
+      { ...accepted, package: "" },
+    ])
+      expect(validate(rejected)).toBe(false);
+  },
+);
 
 it("validates representative parsed documents with the advertised schema", async () => {
   const input = advertisedInput(

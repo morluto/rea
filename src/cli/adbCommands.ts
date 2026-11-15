@@ -20,6 +20,7 @@ import {
   type CommandCancellationHost,
 } from "./commandCancellation.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Expose the same explicit ADB requests through one-shot CLI commands. */
@@ -83,11 +84,10 @@ export const registerAdbCommands = (
     cli.command(name, {
       description,
       args: z.object({
-        inputJson: z
-          .string()
-          .describe(
-            "MCP input object as inline JSON or a local JSON file path",
-          ),
+        inputJson: jsonInputArgument(
+          "MCP input object as inline JSON or a local JSON file path",
+          adbInputSchemas[operation],
+        ),
       }),
       run: ({ args }) =>
         executeResolved(name, operation, (signal) =>
