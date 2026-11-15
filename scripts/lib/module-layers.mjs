@@ -173,7 +173,8 @@ export const layerGraphFacts = (imports, files = []) => {
 /**
  * Compare facts with the recorded baseline. Growth fails: a new upward pair,
  * more imports on a recorded pair, or a cycle group not recorded. Shrinkage is
- * returned separately so the baseline can be lowered.
+ * returned separately: the caller fails on it too, so the baseline is lowered
+ * in the change that removes the imports and can never grow back silently.
  */
 export const compareLayerBaseline = (facts, baseline) => {
   const failures = [];
@@ -204,3 +205,18 @@ export const compareLayerBaseline = (facts, baseline) => {
       lowerable.push(`recorded mutual import no longer present: ${group}`);
   return { failures, lowerable };
 };
+
+/**
+ * The baseline lowered to the observed facts: each recorded upward pair keeps
+ * the smaller of its recorded and observed counts, and only recorded cycles
+ * that are still present remain. Nothing is added, so growth still fails.
+ */
+export const lowerLayerBaseline = (facts, baseline) => ({
+  upward: Object.fromEntries(
+    Object.entries(baseline.upward).flatMap(([key, allowed]) => {
+      const count = Math.min(allowed, facts.upward[key] ?? 0);
+      return count > 0 ? [[key, count]] : [];
+    }),
+  ),
+  cycles: baseline.cycles.filter((group) => facts.cycles.includes(group)),
+});

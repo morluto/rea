@@ -23,6 +23,12 @@ Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
+It also checks each top-level `src/` unit against its layer in
+[`scripts/lib/module-layers.mjs`](scripts/lib/module-layers.mjs) (a new
+directory must declare one) and against the counted outward and mutual imports
+in `scripts/lib/module-layers.baseline.json`. The baseline may only shrink: a
+change that removes such imports lowers it with
+`node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
 Before retiring an alias or facade, trace runtime registration, dynamic imports,
 JavaScript verifiers, subprocess scripts, and packaged entrypoints as well as

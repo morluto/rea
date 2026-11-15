@@ -36,7 +36,7 @@
     "model -> application": 2,
     "native -> application": 35,
     "pcap -> application": 2,
-    "process -> artifacts": 20,
+    "process -> artifacts": 17,
     "providers -> application": 4,
     "python -> application": 2,
     "rust -> application": 2,

@@ -1,6 +1,12 @@
 graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
+    %% Layers, innermost first: domain, contracts, foundation, providers,
+    %% application, composition, adapters. An import may point to the same or an
+    %% inner layer. scripts/lib/module-layers.mjs declares the layer of every
+    %% top-level src/ directory and root file; verify:module-boundaries fails on
+    %% an undeclared unit and ratchets the recorded outward imports and mutual
+    %% imports in scripts/lib/module-layers.baseline.json.
     subgraph "Entry Points"
         CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation<br/>cliLoader: recorded registrar per command, complete CLI otherwise"]
         MAIN["src/main.ts + src/main/<br/>MCP server adapter: stdio default, streamable HTTP opt-in<br/>config, session, process lifetime"]

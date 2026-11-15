@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -7,14 +7,23 @@ import {
   inspectResolvedModuleBoundaries,
   resolveModuleImports,
 } from "./lib/module-boundaries.mjs";
-import { compareLayerBaseline, layerGraphFacts } from "./lib/module-layers.mjs";
+import {
+  compareLayerBaseline,
+  layerGraphFacts,
+  lowerLayerBaseline,
+} from "./lib/module-layers.mjs";
 
 const execute = promisify(execFile);
 const root = process.cwd();
 const printLayerBaseline = process.argv.includes("--print-layer-baseline");
+const shrinkLayerBaseline = process.argv.includes("--shrink-layer-baseline");
 const selected = process.argv
   .slice(2)
-  .filter((argument) => argument !== "--print-layer-baseline");
+  .filter(
+    (argument) =>
+      argument !== "--print-layer-baseline" &&
+      argument !== "--shrink-layer-baseline",
+  );
 for (const file of selected)
   if (!file.endsWith(".ts"))
     throw new TypeError(`Expected an exact TypeScript source file: ${file}`);
@@ -104,10 +113,20 @@ if (selected.length === 0) {
     console.error(`module layers: ${failure}`);
     process.exitCode = 1;
   }
-  if (lowerable.length > 0)
-    console.log(
-      `Module layer baseline can be lowered in scripts/lib/module-layers.baseline.json:\n  ${lowerable.join("\n  ")}`,
+  if (lowerable.length > 0 && shrinkLayerBaseline && failures.length === 0) {
+    await writeFile(
+      baselinePath,
+      `${JSON.stringify(lowerLayerBaseline(facts, baseline), null, 2)}\n`,
     );
+    console.log(
+      `Lowered scripts/lib/module-layers.baseline.json:\n  ${lowerable.join("\n  ")}`,
+    );
+  } else if (lowerable.length > 0) {
+    console.error(
+      `module layers: the baseline records imports that are gone; lower it with \`node scripts/verify-module-boundaries.mjs --shrink-layer-baseline\`:\n  ${lowerable.join("\n  ")}`,
+    );
+    process.exitCode = 1;
+  }
 }
 if (process.exitCode !== 1)
   console.log(`Checked resolved module boundaries in ${checked} source files.`);

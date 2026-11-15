@@ -19,3 +19,8 @@ export function compareLayerBaseline(
   facts: LayerGraphFacts,
   baseline: Pick<LayerGraphFacts, "upward" | "cycles">,
 ): { readonly failures: string[]; readonly lowerable: string[] };
+
+export function lowerLayerBaseline(
+  facts: LayerGraphFacts,
+  baseline: Pick<LayerGraphFacts, "upward" | "cycles">,
+): Pick<LayerGraphFacts, "upward" | "cycles">;
