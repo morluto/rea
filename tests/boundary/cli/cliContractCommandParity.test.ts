@@ -108,9 +108,12 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
-  // The named option may supply a selector in place of the positional.
-  if (parameter.selectorOption !== undefined && value === undefined)
-    return true;
+  // The named option may supply a selector in place of the positional, and
+  // a selector names one object, so it is never empty.
+  if (parameter.selectorOption !== undefined) {
+    if (value === undefined) return true;
+    if (value === "") return false;
+  }
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -199,12 +202,10 @@ const argvValues = (
   // A required selector is supplied positionally.
   const required = description.parameters.filter(
     (parameter) =>
-      !admits(
-        parameter.selectorOption === undefined
-          ? registeredField(description, parameter)
-          : suppliedField(description, parameter),
-        undefined,
-      ) && !Object.hasOwn(options, parameter.key),
+      (parameter.selectorOption === undefined
+        ? !admits(registeredField(description, parameter), undefined)
+        : parameter.selectorOption.required) &&
+      !Object.hasOwn(options, parameter.key),
   );
   const filled = Object.fromEntries(
     required.map((parameter) => [
@@ -292,6 +293,11 @@ const MIGRATED_COMMANDS = [
   "inspect-native-dispatch-metadata",
   "procedure-references",
   "inspect-native-api",
+  "inspect",
+  "xrefs",
+  "trace",
+  "function",
+  "instructions",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -1212,7 +1218,13 @@ describe("Positional selectors with a named option", () => {
       const named = (command.options as z.ZodObject).shape[option.key];
       expect(admits(named as z.ZodType, undefined)).toBe(true);
       expect(admits(named as z.ZodType, "-dash")).toBe(true);
-      const required = !admits(description.fields[parameter.field]!, undefined);
+      // A required selector is refused when neither spelling is given,
+      // including where only the CLI requires it.
+      expect(option.required).toBe(
+        option.required ||
+          !admits(description.fields[parameter.field]!, undefined),
+      );
+      const { required } = option;
       const admit = (values: Record<string, unknown>) =>
         description.admit({
           [description.sessionTarget?.key ?? "path"]: "rel/app",

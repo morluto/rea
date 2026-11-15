@@ -77,9 +77,10 @@ export interface CliContractProjection<
   readonly positionals?: readonly Field[];
   /**
    * Positional selectors the caller may instead give with a named option,
-   * for values that begin with a dash. The positional becomes optional;
-   * equal values agree and different ones are refused before the target is
-   * opened, as is neither when the field is required.
+   * for values that begin with a dash. The positional becomes optional and
+   * neither spelling may be empty; equal values agree and different ones are
+   * refused before the target is opened, as is neither when the field is
+   * required.
    */
   readonly selectorOptions?: { readonly [Key in Field]?: CliSelectorOption };
   /**
@@ -274,6 +275,11 @@ export interface CliSelectorOption {
   readonly description: string;
   /** How the two spellings agree; `text` by default. */
   readonly kind?: CliSelectorKind;
+  /**
+   * The command needs a selector although the contract admits omission,
+   * such as a one-shot command that has no current position to fall back on.
+   */
+  readonly required?: true;
 }
 
 /** The described named option of a positional selector. */
@@ -287,6 +293,8 @@ export interface ContractCliSelectorOption {
   readonly description: string;
   readonly schema: z.ZodType;
   readonly kind: CliSelectorKind;
+  /** Neither spelling may be omitted. */
+  readonly required: boolean;
 }
 
 /** One positional argument or option of a contract command. */
@@ -1248,8 +1256,10 @@ export const describeContractCommand = <
     if (selector !== undefined) {
       if (!(value instanceof z.ZodString))
         throw new Error(`${contract.name}.${field} is not a text selector`);
-      // Either spelling may supply the selector.
-      schema = schema.optional();
+      // Either spelling may supply the selector. A selector names one
+      // object, so an empty one is refused even where the contract's text
+      // admits it.
+      schema = value.min(1).optional();
       if (description !== undefined) schema = schema.describe(description);
       selectorOption = {
         key: selector.name,
@@ -1257,6 +1267,7 @@ export const describeContractCommand = <
         description: selector.description,
         schema: schema.describe(selector.description),
         kind: selector.kind ?? "text",
+        required: selector.required === true || !admitsOmission(declared),
       };
     }
     return {
@@ -1544,7 +1555,7 @@ export const describeContractCommand = <
     },
     evidenceDelivery,
     admit: (values) => {
-      for (const { field, key, selectorOption } of parameters) {
+      for (const { key, selectorOption } of parameters) {
         if (selectorOption === undefined) continue;
         const selected = selectCliAnalysisSelector(
           values[key] as string | undefined,
@@ -1553,7 +1564,7 @@ export const describeContractCommand = <
             option: selectorOption.key,
             operation: contract.name,
             kind: selectorOption.kind,
-            required: !admitsOmission(shape[field]!),
+            required: selectorOption.required,
           },
         );
         if (!selected.ok) return selected;
