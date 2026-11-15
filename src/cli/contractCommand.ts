@@ -140,6 +140,8 @@ export const admittedContractInput = <Parsed>(context: {
 export interface CliEvidenceTargetSelection {
   /** The source contract each target runs. */
   readonly source: string;
+  /** Source contract fields this command takes as options, with their flags. */
+  readonly sourceFlags: Readonly<Record<string, string>>;
   readonly targets: readonly {
     /** The contract field the target's source Evidence supplies. */
     readonly field: string;
@@ -387,7 +389,7 @@ export const runOnEvidenceTargets =
           {
             operation: evidenceTargets.source,
             fields: { path: key },
-            flags: {},
+            flags: evidenceTargets.sourceFlags,
           },
         );
       sources[field] = source.value;
@@ -651,6 +653,7 @@ export const registerContractCommand = <
                     ? undefined
                     : {
                         source: description.evidenceTargets.source,
+                        sourceFlags: description.evidenceTargets.sourceFlags,
                         targets: description.evidenceTargets.targets.map(
                           ({ field, key }) => ({
                             field,

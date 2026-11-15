@@ -116,6 +116,32 @@ cliTest(
       },
     });
 
+    // A source refused by its snapshot budget names the source option that
+    // raises it; the remediation names only the contract field.
+    const refused = await cli.run({
+      arguments: [
+        "compare-managed-members",
+        good,
+        peer,
+        "--max-snapshot-bytes",
+        String(bytes.length - 1),
+        "--json",
+      ],
+    });
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_snapshot_bytes",
+          cli_flag: "--max-snapshot-bytes",
+        },
+      },
+    });
+    expect(
+      JSON.stringify((refused.json as { remediation: unknown }).remediation),
+    ).not.toContain("--max-snapshot-bytes");
+
     for (const field of ["leftPath", "rightPath"] as const) {
       const result = await cli.run({
         arguments: [
