@@ -1,5 +1,10 @@
 import * as t from "@babel/types";
-import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientPathMayObserveAt,
+  semanticAmbientWriteGeneration,
+  semanticBindingEffectGeneration,
+  semanticMemberWriteSources,
+} from "./javascriptSemanticEffectLog.js";
 
 import {
   semanticStaticPropertyKey,
@@ -95,11 +100,10 @@ export const createSemanticReturnedReferences = (
       readonly result: SemanticReturnedReferenceResult;
       readonly invocation: t.Node | undefined;
       readonly iterationUnknown: boolean;
-      readonly ambientWrites: number;
+      readonly ambientGeneration: number;
       readonly dependencies: readonly {
         readonly binding: JavaScriptSemanticBindingState;
-        readonly writes: number;
-        readonly escapes: number;
+        readonly generation: number;
       }[];
     }
   >();
@@ -109,18 +113,14 @@ export const createSemanticReturnedReferences = (
       existing !== undefined &&
       existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
-      existing.ambientWrites === state.ambientWriteEffects.length &&
+      existing.ambientGeneration === semanticAmbientWriteGeneration(state) &&
       existing.dependencies.every(
-        ({ binding, writes, escapes }) =>
-          binding.memberWrites.length === writes &&
-          binding.escapedPaths.length === escapes,
+        ({ binding, generation }) =>
+          semanticBindingEffectGeneration(binding) === generation,
       )
     )
       return existing.result;
-    const dependencies = new Map<
-      JavaScriptSemanticBindingState,
-      { readonly writes: number; readonly escapes: number }
-    >();
+    const dependencies = new Map<JavaScriptSemanticBindingState, number>();
     const functions = new Set<t.Function>();
     const work: Candidate[] = [];
     // A transition depends on the source read and current projection, not the
@@ -309,10 +309,7 @@ export const createSemanticReturnedReferences = (
             result.unresolvedInvocation = true;
           continue;
         }
-        dependencies.set(binding, {
-          writes: binding.memberWrites.length,
-          escapes: binding.escapedPaths.length,
-        });
+        dependencies.set(binding, semanticBindingEffectGeneration(binding));
         if (current.path !== undefined) {
           if (
             sourceGenericInvocation &&
@@ -405,10 +402,9 @@ export const createSemanticReturnedReferences = (
           });
         }
         if (current.path === undefined)
-          for (const effect of binding.memberWrites)
-            for (const source of effect.assignedSources ?? [])
-              if (!semanticReferenceSourcesInactive(source, state))
-                pending.push({ node: source.node, path: undefined });
+          for (const source of semanticMemberWriteSources(binding))
+            if (!semanticReferenceSourcesInactive(source, state))
+              pending.push({ node: source.node, path: undefined });
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -729,10 +725,10 @@ export const createSemanticReturnedReferences = (
       result,
       invocation,
       iterationUnknown: state.arrayIterationUnknown,
-      ambientWrites: state.ambientWriteEffects.length,
-      dependencies: [...dependencies].map(([binding, counts]) => ({
+      ambientGeneration: semanticAmbientWriteGeneration(state),
+      dependencies: [...dependencies].map(([binding, generation]) => ({
         binding,
-        ...counts,
+        generation,
       })),
     });
     if (result.precision === "widened")

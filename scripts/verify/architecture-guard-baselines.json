@@ -558,7 +558,6 @@
     "src/domain/javascript/javascriptSemanticMutationInitializers.ts": 3,
     "src/domain/javascript/javascriptSemanticProjectedSources.ts": 3,
     "src/domain/javascript/javascriptSemanticProjection.ts": 1,
-    "src/domain/javascript/javascriptSemanticRequireOrigin.ts": 8,
-    "src/domain/javascript/javascriptSemanticReturnedReferences.ts": 8
+    "src/domain/javascript/javascriptSemanticRequireOrigin.ts": 1
   }
 }
