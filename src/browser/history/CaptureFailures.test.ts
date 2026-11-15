@@ -6,7 +6,7 @@ import {
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import {
   historicalCaptureFailure,

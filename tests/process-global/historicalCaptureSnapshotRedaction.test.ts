@@ -37,7 +37,7 @@ import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/Capture
 import { WebNetworkCaptureService } from "../../src/application/WebNetworkCaptureService.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { fileSnapshotPartialObservationSchema } from "../../src/domain/fileSnapshotObservation.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
 import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";

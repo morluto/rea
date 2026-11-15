@@ -37,7 +37,7 @@ import {
   type AnalysisExecution,
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
-import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
+import type { PacketCapturePort } from "../ports/captures/PacketCapturePort.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
