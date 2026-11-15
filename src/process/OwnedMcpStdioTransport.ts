@@ -18,6 +18,11 @@ import {
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  processInspectionCleanupFailures,
+  type ProcessInspectionCleanupFailure,
+} from "./ProcessInspectionCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
@@ -66,6 +71,8 @@ export class OwnedMcpStdioTransport implements Transport {
     [this.runId],
   );
   #starting: Promise<void> | undefined;
+  /** Preparation cleanup owners a failed launch transferred and that closed. */
+  readonly #releasedPreparations = new Set<unknown>();
   /** Ends a launch still resolving or spawning when the transport closes. */
   readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
@@ -228,7 +235,12 @@ export class OwnedMcpStdioTransport implements Transport {
     // A cancellation may race acquisition: end a launch that is still
     // resolving its command, then join it before inspecting ownership.
     this.#acquisition.abort(OwnerCancellation.ownerClosed);
-    await this.#starting?.catch(() => undefined);
+    // A failed launch may transfer ownership-preparation cleanup (a helper
+    // directory or file handle it could not remove); this close owns it.
+    const startFailure = await this.#starting?.then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
     const process = this.#spawned?.process;
     process?.stdout?.off("data", this.#read);
     process?.stdout?.off("error", this.#error);
@@ -279,6 +291,47 @@ export class OwnedMcpStdioTransport implements Transport {
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
     }
+    for (const preparation of processInspectionCleanupFailures(startFailure))
+      await this.#releasePreparation(preparation);
+  }
+
+  /**
+   * Close one transferred preparation owner. Until it closes (or when the
+   * launch reported a failure without an owner) the close fails and a later
+   * close retries it.
+   */
+  async #releasePreparation(
+    preparation: ProcessInspectionCleanupFailure,
+  ): Promise<void> {
+    const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
+    const owner = darwin ? preparation.cleanupOwner : preparation.owner;
+    if (owner !== undefined && this.#releasedPreparations.has(owner)) return;
+    let reason = preparation.message;
+    if (owner !== undefined)
+      try {
+        await owner.close();
+        this.#releasedPreparations.add(owner);
+        return;
+      } catch (cause: unknown) {
+        reason = cause instanceof Error ? cause.message : String(cause);
+      }
+    const failure = new ProviderCleanupError(
+      this.settings.provider,
+      [darwin ? "process ownership inspection" : preparation.path],
+      { reason },
+      {
+        cause: preparation,
+        ...(this.settings.operation === undefined
+          ? {}
+          : { operation: this.settings.operation }),
+      },
+    );
+    // The transport's close retries the owner; the failure keeps naming the
+    // preparation resource rather than the process run.
+    new AnalysisCleanupLeaseGroup(failure, [this.#cleanup], {
+      preserveResourceAttribution: true,
+    });
+    throw failure;
   }
 
   readonly #error = (error: Error): void => {
