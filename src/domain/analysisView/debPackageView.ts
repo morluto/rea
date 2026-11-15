@@ -93,9 +93,6 @@ export const projectDebPackageView = (
       issue_count: report.issues.length,
       limitation_count: report.limitations.length,
     },
-    coverage: completeWithinViewCoverage(
-      report.data_entries.length,
-      report.data_entries.length,
-    ),
+    coverage: completeWithinViewCoverage(report.data_entries.length),
   });
 };
