@@ -14,10 +14,7 @@ import {
   allowedSanitizedUrl,
   delayWithCancellation,
   isHttpUrl,
-  numberValue,
-  recordValue,
   cdpStringValue,
-  type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { z } from "zod";
 import type { Frame, Page } from "playwright-core";
 
 import {
