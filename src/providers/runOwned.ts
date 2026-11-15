@@ -16,6 +16,7 @@ import {
   cancelledBy,
   isAborted,
   OwnerCancellation,
+  type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { Deadline } from "../domain/deadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -117,6 +118,13 @@ interface RunOwnedBaseOptions<Value> {
    * (`commit`) is outside both budgets.
    */
   readonly deadline?: Deadline | undefined;
+  /**
+   * The provider's recovery for an elapsed work budget, carried by the
+   * `AnalysisTimeoutError` that budget produces. Its diagnostics are added to
+   * the ones the replaced outcome recorded. Without it the timeout names only
+   * the operation and its work budget.
+   */
+  readonly timeoutRecovery?: AnalysisTimeoutRecovery | undefined;
   /** Releases everything the work acquired; awaited before the signal is read. */
   readonly close: () => Promise<void>;
   /** Names the owned resources when a non-REA close failure names none. */
@@ -497,19 +505,28 @@ export const runOwned = async <Value>(
         >
       >,
       cause?: unknown,
-    ): AnalysisTimeoutError =>
-      new AnalysisTimeoutError(options.operation, options.deadline!.workMs, {
-        ...(cause === undefined ? {} : { cause }),
-        ...(replaced.partialObservation === undefined
-          ? {}
-          : { partialObservation: replaced.partialObservation }),
-        ...(replaced.diagnostics === undefined
-          ? {}
-          : { diagnostics: replaced.diagnostics }),
-        ...(replaced.capturedOutput === undefined
-          ? {}
-          : { capturedOutput: replaced.capturedOutput }),
-      });
+    ): AnalysisTimeoutError => {
+      const recovery = options.timeoutRecovery ?? {};
+      const diagnostics =
+        replaced.diagnostics === undefined || recovery.diagnostics === undefined
+          ? (recovery.diagnostics ?? replaced.diagnostics)
+          : { ...replaced.diagnostics, ...recovery.diagnostics };
+      return new AnalysisTimeoutError(
+        options.operation,
+        options.deadline!.workMs,
+        {
+          ...recovery,
+          ...(cause === undefined ? {} : { cause }),
+          ...(replaced.partialObservation === undefined
+            ? {}
+            : { partialObservation: replaced.partialObservation }),
+          ...(diagnostics === undefined ? {} : { diagnostics }),
+          ...(replaced.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: replaced.capturedOutput }),
+        },
+      );
+    };
     if (outcome.ok && !committed) {
       // The value arrived after the budget elapsed and was not published.
       const kept = keepCompleted(options, outcome.value, "failure");
