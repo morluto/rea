@@ -11,7 +11,7 @@ import {
 } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
-import { waitFor } from "../../tests/support/testWait.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const JAVA = "/usr/lib/jvm/java-21-openjdk-amd64/bin/java";
 
@@ -169,22 +169,36 @@ it.each([
     // A mismatch is not exit proof: the stop stays pending through the
     // launcher's grace and reports incomplete only once it ends without exit.
     let endGrace: (exited: boolean) => void = () => undefined;
+    let enterGrace!: () => void;
+    const graceEntered = new Promise<void>((resolve) => {
+      enterGrace = resolve;
+    });
     const waited = vi.spyOn(supervisor, "waitForExit").mockImplementation(
       () =>
         new Promise<boolean>((resolve) => {
           endGrace = resolve;
+          enterGrace();
         }),
     );
     let settled = false;
     const stopping = supervisor.stop({ killGraceMs: 50 }).finally(() => {
       settled = true;
     });
-    await waitFor(() => expect(waited.mock.calls).toEqual([[50]]));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    endGrace(false);
-    const stopped = await stopping;
+    let settledDuringGrace = true;
+    let stopped: Awaited<typeof stopping> | undefined;
+    try {
+      await awaitAcknowledgement(graceEntered, stopping, "launcher grace");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      settledDuringGrace = settled;
+    } finally {
+      // Release and join the stop before any assertion or mock restore.
+      endGrace(false);
+      stopped = await stopping;
+      supervisor.dispose();
+    }
 
+    expect(waited.mock.calls).toEqual([[50]]);
+    expect(settledDuringGrace).toBe(false);
     expect(stopped).toEqual({
       status: "incomplete",
       reason: `owned launcher command identity did not match (observed=/usr/bin/other; expected=${JAVA})`,
@@ -193,7 +207,6 @@ it.each([
     expect(results).toHaveLength(1);
     expect(host.signalGroup).not.toHaveBeenCalled();
     expect(launcher.child.kill).not.toHaveBeenCalled();
-    supervisor.dispose();
   },
 );
 
