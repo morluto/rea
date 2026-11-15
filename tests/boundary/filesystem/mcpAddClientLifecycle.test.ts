@@ -522,6 +522,8 @@ it.skipIf(platform === "win32")(
     const lower = "extensions:\n  rea:\n    enabled: false\n";
     await writeFile(additional, lower);
     const environment = { GOOSE_ADDITIONAL_CONFIG_FILES: additional };
+    // The system layer is injected so the host's /etc/goose is never read.
+    const systemPaths = { gooseSystemConfig: join(home, "system.yaml") };
     const resources = new ArtifactResourceScope();
     const selected = await resolveMcpRegistrationClients(
       {
@@ -531,18 +533,22 @@ it.skipIf(platform === "win32")(
         home,
         platform,
         environment,
+        systemPaths,
       },
       resources,
     );
     if (!selected.ok) throw selected.error;
-    const row = supportedClients(home, platform, environment).find(
+    const row = supportedClients(home, platform, environment, systemPaths).find(
       ({ name }) => name === "goose",
     );
     expect(row?.configPaths).toEqual([
-      "/etc/goose/config.yaml",
+      systemPaths.gooseSystemConfig,
       additional,
       row?.configPath,
     ]);
+    expect(selected.value[0]).toMatchObject({
+      configPaths: row?.configPaths,
+    });
     const [outcome] = await registerMcpClients(
       selected.value,
       { command: command[0] ?? "", args: command.slice(1) },
@@ -557,14 +563,14 @@ it.skipIf(platform === "win32")(
     const inspections = await readClientRegistrationInspections(
       home,
       command[1],
-      { platform, environment },
+      { platform, environment, systemPaths },
     );
     expect(
       inspections.find(({ status }) => status.client === "goose"),
     ).toMatchObject({ activation: "disabled", status: { state: "stale" } });
     const uninstall = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, environment, platform),
+      systemUninstallHost(home, undefined, environment, platform, systemPaths),
     );
     expect(uninstall.items).toContainEqual(
       expect.objectContaining({ name: "goose", status: "removed" }),
@@ -665,6 +671,73 @@ it.skipIf(platform === "win32")(
       TEAM_SETTING: "1",
       REA_ANALYSIS_PROVIDER: "ghidra",
     });
+
+    // An inherited map under the env alias is replaced under that spelling,
+    // so the merged entry never declares both env and envs.
+    await writeFile(team, 'extensions:\n  rea:\n    env:\n      KEEP: "1"\n');
+    await writeFile(row.configPath, `extensions:\n  rea:\n${launcher}`);
+    await expect(
+      configureClientConfiguration(
+        row,
+        { REA_ANALYSIS_PROVIDER: "ghidra" },
+        command,
+      ),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect(await userEntry()).toMatchObject({
+      env: { KEEP: "1", REA_ANALYSIS_PROVIDER: "ghidra" },
+    });
+    expect(await userEntry()).not.toHaveProperty("envs");
+    await expect(
+      inspectClientConfiguration(
+        row,
+        { REA_ANALYSIS_PROVIDER: "ghidra" },
+        command,
+      ),
+    ).resolves.toEqual({ status: "already_current" });
+  },
+);
+
+it.skipIf(platform === "win32")(
+  "mcp add leaves an inherited Goose env alias in force",
+  async () => {
+    const { home, team, environment, systemPaths } = await gooseFixture(
+      "rea-goose-add-alias-",
+    );
+    await writeFile(team, 'extensions:\n  rea:\n    env:\n      KEEP: "1"\n');
+    const resources = new ArtifactResourceScope();
+    const selected = await resolveMcpRegistrationClients(
+      {
+        agents: ["goose"],
+        global: true,
+        cwd: home,
+        home,
+        platform,
+        environment,
+        systemPaths,
+      },
+      resources,
+    );
+    if (!selected.ok) throw selected.error;
+    const [outcome] = await registerMcpClients(
+      selected.value,
+      { command: command[0] ?? "", args: command.slice(1) },
+      undefined,
+      resources,
+    );
+    expect(outcome).toMatchObject({
+      status: "completed",
+      result: { ok: true },
+    });
+    // Writing envs: {} beside the inherited alias would make the merged entry
+    // ambiguous; the registration reads back as aligned instead.
+    const inspections = await readClientRegistrationInspections(
+      home,
+      command[1],
+      { platform, environment, systemPaths },
+    );
+    expect(
+      inspections.find(({ status }) => status.client === "goose"),
+    ).toMatchObject({ activation: "enabled", status: { state: "aligned" } });
   },
 );
 

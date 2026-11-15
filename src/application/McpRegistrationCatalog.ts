@@ -13,6 +13,7 @@ import {
   registrationWriteBlocker,
   supportedClientDefinition,
   supportedClients,
+  type ClientSystemPaths,
   type SetupClient,
   type SupportedClientName,
 } from "./SupportedClients.js";
@@ -201,6 +202,8 @@ export interface McpRegistrationSelection {
   readonly home: string;
   readonly platform: NodeJS.Platform;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /** System-wide client configuration paths; defaults to each client's own. */
+  readonly systemPaths?: ClientSystemPaths;
   readonly signal?: AbortSignal;
 }
 
@@ -335,6 +338,7 @@ export const resolveMcpRegistrationClients = async (
             selection.home,
             selection.platform,
             selection.environment,
+            selection.systemPaths,
           )
         : [],
     };
