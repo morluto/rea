@@ -24,6 +24,12 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,
   defaultBuildComputerArchive,
@@ -90,7 +96,12 @@ export const readDesktopBuildFacts = async (
       ? agentEnvInterpreter(
           { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
           "desktop_build_doctor",
-        ).catch(() => "python3")
+          input.resources,
+        ).catch((cause: unknown) => {
+          if (cause instanceof ArtifactFileCleanupFailure)
+            throw runnerCleanupFailure(cause);
+          return "python3";
+        })
       : "python3",
   );
   const chosenCommand = (
@@ -367,7 +378,9 @@ const registrationFacts = async (
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
-  return Promise.all(
+  // Every admitted client inspection settles before a failure is reported, so
+  // no file a peer opened outlives the doctor operation that owns it.
+  const outcomes = await Promise.allSettled(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
       const values = status === undefined ? undefined : recorded.get(client);
@@ -440,7 +453,12 @@ const registrationFacts = async (
                 : agentEnvInterpreter(
                     { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
                     "desktop_build_doctor",
-                  ).catch(() => undefined),
+                    input.resources,
+                  ).catch((cause: unknown) => {
+                    if (cause instanceof ArtifactFileCleanupFailure)
+                      throw runnerCleanupFailure(cause);
+                    return undefined;
+                  }),
           );
           if (archive.status === "unknown") unchecked.push(name);
           else if (archive.status !== "current") compared.push(name);
@@ -456,6 +474,11 @@ const registrationFacts = async (
         ...(runner === undefined ? {} : { runner }),
       };
     }),
+  );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+  return outcomes.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [outcome.value] : [],
   );
 };
 
@@ -523,6 +546,38 @@ const solveEndpoint = async (
     : (selected ?? "agentenv model configuration");
 };
 
+/**
+ * A doctor file whose close failed stays owned by `input.resources`, which the
+ * doctor host retries on close. Report it as the doctor's typed cleanup
+ * failure, bound to that owner's lease, so the error document keeps the
+ * retained file and its recovery.
+ */
+const doctorFileCleanupFailure = (
+  lease: AnalysisCleanupLease,
+  resources: readonly string[],
+  reason: string,
+  cause: unknown,
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
+    "rea",
+    resources,
+    { reason },
+    { operation: "doctor", cause },
+  );
+  new AnalysisCleanupLeaseGroup(failure, [lease]);
+  return failure;
+};
+
+const runnerCleanupFailure = (
+  cause: ArtifactFileCleanupFailure,
+): ProviderCleanupError =>
+  doctorFileCleanupFailure(
+    cause.cleanupLease,
+    cause.cleanup?.resources ?? cause.cleanupLease.cleanupResources ?? [],
+    cause.cleanup?.reason ?? cause.message,
+    cause,
+  );
+
 const canReadModelConfig = async (
   path: string,
   input: DesktopBuildFactsInput,
@@ -545,7 +600,12 @@ const canReadModelConfig = async (
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
-      throw cause;
+      throw doctorFileCleanupFailure(
+        cause.cleanupLease,
+        [cause.path],
+        cause.message,
+        cause,
+      );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
     if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
