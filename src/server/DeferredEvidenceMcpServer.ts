@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   EvidenceMcpServerCore,
@@ -60,20 +61,25 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
     ) => Promise<void>,
-    maximumInputElements?: number,
+    options: {
+      readonly maximumInputElements?: number | undefined;
+      // Recorded tools carry their presented schemas. The selected presentation
+      // still applies to transport discovery, which is not recorded.
+      readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+    } = {},
   ) {
     super(
       catalog.info,
       {
         capabilities: catalog.capabilities,
         instructions: catalog.instructions,
-        ...(maximumInputElements === undefined
+        ...(options.maximumInputElements === undefined
           ? {}
-          : { maxToolInputElements: maximumInputElements }),
+          : { maxToolInputElements: options.maximumInputElements }),
       },
       undefined,
       delivery,
-      undefined,
+      options.compactPresentation,
       // `main.ts` only defers the exact full advertisement catalog.
       "full",
       catalog.identity,
