@@ -55,7 +55,12 @@ Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so 
 domain signature change that breaks a listed script fails `check:fast` without a
 build. To add a script, switch its `../dist/` imports and those of the local
 modules it loads to `#dist/`, add it to the list, and fix what the check
-reports with JSDoc types.
+reports with JSDoc types. Name tool results with the
+`scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
+`VerifierOperationResult<N>`) so a result reads with its named contract's
+type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
+outside the check: it imports `dist` modules by path from a caller-selected
+checkout at run time, so no import in this tree names their types.
 
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).

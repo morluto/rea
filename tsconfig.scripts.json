@@ -4,9 +4,13 @@
     "allowJs": true,
     "checkJs": true,
     "noEmit": true,
-    "paths": { "#dist/*": ["./src/*"] }
+    "paths": {
+      "#dist/*": ["./src/*"]
+    }
   },
   "files": [
+    "scripts/lib/mcp-verifier-results.mjs",
+    "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
     "scripts/verify-package-evidence.mjs",
     "scripts/verify/javascript/digests.mjs",
     "scripts/verify/javascript/output.mjs"
