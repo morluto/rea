@@ -175,6 +175,15 @@ describe("portable pattern projection", () => {
   );
 });
 
+const PRESENTERS = [
+  [
+    "input",
+    (schema: Record<string, unknown>) =>
+      presentInputJsonSchema(schema, () => undefined),
+  ],
+  ["output", presentOutputJsonSchema],
+] as const;
+
 describe("advertised pattern presentation", () => {
   const lookAround = "^(?!con$)[a-z]+$";
   const property = (schema: Record<string, unknown>) => ({
@@ -182,14 +191,7 @@ describe("advertised pattern presentation", () => {
     properties: { name: schema },
   });
 
-  it.each([
-    [
-      "input",
-      (schema: Record<string, unknown>) =>
-        presentInputJsonSchema(schema, () => undefined),
-    ],
-    ["output", presentOutputJsonSchema],
-  ] as const)(
+  it.each(PRESENTERS)(
     "keeps only widening around a widened %s pattern",
     (_kind, present) => {
       // Widening a pattern under `not` would narrow the enclosing schema.
@@ -227,31 +229,22 @@ describe("advertised pattern presentation", () => {
     expect(presentOutputJsonSchema(schema)).toBe(schema);
   });
 
-  it.each([
-    [
-      "input",
-      (schema: Record<string, unknown>) =>
-        presentInputJsonSchema(schema, () => undefined),
-    ],
-    ["output", presentOutputJsonSchema],
-  ] as const)("does not narrow %s through a named anchor", (_kind, present) => {
-    const schema = {
-      $defs: { name: { $anchor: "name", type: "string", pattern: lookAround } },
-      type: "object",
-      properties: { name: { not: { $ref: "#name" } } },
-    };
-    const validate = new Ajv2020({ strict: false }).compile(present(schema));
-    expect(validate({ name: "con" })).toBe(true);
-  });
+  it.each(PRESENTERS)(
+    "does not narrow %s through a named anchor",
+    (_kind, present) => {
+      const schema = {
+        $defs: {
+          name: { $anchor: "name", type: "string", pattern: lookAround },
+        },
+        type: "object",
+        properties: { name: { not: { $ref: "#name" } } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ name: "con" })).toBe(true);
+    },
+  );
 
-  it.each([
-    [
-      "input",
-      (schema: Record<string, unknown>) =>
-        presentInputJsonSchema(schema, () => undefined),
-    ],
-    ["output", presentOutputJsonSchema],
-  ] as const)(
+  it.each(PRESENTERS)(
     "does not narrow %s through a URI naming this resource",
     (_kind, present) => {
       const schema = {
@@ -267,16 +260,11 @@ describe("advertised pattern presentation", () => {
     },
   );
 
-  it.each([
-    [
-      "input",
-      (schema: Record<string, unknown>) =>
-        presentInputJsonSchema(schema, () => undefined),
-    ],
-    ["output", presentOutputJsonSchema],
-  ] as const)(
-    "keeps %s pointers valid when a widened oneOf becomes anyOf",
+  it.each(PRESENTERS)(
+    "keeps %s pointers valid into locations presentation may remove",
     (_kind, present) => {
+      // A widened `oneOf` becomes `anyOf`; a widened `not` or `if` is dropped.
+      const widened = { type: "string", pattern: lookAround };
       const schema = {
         $defs: {
           choice: {
@@ -285,12 +273,28 @@ describe("advertised pattern presentation", () => {
               { type: "string", pattern: "^ok$" },
             ],
           },
+          guard: { not: widened },
+          gate: { if: widened, then: { type: "string" }, else: widened },
         },
         type: "object",
-        properties: { value: { $ref: "#/$defs/choice/oneOf/1" } },
+        properties: {
+          choice: { $ref: "#/$defs/choice/oneOf/1" },
+          negated: { $ref: "#/$defs/guard/not" },
+          predicate: { $ref: "#/$defs/gate/if" },
+          consequent: { $ref: "#/$defs/gate/then" },
+          alternative: { $ref: "#/$defs/gate/else" },
+        },
       };
       const validate = new Ajv2020({ strict: false }).compile(present(schema));
-      expect(validate({ value: "ok" })).toBe(true);
+      expect(
+        validate({
+          choice: "ok",
+          negated: "con",
+          predicate: "y",
+          consequent: "z",
+          alternative: "w",
+        }),
+      ).toBe(true);
     },
   );
 
