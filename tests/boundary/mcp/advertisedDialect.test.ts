@@ -67,6 +67,67 @@ describe("portable regex grammar", () => {
   });
 });
 
+describe("nullable values", () => {
+  const check = (properties: Record<string, unknown>) =>
+    advertisedInputDialectViolations({
+      name: "probe",
+      inputSchema: { type: "object", properties },
+    }).map(({ path, rule, detail }) => [path, rule, detail]);
+
+  it("accepts anyOf one typed branch and null below the root", () => {
+    expect(
+      check({
+        limit: {
+          description: "Entries; null returns every remaining entry.",
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+        },
+        names: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "null" },
+          ],
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a type list",
+      { type: ["integer", "null"] },
+      ["$.properties.value", "type", "type-list"],
+    ],
+    [
+      "a bare null type",
+      { type: "null" },
+      ["$.properties.value", "type", "type:null"],
+    ],
+    [
+      "an untyped non-null branch",
+      { anyOf: [{ minimum: 1 }, { type: "null" }] },
+      ["$.properties.value", "type", "untyped"],
+    ],
+  ])("refuses %s", (_name, value, violation) => {
+    expect(check({ value })).toContainEqual(violation);
+  });
+
+  it("refuses a nullable root", () => {
+    expect(
+      advertisedInputDialectViolations({
+        name: "probe",
+        inputSchema: {
+          anyOf: [{ type: "object", properties: {} }, { type: "null" }],
+        },
+      }).map(({ rule, detail }) => [rule, detail]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["root-shape", undefined],
+        ["any-of", "root"],
+      ]),
+    );
+  });
+});
+
 const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");

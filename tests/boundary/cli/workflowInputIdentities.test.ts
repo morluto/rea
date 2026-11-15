@@ -52,7 +52,10 @@ const runJson = async (
         : ["--evidence-bundle", evidenceBundle]),
     ],
     cwd: root,
-    environment: { REA_LOG_LEVEL: "silent" },
+    environment: {
+      REA_LOG_LEVEL: "silent",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
   });
 };
 const connectMcp = async (root: string) => {
@@ -73,6 +76,7 @@ const connectMcp = async (root: string) => {
       XDG_CONFIG_HOME: join(root, "config"),
       XDG_CACHE_HOME: join(root, "cache"),
       REA_LOG_LEVEL: "silent",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
     },
   });

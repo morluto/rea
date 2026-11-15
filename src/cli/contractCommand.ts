@@ -12,8 +12,14 @@ import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
   describeContractCommand,
+  describeContractDocumentCommand,
+  type CliDocumentProjection,
+  type DocumentContract,
+  type ContractCliDocumentDescription,
   type CliContractProjection,
   type CliEvidenceDeliveryChoice,
   type CliOptionShape,
@@ -295,4 +301,98 @@ export const registerContractCommand = <
   const registered = descriptions.get(cli) ?? [];
   registered.push(description);
   descriptions.set(cli, registered);
+};
+
+/** What a JSON-document command's handler receives besides the document. */
+export interface ContractDocumentContext<
+  CliOptions extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
+> {
+  readonly signal: AbortSignal;
+  /** The contract name, which is the canonical operation. */
+  readonly operation: string;
+  /** The document as decoded, before its caller paths were resolved. */
+  readonly spelled: unknown;
+  /** The projection's CLI-only options, whose effect the handler owns. */
+  readonly cliOptions: CliOptions;
+}
+
+const documentDescriptions = new WeakMap<
+  CliInstance,
+  ContractCliDocumentDescription[]
+>();
+
+/** Commands registered on this CLI through `registerContractDocumentCommand`. */
+export const contractDocumentCommandDescriptions = (
+  cli: CliInstance,
+): readonly ContractCliDocumentDescription[] =>
+  documentDescriptions.get(cli) ?? [];
+
+/**
+ * Register one CLI command whose whole contract input is one JSON document.
+ * The handler receives the decoded document with its caller paths made
+ * absolute, and admits it with the contract's owner.
+ */
+export const registerContractDocumentCommand = <
+  Contract extends DocumentContract,
+  Value,
+  CliOptions extends CliOptionShape = Record<never, z.ZodType>,
+>(
+  cli: CliInstance,
+  logger: Logger,
+  contract: Contract,
+  projection: CliDocumentProjection<ContractField<Contract>, CliOptions>,
+  run: (
+    document: unknown,
+    context: ContractDocumentContext<CliOptionValues<CliOptions>>,
+  ) => Promise<Value>,
+): void => {
+  const description = describeContractDocumentCommand(contract, projection);
+  const options = Object.fromEntries(
+    description.cliOnlyOptions.map(({ key, schema }) => [key, schema]),
+  );
+  cli.command(description.command, {
+    description: description.description,
+    args: z.object({
+      [description.key]: jsonInputArgument(
+        description.documentDescription,
+        description.content,
+      ),
+    }),
+    ...(Object.keys(options).length === 0
+      ? {}
+      : { options: z.object(options) }),
+    run: ({
+      args,
+      options: values,
+    }: {
+      readonly args: Readonly<Record<string, string>>;
+      readonly options: Readonly<Record<string, unknown>>;
+    }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, description.command, async () => {
+          const decoded = await parseCliJsonInput(
+            args[description.key]!,
+            contract.name,
+            signal,
+          );
+          if (!decoded.ok) return decoded.error;
+          return run(
+            resolveCliJsonPaths(decoded.value, description.callerPaths),
+            {
+              signal,
+              operation: contract.name,
+              spelled: decoded.value,
+              cliOptions: description.cliOptionValues(
+                values,
+              ) as CliOptionValues<CliOptions>,
+            },
+          );
+        }),
+      ),
+  } as never);
+  const registered = documentDescriptions.get(cli) ?? [];
+  registered.push(description);
+  documentDescriptions.set(cli, registered);
 };

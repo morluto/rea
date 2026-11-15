@@ -363,7 +363,8 @@ const expectFridaSelectorGuidance = async (
     (tool) => tool.name === "list_frida_processes",
   );
   if (processTool === undefined) throw new Error("Missing Frida process tool");
-  expect(processTool.inputSchema.description).toMatch(
+  // Compact input guidance is part of the tool description.
+  expect(processTool.description).toMatch(
     /exactly one of device_id or remote/u,
   );
   expect(ajv.validateSchema(processTool.inputSchema)).toBe(true);

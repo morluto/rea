@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -89,12 +90,12 @@ const callTool = (request) =>
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: {
+  env: schemaVerifierEnvironment({
     ...environment,
     TMPDIR: childTempRoot,
     TMP: childTempRoot,
     TEMP: childTempRoot,
-  },
+  }),
   stderr: "pipe",
 });
 let cases = 0;

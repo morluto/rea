@@ -72,7 +72,10 @@ import {
   type ProcessStartTimeReader,
   verifyOwnedInferiorsEnded,
 } from "../process/ownedDebuggerSession.js";
-import { OwnedDebuggerSessionRegistry } from "../process/OwnedDebuggerSessionRegistry.js";
+import {
+  OwnedDebuggerSessionRegistry,
+  cancelledWithCallerReason,
+} from "../process/OwnedDebuggerSessionRegistry.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -132,29 +135,6 @@ const gdbRetainedOutputLimitations = (
         return `GDB emitted a stream record exceeding the ${String(limit.maximum)} byte MI line limit; that record was dropped. This release has no runtime override for that protocol limit; REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES does not raise it. Select a command that emits smaller records on the next call. Retained output is partial.`;
     }
   });
-
-const cancelledWithCallerReason = (
-  operation: string,
-  signal: AbortSignal,
-  previous?: AnalysisCancelledError,
-): AnalysisCancelledError => {
-  const cancellation = cancelledBy(operation, signal, {
-    cleanupPrimary: previous,
-    ...(previous?.diagnostics === undefined
-      ? {}
-      : { diagnostics: previous.diagnostics }),
-    ...(previous?.capturedOutput === undefined
-      ? {}
-      : { capturedOutput: previous.capturedOutput }),
-    ...(previous?.cleanup === undefined ? {} : { cleanup: previous.cleanup }),
-    ...(previous?.partialObservation === undefined
-      ? {}
-      : { partialObservation: previous.partialObservation }),
-  });
-  if (previous?.cleanupIncomplete)
-    cancellation.bindCleanupDependencies([previous]);
-  return cancellation;
-};
 
 interface PendingCommand {
   readonly token: number;
@@ -368,15 +348,6 @@ const gdbCloseUnavailable = (): AnalysisInputError =>
 /** Owns persistent GDB/MI sessions independently from the active binary target. */
 export class GdbSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<GdbSession>;
-  readonly #activeStarts = new Map<
-    AbortController,
-    Promise<
-      Result<
-        { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-        AnalysisError
-      >
-    >
-  >();
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #launchCommandDeadline: DebuggerAdmissionLimit;
@@ -509,35 +480,8 @@ export class GdbSessionManager {
             : "Persistent GDB sessions are available only on Linux because REA verifies live inferior output descriptors through /proc.",
         ),
       );
-    const controller = new AbortController();
-    let callerAbortWon = false;
-    const relayAbort = (): void => {
-      if (controller.signal.aborted) return;
-      callerAbortWon = true;
-      controller.abort(signal?.reason);
-    };
-    signal?.addEventListener("abort", relayAbort, { once: true });
-    if (signal?.aborted) relayAbort();
-    const tracked = Promise.resolve()
-      .then(() => this.#startWithReservation(controller.signal, options))
-      .finally(() => {
-        signal?.removeEventListener("abort", relayAbort);
-        this.#activeStarts.delete(controller);
-      });
-    this.#activeStarts.set(controller, tracked);
-    return tracked.then((result) =>
-      !result.ok &&
-      result.error instanceof AnalysisCancelledError &&
-      callerAbortWon &&
-      signal !== undefined
-        ? err(
-            cancelledWithCallerReason(
-              "start_gdb_session",
-              signal,
-              result.error,
-            ),
-          )
-        : result,
+    return this.#sessions.start("start_gdb_session", signal, (started) =>
+      this.#startWithReservation(started, options),
     );
   }
 
@@ -1416,10 +1360,7 @@ export class GdbSessionManager {
   }
 
   async #drainStartsAndCloseSessions(): Promise<void> {
-    const active = [...this.#activeStarts.entries()];
-    for (const [controller] of active)
-      controller.abort(OwnerCancellation.ownerClosed);
-    await Promise.allSettled(active.map(([, start]) => start));
+    await this.#sessions.abortStarts();
     await Promise.all(
       [...this.#sessions.values()].map((session) => session.commandTail),
     );
