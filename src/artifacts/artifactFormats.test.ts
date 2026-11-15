@@ -30,6 +30,7 @@ type FormatsWithReaders =
   | "unityfs"
   | "wxapkg"
   | "uimage"
+  | "android-ota-payload"
   | "mach-o-universal"
   | "directory"
   | "pyinstaller"

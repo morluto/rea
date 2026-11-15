@@ -539,6 +539,11 @@ export const documentationSections = [
         route: "/apk-signature",
       },
       {
+        text: "Android OTA update payloads",
+        source: "android-ota-payload.md",
+        route: "/android-ota-payload",
+      },
+      {
         text: "Apple IPS crash reports",
         source: "apple-ips.md",
         route: "/apple-ips",

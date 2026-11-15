@@ -91,6 +91,7 @@ const formatSchema = z.enum([
   "javascript",
   "source-map",
   "uimage",
+  "android-ota-payload",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 const subjectBaseSchema = z.object({

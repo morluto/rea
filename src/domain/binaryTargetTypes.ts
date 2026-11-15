@@ -313,6 +313,7 @@ export type BinaryTarget =
           | "unityfs"
           | "wxapkg"
           | "uimage"
+          | "android-ota-payload"
           | "dmg"
           | "pkg"
           | "intel-hex"
