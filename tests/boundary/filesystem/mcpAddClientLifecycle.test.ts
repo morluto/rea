@@ -70,13 +70,23 @@ it.each([
   async ({ agent, client }) => {
     const home = await createTestTempDirectory(`rea-mcp-add-${client}-`);
     const environment = {};
+    // Goose's system layer stays inside the temporary home.
+    const systemPaths = { gooseSystemConfig: join(home, "goose-system.yaml") };
     const resources = new ArtifactResourceScope();
     const selected = await resolveMcpRegistrationClients(
-      { agents: [agent], global: true, cwd: home, home, platform, environment },
+      {
+        agents: [agent],
+        global: true,
+        cwd: home,
+        home,
+        platform,
+        environment,
+        systemPaths,
+      },
       resources,
     );
     if (!selected.ok) throw selected.error;
-    const row = supportedClients(home, platform, environment).find(
+    const row = supportedClients(home, platform, environment, systemPaths).find(
       ({ name }) => name === client,
     );
     if (row === undefined) throw new Error(`${client} has no table row`);
@@ -102,6 +112,7 @@ it.each([
         await readClientRegistrationStatuses(home, command[1], {
           platform,
           environment,
+          systemPaths,
         })
       ).find((entry) => entry.client === client);
 
@@ -114,7 +125,9 @@ it.each([
     });
     // Update selects it, and setup refreshes it to the current launcher.
     await expect(
-      existingMaintenanceScope(home, command[1] ?? "", environment),
+      existingMaintenanceScope(home, command[1] ?? "", environment, {
+        systemPaths,
+      }),
     ).resolves.toMatchObject({ clients: [client] });
     await expect(
       inspectClientConfiguration(row, {}, command),
@@ -130,7 +143,7 @@ it.each([
     // Uninstall removes only REA's row and keeps the file.
     const uninstall = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, environment, platform),
+      systemUninstallHost(home, undefined, environment, platform, systemPaths),
     );
     expect(uninstall.items).toContainEqual(
       expect.objectContaining({ name: client, status: "removed" }),

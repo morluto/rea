@@ -140,12 +140,12 @@ const CATALOG_PROGRAM = `
       const posix = process.platform !== 'win32';
       const cwd = join(home, 'project');
       await mkdir(cwd);
-      const selection = { agents: [], global: true, home, cwd, platform: process.platform, environment: process.env };
+      // Goose's system layer stays inside HOME, so no test reads the host's file.
+      const selection = { agents: [], global: true, home, cwd, platform: process.platform, environment: process.env, systemPaths: { gooseSystemConfig: join(home, 'goose-system.yaml') } };
       const observe = async (changes = {}) => {
         const result = await resources.run(() => resolveMcpRegistrationClients({ ...selection, ...changes }, resources));
         if (!result.ok) return { ok: false, error: { tag: result.error._tag, message: result.error.message } };
-        // System layers (Goose's /etc file) are read-only; every writable path stays in HOME.
-        for (const client of result.value) for (const source of [client.configPath,...(client.setupClient?.readOnlyLowerLayers ? [] : client.configPaths ?? [])]) {
+        for (const client of result.value) for (const source of [client.configPath,...(client.configPaths ?? [])]) {
           const path = relative(home, source);
           if (path.startsWith('..') || isAbsolute(path)) throw Error('Catalog path escaped temporary HOME: ' + client.id);
         }
