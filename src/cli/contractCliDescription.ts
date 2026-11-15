@@ -104,6 +104,15 @@ export interface CliContractProjection<
    */
   readonly runtimeJson?: { readonly [Key in Field]?: string };
   /**
+   * Structured fields taken as inline JSON or a JSON file path (`-` reads
+   * stdin), for values that can exceed the host's command-line limit. The
+   * command reads and decodes each when it runs, with its refusal when inline
+   * text is not JSON; a file that cannot be read keeps its own failure. The
+   * decoded input is then admitted by the contract input, as for
+   * `runtimeJson`, before any target is opened.
+   */
+  readonly jsonInputs?: { readonly [Key in Field]?: string };
+  /**
    * Nullable limits whose null ("all remaining") is spelled by a bare flag,
    * keyed by contract field. The limit option takes only a value; the flag
    * and the limit are mutually exclusive.
@@ -444,6 +453,11 @@ export interface ContractCliParameter {
    * decoded when the command runs; undefined otherwise.
    */
   readonly runtimeJson: string | undefined;
+  /**
+   * The text may name a JSON file, which the command reads before the
+   * parameters are admitted, so `admit` receives the decoded value.
+   */
+  readonly jsonInput: boolean;
   /** The bare flag that sets this nullable field to null, if any. */
   readonly nullFlag: string | undefined;
   /** The member of the object field this option supplies, if flattened. */
@@ -1442,8 +1456,15 @@ export const describeContractCommand = <
   const jsonTextFields: ReadonlySet<string> = new Set(
     projection.jsonText ?? [],
   );
-  const runtimeJsonFields: Readonly<Record<string, string | undefined>> =
-    projection.runtimeJson ?? {};
+  const jsonInputFields: Readonly<Record<string, string | undefined>> =
+    projection.jsonInputs ?? {};
+  for (const field of Object.keys(jsonInputFields))
+    if (Object.hasOwn(projection.runtimeJson ?? {}, field))
+      throw new Error(`${contract.name}.${field} is JSON text and JSON input`);
+  const runtimeJsonFields: Readonly<Record<string, string | undefined>> = {
+    ...projection.runtimeJson,
+    ...jsonInputFields,
+  };
   const nullFlags: Readonly<Record<string, CliNullFlag | undefined>> =
     projection.nullFlags ?? {};
   const omitted: Readonly<Record<string, string>> = Object.fromEntries(
@@ -1489,6 +1510,7 @@ export const describeContractCommand = <
     const runtimeJson = viewSelection
       ? viewDelivery?.invalidJson
       : runtimeJsonFields[field];
+    const jsonInput = !viewSelection && Object.hasOwn(jsonInputFields, field);
     const nullFlag = nullFlags[field]?.key;
     const key = projected?.name ?? camelCase(field);
     let schema: z.ZodType;
@@ -1576,6 +1598,7 @@ export const describeContractCommand = <
       jsonText,
       viewSelection,
       runtimeJson,
+      jsonInput,
       nullFlag,
       member: undefined,
       selectorOption,
@@ -1619,6 +1642,7 @@ export const describeContractCommand = <
         jsonText: false,
         viewSelection: false,
         runtimeJson: undefined,
+        jsonInput: false,
         nullFlag: undefined,
         member,
         selectorOption: undefined,
@@ -1977,8 +2001,9 @@ const admitInvocation = (
 ): Result<ContractCliAdmission, AnalysisInputError> => {
   const { evidenceDelivery, viewDelivery, parameters, shape } = command;
   const decoded: Record<string, unknown> = { ...values };
-  for (const { key, runtimeJson } of parameters) {
-    if (runtimeJson === undefined) continue;
+  for (const { key, runtimeJson, jsonInput } of parameters) {
+    // The command read and decoded a JSON input before admission.
+    if (runtimeJson === undefined || jsonInput) continue;
     const parsed = parseCliJsonOption(
       contract.name,
       key,
