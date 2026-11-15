@@ -330,6 +330,19 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
+// MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
+// A bare `.abort()` leaves an anonymous platform AbortError as the cause.
+// Playwright's `route.abort(errorCode)` takes a network error code instead;
+// its call sites pass that code explicitly so the scan stays receiver-independent.
+checkCounted(
+  "AbortController.abort() without a reason (pass a CallerAbort or OwnerCancellation from src/domain/analysisErrorCore)",
+  "abort-without-reason",
+  files,
+  /\.abort\(\s*\)/gu,
+  [],
+);
+
 // GDB MI result records have one parser, src/gdb/GdbMiRecord.ts, which
 // returns typed records and typed failures. A regex over `\^done` accepts a
 // malformed record by its prefix.

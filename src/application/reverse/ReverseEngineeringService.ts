@@ -28,6 +28,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisOutputError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -322,7 +323,8 @@ export class ReverseEngineeringService {
 
   async #closeActiveOperationsAndCleanup(): Promise<void> {
     const active = [...this.#activeOperations.entries()];
-    for (const [controller] of active) controller.abort();
+    for (const [controller] of active)
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.allSettled(active.map(([, operation]) => operation));
 
     const cleanup = await this.retryCleanup();

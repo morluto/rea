@@ -111,7 +111,7 @@
     "src/browser/modules/NativeModuleResolver.ts": 3,
     "src/captures/TsharkCaptureProvider.ts": 2,
     "src/electron/ElectronFuseFailures.ts": 3,
-    "src/gdb/GdbSessionManager.ts": 14,
+    "src/gdb/GdbSessionManager.ts": 13,
     "src/inspector/JavaScriptRuntimeScope.ts": 1,
     "src/inspector/V8InspectorProvider.ts": 2,
     "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 5,
@@ -502,5 +502,6 @@
     "src/domain/apkSignature/apkV1SignatureBlock.ts": 1,
     "src/native/MachoArchitectureSelection.ts": 2,
     "src/native/NativeMachoInspection.ts": 1
-  }
+  },
+  "abort-without-reason": {}
 }
