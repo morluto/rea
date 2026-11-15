@@ -125,6 +125,7 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
@@ -1055,6 +1056,53 @@ it("restores an owned policy script after later setup fails", async () => {
       ([method]) => method === "Runtime.evaluate",
     ),
   ).toBe(true);
+  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+it("retires a child policy session that CDP reports gone during restoration", async () => {
+  const { cleanup } = fixture();
+  const session = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {},
+  );
+  mocks.policyEvent?.({
+    method: "Target.attachedToTarget",
+    params: { sessionId: "child-session", targetInfo: { type: "iframe" } },
+    sessionId: "policy-session",
+  });
+  await waitFor(() =>
+    expect(mocks.policySend).toHaveBeenCalledWith(
+      "Page.addScriptToEvaluateOnNewDocument",
+      expect.anything(),
+      "child-session",
+    ),
+  );
+  // The child detached without a delivered notice (for example while event
+  // delivery is stopped by a listener failure); CDP rejects its session.
+  mocks.policySend.mockImplementation(
+    async (method: string, _params: unknown, target: string) => {
+      if (target === "child-session")
+        throw new CdpCommandRejection(
+          "capture_browser_scenario",
+          method,
+          -32_001,
+          "Session with given id not found.",
+        );
+      return policyResponse(method);
+    },
+  );
+
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(mocks.policySend).toHaveBeenCalledWith(
+    "Page.removeScriptToEvaluateOnNewDocument",
+    { identifier: "owned-policy-script" },
+    "policy-session",
+  );
+  expect(mocks.policySend).toHaveBeenCalledWith("Target.detachFromTarget", {
+    sessionId: "policy-session",
+  });
   expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
