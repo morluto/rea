@@ -1,5 +1,6 @@
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
+import { Deadline } from "../domain/deadline.js";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
@@ -1811,7 +1812,7 @@ const waitForCommandFrames = async (
   signal?: AbortSignal,
 ): Promise<Result<RizinCommandCapture, RizinCommandInterruption>> => {
   const maxCommandOutputBytes = commandOutput.value;
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Deadline.after(timeoutMs);
   const output: string[] = [];
   let outputBytes = 0;
   let outputInvalidUtf8 = false;
@@ -1892,7 +1893,7 @@ const waitForCommandFrames = async (
         capture,
       });
     }
-    const remaining = deadline - Date.now();
+    const remaining = deadline.remainingMs();
     if (remaining <= 0)
       return err({
         kind: "timeout",

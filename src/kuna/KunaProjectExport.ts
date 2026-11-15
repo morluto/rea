@@ -16,6 +16,7 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { Deadline } from "../domain/deadline.js";
 import {
   AnalysisArtifactChangedError,
   cancelledBy,
@@ -274,7 +275,7 @@ export const exportKunaProject = async (
     configuration,
     request.deadline,
   );
-  const deadline = Date.now() + acceptedDeadline.ms;
+  const deadline = Deadline.after(acceptedDeadline.ms);
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
@@ -301,7 +302,7 @@ export const exportKunaProject = async (
       arguments: arguments_,
       workspace: request.workspace,
       operation: KUNA_EXPORT_OPERATION,
-      timeoutMs: deadline - Date.now(),
+      timeoutMs: deadline.remainingMs(),
       deadline: acceptedDeadline,
       outputBytes,
       signal,
