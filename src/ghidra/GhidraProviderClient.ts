@@ -157,7 +157,8 @@ import {
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   JVM_EXHAUSTION_DETAILS,
-  jvmExhaustionArea,
+  RUNTIME_EXHAUSTION_AREAS,
+  type RuntimeExhaustionArea,
 } from "../process/RuntimeExhaustion.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
@@ -1704,10 +1705,12 @@ const observedJvmFailureSchema = z.object({
   stream: z.enum(["stdout", "stderr"]),
   offset: z.number().int().nonnegative(),
   line: z.string().min(1),
+  area: z.enum(RUNTIME_EXHAUSTION_AREAS).optional(),
 });
 
 interface GhidraFailureOutputView {
-  readonly oomText: string | undefined;
+  /** Memory areas the supervisor parsed from each observed OOME line. */
+  readonly oomAreas: ReadonlySet<RuntimeExhaustionArea | undefined> | undefined;
   readonly complete: boolean | undefined;
   readonly text: readonly string[];
 }
@@ -1769,14 +1772,14 @@ const readGhidraFailureOutput = (
 ): GhidraFailureOutputView | undefined => {
   if (scoped === null || typeof scoped !== "object" || Array.isArray(scoped))
     return undefined;
-  const observedLines = Array.isArray(scoped.observed_oome)
+  const observedAreas = Array.isArray(scoped.observed_oome)
     ? scoped.observed_oome.flatMap((observed) => {
         const parsed = observedJvmFailureSchema.safeParse(observed);
-        return parsed.success ? [parsed.data.line] : [];
+        return parsed.success ? [parsed.data.area] : [];
       })
     : [];
   return {
-    oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
+    oomAreas: observedAreas.length === 0 ? undefined : new Set(observedAreas),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
     text: [scoped.stdout, scoped.stderr].flatMap((stream) =>
@@ -1803,9 +1806,8 @@ const projectObservedJvmMemoryFailure = (
   },
   scoped: GhidraFailureOutputView | undefined,
 ): AnalysisResourceConstraintError | undefined => {
-  const output = scoped?.oomText;
-  if (output === undefined) return undefined;
-  const areas = new Set(output.split("\n").map(jvmExhaustionArea));
+  const areas = scoped?.oomAreas;
+  if (areas === undefined) return undefined;
   const threadCapacity = areas.has("native-thread");
   const heapExhaustion = areas.has("heap") || areas.has("gc-overhead");
   const detail = JVM_EXHAUSTION_DETAILS.find(([, area]) =>

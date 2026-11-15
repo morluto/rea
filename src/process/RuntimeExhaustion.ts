@@ -15,13 +15,17 @@ export const RUNTIME_EXHAUSTION_TOKENS: Readonly<
   v8: "JavaScript heap out of memory",
 };
 
+/** The runtime memory areas a reported line can name. */
+export const RUNTIME_EXHAUSTION_AREAS = [
+  "heap",
+  "gc-overhead",
+  "metaspace",
+  "array-size",
+  "native-thread",
+] as const;
+
 /** Which runtime memory area the reported line names, when it names one. */
-export type RuntimeExhaustionArea =
-  | "heap"
-  | "gc-overhead"
-  | "metaspace"
-  | "array-size"
-  | "native-thread";
+export type RuntimeExhaustionArea = (typeof RUNTIME_EXHAUSTION_AREAS)[number];
 
 /** HotSpot's out-of-memory detail strings, in reporting precedence. */
 export const JVM_EXHAUSTION_DETAILS: readonly (readonly [
