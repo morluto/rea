@@ -56,6 +56,12 @@ import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparis
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
 import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
+import {
+  buildCallPathEvidence,
+  correlateStaticAndRuntimeEvidence,
+  findChangedBehaviorEvidence,
+  verifyReconstructionEvidence,
+} from "../application/investigation/InvestigationWorkflows.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -579,6 +585,35 @@ const SERVICE_TOOL_BINDINGS = {
       session,
       derive: (input, evidenceForAnalysis, signal) =>
         compareProcessEvidence(input, evidenceForAnalysis, { signal }),
+    },
+    // Investigation workflows validate their own raw request.
+    find_changed_behavior: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        findChangedBehaviorEvidence(input, { evidenceForAnalysis }, signal),
+    },
+    build_call_path: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        buildCallPathEvidence(input, { evidenceForAnalysis }, signal),
+    },
+    correlate_static_and_runtime: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        correlateStaticAndRuntimeEvidence(
+          input,
+          { evidenceForAnalysis },
+          signal,
+        ),
+    },
+    // Verification reads the session's immutable bundle as a whole.
+    verify_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input) => verifyReconstructionEvidence(input, session),
     },
   })) satisfies Bind<BinarySessionPort>,
   sessionStatus: ((options) => ({

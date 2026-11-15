@@ -34,7 +34,6 @@ import {
   flutterResultSchemas,
   type FlutterOperation,
 } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import {
   createFlutterApk as buildApk,
@@ -48,6 +47,7 @@ import {
   realRm,
 } from "../../fixtures/flutterCleanup.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();

@@ -12,9 +12,9 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   withArtifactTargetIdentity,
+  translateArtifactFailure,
 } from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   createAnalysisExecution,

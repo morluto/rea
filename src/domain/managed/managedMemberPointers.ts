@@ -1,12 +1,12 @@
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
 import type {
   ManagedMetadataLayout,
   MetadataTableLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 import {
   managedFailure,
   ManagedReaderFailure,
-} from "./ManagedReaderFailure.js";
+} from "./managedReaderFailure.js";
 
 type MemberTable = 4 | 6;
 type ListRowLookup = (definitionRow: number) => number;

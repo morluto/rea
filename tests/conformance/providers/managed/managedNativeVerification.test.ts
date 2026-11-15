@@ -4,12 +4,12 @@ import {
   fileSubjectArchitecture,
 } from "../../../fixtures/evidenceSubject.js";
 import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
-import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../../../src/domain/managed/managedPeReader.js";
 import { machoRuntimeSymbolName } from "../../../../src/domain/native/machoSymbolName.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "../../../../src/dotnet/ManagedMetadataLayout.js";
+} from "../../../../src/domain/managed/managedMetadataLayout.js";
 import { describe, expect, it } from "vitest";
 import {
   buildManagedPeFixture,
