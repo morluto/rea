@@ -422,8 +422,11 @@ checkCounted(
   ["src/native/metadata/BinaryContainer.ts"],
 );
 
+// An input fault is a ParseFailureError; a broken internal assumption is a
+// defect, not an input fault, and throws invariantViolation from
+// src/domain/internalInvariant so callers never read it as bad bytes.
 checkCounted(
-  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure)",
+  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
   parserFiles,
   /throw new (?:Error|TypeError|RangeError)\(/gu,
@@ -432,13 +435,32 @@ checkCounted(
 
 // A per-format failure class restates the ParseFailure algebra under its own
 // spelling and needs its own catch-site translation; parsers throw a
-// ParseFailureError (or a subclass of it) instead.
+// ParseFailureError instead. A subclass of ParseFailureError (such as
+// CaptureFormatError) keeps the shared kind and is not counted. The name
+// pattern covers format, parse, document, source, decode and syntax failures,
+// and any property-list or archive failure (such as a nesting limit or an
+// unsupported UID), built on any of the host's general error classes.
 checkCounted(
-  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "per-format failure class extending a host error (throw a ParseFailureError from src/domain/parseFailure)",
   "parser-format-failure-class",
   files,
-  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  /class (?:\w*(?:Format|Parse|Document|Source|Decode|Decoding|Encoding|Syntax)|\w*(?:Plist|PropertyList|Archive)\w*)(?:Failure|Error|Issue) extends (?:Error|TypeError|RangeError|SyntaxError)\b/gu,
   ["src/domain/parseFailure.ts"],
+);
+
+// Mach-O load-command codes have one table; a literal code in a load-command
+// reader restates it and drifts from the named command it means.
+checkCounted(
+  "literal Mach-O load-command code (use LC from src/domain/apple/machoLoadCommandCodes)",
+  "macho-load-command-literal",
+  files.filter((file) =>
+    /MachoLoadCommandCursor|readMachoLoadCommand|machoLoadCommandCodes/u.test(
+      file.content,
+    ),
+  ),
+  // An equality test, or membership in a literal list of codes.
+  /\b(?:frame\.command|command\.kind|command|cmd)\s*[!=]==\s*(?:0x[0-9a-fA-F]+|\d+)\b|\[\s*(?:0x[0-9a-fA-F]+|\d+)(?:\s*,\s*(?:0x[0-9a-fA-F]+|\d+))*\s*,?\s*\]\s*\.(?:includes|indexOf)\(\s*(?:\w+\.)*(?:command|cmd|kind)\s*\)/gu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
 );
 
 // JSON.parse keeps the last of repeated member names without saying so; a

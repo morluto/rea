@@ -146,14 +146,6 @@ export const selectMachoSlice = (
   };
 };
 
-/** A recognized Mach-O class outside this metadata reader's supported formats. */
-export class UnsupportedMachoMetadataFormatError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnsupportedMachoMetadataFormatError";
-  }
-}
-
 /** Parse segments/sections for a little-endian 64-bit Mach-O architecture slice. */
 export const parseMachoLayout = (
   bytes: Buffer,
@@ -196,8 +188,13 @@ export const parseMachoLayout = (
         "unsupported",
         "Unsupported big-endian Mach-O CPU type",
       );
-    throw new UnsupportedMachoMetadataFormatError(
+    throw new BinaryFormatFailure(
+      "unsupported",
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   }
   // A thin image has no FAT declaration to bind the requested CPU family.
@@ -207,8 +204,13 @@ export const parseMachoLayout = (
       `Mach-O CPU type does not match requested architecture ${architecture}`,
     );
   if (!table.wide)
-    throw new UnsupportedMachoMetadataFormatError(
+    throw new BinaryFormatFailure(
+      "unsupported",
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   const commandEnd = slice + table.headerSize + table.commandBytes;
   if (commandEnd > sliceEnd)
@@ -237,12 +239,12 @@ export const parseMachoLayout = (
       kind: frame.value.command,
       size: frame.value.size,
     };
-    if (command.kind === 1)
+    if (command.kind === LC.SEGMENT)
       throw malformedInput(
         "macho",
         "Mach-O segment command does not match the header width",
       );
-    if (command.kind === 0x19) collectSegment(bytes, command, state);
+    if (command.kind === LC.SEGMENT_64) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
   }
   const complete = framing.finish();
