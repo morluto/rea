@@ -1,11 +1,13 @@
-import { posix } from "node:path";
+import { posix, win32 } from "node:path";
 
 import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { snapshotEnvironment } from "./snapshotEnvironment.js";
 
-/** One file a POSIX launcher tries for a bare command, in search order. */
+/** One file a launcher tries for a bare command, in search order. */
 export interface PathSearchCandidate {
   /** The absolute file the launch would execute from this entry. */
   readonly path: string;
@@ -29,9 +31,10 @@ export type RelativePathEntries =
  * symbolic link. Each caller decides how a candidate is probed and how a
  * failed probe is reported; this owner fixes only the search order.
  * Candidates are produced on demand: stop iterating at the first match.
+ * Several names are tried in each entry before the next entry.
  */
 export function* posixPathCandidates(
-  command: string,
+  commands: string | readonly string[],
   searchPath: string,
   selection: RelativePathEntries,
 ): Generator<PathSearchCandidate, void, undefined> {
@@ -44,12 +47,103 @@ export function* posixPathCandidates(
       selection.relativeEntries === "resolve"
         ? selection.workingDirectory
         : undefined;
-    yield {
-      path: absoluteCallerPath(appendCallerPath(directory, command, "linux"), {
-        ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-        platform: "linux",
-      }),
-      relativeEntry,
-    };
+    for (const command of typeof commands === "string" ? [commands] : commands)
+      yield {
+        path: absoluteCallerPath(
+          appendCallerPath(directory, command, "linux"),
+          {
+            ...(workingDirectory === undefined
+              ? {}
+              : { cwd: workingDirectory }),
+            platform: "linux",
+          },
+        ),
+        relativeEntry,
+      };
   }
 }
+
+/**
+ * Windows PATH entries in order. A quoted entry may contain `;`; empty
+ * entries, `""` and entries with a stray quote name nothing and are skipped.
+ */
+const windowsPathEntries = (value: string): readonly string[] => {
+  const entries: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '"') quoted = !quoted;
+    else if (value[index] === ";" && !quoted) {
+      entries.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  entries.push(value.slice(start));
+  return entries.flatMap((entry) => {
+    if (entry === "") return [];
+    if (entry.startsWith('"') && entry.endsWith('"') && entry.length >= 2)
+      return entry.length === 2 ? [] : [entry.slice(1, -1)];
+    return entry.includes('"') ? [] : [entry];
+  });
+};
+
+/** Image extensions Windows starts directly; anything else needs a host such as cmd.exe. */
+const WINDOWS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".com", ".exe"]);
+
+/** A PATHEXT entry that is not a filename extension, so the search is unknown. */
+export interface WindowsPathSearchFailure {
+  readonly kind: "invalid_extension";
+  readonly extension: string;
+}
+
+/**
+ * The files Windows' PATH/PATHEXT search tries for bare commands, in order:
+ * for each PATH entry (relative ones resolve against `cwd`, read only when
+ * such a candidate is produced), each command with every PATHEXT extension,
+ * or as written when it already names an extension. Only `.com` and `.exe`
+ * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
+ * then be started through src/process/WindowsBatchCommand. An invalid
+ * PATHEXT entry fails a search that would append extensions; a command that
+ * names its extension never consults PATHEXT. Environment names match without
+ * case.
+ */
+export const windowsPathCandidates = (
+  commands: string | readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  search: { readonly cwd?: string; readonly allowBatch?: boolean } = {},
+): Result<Iterable<PathSearchCandidate>, WindowsPathSearchFailure> => {
+  const selected = snapshotEnvironment(environment, "win32");
+  const listed = typeof commands === "string" ? [commands] : commands;
+  const extensions = (selected.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .filter((extension) => extension !== "");
+  const invalid = listed.every((command) => win32.extname(command) !== "")
+    ? undefined
+    : extensions.find(
+        (extension) =>
+          !extension.startsWith(".") || /[\\/:\0]/u.test(extension),
+      );
+  if (invalid !== undefined)
+    return err({ kind: "invalid_extension", extension: invalid });
+  const runnable = (extension: string) =>
+    search.allowBatch === true ||
+    WINDOWS_IMAGE_EXTENSIONS.has(extension.toLowerCase());
+  const names = listed.flatMap((command) => {
+    const explicit = win32.extname(command);
+    if (explicit !== "") return runnable(explicit) ? [command] : [];
+    return extensions
+      .filter(runnable)
+      .map((extension) => `${command}${extension}`);
+  });
+  const entries = windowsPathEntries(selected.PATH ?? "");
+  return ok({
+    *[Symbol.iterator]() {
+      for (const directory of entries)
+        for (const name of names)
+          yield {
+            path: win32.resolve(search.cwd ?? process.cwd(), directory, name),
+            relativeEntry: !win32.isAbsolute(directory),
+          };
+    },
+  });
+};

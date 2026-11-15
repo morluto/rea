@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { win32 } from "node:path";
-import { windowsPathEntries } from "../process/WindowsExecutable.js";
+import { windowsPathCandidates } from "../process/executableSearch.js";
 
 export interface WindowsExecutableLookup {
   /** Windows-formatted working directory; defaults to the process CWD. */
@@ -33,27 +33,11 @@ export const resolveWindowsProviderExecutable = (
   )
     return absolute(executable);
 
-  const pathValue = environment.PATH ?? environment.Path ?? environment.path;
-  if (pathValue === undefined) return executable;
-  const pathEntries = windowsPathEntries(pathValue);
-  const explicitExtension = win32.extname(executable).toLowerCase();
-  if (explicitExtension !== "" && ![".com", ".exe"].includes(explicitExtension))
-    return executable;
-  const extensions =
-    explicitExtension !== ""
-      ? [""]
-      : (environment.PATHEXT ?? environment.PathExt ?? ".COM;.EXE")
-          .split(";")
-          .filter((extension) =>
-            [".com", ".exe"].includes(extension.toLowerCase()),
-          );
-
-  for (const entry of pathEntries) {
-    if (entry.length === 0) continue;
-    for (const extension of extensions) {
-      const candidate = absolute(entry, `${executable}${extension}`);
-      if ((lookup.isFile ?? isRegularFile)(candidate)) return candidate;
-    }
-  }
+  const candidates = windowsPathCandidates(executable, environment, { cwd });
+  // An unresolved name, or a search an invalid PATHEXT leaves unknown, keeps
+  // the bare name as before.
+  if (candidates.ok)
+    for (const { path } of candidates.value)
+      if ((lookup.isFile ?? isRegularFile)(path)) return path;
   return executable;
 };

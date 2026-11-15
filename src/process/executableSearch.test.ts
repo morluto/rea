@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { posixPathCandidates } from "./executableSearch.js";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+} from "./executableSearch.js";
 
 describe("posixPathCandidates", () => {
   it("searches PATH in order, resolving empty and relative entries against the working directory", () => {
@@ -52,5 +55,83 @@ describe("posixPathCandidates", () => {
     } finally {
       cwd.mockRestore();
     }
+  });
+
+  it("tries every name in an entry before the next entry", () => {
+    expect([
+      ...posixPathCandidates(["ghidra", "ghidraRun"], "/a:/b", {
+        relativeEntries: "skip",
+      }),
+    ]).toEqual([
+      { path: "/a/ghidra", relativeEntry: false },
+      { path: "/a/ghidraRun", relativeEntry: false },
+      { path: "/b/ghidra", relativeEntry: false },
+      { path: "/b/ghidraRun", relativeEntry: false },
+    ]);
+  });
+});
+
+describe("windowsPathCandidates", () => {
+  const paths = (
+    ...input: Parameters<typeof windowsPathCandidates>
+  ): readonly string[] => {
+    const search = windowsPathCandidates(...input);
+    if (!search.ok) throw new Error(search.error.extension);
+    return [...search.value].map(({ path }) => path);
+  };
+
+  it("searches quoted, relative and case-insensitive PATH entries with image PATHEXT extensions", () => {
+    expect(
+      paths(
+        "rizin",
+        {
+          Path: '"C:\\Program Files\\a;b";.\\bin;;"";bad"quote',
+          PathExt: ".CMD;.EXE;.COM",
+        },
+        { cwd: "D:\\work" },
+      ),
+    ).toEqual([
+      "C:\\Program Files\\a;b\\rizin.EXE",
+      "C:\\Program Files\\a;b\\rizin.COM",
+      "D:\\work\\bin\\rizin.EXE",
+      "D:\\work\\bin\\rizin.COM",
+    ]);
+  });
+
+  it("includes batch launchers only when the caller can start them through cmd.exe", () => {
+    const environment = { PATH: "C:\\tools", PATHEXT: ".BAT;.EXE" };
+    expect(paths("apktool", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\tools\\apktool.EXE",
+    ]);
+    expect(
+      paths("apktool", environment, { cwd: "C:\\", allowBatch: true }),
+    ).toEqual(["C:\\tools\\apktool.BAT", "C:\\tools\\apktool.EXE"]);
+    expect(paths("npm.cmd", environment, { cwd: "C:\\" })).toEqual([]);
+  });
+
+  it("tries every launcher name in an entry before the next entry", () => {
+    expect(
+      paths(
+        ["ghidra.bat", "ghidra.exe"],
+        { PATH: "C:\\a;C:\\b" },
+        { allowBatch: true, cwd: "C:\\" },
+      ),
+    ).toEqual([
+      "C:\\a\\ghidra.bat",
+      "C:\\a\\ghidra.exe",
+      "C:\\b\\ghidra.bat",
+      "C:\\b\\ghidra.exe",
+    ]);
+  });
+
+  it("fails a search that would append an invalid PATHEXT entry, but not one with a named extension", () => {
+    const environment = { PATH: "C:\\jdk\\bin", PATHEXT: ".EXE;C:\\bad" };
+    expect(windowsPathCandidates("java", environment)).toEqual({
+      ok: false,
+      error: { kind: "invalid_extension", extension: "C:\\bad" },
+    });
+    expect(paths("java.exe", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\jdk\\bin\\java.exe",
+    ]);
   });
 });
