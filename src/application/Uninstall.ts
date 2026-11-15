@@ -73,6 +73,7 @@ import {
   manualRegistrationRemediation,
   registrationWriteBlocker,
   supportedClients,
+  type ClientSystemPaths,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -509,6 +510,7 @@ export const systemUninstallHost = (
   selectedFileSystem: UninstallFileSystem | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   platform: NodeJS.Platform = process.platform,
+  systemPaths: ClientSystemPaths = {},
 ): UninstallHost => {
   const home =
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
@@ -528,7 +530,12 @@ export const systemUninstallHost = (
     redirectedWriteBlocker(redirection, [path], "uninstall");
   return {
     clients: async () => {
-      const supported = supportedClients(home, platform, environment);
+      const supported = supportedClients(
+        home,
+        platform,
+        environment,
+        systemPaths,
+      );
       redirection = appDataRedirection(supported);
       // Shared configuration alone cannot establish product applicability.
       // Definitive absence leaves the shared paths unverified while owned
@@ -726,6 +733,7 @@ export const systemUninstallHost = (
               fileSystem,
               resources,
               ownershipEstablished,
+              "read_only",
             );
             if (layer.kind === "item") {
               if (layer.item.status !== "skipped") return layer.item;
@@ -915,6 +923,11 @@ const readClientConfiguration = async (
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
   ownershipEstablished: boolean,
+  /**
+   * `read_only` is a lower layer REA never changes: it is read where the
+   * client reads it, without the write target's ownership check.
+   */
+  access: "write_target" | "read_only" = "write_target",
 ): Promise<ClientConfigurationRead> => {
   const applicabilityUnverified =
     client.applicability === "unverified" && !ownershipEstablished;
@@ -940,7 +953,10 @@ const readClientConfiguration = async (
           "This client has no documented local MCP configuration boundary.",
       ),
     );
-  const resolved = await resolveUninstallConfigPath(client, fileSystem);
+  const resolved =
+    access === "read_only"
+      ? client.configPath
+      : await resolveUninstallConfigPath(client, fileSystem);
   if (typeof resolved !== "string")
     return resolved.status === "failed"
       ? configurationFailure(resolved.detail)

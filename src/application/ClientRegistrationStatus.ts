@@ -30,7 +30,7 @@ import {
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
-import type { SetupClient } from "./SupportedClients.js";
+import type { ClientSystemPaths, SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import {
@@ -101,6 +101,7 @@ export type UnhealthyClientRegistrationStatus = Exclude<
 interface ClientRegistrationReadOptions {
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly systemPaths?: ClientSystemPaths;
   readonly resources?: ArtifactResourceScope;
   readonly selectedClientIds?: readonly string[];
   /**
@@ -159,6 +160,7 @@ export const readClientRegistrationInspections = async (
     home,
     options.platform,
     options.environment,
+    options.systemPaths,
   )) {
     const selected = options.selectedClientIds?.includes(client.name) === true;
     // An unresolved location leaves this client's registration unknown, never
