@@ -900,10 +900,45 @@ it.skipIf(platform === "win32")(
       status: "failed",
       items: expect.arrayContaining([retained]),
     });
+    // A partial user entry inherits REA's launcher from the lower layer.
+    await writeFile(
+      row.configPath,
+      "extensions:\n  rea:\n    envs:\n      KEEP: '1'\n",
+    );
+    await expect(uninstall()).resolves.toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([retained]),
+    });
     expect(await readFile(team, "utf8")).toContain("rea:");
     // A disabled lower entry is not loaded, so nothing is retained.
+    await writeFile(row.configPath, "extensions: {}\n");
     await writeFile(team, "extensions:\n  rea:\n    enabled: false\n");
     await expect(uninstall()).resolves.toMatchObject({ status: "complete" });
+  },
+);
+
+it.skipIf(platform === "win32")(
+  "stops uninstall before any removal when a lower Goose layer is unreadable",
+  async () => {
+    const { home, team, environment, systemPaths } = await gooseFixture(
+      "rea-goose-lower-unreadable-",
+    );
+    await writeFile(team, "extensions: [\n");
+    const codex = join(home, ".codex", "config.toml");
+    await mkdir(dirname(codex), { recursive: true });
+    const registration = `[mcp_servers.rea]\ncommand = ${JSON.stringify(command[0])}\nargs = ${JSON.stringify(command.slice(1))}\n`;
+    await writeFile(codex, registration);
+    const uninstall = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, environment, platform, systemPaths),
+    );
+    expect(uninstall).toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "goose", status: "failed" }),
+      ]),
+    });
+    expect(await readFile(codex, "utf8")).toBe(registration);
   },
 );
 
