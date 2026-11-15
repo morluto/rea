@@ -9,7 +9,11 @@ import {
   cdpDiscoveryTimeoutRecovery,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
@@ -18,7 +22,7 @@ import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpConnection } from "./CdpConnection.js";
-import { recordValue } from "./CdpCaptureValues.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 import {
   parseCdpDiscoveryTargets,
   type CdpDiscoveryTarget,
@@ -65,14 +69,6 @@ interface CdpDiscoveryResponseLimits {
   readonly bytes: number;
   readonly timeoutMs: number;
 }
-
-const browserSocketVersionSchema = z.object({
-  protocolVersion: z.string().min(1),
-  product: z.string().min(1),
-  revision: z.string(),
-  userAgent: z.string(),
-  jsVersion: z.string(),
-});
 
 /** Validated direct CDP WebSocket bound to one discovered page target. */
 interface CdpPageWebSocketEndpoint {
@@ -202,7 +198,7 @@ export const withCdpDiscoveryDeadline = async <T>(
   } catch (cause: unknown) {
     if (cause === abortReason) {
       if (abortSource === "caller")
-        throw new AnalysisCancelledError(operation, { cause: abortReason });
+        throw cancelledBy(operation, carriedReason(abortReason));
       if (abortSource === "deadline")
         throw discoveryTimeout(operation, timeoutMs, "browser-socket");
     }
@@ -234,25 +230,16 @@ export const discoverCdpBrowserSocket = async (
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<CdpEndpointDiscovery> => {
-  const versionInput = await connection.send(
-    "Browser.getVersion",
-    {},
-    undefined,
-    signal,
+  const version = await discoveryReply(
+    connection.send("Browser.getVersion", {}, undefined, signal),
+    operation,
   );
-  const targetsInput = await connection.send(
-    "Target.getTargets",
-    {},
-    undefined,
-    signal,
-  );
-  const version = parseCdpEndpointValue(
-    browserSocketVersionSchema,
-    versionInput,
+  const { targetInfos } = await discoveryReply(
+    connection.send("Target.getTargets", {}, undefined, signal),
     operation,
   );
   const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
-    recordValue(targetsInput)?.targetInfos,
+    targetInfos,
     operation,
     "browser-socket",
   );
@@ -275,6 +262,25 @@ export const discoverCdpBrowserSocket = async (
       attached: target.attached,
     })),
   };
+};
+
+/**
+ * Discovery answers the same question over HTTP and over a browser socket, so
+ * a malformed discovery reply is an invalid endpoint response on both paths.
+ */
+const discoveryReply = async <Reply>(
+  reply: Promise<Reply>,
+  operation: BrowserObservationOperation,
+): Promise<Reply> => {
+  try {
+    return await reply;
+  } catch (cause: unknown) {
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    throw new BrowserObservationError(operation, "invalid_endpoint_response", {
+      cause,
+      ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+    });
+  }
 };
 
 const sanitizeTargetTitle = (value: string, targetUrl: string): string => {
@@ -463,7 +469,7 @@ export const readCdpJson = async (
 ): Promise<unknown> =>
   await new Promise((resolve, reject) => {
     if (signal?.aborted === true) {
-      reject(new AnalysisCancelledError(operation, { cause: signal.reason }));
+      reject(cancelledBy(operation, signal));
       return;
     }
     let response: IncomingMessage | undefined;
@@ -484,8 +490,7 @@ export const readCdpJson = async (
       } else resolve(value);
     };
     const onAbort = (): void => {
-      if (signal?.aborted === true)
-        finish(new AnalysisCancelledError(operation, { cause: signal.reason }));
+      if (signal?.aborted === true) finish(cancelledBy(operation, signal));
     };
     request_ = request(
       url,
@@ -583,8 +588,7 @@ const endpointFailure = (
   signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) return cancelledBy(operation, signal);
   return new BrowserObservationError(operation, "endpoint_unreachable", {
     cause,
   });

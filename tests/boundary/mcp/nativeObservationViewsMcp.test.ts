@@ -26,7 +26,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
     );
     const call = async (name: string, input: Record<string, unknown>) => {
       const tool = definitions.get(name);
-      if (!tool?.outputSchema) throw new Error("Missing named contract");
+      if (tool === undefined) throw new Error("Missing named contract");
       const result = await harness.mcp.callTool(
         { name, arguments: input },
         { toolDefinition: tool },

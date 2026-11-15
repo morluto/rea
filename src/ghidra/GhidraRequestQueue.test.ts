@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 import {
   bindGhidraSessionFailure,
   GhidraSessionError,
@@ -491,13 +492,13 @@ it.each([
       throw new Error("Expected both cleanup owners");
     const aggregate = result.error.cleanupFailure;
     expect(aggregate.cleanupIncomplete).toBe(true);
-    const owners =
+    const [first, second] =
       order === "execution-first"
         ? [executionCleanup, cancellationCleanup]
         : [cancellationCleanup, executionCleanup];
-    owners[0]?.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(aggregate.cleanupIncomplete).toBe(true);
-    owners[1]?.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(aggregate.cleanupIncomplete).toBe(false);
   },
 );

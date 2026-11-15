@@ -32,12 +32,11 @@ const query = (
   return result.value;
 };
 
-it.each([undefined, null, "https://example.test"])(
-  "preserves historical omitted and explicit target origins: %s",
+it.each([null, "https://example.test"])(
+  "projects the recorded target origin: %s",
   (origin) => {
     const report = sampleWebBundleAnalysis();
-    if (origin === undefined) delete report.capture.target_origin;
-    else report.capture.target_origin = origin;
+    report.capture.target_origin = origin;
     const parent = makeParent(report);
     for (const selection of [
       { kind: "summary" },
@@ -45,20 +44,23 @@ it.each([undefined, null, "https://example.test"])(
       { kind: "web-bundle", collection: "endpoints", fields: ["value"] },
     ]) {
       const view = query(parent, selection);
-      if (origin === undefined)
-        expect(view).not.toHaveProperty("target_origin");
-      else expect(view).toHaveProperty("target_origin", origin);
+      expect(view).toHaveProperty("target_origin", origin);
       if (
         view.kind === "summary" ||
         (view.kind === "web-bundle" && view.summary !== null)
-      ) {
-        if (origin === undefined)
-          expect(view.summary).not.toHaveProperty("target_origin");
-        else expect(view.summary).toHaveProperty("target_origin", origin);
-      }
+      )
+        expect(view.summary).toHaveProperty("target_origin", origin);
     }
   },
 );
+
+it("refuses a web-bundle report without its target origin", () => {
+  const report = sampleWebBundleAnalysis();
+  Reflect.deleteProperty(report.capture, "target_origin");
+  expect(() =>
+    query(makeParent(report), { kind: "web-bundle", collection: "summary" }),
+  ).toThrow(AnalysisInputError);
+});
 
 it("counts the distinct full parent/report limitation union before bounding", () => {
   const base = makeParent({

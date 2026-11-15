@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
@@ -473,9 +474,10 @@ describe("enhanced MCP batches", () => {
       },
     );
     const { tools } = await client.listTools();
-    expect(
-      tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
-    ).toMatchObject({
+    expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
+    // The budget is a canonical input constraint; the server enforces it
+    // whatever the compact advertisement retains.
+    expect(canonicalInputSchema("batch_decompile")).toMatchObject({
       properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
     });
 
@@ -589,12 +591,12 @@ describe("enhanced MCP batches", () => {
             category: "execution_failure",
             details: { operation: "decompile", reason: "failed" },
             message: expect.stringMatching(
-              /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+              /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
             ),
             retryable: false,
             remediation: {
               action: expect.stringMatching(
-                /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+                /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
               ),
             },
           },

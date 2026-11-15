@@ -4,6 +4,7 @@ import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok, type Result } from "../result.js";
+import { distinctItems } from "../schemaConstraints.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { ownedView, type AdmittedView } from "./analysisViewShape.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
@@ -19,13 +20,10 @@ import {
   type ScenarioResponseBodyRetention,
 } from "./scenarioCaptureRecords.js";
 /** Opt-in template rules, each listed at most once; shared by every view that groups tools. */
-export const templateRulesSchema = z
-  .array(z.enum(TEMPLATE_RULES))
-  .refine((rules) => new Set(rules).size === rules.length, {
-    message: "template_rules must not repeat a rule",
-  })
-  .meta({ uniqueItems: true })
-  .default([]);
+export const templateRulesSchema = distinctItems(
+  z.array(z.enum(TEMPLATE_RULES)),
+  "template_rules must not repeat a rule",
+).default([]);
 
 export const environmentManifestViewRequestSchema = z.strictObject({
   kind: z.literal("environment-manifest"),

@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -165,8 +166,10 @@ describe("chained import names", () => {
   it("rejects a malformed import table", () => {
     const data = chainedData(1);
     data.writeUInt32LE(4, 20);
-    expect(() => chainedImportNames(data)).toThrow(RangeError);
-    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(RangeError);
+    expect(() => chainedImportNames(data)).toThrow(ParseFailureError);
+    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(
+      ParseFailureError,
+    );
   });
 });
 
@@ -474,6 +477,36 @@ const legacyRebaseInput = (stream: Buffer) => {
     ),
   };
 };
+
+it("charges a padded rebase operand that exhausts the work budget", () => {
+  // Work is bounded by twice the source bytes (0x20000). Each padded
+  // SET_SEGMENT_AND_OFFSET_ULEB stream charges ~51 KiB, so the third exhausts
+  // the budget and a later valid stream must not run on uncharged work.
+  const data = Buffer.alloc(0x10000);
+  const padding = 0xc800;
+  const padded = Buffer.concat([
+    Buffer.from([0x11, 0x20]),
+    Buffer.alloc(padding, 0x80),
+    Buffer.from([0, 0]),
+  ]);
+  padded.copy(data, 0x2000);
+  const valid = Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0]);
+  valid.copy(data, 0xf000);
+  const stream = { offset: 0x2000, size: padded.length };
+  const fixups = parsePointerFixups(
+    data,
+    {
+      chained: null,
+      binds: [],
+      rebases: [stream, stream, stream, { offset: 0xf000, size: valid.length }],
+      dylibs: [],
+    },
+    [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
+    BASE,
+  );
+  expect(fixups).toMatchObject({ examined: 4, decoded: 2 });
+  expect(fixups.issues).toHaveLength(2);
+});
 
 it("marks only opcode-selected pointer slots rebased, including target zero", () => {
   // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,

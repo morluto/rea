@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -41,11 +42,11 @@ const facts = async (
   const matches = (await harness.client.listTools()).tools.filter(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (matches.length !== 1 || matches[0]?.outputSchema === undefined)
-    throw new Error("Expected one advertised analysis-view output schema");
+  if (matches.length !== 1 || matches[0] === undefined)
+    throw new Error("Expected one advertised analysis-view definition");
   const wire = await harness.client.callTool(
     { name: "inspect_analysis_view", arguments: { source, view } },
-    { toolDefinition: matches[0] },
+    { toolDefinition: withCanonicalOutputSchema(matches[0]) },
   );
   expect(wire.isError).not.toBe(true);
   const evidence = parseEvidence(wire.structuredContent);

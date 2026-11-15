@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -169,10 +170,14 @@ const writeBundleFiles = async (
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
     try {
-      tree = await SafeOutputTree.create(input.directory, process.platform, {
-        acceptExistingEmpty: input.exclusiveDestination !== true,
-        createParents: input.exclusiveDestination !== true,
-      });
+      tree = await SafeOutputTree.create(
+        input.directory,
+        HOST_PLATFORM.platform,
+        {
+          acceptExistingEmpty: input.exclusiveDestination !== true,
+          createParents: input.exclusiveDestination !== true,
+        },
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;

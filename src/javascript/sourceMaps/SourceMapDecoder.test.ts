@@ -16,6 +16,7 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../../../tests/fixtures/webSourceLocation.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const fixture = webSourceLocationFixture();
 const input = {
@@ -342,7 +343,7 @@ it("retains Darwin preparation cleanup ownership and cancellation through retry"
         close: async () => {
           if (!release) throw new Error("still held");
           await root.close();
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
         },
       },
     },

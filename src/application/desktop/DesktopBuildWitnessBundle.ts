@@ -6,8 +6,9 @@ import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
 import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
@@ -77,7 +78,7 @@ export const bundleTaskDifference = async (
         bundleFileBytes(),
         signal,
         false,
-        (reason) => new AnalysisCancelledError(CHECK, { cause: reason }),
+        (reason) => cancelledBy(CHECK, carriedReason(reason)),
       ),
     ),
   );

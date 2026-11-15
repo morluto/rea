@@ -1,10 +1,10 @@
 import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 import {
   readAuditableSection,
-  RustAuditableFormatFailure,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 
@@ -112,7 +112,7 @@ it("preserves historical cargo-auditable feature lists and rejects bad values", 
         },
       ],
     }),
-  ).toThrow(RustAuditableFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("reports dependency cycles and keeps an omitted format version unknown", () => {
@@ -163,7 +163,7 @@ it("rejects out-of-range indices, multiple roots, and schema drift", () => {
         { name: "a", version: "1", source: "local", dependencies: [2] },
       ],
     }),
-  ).toThrow(RustAuditableFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     section({
       packages: [
@@ -196,7 +196,7 @@ it("rejects invalid JSON, trailing zlib bytes, and an empty section", () => {
   );
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.from([1, 2, 3])),
-  ).toThrow(RustAuditableFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("rejects duplicate decoded JSON fields before object conversion", () => {
@@ -353,8 +353,11 @@ it.each([-1, 1.5, 0x1_0000_0000])(
   (format) => {
     expect(() => section({ format, packages: [] })).toThrow(
       expect.objectContaining({
-        name: "RustAuditableFormatFailure",
-        kind: "malformed",
+        name: "ParseFailureError",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          format: "rust-auditable",
+        }),
       }),
     );
   },

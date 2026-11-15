@@ -23,21 +23,27 @@ import {
   providerCleanupFailure,
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
-import {
-  isHopperCleanupRequired,
-  isHopperShutdownAcknowledgement,
-} from "./HopperSessionValues.js";
+import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
 
 interface CleanupIssue {
   readonly resource: string;
   readonly reason: string;
 }
 
+/** Exit evidence for an authenticated external application, when it applies. */
+type ExternalApplicationExitObservation =
+  | Awaited<ReturnType<typeof observeProcessStartIdentityExit>>
+  | undefined;
+
 interface CleanupState {
   readonly issues: CleanupIssue[];
   readonly resources: Set<string>;
   cleanupResult: ProcessCleanupResult | undefined;
   processStopped: boolean;
+  /** Why document shutdown was or was not confirmed by the bridge request. */
+  shutdownRequest: JsonValue | undefined;
+  /** The final external-application exit observation before retention. */
+  applicationExit: ExternalApplicationExitObservation;
 }
 
 /** Owned capabilities survive failed cleanup until their release is verified. */
@@ -77,6 +83,8 @@ export const cleanupHopperSession = async (
     resources: new Set(),
     cleanupResult: undefined,
     processStopped: input.resources.processSupervisor === undefined,
+    shutdownRequest: undefined,
+    applicationExit: undefined,
   };
   await confirmExternalApplicationExit(
     input.resources,
@@ -100,7 +108,7 @@ export const cleanupHopperSession = async (
     input.releaseTransport(input.socket);
   await stopProcess(input, state);
   // A late authenticated application may exit while shutdown is in flight.
-  await confirmExternalApplicationExit(
+  state.applicationExit = await confirmExternalApplicationExit(
     input.resources,
     input.socket,
     input.releaseTransport,
@@ -145,21 +153,23 @@ export const confirmExternalApplicationExit = async (
   socket: Socket | undefined,
   releaseTransport: (socket: Socket | undefined) => void,
   observeExit: typeof observeProcessStartIdentityExit = observeProcessStartIdentityExit,
-): Promise<void> => {
+): Promise<ExternalApplicationExitObservation> => {
   const application = resources.externalApplication;
   if (
     resources.shutdownConfirmed ||
     resources.launch?.providerLifetime !== "external-application" ||
     application?.identity.state !== "readable"
   )
-    return;
-  if (
-    (await observeExit(application.pid, application.identity.identity)) ===
-    "exited"
-  ) {
+    return undefined;
+  const observed = await observeExit(
+    application.pid,
+    application.identity.identity,
+  );
+  if (observed === "exited") {
     resources.shutdownConfirmed = true;
     releaseTransport(socket);
   }
+  return observed;
 };
 
 const requestShutdown = async (
@@ -172,6 +182,16 @@ const requestShutdown = async (
     input.socket.destroyed ||
     input.activeRequest !== null
   ) {
+    state.shutdownRequest = {
+      status: "not_sent",
+      reason: input.resources.shutdownConfirmed
+        ? "shutdown_already_confirmed"
+        : input.socket === undefined
+          ? "no_bridge_transport"
+          : input.socket.destroyed
+            ? "bridge_transport_closed"
+            : "bridge_operation_active",
+    };
     if (input.activeRequest !== null)
       input.logger.warn(
         {
@@ -191,22 +211,51 @@ const requestShutdown = async (
   const shutdown = await input
     .request(method)
     .catch((cause: unknown) => err(shutdownRequestFailure(method, cause)));
+  const outcome = shutdown.ok
+    ? parseHopperShutdownReply(method, shutdown.value)
+    : undefined;
+  let fallback: Result<JsonValue, HopperError> | undefined;
   if (
-    shutdown.ok &&
-    isHopperCleanupRequired(shutdown.value) &&
+    outcome?.ok === true &&
+    outcome.value === "cleanup_required" &&
     input.resources.launch?.shutdownMode === "process-cleanup"
   ) {
     state.cleanupResult = await input.resources.launch
       .cleanup()
       .catch(providerCleanupFailure);
     if (!state.cleanupResult.cleaned) {
-      input.resources.shutdownConfirmed = await fallbackDocumentShutdown(input);
+      fallback = await fallbackDocumentShutdown(input);
+      input.resources.shutdownConfirmed =
+        fallback.ok &&
+        isConfirmed(
+          parseHopperShutdownReply("shutdown_document", fallback.value),
+        );
     }
-  } else if (shutdown.ok) {
-    input.resources.shutdownConfirmed = isHopperShutdownAcknowledgement(
-      shutdown.value,
-    );
+  } else if (outcome !== undefined) {
+    input.resources.shutdownConfirmed = isConfirmed(outcome);
   }
+  state.shutdownRequest = {
+    method,
+    status: !shutdown.ok
+      ? "failed"
+      : input.resources.shutdownConfirmed
+        ? "confirmed"
+        : "unconfirmed",
+    ...(shutdown.ok ? {} : shutdownErrorDetails(shutdown.error)),
+    ...(fallback === undefined
+      ? {}
+      : {
+          fallback: {
+            method: "shutdown_document",
+            status: !fallback.ok
+              ? "failed"
+              : input.resources.shutdownConfirmed
+                ? "confirmed"
+                : "unconfirmed",
+            ...(fallback.ok ? {} : shutdownErrorDetails(fallback.error)),
+          },
+        }),
+  };
   if (
     !shutdown.ok ||
     (!input.resources.shutdownConfirmed && state.cleanupResult === undefined)
@@ -215,6 +264,7 @@ const requestShutdown = async (
       {
         status: shutdown.ok ? "invalid-acknowledgement" : "failed",
         ...(shutdown.ok ? {} : shutdownFailureDetails(shutdown.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown was not confirmed",
     );
@@ -222,24 +272,38 @@ const requestShutdown = async (
 
 const fallbackDocumentShutdown = async (
   input: HopperCleanupInput,
-): Promise<boolean> => {
+): Promise<Result<JsonValue, HopperError>> => {
   const fallback = await input
     .request("shutdown_document")
     .catch((cause: unknown) =>
       err(shutdownRequestFailure("shutdown_document", cause)),
     );
-  const confirmed =
-    fallback.ok && isHopperShutdownAcknowledgement(fallback.value);
-  if (!confirmed)
+  const outcome = fallback.ok
+    ? parseHopperShutdownReply("shutdown_document", fallback.value)
+    : undefined;
+  if (outcome === undefined || !isConfirmed(outcome))
     input.logger.warn(
       {
         status: fallback.ok ? "invalid-acknowledgement" : "failed",
         ...(fallback.ok ? {} : shutdownFailureDetails(fallback.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown fallback was not confirmed",
     );
-  return confirmed;
+  return fallback;
 };
+
+const isConfirmed = (
+  outcome: ReturnType<typeof parseHopperShutdownReply>,
+): boolean => outcome.ok && outcome.value === "confirmed";
+
+/** Name the fields of a reply outside the shutdown contract. */
+const replyContractDetails = (
+  outcome: ReturnType<typeof parseHopperShutdownReply> | undefined,
+): Record<string, JsonValue> =>
+  outcome === undefined || outcome.ok
+    ? {}
+    : { reply_contract: outcome.error.diagnostics ?? null };
 
 const shutdownRequestFailure = (
   operation: "shutdown" | "shutdown_document",
@@ -247,6 +311,16 @@ const shutdownRequestFailure = (
 ): HopperProcessError => {
   return new HopperProcessError(null, { operation, cause });
 };
+
+/** Name the shutdown failure in retained-cleanup details without its cause text. */
+const shutdownErrorDetails = (
+  error: HopperError,
+): Record<string, JsonValue> => ({
+  error_tag: error._tag,
+  ...(error instanceof HopperProcessError
+    ? { provider_state: error.providerState }
+    : {}),
+});
 
 const shutdownFailureDetails = (
   error: HopperError,
@@ -402,6 +476,12 @@ const cleanupOutcome = (
                 input.resources.externalApplication === undefined
                   ? "not_observed"
                   : input.resources.externalApplication.identity.state,
+              ...(state.shutdownRequest === undefined
+                ? {}
+                : { shutdown_request: state.shutdownRequest }),
+              ...(state.applicationExit === undefined
+                ? {}
+                : { application_exit: state.applicationExit }),
             }
           : {}),
       },

@@ -1,6 +1,7 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { ClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   clientConfigurationValuesEqual,
   clientServerPath,
@@ -18,9 +19,13 @@ import {
   readConfigurationFile,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+
+// `rea mcp add` writes and verifies this host's client files.
+const { platform } = HOST_PLATFORM;
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
@@ -52,6 +57,7 @@ export const prepareRegistration = async (
   const targetIndex = paths.lastIndexOf(client.configPath);
   const inherited = mergeClientConfigurationDocuments(
     layers.slice(0, targetIndex),
+    platform,
   );
   const desired = replaceClientRegistrationLauncher(
     { dialect: parsed.dialect, profile: client.registrationProfile },
@@ -62,12 +68,28 @@ export const prepareRegistration = async (
       : effectiveClientServer(inherited, PRODUCT_IDENTITY.mcpServerKey),
   );
   if (!desired.ok) throw desired.error;
+  // The client's own settings policy can exclude or override this entry.
+  if (client.setupClient !== undefined) {
+    const policy = await readClientPolicyBlock(
+      client.setupClient,
+      parsed,
+      desired.value,
+    );
+    if (!policy.ok)
+      throw (
+        policy.error.cleanupFailure ??
+        new ConfigurationError(policy.error.detail)
+      );
+    if (policy.value !== undefined)
+      throw new ConfigurationError(`${policy.value} No settings were written.`);
+  }
   const updated = withClientServers(
     parsed,
     {
       ...parsed.servers,
       [PRODUCT_IDENTITY.mcpServerKey]: desired.value,
     },
+    platform,
     PRODUCT_IDENTITY.mcpServerKey,
   );
   const legacy = legacyClientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey);
@@ -146,7 +168,7 @@ const assertEffectiveLauncher = (
   layers: readonly ClientConfigurationDocument[],
   launcher: ClientRegistrationCommand,
 ): void => {
-  const effective = mergeClientConfigurationDocuments(layers);
+  const effective = mergeClientConfigurationDocuments(layers, platform);
   const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined

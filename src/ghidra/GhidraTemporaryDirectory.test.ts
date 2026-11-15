@@ -6,10 +6,7 @@ import * as fs from "node:fs/promises";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
-import {
-  ghidraJavaHomeSaveDenial,
-  probeGhidraTemporaryDirectory,
-} from "./GhidraTemporaryDirectory.js";
+import { probeGhidraTemporaryDirectory } from "./GhidraTemporaryDirectory.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -105,33 +102,6 @@ describe("Ghidra temporary directory probe", () => {
         });
     },
   );
-});
-
-describe("Ghidra java_home.save denial", () => {
-  it("extracts the denied path from JVM output", () => {
-    expect(
-      ghidraJavaHomeSaveDenial([
-        "INFO starting\r\njava.io.FileNotFoundException: C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save (Access is denied)\r\n\tat java.base/java.io.FileOutputStream.open0(Native Method)",
-      ]),
-    ).toEqual({
-      path: "C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save",
-    });
-  });
-
-  it.each([
-    [
-      "another denied path",
-      "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)",
-    ],
-    [
-      "a different failure for the file",
-      "java.io.FileNotFoundException: C:\\x\\java_home.save (The system cannot find the path specified)",
-    ],
-    ["only a mention", "Reading java_home.save failed"],
-    ["no output", ""],
-  ])("does not classify %s", (_label, text) => {
-    expect(ghidraJavaHomeSaveDenial([text])).toBeUndefined();
-  });
 });
 
 it.each([

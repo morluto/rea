@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve, isAbsolute } from "node:path";
-import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execute = promisify(execFile);
 const bin = process.env.REA_WABT_BIN_DIRECTORY;
 if (!isAbsolute(bin ?? ""))
   throw new Error("Supply absolute REA_WABT_BIN_DIRECTORY with WABT 1.0.42");
-const root = await mkdtemp(join(tmpdir(), "rea-wasm-interface-real-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-wasm-interface-real-",
+  private: false,
+});
+const root = rootFixture.path;
 const cli = resolve("scripts/rea.mjs");
 const environment = { ...process.env };
 const command = async (file, args) =>
@@ -85,7 +92,9 @@ const compare = async (left, right, scope = "both") => {
   assert.deepEqual(local, mcp);
   return mcp.normalized_result;
 };
-try {
+// The root is removed only after the MCP client confirms it closed.
+rootFixture.releaseAfter(() => client.close());
+await withVerifierFixture(rootFixture, async () => {
   assert.equal(
     (await command(join(bin, "wat2wasm"), ["--version"])).trim(),
     "1.0.42",
@@ -205,7 +214,4 @@ try {
       2,
     ),
   );
-} finally {
-  await client.close();
-  await rm(root, { recursive: true, force: true });
-}
+});
