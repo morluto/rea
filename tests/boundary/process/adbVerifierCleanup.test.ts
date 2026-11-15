@@ -37,12 +37,19 @@ const runVerifier = async (
     join(root, "scripts", "verify-adb.mjs"),
     await readFile(new URL("../../../scripts/verify-adb.mjs", import.meta.url)),
   );
-  await writeFile(
-    join(root, "scripts", "lib", "verifier-cleanup.mjs"),
-    await readFile(
-      new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url),
-    ),
-  );
+  // The verifier's cleanup and fixture owners, with the fixture's imports.
+  for (const helper of [
+    "verifier-cleanup.mjs",
+    "verifier-fixture.mjs",
+    "canonical-temporary-directory.mjs",
+    "verifier-source-loader.mjs",
+  ])
+    await writeFile(
+      join(root, "scripts", "lib", helper),
+      await readFile(
+        new URL(`../../../scripts/lib/${helper}`, import.meta.url),
+      ),
+    );
   // The simulated device directory stands in for /data/local/tmp; the fake
   // adb client records its argv and removes only the named probe.
   const device = join(root, "device");
