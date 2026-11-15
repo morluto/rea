@@ -2,7 +2,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  parseMcpJsonOrText,
+  decodeMcpTextReply,
 } from "../providers/McpToolResult.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -54,7 +54,11 @@ const toolResultSchema = mcpToolResultSchema.extend({
   content: mcpToolResultSchema.shape.content.default([]),
 });
 
-/** Decode a JEB MCP tool result without inventing an empty observation. */
+/**
+ * Decode a JEB MCP tool result without inventing an empty observation. Every
+ * JEB tool replies with a JSON envelope; only an error-marked reply may carry
+ * plain engine text, which is reported as the tool failure.
+ */
 export const decodeJebToolResult = (input: unknown): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -66,7 +70,13 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
       throw new AnalysisProtocolError(
         "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
       );
-    decoded = parseMcpJsonOrText(blocks[0]!);
+    const text = decodeMcpTextReply(blocks[0]!, "json");
+    if (!text.ok && result.isError !== true)
+      throw new AnalysisProtocolError("JEB MCP returned malformed JSON text", {
+        cause: text.error.cause,
+        diagnostics: { upstream_response: blocks[0]! },
+      });
+    decoded = text.ok ? text.value : blocks[0]!;
   }
   if (result.isError === true && !isJebFailureEnvelope(decoded))
     throw new AnalysisProtocolError(
