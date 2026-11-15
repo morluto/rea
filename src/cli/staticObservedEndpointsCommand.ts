@@ -10,8 +10,6 @@ import {
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
-import { parseAnalysisInput } from "../application/AnalysisInput.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 /** Reuse standard CLI publication so summaries keep their complete source closure on disk. */
 export const registerStaticObservedEndpointsCommand = (
@@ -38,14 +36,10 @@ export const registerStaticObservedEndpointsCommand = (
     async (document, { signal, operation, delivery, cliOptions, frame }) => {
       if (delivery === undefined)
         throw new Error(`${operation} declares evidenceDelivery`);
-      // Refuse a malformed document before reading the Evidence bundle.
-      const framed = parseAnalysisInput(operation, document, frame, signal);
-      if (!framed.ok) return projectAnalysisError(framed.error);
       let sources: readonly Evidence[] = [];
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup) => {
           const { compareStaticAndObservedEndpointsEvidence } =
             await import("../application/javascript/StaticObservedEndpointComparisonService.js");

@@ -246,11 +246,10 @@ const registerManagedWorkflowCommands = (
         document,
         cliOptions: { evidenceBundle: evidenceBundleOption },
       },
-      (input, { signal, operation, cliOptions }) =>
+      (input, { signal, operation, frame, cliOptions }) =>
         runEvidenceInputCommand(
-          operation,
-          cliOptions.evidenceBundle,
-          signal,
+          input,
+          { operation, signal, frame, cliOptions },
           (lookup) => Promise.resolve(workflow(input, lookup, signal)),
         ).then(projectCliAnalysisResult),
     );

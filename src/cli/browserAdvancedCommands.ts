@@ -1,7 +1,20 @@
-import { Cli, z } from "incur";
+import type { Cli, z } from "incur";
+import type { Logger } from "pino";
 
 import { browserCliError } from "./browserCliError.js";
-
+import {
+  browserTargetProjection,
+  observeThroughBrowser,
+} from "./browserContractCommands.js";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  commandRoute,
+  contractInputBranch,
+  registerContractCommand,
+  registerRoutedCommand,
+  type ContractCommandContext,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,
@@ -9,32 +22,13 @@ import {
   discoverWebMcpTools,
 } from "../application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
-import { logCliCommand } from "../cliLogging.js";
-import {
-  AnalysisInputError,
-  type AnalysisInputIssue,
-} from "../domain/analysisErrorCore.js";
-import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
-import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
-import { compareWebCapturesInputSchema } from "../domain/webCaptureDiffSchemas.js";
-import {
-  analysisInputErrorFromIssues,
-  projectInputIssues,
-} from "../domain/inputIssueProjection.js";
-
-import type { JsonValue } from "../domain/jsonValue.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
-import type { Logger } from "pino";
-
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-
-import { contractNamed } from "./contractCliDescription.js";
-import { registerContractCommand } from "./contractCommand.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import {
-  browserTargetProjection,
-  observeThroughBrowser,
-} from "./browserContractCommands.js";
+  isScenarioCaptureDocument,
+  type BrowserCaptureComparisonInput,
+} from "../domain/browserCaptureComparison.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
@@ -86,63 +80,94 @@ const registerCaptureDiff = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.compareWebCaptures, {
+  const contract = contractNamed(
+    BROWSER_TOOL_CONTRACTS,
+    "compare_web_captures",
+  );
+  const command = {
+    command: CLI_COMMANDS.compareWebCaptures,
     description:
       "Compare two normalized passive captures or recorded browser scenarios",
-    args: z.object({
-      beforeJson: z
-        .string()
-        .describe("Earlier normalized web capture JSON or JSON file path"),
-      afterJson: z
-        .string()
-        .describe("Later normalized web capture JSON or JSON file path"),
-    }),
-    options: z.object({
-      normalizationJson: z
-        .string()
-        .default('{"rules":[]}')
-        .describe(
-          "Recorded literal normalization policy JSON or JSON file path for browser scenarios",
-        ),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "compare-web-captures", async () => {
-        const inputs = await parseJsonArguments("compare_web_captures", {
-          before: args.beforeJson,
-          after: args.afterJson,
-          normalization: options.normalizationJson,
-        });
-        if (!inputs.ok) return inputs.error;
-        const { before, after, normalization } = inputs.value;
-        // Passive snapshots own the inspection wrapper. Otherwise recognize
-        // scenario-owned fields even when the scenario manifest is missing.
-        const scenarioInput = [before, after].some(
-          (capture) =>
-            typeof capture === "object" &&
-            capture !== null &&
-            !("inspection" in capture) &&
-            Object.keys(browserScenarioCaptureSchema.shape).some(
-              (field) => field in capture,
-            ),
-        );
-        const input = scenarioInput
-          ? { before_scenario: before, after_scenario: after, normalization }
-          : { before, after };
-        const parsed = scenarioInput
-          ? compareBrowserScenariosInputSchema.safeParse(input)
-          : compareWebCapturesInputSchema.safeParse(input);
-        if (!parsed.success)
-          return inputError(
-            "compare_web_captures",
-            projectInputIssues(parsed.error.issues, input),
-          );
-        const result = await compareWebCaptureEvidence(
-          new CdpBrowserProvider(),
-          parsed.data,
-        );
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
-  });
+  };
+  // Scenario captures embed screenshots that can exceed the host's
+  // command-line length limit, so each side may be a JSON file.
+  const beforeJson = "beforeJson must be inline JSON or a JSON file path";
+  const afterJson = "afterJson must be inline JSON or a JSON file path";
+  const before = {
+    name: "beforeJson",
+    description: "Earlier normalized web capture JSON or JSON file path",
+  };
+  const after = {
+    name: "afterJson",
+    description: "Later normalized web capture JSON or JSON file path",
+  };
+  const scenarios = contractInputBranch(contract, "before_scenario");
+  const passive = contractInputBranch(contract, "before");
+  registerRoutedCommand(cli as unknown as CliInstance, logger, command, [
+    commandRoute(
+      scenarios,
+      {
+        ...command,
+        positionals: ["before_scenario", "after_scenario"],
+        jsonInputs: {
+          before_scenario: beforeJson,
+          after_scenario: afterJson,
+          normalization:
+            "normalizationJson must be inline JSON or a JSON file path",
+        },
+        fields: {
+          before_scenario: before,
+          after_scenario: after,
+          normalization: {
+            name: "normalizationJson",
+            description:
+              "Recorded literal normalization policy JSON or JSON file path for browser scenarios",
+          },
+        },
+      },
+      compareCaptures,
+      {
+        takes: async (values) =>
+          isScenarioCaptureDocument(values.beforeJson) ||
+          isScenarioCaptureDocument(values.afterJson),
+        requirement: "recorded browser scenario captures",
+      },
+    ),
+    commandRoute(
+      passive,
+      {
+        ...command,
+        positionals: ["before", "after"],
+        jsonInputs: { before: beforeJson, after: afterJson },
+        fields: { before, after },
+      },
+      compareCaptures,
+      { requirement: "passive page captures" },
+    ),
+  ]);
+};
+
+/**
+ * Compare the captures one input shape admits. Admission parsed the decoded
+ * captures with that shape, so the handler reuses its parse.
+ */
+const compareCaptures = async (
+  _input: unknown,
+  {
+    operation,
+    parsed,
+  }: ContractCommandContext<
+    Readonly<Record<string, unknown>>,
+    BrowserCaptureComparisonInput
+  >,
+): Promise<unknown> => {
+  if (parsed === undefined)
+    throw new Error(`${operation} admits its decoded captures`);
+  const result = await compareWebCaptureEvidence(
+    new CdpBrowserProvider(),
+    parsed,
+  );
+  return result.ok ? result.value : browserCliError(result.error);
 };
 
 const registerScreenshotDiff = (
@@ -200,49 +225,3 @@ const registerScreenshotDiff = (
     },
   );
 };
-
-/**
- * Parse each named inline JSON argument or local JSON file, like other
- * JSON-input commands. Screenshot artifacts and scenario captures embed PNG
- * bytes that can exceed the host's command-line length limit.
- */
-const parseJsonArguments = async (
-  operation: string,
-  fields: Readonly<Record<string, string>>,
-): Promise<
-  | { readonly ok: true; readonly value: Readonly<Record<string, unknown>> }
-  | { readonly ok: false; readonly error: JsonValue }
-> => {
-  const values: Record<string, unknown> = {};
-  for (const [field, value] of Object.entries(fields)) {
-    const parsed = await parseCliJsonInput(value, operation);
-    if (!parsed.ok)
-      return isFileInputFailure(parsed.error)
-        ? parsed
-        : {
-            ok: false,
-            error: inputError(operation, [invalidJsonIssue(field)]),
-          };
-    values[field] = parsed.value;
-  }
-  return { ok: true, value: values };
-};
-
-/** File read and decode failures name the selected path; inline JSON does not. */
-const isFileInputFailure = (error: JsonValue): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  !Array.isArray(error) &&
-  "input_path" in error;
-
-const invalidJsonIssue = (field: string): AnalysisInputIssue => ({
-  path: [field],
-  reason: "invalid_format",
-  expected: "JSON",
-});
-
-const inputError = (
-  operation: string,
-  issues: readonly AnalysisInputIssue[] = [],
-): JsonValue =>
-  browserCliError(new AnalysisInputError(operation, undefined, issues));
