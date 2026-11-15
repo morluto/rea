@@ -158,6 +158,26 @@ export interface SourcePublicationRecovery {
   readonly completed: SourcePublicationCompletion;
 }
 
+/**
+ * Presentation an error's own module supplies. The shared presenter reads it
+ * before its tables, so it never needs the error's type: a provider error
+ * says what it means for callers where it is defined.
+ */
+export interface AnalysisErrorOwnPresentation {
+  /** The stable code before any cleanup composition. */
+  readonly code: AnalysisErrorProjection["code"];
+  readonly category: AnalysisErrorProjection["category"];
+  /** The outcome every caller receives; absent keeps the code's standard text. */
+  readonly message?: string;
+  /** Guidance only a caller that keeps REA's runtime and session receives. */
+  readonly continuing?: AnalysisContinuingCallerGuidance;
+  /** The next step; absent keeps the shared fallback. */
+  readonly remediation?: string;
+  /** False when the failure cannot clear on retry whatever its code. */
+  readonly retryable?: false;
+  readonly details?: Readonly<Record<string, JsonValue>>;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   limit: Readonly<AnalysisSettingLimit> | undefined;
@@ -217,6 +237,10 @@ export abstract class AnalysisError extends Error {
     this.partialObservation = options?.partialObservation;
   }
   abstract readonly _tag: AnalysisErrorTag;
+  /** What this error's own module says it means; undefined uses the shared tables. */
+  ownPresentation(): AnalysisErrorOwnPresentation | undefined {
+    return undefined;
+  }
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
@@ -439,6 +463,7 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
+import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 import type {
   ElectronActiveObservationResult,
   ElectronActivePartialObservation,

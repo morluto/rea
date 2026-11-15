@@ -1,10 +1,13 @@
 import {
   AnalysisError,
+  type AnalysisContinuingCallerGuidance,
   type AnalysisErrorOptions,
+  type AnalysisErrorOwnPresentation,
 } from "./analysisErrorBase.js";
-import type {
-  HopperProcessProviderState,
-  ProviderFailureStage,
+import {
+  providerRetryAction,
+  type HopperProcessProviderState,
+  type ProviderFailureStage,
 } from "./providerOperationHealth.js";
 import {
   dialogTimeoutFromDiagnostic,
@@ -45,6 +48,18 @@ const HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION =
   "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening.";
 
 /** Hopper did not respond within the configured operation deadline. */
+const RESTART_OWNED_PROVIDER =
+  "Restart the owned provider by calling close_binary, then open the target again and retry.";
+const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary preserves retained Evidence and Unknown history on this connection; export_evidence_bundle before ending the REA process if you need to resume later.`;
+const RERUN_HOPPER_INVOCATION =
+  "Review the reported Hopper state and resolve any incomplete cleanup before rerunning the command.";
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
+  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
+  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
+
 export class HopperTimeoutError extends HopperError {
   readonly _tag = "HopperTimeoutError";
 
@@ -71,6 +86,49 @@ export class HopperTimeoutError extends HopperError {
         : options,
     );
   }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    const { operation } = this;
+    const continuing =
+      operation === undefined
+        ? undefined
+        : this.providerState === "busy"
+          ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
+          : "Check binary_session for Hopper health, then retry the operation.";
+    return {
+      code: "provider_timeout",
+      category: "timeout",
+      message:
+        operation === undefined
+          ? "REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. Review the captured launcher outcome and resolve retained cleanup before retrying."
+          : this.providerState === "busy"
+            ? `Hopper timed out during ${operation} while the provider remained busy.`
+            : `Hopper timed out during ${operation} before it started.`,
+      ...(continuing === undefined
+        ? {}
+        : {
+            continuing: {
+              userMessage: continuing,
+              remediationAction: continuing,
+            },
+          }),
+      remediation:
+        operation === undefined
+          ? HOPPER_STARTUP_TIMEOUT_REMEDIATION
+          : RERUN_HOPPER_INVOCATION,
+      details: {
+        stage: operation === undefined ? "startup" : this.stage,
+        timeout_ms: this.timeoutMs,
+        ...(this.launcherOutcome === undefined
+          ? {}
+          : { launcher: this.launcherOutcome }),
+        provider_state: this.providerState,
+        retry_action: this.providerState === "busy" ? "wait" : "retry",
+        ...(operation === undefined ? {} : { operation }),
+        ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
+      },
+    };
+  }
 }
 
 /** The caller cancelled a Hopper operation before it completed. */
@@ -94,6 +152,14 @@ export class HopperCancelledError extends HopperError {
       });
     super("Hopper operation was cancelled", errorOptions);
   }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    return {
+      code: "cancelled",
+      category: "cancelled",
+      details: { operation: "hopper", cleanup: "complete" },
+    };
+  }
 }
 
 /**
@@ -112,6 +178,10 @@ export const hopperCancelledBySignal = (
 /** Hopper returned bytes or JSON that do not satisfy the NDJSON RPC contract. */
 export class HopperProtocolError extends HopperError {
   readonly _tag = "HopperProtocolError";
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    return { code: "unreadable_output", category: "execution_failure" };
+  }
 }
 
 export type HopperDiagnosticType =
@@ -143,6 +213,29 @@ export class HopperRemoteError extends HopperError {
     this.diagnosticType = context.diagnosticType ?? "remote";
     this.operation = context.operation;
     this.requestId = context.requestId;
+  }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    const invalidRequest = this.diagnosticType === "invalid_request";
+    return {
+      code: invalidRequest ? "invalid_request" : "execution_failure",
+      category: invalidRequest
+        ? "invalid_input"
+        : this.diagnosticType === "authorization"
+          ? "unavailable"
+          : "execution_failure",
+      message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
+      remediation: invalidRequest
+        ? "Correct the reported address, document, or arguments and retry."
+        : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
+      details: {
+        stage: "analysis",
+        provider_code: this.code,
+        diagnostic_type: this.diagnosticType,
+        ...(this.operation === undefined ? {} : { operation: this.operation }),
+        ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
+      },
+    };
   }
 }
 
@@ -196,6 +289,86 @@ export class HopperProcessError extends HopperError {
     this.failureCode = failure?.code;
     this.providerState =
       context.providerState ?? (exitCode === null ? "unknown" : "exited");
+  }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    const continuing = this.#continuing();
+    return {
+      code: "provider_unavailable",
+      category: "unavailable",
+      message: this.#message(),
+      ...(continuing === undefined ? {} : { continuing }),
+      remediation:
+        this.failureCode !== undefined && this.userMessage !== undefined
+          ? this.userMessage
+          : this.stage === "launch"
+            ? "Review the captured launcher diagnostics and Hopper setup, then retry opening the target."
+            : RERUN_HOPPER_INVOCATION,
+      details: {
+        exit_code: this.exitCode,
+        stage: this.stage,
+        provider_state: this.providerState,
+        retry_action: providerRetryAction(
+          this.providerState,
+          this.failureCode !== undefined || this.stage === "launch",
+        ),
+        ...(this.failureCode === undefined
+          ? {}
+          : { failure_code: this.failureCode }),
+        ...(this.operation === undefined ? {} : { operation: this.operation }),
+        ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
+        ...(this.diagnostic === undefined
+          ? {}
+          : { diagnostics: { ...this.diagnostic } }),
+        ...(this.launcherFailure === undefined
+          ? {}
+          : { launcher: this.launcherFailure }),
+      },
+    };
+  }
+
+  #message(): string {
+    const where = this.operation ?? this.stage;
+    const request =
+      this.requestId === undefined
+        ? ""
+        : ` Request id ${String(this.requestId)}.`;
+    const startup =
+      this.userMessage === undefined ? "" : ` ${this.userMessage}`;
+    if (this.providerState === "exited") {
+      const signal = this.launcherFailure?.signal;
+      const exit =
+        this.exitCode === null
+          ? signal === undefined || signal === null
+            ? "no exit code was observed"
+            : `signal ${signal}`
+          : `exit code ${String(this.exitCode)}`;
+      return `Hopper exited during ${where} (${exit}).${startup}${request}`;
+    }
+    if (this.providerState === "unreachable")
+      return `Hopper became unreachable during ${where}; its process exit was not observed.${startup}${request}`;
+    return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup}${request}`;
+  }
+
+  #continuing(): AnalysisContinuingCallerGuidance | undefined {
+    if (
+      this.providerState === "exited" &&
+      (this.stage === "launch" || this.failureCode !== undefined)
+    )
+      return undefined;
+    const action =
+      this.providerState === "unreachable"
+        ? RESTART_UNREACHABLE_HOPPER
+        : providerRetryAction(this.providerState) === "restart_provider"
+          ? RESTART_OWNED_PROVIDER
+          : "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
+    return {
+      userMessage: action,
+      ...(this.stage === "launch" ||
+      (this.failureCode !== undefined && this.userMessage !== undefined)
+        ? {}
+        : { remediationAction: action }),
+    };
   }
 }
 
@@ -263,5 +436,38 @@ export class HopperStartError extends HopperError {
     this.ownerRunId = options?.ownerRunId;
     this.launcherFailure = options?.launcherFailure;
     this.launchRejection = options?.launchRejection;
+  }
+
+  override ownPresentation(): AnalysisErrorOwnPresentation {
+    const denied = hopperAppleEventsAuthorizationDenied(this.launchRejection);
+    return {
+      code: "provider_unavailable",
+      category: "unavailable",
+      message: denied
+        ? HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE
+        : (this.userMessage ??
+          "Hopper could not start. Check the launcher and target details, then retry opening the target."),
+      remediation: denied
+        ? HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION
+        : this.ownerRunId === undefined
+          ? "Check the Hopper launcher and target details, then retry opening the target."
+          : `Use the active REA session ${this.ownerRunId} or close it before opening this target again.`,
+      ...(denied ? { retryable: false as const } : {}),
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        ...(this.launchRejection === undefined
+          ? {}
+          : { launch_rejection: { ...this.launchRejection } }),
+        retry_action:
+          this.ownerRunId === undefined && !denied ? "retry" : "unknown",
+        ...(this.ownerRunId === undefined
+          ? {}
+          : { owner_run_id: this.ownerRunId }),
+        ...(this.launcherFailure === undefined
+          ? {}
+          : { launcher: this.launcherFailure }),
+      },
+    };
   }
 }
