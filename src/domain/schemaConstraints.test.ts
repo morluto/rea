@@ -130,6 +130,23 @@ describe("schema constraints", () => {
     expectAgreement(schema, ["", "a", "ab", "ac", "b"]);
   });
 
+  it("refuses pattern declarations JSON Schema cannot state", () => {
+    const declare = (declaration: Parameters<typeof declaredByPatterns>[2]) =>
+      declaredByPatterns(z.string(), () => true, declaration, {
+        message: "rejected",
+      });
+    expect(() => declare({ matches: [/^app$/iu], relation: "exact" })).toThrow(
+      TypeError,
+    );
+    expect(() => declare({ excludes: [/a/gu], relation: "wider" })).toThrow(
+      TypeError,
+    );
+    expect(() => declare({ relation: "wider" })).toThrow(TypeError);
+    expect(() =>
+      declare({ matches: [], excludes: [], relation: "exact" }),
+    ).toThrow(TypeError);
+  });
+
   it("declares canonical base64 exactly", () => {
     expect(schemaAnnotations(canonicalBase64Schema)?.patternDeclaration).toBe(
       "exact",
