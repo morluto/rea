@@ -265,7 +265,7 @@ export const mergeClientConfigurationDocuments = (
       // replacing nested values such as `envs` whole.
       const goose = document.dialect === "goose";
       const merged = goose
-        ? isObject(previous) && isObject(next)
+        ? isRecord(previous) && isRecord(next)
           ? { ...previous, ...next }
           : next
         : mergeConfigurationValue(previous, next);
