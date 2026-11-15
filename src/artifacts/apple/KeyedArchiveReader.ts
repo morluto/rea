@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  decodeLimit,
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { readStableArtifact } from "../readStableArtifact.js";
@@ -81,7 +85,10 @@ export const decodeKeyedArchiveBytes = (
   selection: { root?: string | undefined; offset: number; limit: number },
 ) => {
   if (bytes.length > MAX_BYTES)
-    throw new RangeError("Keyed archive exceeds 64 MiB");
+    throw decodeLimit("keyed-archive", "Keyed archive exceeds 64 MiB", {
+      name: "keyed-archive-bytes",
+      maximum: MAX_BYTES,
+    });
   if (hasNibArchiveSignature(bytes))
     throw new KeyedArchiveKindError(
       "Selected file is a compiled NIBArchive, not a Foundation plist archive; decode it with decode_interface_builder",
@@ -475,8 +482,8 @@ const decodeSelectedArchive = (
         },
       );
     throw new ArtifactReaderFailure(
-      cause instanceof RangeError ||
-        (cause instanceof ParseFailureError && cause.kind === "limit")
+      (cause instanceof ParseFailureError && cause.kind === "limit") ||
+        isHostLimitFailure(cause)
         ? "limit"
         : "format",
       `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
