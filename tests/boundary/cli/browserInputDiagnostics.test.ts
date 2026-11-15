@@ -62,7 +62,9 @@ const invalidInputs = [
     command: "analyze-web-bundle",
     arguments: [malformedEndpoint, "target"],
     operation: "analyze_web_bundle",
-    error: "Browser observation failed",
+    // The contract builder admits the decoded input before the handler, so
+    // the refusal carries no handler label.
+    error: undefined,
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
@@ -171,7 +173,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        error: input.error,
+        ...(input.error === undefined ? {} : { error: input.error }),
         code: "invalid_request",
         category: "invalid_input",
         message: expect.stringMatching(/input.*invalid/iu),
@@ -314,6 +316,52 @@ describe("browser correction facts", () => {
               reason: "missing_argument",
             }),
           ]),
+        },
+      });
+    },
+  );
+
+  cliTest(
+    "chooses the capture comparison shape from the documents",
+    async ({ cli, workspace }) => {
+      const run = async (...argv: string[]) =>
+        (
+          await cli.run({
+            arguments: ["compare-web-captures", ...argv, "--json"],
+            cwd: workspace.root,
+            environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+          })
+        ).json;
+      // A scenario-owned field selects the scenario shape, so its own
+      // issues are reported rather than the passive capture's.
+      expect(await run('{"steps":[]}', "{}")).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: ["before_scenario", "browser"],
+              reason: "missing_argument",
+            }),
+          ]),
+        },
+      });
+      // Normalization applies only to scenarios; passive captures refuse it
+      // instead of ignoring it.
+      expect(
+        await run("{}", "{}", "--normalization-json", '{"rules":[]}'),
+      ).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: [
+            {
+              path: ["normalizationJson"],
+              reason: "invalid_value",
+              message:
+                "--normalization-json requires recorded browser scenario captures; the given input selects passive page captures, which does not take it.",
+            },
+          ],
         },
       });
     },

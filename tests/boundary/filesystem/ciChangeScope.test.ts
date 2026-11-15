@@ -1297,7 +1297,7 @@ it.each([
     { code: true, agentenv: true, runtime: true },
   ],
   [
-    "src/cliJsonInput.ts",
+    "src/cli/cliJsonInput.ts",
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [

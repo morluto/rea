@@ -15,6 +15,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 export const API_CONTRACT_TOOL_CONTRACTS = [
   {
     name: "inspect_api_contract",
+    cli: true,
     ...toolContractMetadata("inspect_api_contract"),
     kind: "application",
     description:

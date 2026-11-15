@@ -5,7 +5,7 @@ import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisSe
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../cliCommandNames.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -50,21 +50,21 @@ const ADB_COMMANDS: {
   ];
 } = {
   inspect_adb_client: [
-    CLI_COMMANDS.inspectAdbClient,
+    cliCommandFor("inspect_adb_client"),
     {
       description:
         "Inspect the caller-selected adb client without contacting devices",
     },
   ],
   list_adb_devices: [
-    CLI_COMMANDS.listAdbDevices,
+    cliCommandFor("list_adb_devices"),
     {
       description:
         "List attached devices with serial, state, transport, and inferred kind",
     },
   ],
   inspect_adb_device: [
-    CLI_COMMANDS.inspectAdbDevice,
+    cliCommandFor("inspect_adb_device"),
     {
       description:
         "Inspect one device's build identity through a fixed getprop whitelist",
@@ -72,7 +72,7 @@ const ADB_COMMANDS: {
     },
   ],
   list_adb_packages: [
-    CLI_COMMANDS.listAdbPackages,
+    cliCommandFor("list_adb_packages"),
     {
       description:
         "List installed packages on one device with base APK device paths",
@@ -80,7 +80,7 @@ const ADB_COMMANDS: {
     },
   ],
   pull_adb_package: [
-    CLI_COMMANDS.pullAdbPackage,
+    cliCommandFor("pull_adb_package"),
     {
       description:
         "Pull one installed package's complete APK set with SHA-256 digests",
@@ -91,14 +91,14 @@ const ADB_COMMANDS: {
     },
   ],
   read_adb_logcat: [
-    CLI_COMMANDS.readAdbLogcat,
+    cliCommandFor("read_adb_logcat"),
     {
       description: "Read a bounded dump of the device log for one buffer",
       positionals: serialFirst(),
     },
   ],
   inspect_adb_package: [
-    CLI_COMMANDS.inspectAdbPackage,
+    cliCommandFor("inspect_adb_package"),
     {
       description:
         "Inspect one installed package's version, installer, and flags through dumpsys",
@@ -106,7 +106,7 @@ const ADB_COMMANDS: {
     },
   ],
   pull_adb_file: [
-    CLI_COMMANDS.pullAdbFile,
+    cliCommandFor("pull_adb_file"),
     {
       description: "Pull one device file to a local copy with a SHA-256 digest",
       positionals: serialFirst("device_path"),
@@ -117,7 +117,7 @@ const ADB_COMMANDS: {
     },
   ],
   push_adb_file: [
-    CLI_COMMANDS.pushAdbFile,
+    cliCommandFor("push_adb_file"),
     {
       description:
         "Push one local file to the device; refuses existing targets without --overwrite",
@@ -129,7 +129,7 @@ const ADB_COMMANDS: {
     },
   ],
   capture_adb_screen: [
-    CLI_COMMANDS.captureAdbScreen,
+    cliCommandFor("capture_adb_screen"),
     {
       description: "Capture one screen frame as a digested PNG",
       positionals: serialFirst(),
@@ -139,14 +139,14 @@ const ADB_COMMANDS: {
     },
   ],
   list_adb_processes: [
-    CLI_COMMANDS.listAdbProcesses,
+    cliCommandFor("list_adb_processes"),
     {
       description: "List running processes exactly as ps -A reports them",
       positionals: serialFirst(),
     },
   ],
   list_adb_directory: [
-    CLI_COMMANDS.listAdbDirectory,
+    cliCommandFor("list_adb_directory"),
     {
       description:
         "List one device directory with kinds, permissions, and sizes",
@@ -157,42 +157,42 @@ const ADB_COMMANDS: {
     },
   ],
   list_adb_features: [
-    CLI_COMMANDS.listAdbFeatures,
+    cliCommandFor("list_adb_features"),
     {
       description: "List the device's declared hardware and software features",
       positionals: serialFirst(),
     },
   ],
   list_adb_services: [
-    CLI_COMMANDS.listAdbServices,
+    cliCommandFor("list_adb_services"),
     {
       description: "List the device's binder services and interfaces",
       positionals: serialFirst(),
     },
   ],
   inspect_adb_display: [
-    CLI_COMMANDS.inspectAdbDisplay,
+    cliCommandFor("inspect_adb_display"),
     {
       description: "Report the display's declared size and density",
       positionals: serialFirst(),
     },
   ],
   inspect_adb_window: [
-    CLI_COMMANDS.inspectAdbWindow,
+    cliCommandFor("inspect_adb_window"),
     {
       description: "Report the window manager's current focus declarations",
       positionals: serialFirst(),
     },
   ],
   read_adb_setting: [
-    CLI_COMMANDS.readAdbSetting,
+    cliCommandFor("read_adb_setting"),
     {
       description: "Read one settings value from system, secure, or global",
       positionals: serialFirst("namespace", "key"),
     },
   ],
   collect_adb_bugreport: [
-    CLI_COMMANDS.collectAdbBugreport,
+    cliCommandFor("collect_adb_bugreport"),
     {
       description: "Collect and digest one device-generated bugreport archive",
       positionals: serialFirst(),
@@ -202,14 +202,14 @@ const ADB_COMMANDS: {
     },
   ],
   resolve_adb_packages: [
-    CLI_COMMANDS.resolveAdbPackages,
+    cliCommandFor("resolve_adb_packages"),
     {
       description: "Find installed packages by case-insensitive name substring",
       positionals: serialFirst("query"),
     },
   ],
   install_adb_package: [
-    CLI_COMMANDS.installAdbPackage,
+    cliCommandFor("install_adb_package"),
     {
       description:
         "Install one local APK; --replace requests reinstall mode to keep existing app data",
@@ -220,14 +220,14 @@ const ADB_COMMANDS: {
     },
   ],
   uninstall_adb_package: [
-    CLI_COMMANDS.uninstallAdbPackage,
+    cliCommandFor("uninstall_adb_package"),
     {
       description: "Uninstall one package and its data from the device",
       positionals: serialFirst("package"),
     },
   ],
   start_adb_app: [
-    CLI_COMMANDS.startAdbApp,
+    cliCommandFor("start_adb_app"),
     {
       description:
         "Start one installed app by resolving and launching its launcher activity",
@@ -235,7 +235,7 @@ const ADB_COMMANDS: {
     },
   ],
   stop_adb_app: [
-    CLI_COMMANDS.stopAdbApp,
+    cliCommandFor("stop_adb_app"),
     {
       description: "Force-stop every process of one package",
       positionals: serialFirst("package"),
@@ -315,7 +315,6 @@ export const registerAdbCommands = (
     logger,
     contractNamed(ADB_TOOL_CONTRACTS, "start_adb_activity"),
     {
-      command: CLI_COMMANDS.startAdbActivity,
       description:
         "Start an intent with am start (action, URI, component, extras)",
       positionals: serialFirst("action"),

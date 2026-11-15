@@ -2,32 +2,62 @@ import { addAbortListener } from "node:events";
 import type { Readable } from "node:stream";
 import { getHeapStatistics } from "node:v8";
 
-import { absoluteCallerPath } from "./filesystem/callerPath.js";
-import { localPathStringSchema } from "./domain/localPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
-import { sealOwnedJsonInput } from "./application/OwnedJsonInput.js";
+import { sealOwnedJsonInput } from "../application/OwnedJsonInput.js";
 import {
   JsonInputCancellationFailure,
   JsonInputPhysicalReadFailure,
   readJsonInputFile,
   nativeJsonParseRequiredBytes,
-} from "./application/JsonInputFile.js";
-import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
+} from "../application/JsonInputFile.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import { ownCliProcessResource } from "./cliResources.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
-} from "./domain/analysisErrorCore.js";
-import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
-import { err, ok, type Result } from "./domain/result.js";
-import type { JsonValue } from "./domain/jsonValue.js";
-import { safeParseJson } from "./domain/safeJson.js";
+} from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { safeParseJson } from "../domain/safeJson.js";
 import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
-} from "./application/Utf8JsonInput.js";
+} from "../application/Utf8JsonInput.js";
+
+/**
+ * Scopes of JSON-input files whose close still failed after their owner's
+ * retry. The process owns them until final CLI cleanup retries the close, so
+ * a handle never loses its owner when parsing returns, and a later read never
+ * inherits an earlier file's cleanup.
+ */
+const retainedJsonInputs = new Set<ArtifactResourceScope>();
+ownCliProcessResource("json-input", async () => {
+  const failures: unknown[] = [];
+  for (const resources of retainedJsonInputs)
+    try {
+      await resources.close();
+      retainedJsonInputs.delete(resources);
+    } catch (cause: unknown) {
+      failures.push(cause);
+    }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "JSON input cleanup failed");
+});
 
 /** Parse inline JSON, standard input ('-'), or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
@@ -50,6 +80,8 @@ export const parseCliJsonInput = async (
     },
   });
   if (signal?.aborted) return cancelled(signal.reason);
+  // Lets the file's owner retry a refused close before reporting it.
+  const resources = new ArtifactResourceScope();
   try {
     const inline = safeParseJson(value);
     if (inline.ok) {
@@ -72,7 +104,7 @@ export const parseCliJsonInput = async (
             value,
             operation,
             signal,
-            undefined,
+            resources,
             options?.snapshot ?? false,
           );
     if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
@@ -91,20 +123,18 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      retainedJsonInputs.add(resources);
+      return jsonFileCleanupError(value, operation, cause);
+    }
     if (cause instanceof JsonInputCancellationFailure)
       return cancelled(cause.reason);
-    if (cause instanceof JsonInputPhysicalReadFailure) {
-      const physicalCause = cause.physicalCause;
-      const systemCode = accessDeniedSystemCode(physicalCause);
-      return systemCode === undefined
-        ? jsonFileReadError(value, operation, physicalCause)
-        : jsonAccessDeniedError(value, operation, systemCode, physicalCause);
-    }
+    if (cause instanceof JsonInputPhysicalReadFailure)
+      return jsonFileReadError(value, operation, cause.physicalCause);
     if (signal?.aborted && isJsonInputCancellation(cause, signal))
       return cancelled(signal.reason);
-    const systemCode = accessDeniedSystemCode(cause);
-    if (systemCode !== undefined)
-      return jsonAccessDeniedError(value, operation, systemCode, cause);
+    if (accessDeniedSystemCode(cause) !== undefined)
+      return jsonFileReadError(value, operation, cause);
     if (
       ["{", "["].includes(value.trimStart()[0] ?? "") &&
       cannotBeAnExistingFile(cause) &&
@@ -340,6 +370,92 @@ const inputError = (operation: string): JsonValue => ({
   ),
 });
 
+/**
+ * The file's final close failed after its owner's retry, so the handle
+ * stays retained with the process until final CLI cleanup. Report the
+ * incomplete cleanup and the file, keeping why the read stopped (its typed
+ * refusal, descriptor failure or cancellation) as the primary failure.
+ */
+const jsonFileCleanupError = (
+  path: string,
+  operation: string,
+  failure: RegularFileCleanupFailure,
+) => {
+  const cleanup = new ProviderCleanupError(
+    "json-input-file",
+    [path],
+    {
+      reason:
+        failure.cleanupCause instanceof Error
+          ? failure.cleanupCause.message
+          : "file close failed",
+    },
+    { operation, cause: failure },
+  );
+  const primary = jsonFileCleanupPrimary(path, operation, failure);
+  return {
+    ok: false as const,
+    error: {
+      error: "Application workflow failed",
+      ...projectAnalysisError(
+        primary === undefined
+          ? cleanup
+          : analysisErrorWithCleanupFailure(primary, cleanup, operation),
+        "invocation",
+      ),
+      input_path: path,
+    },
+  };
+};
+
+/** Translate the read's recorded outcome once, before cleanup is composed. */
+const jsonFileCleanupPrimary = (
+  path: string,
+  operation: string,
+  failure: RegularFileCleanupFailure,
+): AnalysisError | undefined => {
+  const cancellation = regularFileCancellation(failure);
+  const { outcome } = failure;
+  if (outcome.kind === "failed") {
+    const { cause } = outcome;
+    if (cancellation !== undefined)
+      return cancelledBy(operation, carriedReason(cancellation.reason));
+    if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof JsonInputCancellationFailure)
+      return cancelledBy(operation, carriedReason(cause.reason));
+    return jsonFileReadFailure(
+      path,
+      operation,
+      cause instanceof JsonInputPhysicalReadFailure
+        ? cause.physicalCause
+        : cause,
+    );
+  }
+  // The read's own refusal, returned as a failed result.
+  const decoded = outcome.value as
+    | { readonly ok?: unknown; readonly error?: unknown }
+    | undefined;
+  if (decoded?.ok === false && decoded.error instanceof AnalysisError)
+    return decoded.error;
+  return cancellation === undefined
+    ? undefined
+    : cancelledBy(operation, carriedReason(cancellation.reason));
+};
+
+/** A descriptor or selection failure, refused as access or as an unreadable input. */
+const jsonFileReadFailure = (
+  path: string,
+  operation: string,
+  cause: unknown,
+): AnalysisInputError | AnalysisAccessDeniedError => {
+  const systemCode = accessDeniedSystemCode(cause);
+  return systemCode === undefined
+    ? new AnalysisInputError(operation, { cause }, [
+        readFailureIssue(path, cause),
+      ])
+    : new AnalysisAccessDeniedError(operation, path, systemCode, { cause });
+};
+
 const jsonFileReadError = (
   path: string,
   operation: string,
@@ -348,28 +464,7 @@ const jsonFileReadError = (
   ok: false as const,
   error: {
     error: "Application workflow failed",
-    ...projectAnalysisError(
-      new AnalysisInputError(operation, { cause }, [
-        readFailureIssue(path, cause),
-      ]),
-    ),
-    input_path: path,
-    input_reason: "read-failed" as const,
-  },
-});
-
-const jsonAccessDeniedError = (
-  path: string,
-  operation: string,
-  systemCode: "EACCES" | "EPERM",
-  cause: unknown,
-) => ({
-  ok: false as const,
-  error: {
-    error: "Application workflow failed",
-    ...projectAnalysisError(
-      new AnalysisAccessDeniedError(operation, path, systemCode, { cause }),
-    ),
+    ...projectAnalysisError(jsonFileReadFailure(path, operation, cause)),
     input_path: path,
     input_reason: "read-failed" as const,
   },

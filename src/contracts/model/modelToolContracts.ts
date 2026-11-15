@@ -11,6 +11,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 export const INSPECT_MODEL_ARTIFACT_CONTRACT = {
   name: "inspect_model_artifact",
+  cli: true,
   ...toolContractMetadata("inspect_model_artifact"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

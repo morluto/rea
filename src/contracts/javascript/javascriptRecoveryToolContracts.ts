@@ -10,6 +10,7 @@ import type { ToolContract } from "../toolContractTypes.js";
 export const JAVASCRIPT_RECOVERY_TOOL_CONTRACTS = [
   {
     name: "recover_javascript_sources",
+    cli: true,
     ...toolContractMetadata("recover_javascript_sources"),
     kind: "application",
     description:

@@ -838,13 +838,13 @@ const assertScenarioComparisonPolicy = async (cli: TestCli): Promise<void> => {
   expect(malformedPolicyInvocation.signal).toBeNull();
   const malformedPolicy = malformedPolicyInvocation.json;
   expect(malformedPolicy).toMatchObject({
-    error: "Browser observation failed",
     code: "invalid_request",
     details: {
       operation: "compare_web_captures",
       issues: [
         {
-          path: ["normalization"],
+          // The issue names the CLI key that took the text.
+          path: ["normalizationJson"],
           reason: "invalid_format",
           expected: "JSON",
         },

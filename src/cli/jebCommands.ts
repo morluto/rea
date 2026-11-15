@@ -2,7 +2,6 @@ import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JEB_TOOL_CONTRACTS } from "../contracts/jeb/jebToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -36,7 +35,6 @@ export const registerJebCommands = (
     logger,
     contract("inspect_jeb_client"),
     {
-      command: CLI_COMMANDS.inspectJebClient,
       description:
         "Inspect the running JEB MCP client without opening a target",
     },
@@ -47,7 +45,6 @@ export const registerJebCommands = (
     logger,
     contract("open_jeb_project"),
     {
-      command: CLI_COMMANDS.openJebProject,
       description:
         "Open or create a JEB project from an artifact or .jdb2 database",
       // JEB resolves the path it is given; the CLI passes it on as spelled
@@ -71,7 +68,6 @@ export const registerJebCommands = (
     logger,
     contract("list_jeb_units"),
     {
-      command: CLI_COMMANDS.listJebUnits,
       description:
         "List JEB project units by path and type with optional filter",
     },
@@ -82,7 +78,6 @@ export const registerJebCommands = (
     logger,
     contract("decompile_jeb_item"),
     {
-      command: CLI_COMMANDS.decompileJebItem,
       description: "Decompile one JEB type or method to engine pseudo-code",
       positionals: ["item_address", "item_kind"],
     },

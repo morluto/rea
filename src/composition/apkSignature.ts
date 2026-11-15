@@ -1,7 +1,7 @@
 import { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import { ApkSignatureProvider } from "../apkSignature/ApkSignatureProvider.js";
 import { INSPECT_APK_SIGNATURE_CONTRACT } from "../contracts/apkSignature/apkSignatureToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../cliCommandNames.js";
 
 /** Compose the in-process APK signature reader without acquisition or import-time I/O. */
 export const createApkSignatureService = (): ApkSignatureService =>
@@ -10,7 +10,7 @@ export const createApkSignatureService = (): ApkSignatureService =>
 /** Static descriptor binding the one APK-signature operation for CLI/MCP. */
 export const apkSignatureModule = {
   contract: INSPECT_APK_SIGNATURE_CONTRACT,
-  cliCommand: CLI_COMMANDS.inspectApkSignature,
+  cliCommand: cliCommandFor("inspect_apk_signature"),
   create(
     _environment: Readonly<NodeJS.ProcessEnv>,
     injected?: ApkSignatureService,

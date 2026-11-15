@@ -3,16 +3,20 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import {
+  contractNamed,
   describeContractCommand,
   describeOperationChoices,
   describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
 } from "../../../src/cli/contractCliDescription.js";
+import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 import {
   contractCommandDescriptions,
+  contractInputBranch,
   contractDocumentCommandDescriptions,
-  targetRoutedCommandDescriptions,
+  routedCommandDescriptions,
 } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
@@ -20,7 +24,10 @@ import {
   type RegisteredCommand,
 } from "../../../src/cli/visitRegisteredCommands.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
 
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
@@ -29,10 +36,10 @@ const registered = new Map<string, RegisteredCommand>();
 visitRegisteredCommands(cli, (command, path) => {
   registered.set(path, command);
 });
-// A target-routed command contributes one description per contract it runs.
+// A routed command contributes one description per contract it runs.
 const descriptions = [
   ...contractCommandDescriptions(cli),
-  ...targetRoutedCommandDescriptions(cli),
+  ...routedCommandDescriptions(cli),
 ];
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
@@ -118,6 +125,8 @@ const expectedAdmission = (
   // The named option may supply a selector in place of the positional.
   if (parameter.selectorOption !== undefined && value === undefined)
     return true;
+  // An omitted option takes its CLI default, which the contract admits.
+  if (parameter.cliDefault !== undefined && value === undefined) return true;
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -177,18 +186,38 @@ const handlerSuppliedFields = (
   ...description.handlerFields,
 ];
 
-/** The contract schema one parameter supplies: a field, or a flattened member. */
+/**
+ * The contract schema one parameter supplies: a field, a flattened member,
+ * or a field group's optional object of its fields.
+ */
 const suppliedField = (
   description: ContractCliDescription,
   parameter: ContractCliParameter,
 ): z.ZodType => {
-  const field = contractShape(description)[parameter.field]!;
+  const shape = contractShape(description);
+  if (parameter.group !== undefined)
+    return z
+      .strictObject(
+        Object.fromEntries(
+          parameter.group.map((field) => [field, shape[field]!]),
+        ),
+      )
+      .optional();
+  const field = shape[parameter.field]!;
   if (parameter.member === undefined) return field;
-  let object: z.ZodType = field;
-  while (object instanceof z.ZodOptional) object = object.unwrap() as z.ZodType;
-  return (
-    (object as z.ZodObject).shape[parameter.member] as z.ZodType
-  ).optional();
+  // A member is omittable when it or any enclosing object is.
+  let supplied: z.ZodType = field;
+  let omittable = false;
+  for (const member of parameter.member) {
+    omittable ||= admits(supplied, undefined);
+    while (
+      supplied instanceof z.ZodOptional ||
+      supplied instanceof z.ZodExactOptional
+    )
+      supplied = supplied.unwrap() as z.ZodType;
+    supplied = (supplied as z.ZodObject).shape[member] as z.ZodType;
+  }
+  return omittable ? supplied.optional() : supplied;
 };
 
 /**
@@ -213,6 +242,25 @@ const expectInboundView = (
   expect(admits(cliField, undefined), key).toBe(
     admits(contractField, undefined),
   );
+};
+
+/** Each positional caller path is resolved, and kept as typed in callerInputs. */
+const expectResolvedPositionalPaths = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+  input: Readonly<Record<string, unknown>>,
+): void => {
+  for (const parameter of description.parameters) {
+    if (!parameter.callerPath || !parameter.positional) continue;
+    // A flattened member is resolved inside its object.
+    const path = [parameter.field, ...(parameter.member ?? [])];
+    const resolved = path.reduce<unknown>(
+      (value, key) => (value as Record<string, unknown>)[key],
+      input,
+    );
+    expect(resolved).toBe(absoluteCallerPath("rel/target"));
+    expect(description.callerInputs(values)[path.join(".")]).toBe("rel/target");
+  }
 };
 
 /** A caller-relative target, or the first probe the argument admits. */
@@ -274,6 +322,45 @@ const argvValues = (
   };
 };
 
+const processComparisonExample = toolContract("compare_process_captures")
+  .examples[0]!.input as { readonly left: unknown; readonly right: unknown };
+const screenshotExample = toolContract("compare_web_screenshots").examples[0]!
+  .input as { readonly before: unknown; readonly after: unknown };
+
+const captureDiff = contractNamed(
+  BROWSER_TOOL_CONTRACTS,
+  "compare_web_captures",
+);
+const scenarioExample = captureDiff.examples[0]!.input as {
+  readonly before_scenario: unknown;
+  readonly after_scenario: unknown;
+};
+
+/**
+ * Argv for each input shape of a command routed by document content, keyed
+ * by the shape its route projects; a passive capture and a scenario capture
+ * cannot both satisfy one fixture.
+ */
+const ROUTE_ARGV: ReadonlyMap<
+  unknown,
+  Readonly<Record<string, unknown>>
+> = new Map<unknown, Readonly<Record<string, unknown>>>([
+  [
+    contractInputBranch(captureDiff, "before").inputSchema,
+    {
+      beforeJson: JSON.stringify({ inspection: passiveNetworkCapture() }),
+      afterJson: JSON.stringify({ inspection: passiveNetworkCapture() }),
+    },
+  ],
+  [
+    contractInputBranch(captureDiff, "before_scenario").inputSchema,
+    {
+      beforeJson: JSON.stringify(scenarioExample.before_scenario),
+      afterJson: JSON.stringify(scenarioExample.after_scenario),
+    },
+  ],
+]);
+
 /**
  * Argv for commands whose contract rules need more than one value per
  * required field: a selector choice, a pattern grammar or a change to make.
@@ -283,6 +370,7 @@ const ARGV_SATISFYING_RULES: Readonly<
 > = {
   "annotate-native-function": { name: "renamed" },
   "search-bytes": { pattern: "41 ??" },
+  "cutter-command": { sessionId: "00000000-0000-4000-8000-000000000001" },
   "inspect-native-data-type": { type: "/struct" },
   "capture-native-ui-scenario": {
     steps: '[{"kind":"wait","milliseconds":0}]',
@@ -297,8 +385,21 @@ const ARGV_SATISFYING_RULES: Readonly<
   "inspect-electron-page": { endpoint: "http://127.0.0.1:9222" },
   "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
+  "observe-web-execution": { endpoint: "http://127.0.0.1:9222" },
+  "inspect-web-event-listeners": { endpoint: "http://127.0.0.1:9222" },
+  "analyze-web-bundle": { endpoint: "http://127.0.0.1:9222" },
   "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
   "observe-javascript-runtime": { endpoint: "http://127.0.0.1:9229" },
+  // Each side must be a self-verifying screenshot artifact.
+  "compare-web-screenshots": {
+    beforeJson: JSON.stringify(screenshotExample.before),
+    afterJson: JSON.stringify(screenshotExample.after),
+  },
+  // Each side must be process capture Evidence.
+  "compare-process-captures": {
+    left: JSON.stringify(processComparisonExample.left),
+    right: JSON.stringify(processComparisonExample.right),
+  },
 };
 
 const each = descriptions.map(
@@ -312,35 +413,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
   ),
 );
 
-/**
- * Commands named after a public tool contract that still register by hand.
- * Migrating one removes it here; this list may only shrink.
- */
-const HAND_REGISTERED_CONTRACT_COMMANDS = [
-  "analyze-web-bundle",
-  "compare-process-captures",
-  "compare-web-captures",
-  "compare-web-screenshots",
-  "cutter-command",
-  "execute-rizin-command",
-  "export-web-scripts",
-  "guided-workflows",
-  "inspect-android-jni-bindings",
-  "inspect-api-contract",
-  "inspect-ntfs-journal",
-  "inspect-pcap-capture",
-  "inspect-pcap-client",
-  "inspect-playwright-trace",
-  "inspect-web-event-listeners",
-  "inspect-web-network-capture",
-  "inspect-with-objdump",
-  "list-cutter-sessions",
-  "observe-web-execution",
-  "recover-javascript-sources",
-  "trace-web-module-imports",
-  "trace-web-source-location",
-];
-
 /** Contract-built commands whose name differs from their contract's. */
 const RENAMED_CONTRACT_COMMANDS = [
   "analyze",
@@ -348,6 +420,7 @@ const RENAMED_CONTRACT_COMMANDS = [
   "function",
   "inspect",
   "instructions",
+  "list-objdump-architectures",
   "search",
   "trace",
   "validate-browser-scenario",
@@ -363,10 +436,25 @@ it("builds every contract-named command from its contract", () => {
     [...named]
       .filter((name) => registered.has(name) && !contractBuilt.has(name))
       .toSorted(),
-  ).toEqual(HAND_REGISTERED_CONTRACT_COMMANDS);
+  ).toEqual([]);
   expect(
     [...contractBuilt].filter((name) => !named.has(name)).toSorted(),
   ).toEqual(RENAMED_CONTRACT_COMMANDS);
+});
+
+// The CLI resolves a relative caller path against the working directory, so
+// its help must not inherit an MCP description that requires an absolute one.
+it("describes every caller path without requiring an absolute path", () => {
+  expect(
+    descriptions.flatMap(({ command, parameters }) =>
+      parameters
+        .filter(
+          ({ callerPath, description }) =>
+            callerPath && /\babsolute\b/iu.test(description ?? ""),
+        )
+        .map(({ key }) => `${command} ${key}`),
+    ),
+  ).toEqual([]);
 });
 
 // An argv fixture names a contract-built command, so it cannot outlive its registration.
@@ -384,8 +472,13 @@ describe("CLI commands projected from tool contracts", () => {
     (_command, description) => {
       expect(
         [
-          ...new Set(description.parameters.map(({ field }) => field)),
+          ...new Set(
+            description.parameters.flatMap(
+              ({ field, group }) => group ?? [field],
+            ),
+          ),
           ...Object.keys(description.omitted),
+          ...Object.keys(description.fixedFields),
           ...handlerSuppliedFields(description),
         ]
           .toSorted()
@@ -464,8 +557,12 @@ describe("CLI commands projected from tool contracts", () => {
           expect(admits(cliField, undefined), parameter.key).toBe(
             admits(contractField, undefined),
           );
-          for (const value of ["", "{", "{}"])
+          for (const value of ["{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
+          // Empty text is neither JSON nor a JSON input's file path.
+          expect(admits(cliField, ""), parameter.key).toBe(
+            !parameter.jsonInput,
+          );
           continue;
         }
         for (const value of probes(contractField)) {
@@ -501,7 +598,9 @@ describe("CLI commands projected from tool contracts", () => {
     (command, description) => {
       const values = argvValues(
         description,
-        ARGV_SATISFYING_RULES[command] ?? {},
+        ROUTE_ARGV.get(description.contract.inputSchema) ??
+          ARGV_SATISFYING_RULES[command] ??
+          {},
       );
       // Runtime JSON text is decoded as admission does.
       for (const { key, runtimeJson } of description.parameters)
@@ -520,13 +619,7 @@ describe("CLI commands projected from tool contracts", () => {
               ),
             );
       expect(admitted.safeParse(input).error).toBe(undefined);
-      for (const parameter of description.parameters)
-        if (parameter.callerPath && parameter.positional) {
-          expect(input[parameter.field]).toBe(absoluteCallerPath("rel/target"));
-          expect(description.callerInputs(values)[parameter.field]).toBe(
-            "rel/target",
-          );
-        }
+      expectResolvedPositionalPaths(description, values, input);
     },
   );
 });
@@ -538,7 +631,7 @@ describe("Registration refusals of contract commands", () => {
     ["a union", z.union([z.string(), z.boolean()]).optional()],
     ["a pipe", z.string().pipe(z.string()).optional()],
     ["an array of objects", z.array(z.object({})).optional()],
-    ["an array of numbers", z.array(z.number()).optional()],
+    ["an array of booleans", z.array(z.boolean()).optional()],
     ["a tuple", z.tuple([z.string()]).optional()],
   ])("refuses to describe a field that is %s", (_kind, field) => {
     expect(() =>
@@ -547,6 +640,24 @@ describe("Registration refusals of contract commands", () => {
         { command: "probe", description: "Probe" },
       ),
     ).toThrow("probe.field has no argv projection");
+  });
+
+  it("takes an array of numbers as repeated decimal tokens within its bounds", () => {
+    const [parameter] = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          ordinals: z.array(z.int().nonnegative()).min(1).max(2).optional(),
+        }),
+      },
+      { command: "probe", description: "Probe" },
+    ).parameters;
+    const schema = parameter!.schema;
+    expect(parameter!.repeatable).toBe(true);
+    expect(schema.parse(["0", "7"])).toEqual([0, 7]);
+    expect(schema.parse(undefined)).toBeUndefined();
+    for (const refused of [["0x1"], ["-1"], [], ["1", "2", "3"]])
+      expect(schema.safeParse(refused).success, String(refused)).toBe(false);
   });
 
   it("refuses an input constraint the CLI schema cannot carry", () => {
@@ -680,7 +791,10 @@ describe("JSON decoded when contract commands run", () => {
     "%s refuses text that is not JSON before analysis",
     (_command, description) => {
       for (const parameter of description.parameters) {
-        if (parameter.runtimeJson === undefined) continue;
+        // The command reads a JSON input before admission and refuses it
+        // there; the CLI tests cover that refusal.
+        if (parameter.runtimeJson === undefined || parameter.jsonInput)
+          continue;
         const malformed = description.admit(
           argvValues(description, {
             detail: "summary",
@@ -718,14 +832,32 @@ describe("JSON decoded when contract commands run", () => {
                 : { detail, evidence_output: "out.json" }),
               [parameter.key]: text,
             });
-            const expected = description.contract.inputSchema.safeParse({
-              ...description.toContractInput({
-                ...values,
-                [parameter.key]: undefined,
-              }),
-              ...(detail === undefined ? {} : { detail }),
-              [parameter.field]: JSON.parse(text) as unknown,
-            }).success;
+            // The command hands admission a JSON input already decoded.
+            if (parameter.jsonInput)
+              values[parameter.key] = JSON.parse(text) as unknown;
+            const decoded = JSON.parse(text) as unknown;
+            const { group } = parameter;
+            // A field group supplies the members of a JSON object, each one
+            // of its fields; other JSON is refused before the contract.
+            const supplied =
+              group === undefined
+                ? { [parameter.field]: decoded }
+                : typeof decoded === "object" &&
+                    decoded !== null &&
+                    !Array.isArray(decoded) &&
+                    Object.keys(decoded).every((key) => group.includes(key))
+                  ? decoded
+                  : undefined;
+            const expected =
+              supplied !== undefined &&
+              description.contract.inputSchema.safeParse({
+                ...description.toContractInput({
+                  ...values,
+                  [parameter.key]: undefined,
+                }),
+                ...(detail === undefined ? {} : { detail }),
+                ...supplied,
+              }).success;
             if (description.admit(values).ok !== expected)
               mismatches.push(
                 `${parameter.key} ${String(detail)} ${text} expected ${String(expected)}`,
@@ -786,9 +918,13 @@ describe("Flattened object fields of contract commands", () => {
   it.each(flattening)(
     "%s supplies the object with only the given members",
     (_command, description) => {
+      // A required object is always supplied, so only optional ones apply.
       const fields = new Set(
         description.parameters.flatMap(({ field, member }) =>
-          member === undefined ? [] : [field],
+          member === undefined ||
+          !contractShape(description)[field]!.safeParse(undefined).success
+            ? []
+            : [field],
         ),
       );
       for (const field of fields) {
@@ -804,10 +940,16 @@ describe("Flattened object fields of contract commands", () => {
           const input = description.toContractInput(
             argvValues(description, { [given.key]: value }),
           );
-          // An omitted member stays omitted, never an explicit undefined.
-          expect(Object.keys(input[field] as object)).toEqual([given.member]);
-          expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
-            value,
+          // An omitted member stays omitted, never an explicit undefined;
+          // a nested member supplies each enclosing object with only itself.
+          let object = input[field] as Record<string, unknown>;
+          for (const member of given.member!.slice(0, -1)) {
+            expect(Object.keys(object)).toEqual([member]);
+            object = object[member] as Record<string, unknown>;
+          }
+          expect(Object.keys(object)).toEqual([given.member!.at(-1)]);
+          expect(object[given.member!.at(-1)!]).toEqual(
+            given.callerPath ? absoluteCallerPath(value as string) : value,
           );
         }
       }
@@ -835,7 +977,85 @@ describe("Flattened object fields of contract commands", () => {
         description: "Probe",
         flatten: { range: { a: {}, b: {} }, value: { a: {} } },
       }),
-    ).toThrow("probe.value is not an optional object");
+    ).toThrow("probe.value is not an object");
+  });
+
+  it("takes a required object's members as positionals in member order", () => {
+    const inputSchema = z.strictObject({
+      name: z.string(),
+      position: z.strictObject({ line: z.int(), column: z.int() }),
+      limits: z.strictObject({ bytes: z.int().optional() }).optional(),
+    });
+    const described = describeContractCommand(
+      { name: "probe", inputSchema },
+      {
+        command: "probe",
+        description: "Probe",
+        positionals: ["name", "position"],
+        flatten: {
+          position: { line: {}, column: { name: "col" } },
+          limits: { bytes: {} },
+        },
+      },
+    );
+    expect(
+      described.parameters.map(({ key, positional }) => [key, positional]),
+    ).toEqual([
+      ["name", true],
+      ["line", true],
+      ["col", true],
+      ["bytes", false],
+    ]);
+    const [, line] = described.parameters;
+    expect(line!.schema.safeParse(undefined).success).toBe(false);
+    expect(line!.schema.safeParse("2").success).toBe(true);
+    expect(described.toContractInput({ name: "n", line: 2, col: 0 })).toEqual({
+      name: "n",
+      position: { line: 2, column: 0 },
+    });
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["limits"],
+          flatten: { limits: { bytes: {} } },
+        },
+      ),
+    ).toThrow("probe.limits is an optional positional object");
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.strictObject({
+            position: z.strictObject({ line: z.int().optional() }),
+          }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["position"],
+          flatten: { position: { line: {} } },
+        },
+      ),
+    ).toThrow("probe.position.line is an optional positional");
+    // Omitting every member would drop a required object argv cannot spell.
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.strictObject({
+            limits: z.strictObject({ bytes: z.int().optional() }),
+          }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          flatten: { limits: { bytes: {} } },
+        },
+      ),
+    ).toThrow("probe.limits has no required member");
   });
 });
 
@@ -874,11 +1094,20 @@ describe("Session targets of contract commands", () => {
       expect(description.inputBinding.operation).toBe(
         description.contract.name,
       );
-      for (const { field, key, member } of description.parameters)
-        if (member === undefined)
+      // A selector field is named by its own option, which selection
+      // issues already use; its positional may share another key.
+      for (const {
+        field,
+        key,
+        member,
+        selectorOption,
+      } of description.parameters)
+        if (member === undefined) {
+          const named = selectorOption?.key ?? key;
           expect(description.inputBinding.fields[field]).toBe(
-            key === field ? undefined : key,
+            named === field ? undefined : named,
           );
+        }
     },
   );
 
@@ -1060,6 +1289,15 @@ describe("Opening fields a session target projects", () => {
   });
 });
 
+/** Summary selections for contracts whose summary requires a view. */
+const SUMMARY_SELECTIONS: Readonly<
+  Record<string, Readonly<Record<string, unknown>>>
+> = {
+  "analyze-web-bundle": {
+    view: '{"kind":"web-bundle","collection":"endpoints"}',
+  },
+};
+
 const delivering = each.filter(
   ([, description]) => description.evidenceDelivery,
 );
@@ -1067,9 +1305,13 @@ const delivering = each.filter(
 describe("Evidence delivery of contract commands", () => {
   it.each(delivering)(
     "%s refuses summary delivery without --evidence_output before analysis",
-    (_command, description) => {
+    (command, description) => {
+      const satisfying = {
+        ...ARGV_SATISFYING_RULES[command],
+        ...SUMMARY_SELECTIONS[command],
+      };
       const refused = description.admit(
-        argvValues(description, { detail: "summary" }),
+        argvValues(description, { ...satisfying, detail: "summary" }),
       );
       expect(refused.ok).toBe(false);
       if (!refused.ok)
@@ -1079,6 +1321,7 @@ describe("Evidence delivery of contract commands", () => {
       expect(
         description.admit(
           argvValues(description, {
+            ...satisfying,
             detail: "summary",
             evidence_output: "out.json",
           }),
@@ -1109,7 +1352,75 @@ describe("Evidence delivery of contract commands", () => {
         { name: "probe", inputSchema },
         { command: "probe", description: "Probe" },
       ),
-    ).toThrow("probe.detail differs between input branches");
+    ).toThrow("probe.limit differs between input branches");
+  });
+
+  it("selects an input branch with a literal in one branch and an enum in another", () => {
+    const inputSchema = z.union([
+      z.strictObject({ format: z.literal("json").default("json") }),
+      z.strictObject({ format: z.enum(["sdl", "graphql"]) }),
+    ]);
+    const [format] = describeContractCommand(
+      { name: "probe", inputSchema },
+      { command: "probe", description: "Probe" },
+    ).parameters;
+    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.safeParse("graphql").success).toBe(true);
+    expect(format!.schema.safeParse("xml").success).toBe(false);
+  });
+
+  it("takes the input branches a command selects and fixes a single selected value", () => {
+    const path = z.string();
+    const inputSchema = z.discriminatedUnion("operation", [
+      z.strictObject({ operation: z.enum(["a", "b"]), path }),
+      z.strictObject({
+        operation: z.literal("c"),
+        path,
+        symbol: z.string().optional(),
+      }),
+      z.strictObject({ operation: z.literal("d") }),
+    ]);
+    const describe = (values: readonly [string, ...string[]]) =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values },
+        },
+      );
+    const artifact = describe(["a", "b", "c"]);
+    expect(artifact.parameters.map(({ key }) => key)).toEqual([
+      "operation",
+      "path",
+      "symbol",
+    ]);
+    const operation = artifact.parameters[0]!.schema;
+    expect(operation.safeParse("c").success).toBe(true);
+    expect(operation.safeParse("d").success).toBe(false);
+    expect(artifact.parameters[1]!.schema.safeParse(undefined).success).toBe(
+      false,
+    );
+    const fixed = describe(["d"]);
+    expect(fixed.parameters).toEqual([]);
+    expect(fixed.toContractInput({})).toEqual({ operation: "d" });
+    expect(inputSchema.safeParse(fixed.toContractInput({})).success).toBe(true);
+    expect(() => describe(["a"])).toThrow(
+      "probe.operation would narrow an input branch",
+    );
+    expect(() => describe(["e"])).toThrow(
+      "probe.operation selects no branch for a value",
+    );
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ operation: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values: ["a"] },
+        },
+      ),
+    ).toThrow("probe has one input branch");
   });
 });
 
@@ -1538,5 +1849,109 @@ describe("Operation choices selected by an option", () => {
     expect(() => describeOperationChoices(base, projection)).toThrow(
       "other does not project to probe's options",
     );
+  });
+});
+
+describe("Contract command field groups", () => {
+  const contract = {
+    name: "group_probe",
+    inputSchema: z.strictObject({
+      path: z.string(),
+      name: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }),
+  };
+  const grouped = (
+    fields: readonly [
+      "name" | "tags" | "path",
+      ...("name" | "tags" | "path")[],
+    ],
+  ) =>
+    describeContractCommand(contract, {
+      command: "group-probe",
+      description: "Probe",
+      positionals: ["path"],
+      fieldGroups: {
+        query: {
+          fields,
+          description: "JSON selection",
+          invalidJson: "query must be a JSON selection object.",
+        },
+      },
+    });
+
+  it("supplies each member of one JSON object option as its contract field", () => {
+    const description = grouped(["name", "tags"]);
+    expect(description.parameters.map(({ key }) => key)).toEqual([
+      "path",
+      "query",
+    ]);
+    const admitted = description.admit({
+      path: "/x",
+      query: '{"name":"a","tags":["b"]}',
+    });
+    expect(admitted.ok && admitted.value.input).toEqual({
+      path: "/x",
+      name: "a",
+      tags: ["b"],
+    });
+    expect(description.admit({ path: "/x" }).ok).toBe(true);
+  });
+
+  it.each([
+    ["[]", ["query"], "invalid_format"],
+    ['{"path":"/y"}', ["query", "path"], undefined],
+    ['{"name":1}', ["name"], undefined],
+  ])("refuses the group %s", (text, path, reason) => {
+    const admitted = grouped(["name", "tags"]).admit({
+      path: "/x",
+      query: text,
+    });
+    expect(admitted.ok).toBe(false);
+    if (admitted.ok) return;
+    expect(admitted.error.issues[0]).toMatchObject({
+      path,
+      ...(reason === undefined ? {} : { reason }),
+    });
+  });
+
+  it("refuses a group member an object rule names", () => {
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "group_probe",
+          inputSchema: contract.inputSchema.meta({
+            dependentRequired: { name: ["tags"] },
+          }),
+        },
+        {
+          command: "group-probe",
+          description: "Probe",
+          positionals: ["path"],
+          fieldGroups: {
+            query: {
+              fields: ["name", "tags"],
+              description: "x",
+              invalidJson: "x",
+            },
+          },
+        },
+      ),
+    ).toThrow("group_probe.name is grouped but named by an input rule");
+  });
+
+  it("refuses a required or twice-projected group member", () => {
+    expect(() => grouped(["path"])).toThrow(
+      "group_probe.path is projected twice",
+    );
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "group-probe",
+        description: "Probe",
+        fieldGroups: {
+          query: { fields: ["path"], description: "x", invalidJson: "x" },
+        },
+      }),
+    ).toThrow("group_probe.path is a required group member");
   });
 });

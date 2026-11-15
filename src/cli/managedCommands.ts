@@ -18,7 +18,6 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
@@ -55,7 +54,6 @@ const registerInspectManagedArtifact = (
     logger,
     contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_artifact"),
     {
-      command: CLI_COMMANDS.inspectManagedArtifact,
       description: "Inspect PE/CLI identity without loading target code",
       ...managedTarget,
       evidenceDelivery: true,
@@ -74,7 +72,6 @@ const registerInspectManagedMembers = (
     logger,
     contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_members"),
     {
-      command: CLI_COMMANDS.inspectManagedMembers,
       description:
         "Inspect PE/CLI metadata members, signatures, CIL anchors, and ldstr string literals without loading target code",
       ...managedTarget,
@@ -101,7 +98,6 @@ const registerInspectManagedNativeBoundaries = (
     logger,
     contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_native_boundaries"),
     {
-      command: CLI_COMMANDS.inspectManagedNativeBoundaries,
       description:
         "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
       ...managedTarget,
@@ -124,7 +120,6 @@ const registerCompareManagedMembers = (
     logger,
     contractNamed(MANAGED_WORKFLOW_TOOL_CONTRACTS, "compare_managed_members"),
     {
-      command: CLI_COMMANDS.compareManagedMembers,
       description:
         "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
       evidenceTargets: {
@@ -186,7 +181,6 @@ const registerCompareManagedMembers = (
 const MANAGED_WORKFLOWS = [
   {
     name: "import_managed_reconstruction",
-    command: CLI_COMMANDS.importManagedReconstruction,
     description:
       "Import decompiler-produced managed reconstruction against exact static member evidence",
     document: "Inline managed reconstruction JSON or JSON file path",
@@ -198,7 +192,6 @@ const MANAGED_WORKFLOWS = [
   },
   {
     name: "verify_managed_native_boundaries",
-    command: CLI_COMMANDS.verifyManagedNativeBoundaries,
     description:
       "Verify managed P/Invoke declarations against authenticated native Evidence",
     document: "Inline managed/native verification JSON or JSON file path",
@@ -213,7 +206,6 @@ const MANAGED_WORKFLOWS = [
   },
   {
     name: "project_managed_application_graph",
-    command: CLI_COMMANDS.projectManagedApplicationGraph,
     description:
       "Project authenticated managed static Evidence into an application graph",
     document: "Inline managed application graph JSON or JSON file path",
@@ -229,28 +221,20 @@ const registerManagedWorkflowCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  for (const {
-    name,
-    command,
-    description,
-    document,
-    workflow,
-  } of MANAGED_WORKFLOWS)
+  for (const { name, description, document, workflow } of MANAGED_WORKFLOWS)
     registerContractDocumentCommand(
       cli,
       logger,
       contractNamed(MANAGED_WORKFLOW_TOOL_CONTRACTS, name),
       {
-        command,
         description,
         document,
         cliOptions: { evidenceBundle: evidenceBundleOption },
       },
-      (input, { signal, operation, cliOptions }) =>
+      (input, { signal, operation, frame, cliOptions }) =>
         runEvidenceInputCommand(
-          operation,
-          cliOptions.evidenceBundle,
-          signal,
+          input,
+          { operation, signal, frame, cliOptions },
           (lookup) => Promise.resolve(workflow(input, lookup, signal)),
         ).then(projectCliAnalysisResult),
     );
