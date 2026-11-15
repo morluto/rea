@@ -156,7 +156,7 @@ const fixture = async (
         );
       });
     },
-    options.maximumInputElements,
+    { maximumInputElements: options.maximumInputElements },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },

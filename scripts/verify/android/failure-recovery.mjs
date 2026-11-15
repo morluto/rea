@@ -4,20 +4,16 @@ import {
   sortVerifierNames,
 } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../../../dist/contracts/toolContracts.js";
 import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
@@ -30,10 +26,16 @@ export async function verifyAndroidFailureRecovery({
   execute,
   fixture,
 }) {
-  const root = await mkdtemp(join(tmpdir(), "rea-android-recovery-"));
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-android-recovery-",
+    // A plain directory, as before: tools create directories beneath it,
+    // which a private root blocks on Windows.
+    private: false,
+  });
+  const root = rootFixture.path;
   const javaName = process.platform === "win32" ? "java.exe" : "java";
   const jlinkName = process.platform === "win32" ? "jlink.exe" : "jlink";
-  try {
+  await withVerifierFixture(rootFixture, async () => {
     const withoutJar = { ...environment };
     delete withoutJar.REA_JADX_MCP_JAR;
     await verifyAndroidReadiness({
@@ -277,9 +279,7 @@ export async function verifyAndroidFailureRecovery({
       await client.close();
       await transport.close();
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 }
 
 const verifyAndroidReadiness = async ({

@@ -3,6 +3,7 @@ import type { Readable } from "node:stream";
 import { getHeapStatistics } from "node:v8";
 
 import { absoluteCallerPath } from "./filesystem/callerPath.js";
+import { localPathStringSchema } from "./domain/localPath.js";
 
 import { sealOwnedJsonInput } from "./application/OwnedJsonInput.js";
 import {
@@ -14,9 +15,10 @@ import {
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "./domain/result.js";
@@ -44,11 +46,7 @@ export const parseCliJsonInput = async (
     ok: false as const,
     error: {
       error: "Application workflow failed",
-      ...projectAnalysisError(
-        new AnalysisCancelledError(operation, {
-          cause,
-        }),
-      ),
+      ...projectAnalysisError(cancelledBy(operation, carriedReason(cause))),
     },
   });
   if (signal?.aborted) return cancelled(signal.reason);
@@ -266,7 +264,19 @@ const accessDeniedSystemCode = (
  * A `file:` URL or `scheme://` URL is not an operator-relative filesystem path.
  * One-letter prefixes stay paths so Windows drive paths resolve normally.
  */
-const URL_REFERENCE = /^(?:file:|[A-Za-z][A-Za-z0-9+.-]+:\/\/)/iu;
+const URL_REFERENCE_SOURCE = "(?:[Ff][Ii][Ll][Ee]:|[A-Za-z][A-Za-z0-9+.-]+://)";
+const URL_REFERENCE = new RegExp(`^${URL_REFERENCE_SOURCE}`, "u");
+
+/**
+ * A caller-path field of a CLI JSON document as the CLI admits it: any
+ * nonempty local spelling, which it resolves, but not a URL, which it leaves
+ * for the contract to refuse. The pattern spells case-insensitivity out so
+ * JSON Schema, which carries no regex flags, advertises the same rule.
+ */
+export const cliJsonCallerPathSchema = localPathStringSchema.regex(
+  new RegExp(`^(?!${URL_REFERENCE_SOURCE})`, "u"),
+  "must be a local path, not a URL",
+);
 
 /**
  * Resolve named string fields of CLI-supplied JSON against the operator

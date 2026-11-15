@@ -186,6 +186,7 @@ it("retains alternate dylib flags and legacy platform versions", async () => {
     encoding: { kind: "use", flags: 9 },
   });
   expect(result.commands[1]?.legacyBuild).toEqual({
+    platform: 1,
     version: 0x000d0102,
     sdk: 0x000f0000,
   });

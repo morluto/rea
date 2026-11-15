@@ -20,6 +20,11 @@ export const cutterSessionSchema = z.strictObject({
   cutter_version: z.string().nullable(),
   identity_status: z.literal("partial"),
   bridge_source: cutterBridgeSourceSchema,
+  /**
+   * How to run the packaged plugin, present when `bridge_source` is not
+   * `packaged`: the session's plugin is unknown or differs from this release.
+   */
+  bridge_source_recovery: z.string().exactOptional(),
 });
 
 /** Discovery facts retained independently of descriptor cleanup. */

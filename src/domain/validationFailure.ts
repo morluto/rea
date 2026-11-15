@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+/** The location `describeValidationFailure` names, when the cause is schema-located. */
+export const firstValidationIssuePath = (
+  cause: unknown,
+): readonly (string | number)[] | undefined => {
+  if (!(cause instanceof z.ZodError)) return undefined;
+  const first = cause.issues[0];
+  return first?.path.map((key) =>
+    typeof key === "number" ? key : String(key),
+  );
+};
+
 /** Locate the first schema issue, or keep a thrown constraint message. */
 export const describeValidationFailure = (cause: unknown): string => {
   if (!(cause instanceof z.ZodError))

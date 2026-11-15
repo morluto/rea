@@ -9,7 +9,7 @@ import { isDesktopBuildInformationalCheck } from "./DesktopBuildDoctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
   isDesktopBuildCheck,
-} from "./DoctorProviderIds.js";
+} from "../domain/doctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
