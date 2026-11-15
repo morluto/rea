@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
@@ -107,6 +108,7 @@ it.skipIf(process.platform === "win32")(
       const result = await inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           probeTimeoutMs: 3_000,
@@ -240,6 +242,7 @@ it.skipIf(process.platform === "win32")(
       const pending = inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           signal: controller.signal,
@@ -461,6 +464,7 @@ it.skipIf(process.platform === "win32")(
       const pending = inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           signal: controller.signal,
