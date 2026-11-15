@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
@@ -13,7 +14,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import {
@@ -94,15 +95,46 @@ export interface ContractCommandContext<
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /**
-   * The contract's parse of the input, when the projection decodes JSON at
-   * run time and admission parsed the whole input; undefined otherwise.
+   * The contract's parse of the input, when admission parsed the whole
+   * input: the projection decodes JSON at run time, or argv supplies every
+   * contract field. Undefined when a session target, Evidence target or the
+   * handler supplies part of the input.
    */
   readonly parsed: Parsed | undefined;
+  /**
+   * The contract's parse of an argv-supplied whole input, or its refusal,
+   * which the handler reports in its own workflow's shape. It parses on
+   * first call and reuses the result; undefined when argv does not supply
+   * the whole input. Read it through `admittedContractInput`.
+   */
+  readonly parseWholeInput:
+    | (() => Result<Parsed, AnalysisInputError>)
+    | undefined;
   /** What each `jsonInputChecks` check admitted, by contract field. */
   readonly checked: Checked;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
 }
+
+/**
+ * The contract's parse of a projection whose admission parses the whole
+ * input, or its refusal. Neither means the projection supplies part of the
+ * input elsewhere, which is a defect in that command's registration.
+ */
+export const admittedContractInput = <Parsed>(context: {
+  readonly operation: string;
+  readonly parsed: Parsed | undefined;
+  readonly parseWholeInput:
+    | (() => Result<Parsed, AnalysisInputError>)
+    | undefined;
+}): Result<Parsed, AnalysisInputError> => {
+  if (context.parsed !== undefined) return ok(context.parsed);
+  if (context.parseWholeInput === undefined)
+    throw invariantViolation(
+      `${context.operation} does not admit its whole contract input on the CLI`,
+    );
+  return context.parseWholeInput();
+};
 
 /** The Evidence targets one invocation selected. */
 export interface CliEvidenceTargetSelection {
@@ -628,6 +660,12 @@ export const registerContractCommand = <
                 parsed: admitted.value.parsed as
                   | z.output<Contract["inputSchema"]>
                   | undefined,
+                parseWholeInput: admitted.value.parseWholeInput as
+                  | (() => Result<
+                      z.output<Contract["inputSchema"]>,
+                      AnalysisInputError
+                    >)
+                  | undefined,
                 checked: read.checked as CliCheckedJsonInputs<Checks>,
                 cliOptions: selected.cliOptionValues(
                   values,
@@ -905,6 +943,7 @@ export const registerRoutedCommand = (
               opening: opening.value,
               delivery: admitted.value.delivery,
               parsed: admitted.value.parsed,
+              parseWholeInput: admitted.value.parseWholeInput,
               checked: { ...shared.checked, ...read.checked },
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),
@@ -946,12 +985,23 @@ export interface ContractDocumentContext<
   CliOptions extends Readonly<Record<string, unknown>> = Readonly<
     Record<string, unknown>
   >,
+  Parsed = unknown,
 > {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
   readonly operation: string;
   /** The document as decoded, before its caller paths were resolved. */
   readonly spelled: unknown;
+  /** A document is never parsed at admission; see `parseWholeInput`. */
+  readonly parsed: undefined;
+  /**
+   * The contract's parse of the document, with caller paths resolved, as
+   * the whole contract input, or its refusal (issues name the caller's
+   * spelling). It parses on first call and reuses the result, so a handler
+   * whose document is not the whole input never parses it here. Read it
+   * through `admittedContractInput`.
+   */
+  readonly parseWholeInput: () => Result<Parsed, AnalysisInputError>;
   /**
    * The document's transport frame as `--schema` advertises it. A handler
    * that reads other inputs first, such as an Evidence bundle, admits the
@@ -1145,7 +1195,10 @@ export const registerContractDocumentCommand = <
   projection: CliDocumentProjection<ContractField<Contract>, CliOptions>,
   run: (
     document: unknown,
-    context: ContractDocumentContext<CliOptionValues<CliOptions>>,
+    context: ContractDocumentContext<
+      CliOptionValues<CliOptions>,
+      z.output<Contract["inputSchema"]>
+    >,
   ) => Promise<Value>,
 ): void => {
   const description = describeContractDocumentCommand(contract, projection);
@@ -1203,24 +1256,43 @@ export const registerContractDocumentCommand = <
                 )
               : undefined;
           if (refused !== undefined) return projectAnalysisError(refused);
-          return run(
-            resolveCliJsonPaths(decoded.value, description.callerPaths),
-            {
-              signal,
-              operation: contract.name,
-              spelled: decoded.value,
-              frame: description.content,
-              delivery: delivery.value,
-              opening: opening.value,
-              sessionTarget:
-                description.sessionTarget === undefined
-                  ? undefined
-                  : args[description.sessionTarget.key],
-              cliOptions: description.cliOptionValues(
-                values,
-              ) as CliOptionValues<CliOptions>,
-            },
+          const document = resolveCliJsonPaths(
+            decoded.value,
+            description.callerPaths,
           );
+          let admitted:
+            | Result<z.output<Contract["inputSchema"]>, AnalysisInputError>
+            | undefined;
+          const parseWholeInput = () =>
+            (admitted ??= (() => {
+              const parsed = contract.inputSchema.safeParse(document);
+              return parsed.success
+                ? ok(parsed.data as z.output<Contract["inputSchema"]>)
+                : err(
+                    analysisInputErrorFromIssues(
+                      contract.name,
+                      parsed.error.issues,
+                      decoded.value,
+                    ),
+                  );
+            })());
+          return run(document, {
+            signal,
+            operation: contract.name,
+            spelled: decoded.value,
+            parsed: undefined,
+            parseWholeInput,
+            frame: description.content,
+            delivery: delivery.value,
+            opening: opening.value,
+            sessionTarget:
+              description.sessionTarget === undefined
+                ? undefined
+                : args[description.sessionTarget.key],
+            cliOptions: description.cliOptionValues(
+              values,
+            ) as CliOptionValues<CliOptions>,
+          });
         }),
       ),
   } as never);

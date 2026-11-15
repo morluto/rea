@@ -1,4 +1,4 @@
-import type { Cli, z } from "incur";
+import type { Cli } from "incur";
 import type { Logger } from "pino";
 
 import { browserCliError } from "./browserCliError.js";
@@ -8,6 +8,7 @@ import {
 } from "./browserContractCommands.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  admittedContractInput,
   commandRoute,
   contractInputBranch,
   registerContractCommand,
@@ -27,7 +28,6 @@ import {
   isScenarioCaptureDocument,
   type BrowserCaptureComparisonInput,
 } from "../domain/browserCaptureComparison.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
@@ -201,20 +201,12 @@ const registerScreenshotDiff = (
         },
       },
     },
-    async (input) => {
-      const parsed = contract.inputSchema.safeParse(input);
-      if (!parsed.success)
-        return browserCliError(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            input,
-            { cause: parsed.error },
-          ),
-        );
+    async (_input, context) => {
+      const admitted = admittedContractInput(context);
+      if (!admitted.ok) return browserCliError(admitted.error);
       const result = await compareWebScreenshotEvidence(
         new CdpBrowserProvider(),
-        parsed.data,
+        admitted.value,
       );
       return result.ok ? result.value : browserCliError(result.error);
     },

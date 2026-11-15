@@ -4,10 +4,12 @@ import type { BrowserObservationPort } from "../application/BrowserObservationPo
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Result } from "../domain/result.js";
 import { browserCliError } from "./browserCliError.js";
-import type { ContractCommandContext } from "./contractCommand.js";
+import {
+  admittedContractInput,
+  type ContractCommandContext,
+} from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
@@ -38,15 +40,14 @@ export const observeThroughBrowser =
       options: { readonly signal: AbortSignal },
     ) => Promise<Result<Evidence, AnalysisError>>,
   ) =>
-  async (input: unknown, { signal }: ContractCommandContext) => {
-    const parsed = contract.inputSchema.safeParse(input);
-    if (!parsed.success)
-      return browserCliError(
-        analysisInputErrorFromIssues(contract.name, parsed.error.issues, input),
-      );
+  async (_input: unknown, context: ContractCommandContext) => {
+    const admitted = admittedContractInput(context);
+    if (!admitted.ok) return browserCliError(admitted.error);
+    const input = admitted.value as z.output<Schema>;
+    const { signal } = context;
     const provider = createBrowserObservationProvider();
     return finishAnalysisCommand(
-      () => run(provider, parsed.data, { signal }),
+      () => run(provider, input, { signal }),
       {
         close: async () => {
           await provider.close?.();
