@@ -36,7 +36,7 @@ import {
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 import { resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;

@@ -10,7 +10,7 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;

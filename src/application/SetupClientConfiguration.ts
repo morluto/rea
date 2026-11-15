@@ -85,6 +85,7 @@ import {
   type SetupClient,
 } from "./SupportedClients.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanupFailure<string> {
   constructor(
@@ -1138,9 +1139,7 @@ const registrationOwnershipBlocker = (
   const inheritsLauncher =
     effective !== undefined &&
     effective !== parsed &&
-    typeof fragment === "object" &&
-    fragment !== null &&
-    !Array.isArray(fragment) &&
+    isRecord(fragment) &&
     !Object.hasOwn(fragment, "command");
   if (Object.hasOwn(parsed.servers, name) && !inheritsLauncher)
     entries.push({ value: parsed.servers[name], paths: [client.configPath] });

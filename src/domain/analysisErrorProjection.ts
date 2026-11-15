@@ -62,6 +62,7 @@ import {
 import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -131,9 +132,7 @@ export function* unretainedEvidenceCandidates(
   ] as const) {
     const value = projected.details?.[field];
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       (value.kind === "unretained-evidence" ||
         value.kind === "unretained-observation" ||
         value.kind === "inline-evidence")
@@ -214,12 +213,7 @@ export const omitUnretainedEvidenceFromError = (
   }
   const { [field]: _partial, ...details } = projected.details!;
   const evidence = partial.evidence;
-  const evidenceId =
-    typeof evidence === "object" &&
-    evidence !== null &&
-    !Array.isArray(evidence)
-      ? evidence.evidence_id
-      : undefined;
+  const evidenceId = isRecord(evidence) ? evidence.evidence_id : undefined;
   const retention =
     partial.kind === "inline-evidence"
       ? typeof partial.retention === "string"
