@@ -132,7 +132,7 @@ describe("scanCredentialNames name reading", () => {
       pointers: ["record 1 response /token"],
       skipped: NONE_SKIPPED,
     });
-  }, 60_000);
+  });
 });
 
 describe("scanCredentialNames", () => {
