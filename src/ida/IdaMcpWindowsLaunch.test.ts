@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { createIdaMcpConnection } from "./IdaMcpConnection.js";
+import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import type { OwnedMcpLauncher } from "../process/OwnedMcpStdioTransport.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
@@ -126,4 +127,39 @@ it("closes while a Windows command lookup is stalled on an unreachable PATH dire
   await connection.close();
   await expect(connecting).resolves.toBeDefined();
   expect(launches).toEqual([]);
+});
+
+it("ends a stalled Windows command lookup at the registration timeout", async () => {
+  files.stalled.add("\\\\offline\\tools\\ida-mcp.EXE");
+  const launches: unknown[] = [];
+  const connection = createIdaMcpConnection(
+    { command: "ida-mcp", args: [], env: {}, mode: "attached", timeoutMs: 50 },
+    {
+      SYSTEMROOT: "C:\\Windows",
+      PATH: "\\\\offline\\tools",
+      PATHEXT: ".EXE",
+    },
+    {
+      platform: "win32",
+      launcher: async (options) => {
+        launches.push(options);
+        throw new Error("launch observed");
+      },
+    },
+  );
+  try {
+    const failure: unknown = await connection.connect().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(AnalysisTimeoutError);
+    expect(failure).toMatchObject({
+      operation: "ida_mcp_connect",
+      timeoutMs: 50,
+      diagnostics: { phase: "windows_path_lookup" },
+    });
+    expect(launches).toEqual([]);
+  } finally {
+    await connection.close();
+  }
 });

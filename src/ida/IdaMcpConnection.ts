@@ -29,6 +29,7 @@ import {
 } from "../process/OwnedMcpStdioTransport.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
+import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
@@ -127,7 +128,11 @@ const IDA_STDERR_TAIL_BYTES = 16_384;
  * and route batch launchers through the shared non-AutoRun cmd.exe invocation.
  */
 const idaStdioLauncher =
-  (platform: NodeJS.Platform, launch: OwnedMcpLauncher): OwnedMcpLauncher =>
+  (
+    platform: NodeJS.Platform,
+    launch: OwnedMcpLauncher,
+    timeoutMs: number,
+  ): OwnedMcpLauncher =>
   async (options) => {
     if (platform !== "win32") return launch(options);
     const environment = mergeEnvironmentOverrides(
@@ -135,17 +140,23 @@ const idaStdioLauncher =
       options.env ?? {},
       "win32",
     );
-    // The owned transport aborts this signal when it closes, so a lookup that
-    // stalls on an unreachable PATH directory cannot hold shutdown open.
+    // The registration timeout bounds the PATH search, and the owned
+    // transport aborts its signal when it closes, so a lookup that stalls on
+    // an unreachable PATH directory holds neither connect nor shutdown open.
+    const deadline = new ProviderStartupDeadline(timeoutMs, options.signal);
     const found = await findWindowsExecutable(options.command, environment, {
-      signal: options.signal ?? new AbortController().signal,
+      signal: deadline.signal,
       allowBatch: true,
-    });
+    }).finally(() => deadline.dispose());
     if (!found.ok && found.error.kind === "interrupted")
-      throw (
-        options.signal?.reason ??
-        new Error("IDA MCP command lookup was interrupted")
-      );
+      throw deadline.interruption === "timeout"
+        ? new AnalysisTimeoutError("ida_mcp_connect", timeoutMs, {
+            cause: found.error,
+            diagnostics: { phase: "windows_path_lookup" },
+            ...idaRegistrationTimeoutGuidance(timeoutMs, "request"),
+          })
+        : (options.signal?.reason ??
+            new Error("IDA MCP command lookup was interrupted"));
     if (!found.ok)
       throw new Error(
         found.error.kind === "invalid_extension"
@@ -562,6 +573,8 @@ export const createIdaMcpConnection = (
         : undefined;
     if (cause instanceof IdaDiagnosticResourceError) throw cause;
     if (cause instanceof McpHttpUtf8Error) throw cause;
+    // The Windows command lookup already classified its own deadline.
+    if (cause instanceof AnalysisTimeoutError) throw cause;
     if (
       httpUtf8Failure !== undefined &&
       cause instanceof SdkError &&
@@ -676,6 +689,7 @@ export const createIdaMcpConnection = (
           idaStdioLauncher(
             dependencies.platform ?? process.platform,
             dependencies.launcher ?? spawnOwnedProviderProcess,
+            config.timeoutMs,
           ),
         )
       : new StreamableHTTPClientTransport(new URL(config.url), {
