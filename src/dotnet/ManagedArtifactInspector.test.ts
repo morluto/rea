@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
-import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { ManagedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
