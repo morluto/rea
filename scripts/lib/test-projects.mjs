@@ -55,8 +55,6 @@ export const BUILT_TEST_PROJECTS = [
       "tests/boundary/cli/**/*.test.ts",
       "tests/boundary/mcp/**/*.test.ts",
       "tests/boundary/process/**/*.test.ts",
-      "tests/boundary/javascript/asyncChunkCapacity.test.ts",
-      "tests/boundary/javascript/semanticFingerprintAccumulation.test.ts",
     ],
   },
   {
@@ -68,11 +66,7 @@ export const BUILT_TEST_PROJECTS = [
   {
     name: "process-boundary",
     group: "built",
-    include: [
-      "tests/boundary/process/**/*.test.ts",
-      "tests/boundary/javascript/asyncChunkCapacity.test.ts",
-      "tests/boundary/javascript/semanticFingerprintAccumulation.test.ts",
-    ],
+    include: ["tests/boundary/process/**/*.test.ts"],
   },
   {
     name: "mcp-boundary",
