@@ -201,6 +201,50 @@ it("reports the selected output allowance as the omitted file-size default", () 
   });
 });
 
+it("binds diagnostic_bytes as the only control of the command output budget", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new OwnedCommandFailure(
+        "output-limit",
+        "Command diagnostic output exceeded its complete-output budget.",
+        {
+          stdout: { text: "x".repeat(64), bytes: 64, observedBytes: 65 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: 0,
+          signal: null,
+          outputIncomplete: true,
+        },
+      ),
+      "decoder",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits({ diagnostic_bytes: 64 }),
+      },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "producer_limits.diagnostic_bytes",
+        effective_value: 64,
+        default_value: 1048576,
+      },
+    },
+  });
+  // output_bytes bounds the reply file, not this budget.
+  expect(projected.message).not.toContain("output_bytes");
+  expect(projected.remediation.action).toContain(
+    "Increase producer_limits.diagnostic_bytes above 64",
+  );
+  expect(projected.remediation.action).not.toContain("--");
+});
+
 it("names the file-size cap when SIGXFSZ has no reported limit", () => {
   const projected = projectAnalysisError(
     pwntoolsDecoderFailure(

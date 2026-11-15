@@ -263,12 +263,21 @@ const pwntoolsCommandContext = (
       remediationAction: deadline.remediationAction,
       limit: deadline.limit,
     },
+    // The command retains stdout and stderr under one aggregate
+    // diagnostic_bytes budget; output_bytes bounds the reply file, which
+    // reports its own refusal. Exceeding the command budget therefore names
+    // diagnostic_bytes whichever stream overflowed it.
     outputLimit: {
-      limits: {
-        output_bytes: limits.output_bytes,
-        diagnostic_bytes: limits.diagnostic_bytes,
+      reason: `Owned pwntools stdout and stderr exceeded the selected ${String(limits.diagnostic_bytes)}-byte producer_limits.diagnostic_bytes budget.`,
+      limits: { diagnostic_bytes: limits.diagnostic_bytes },
+      recovery: {
+        remediationAction: `Increase producer_limits.diagnostic_bytes above ${String(limits.diagnostic_bytes)} bytes on the next call; no restart is required. It bounds retained process stdout and stderr only; output_bytes, file and transport limits remain independent.`,
       },
-      recovery: { remediationAction: budgetRecovery },
+      limit: producerLimitControl(
+        "diagnostic_bytes",
+        limits.diagnostic_bytes,
+        PWNTOOLS_LIMITS.diagnostic_bytes,
+      ),
     },
     resourceSignal: (signal) =>
       signal === "SIGXFSZ"
