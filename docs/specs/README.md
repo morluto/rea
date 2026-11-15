@@ -33,5 +33,6 @@ for new work, roadmap granularity and producer-owned contracts.
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md) ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
 - [Linux kernel build config](native/kernel-build-config/spec.md) ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
 - [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))
+- [Managed parameter constant defaults](managed/parameter-constant-defaults/spec.md) ([plan](managed/parameter-constant-defaults/plan.md), [tasks](managed/parameter-constant-defaults/tasks.md))
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))

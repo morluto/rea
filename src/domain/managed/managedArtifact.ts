@@ -286,7 +286,7 @@ const managedMethodSchema = z.object({
     .array(managedParameterDefaultSchema)
     .nullable()
     .describe(
-      "Param-owned ECMA-335 Constant declarations in ParamList order; parameters without HasDefault or a Constant row are omitted. Empty means the method's Param rows were examined; a Param row that cannot be read is omitted and reported as a parse issue. Null means its ParamList run could not be attributed, or a default sits on a Param row no ParamPtr row lists.",
+      "Param-owned ECMA-335 Constant declarations in ParamList order; parameters without HasDefault or a Constant row are omitted. Empty means the method's Param rows were examined; a Param row that cannot be read is omitted and reported as a parse issue. Null means its ParamList run could not be attributed, or a default sits on a Param row no method owns (unlisted by ParamPtr or before every run).",
     ),
 });
 

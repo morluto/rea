@@ -300,6 +300,67 @@ describe("unavailable parameter defaults retain independent facts", () => {
   });
 });
 
+describe("Param rows before every ParamList run", () => {
+  // Configure's run starts at 2, so Param row 1 belongs to no method.
+  const leading = (
+    constants: NonNullable<ManagedPeFixtureOptions["constants"]>,
+  ): ManagedPeFixtureOptions => ({
+    methods: [
+      {
+        name: "Configure",
+        paramList: 2,
+        params: [{ name: "count", flags: 0x1010 }, { name: "mode" }],
+      },
+      { name: "Main" },
+    ],
+    constants,
+  });
+
+  it("keeps every method's defaults unknown when a leading row declares one", () => {
+    const result = inspect(
+      leading([
+        {
+          typeCode: 0x08,
+          parentRaw: paramParent(1),
+          value: Buffer.from("04000000", "hex"),
+        },
+      ]),
+    );
+    expect(result.methods.map((method) => method.parameter_defaults)).toEqual([
+      null,
+      null,
+    ]);
+    expect(result.coverage.issues).toEqual([
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.Param:0x08000001",
+        detail: expect.stringContaining(
+          "its list position precedes every MethodDef ParamList run",
+        ),
+      }),
+    ]);
+  });
+
+  it("reports owned runs when the leading row declares no default", () => {
+    const result = inspect({
+      ...leading([]),
+      methods: [
+        {
+          name: "Configure",
+          paramList: 2,
+          params: [{ name: "count" }, { name: "mode" }],
+        },
+        { name: "Main" },
+      ],
+    });
+    expect(result.methods.map((method) => method.parameter_defaults)).toEqual([
+      [],
+      [],
+    ]);
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+});
+
 describe("ParamPtr indirection", () => {
   it("attributes Param rows through their pointer positions", () => {
     const result = inspect({

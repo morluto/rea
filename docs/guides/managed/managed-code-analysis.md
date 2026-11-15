@@ -55,8 +55,11 @@ same `constant` record. Parameters without a default are omitted, so an empty
 list means the method's Param rows were examined and none declares one.
 `parameter_defaults: null` means the method's `ParamList` run could not be
 attributed: an out-of-range coordinate, a run that ends before it starts or is
-out of order with another method's run, or an invalid `ParamPtr` table. That
-method keeps its other facts and coverage is partial.
+out of order with another method's run, or an invalid `ParamPtr` table. It is
+also `null` for every method when a `Param` row that no method owns declares a
+default: no `ParamPtr` row lists it, or its list position precedes every
+method's run. Such a default could belong to any method. Methods keep their
+other facts and coverage is partial.
 
 Boolean, character, signed/unsigned integers, floating-point, UTF-16 strings
 and class-null declarations are supported. `i8` and `u8` values are decimal

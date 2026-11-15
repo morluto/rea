@@ -155,28 +155,50 @@ const readParamRow = (
 };
 
 /**
- * ECMA-335 II.22.26 with ParamPtr: a method owns the Param rows its pointer
- * positions name. A row no pointer lists has no owning run, so a default it
- * declares could belong to any method and no method's defaults are complete.
- * Rows without HasDefault or a Constant row cannot hide a default.
+ * ECMA-335 II.22.26: a method owns the Param list positions from its ParamList
+ * start up to the next method's start. A Param row has no owning method when
+ * no ParamPtr row lists it, or when its list position precedes every method's
+ * run. A default on such a row could belong to any method, so no method's
+ * defaults are complete. Rows without HasDefault or a Constant row cannot hide
+ * a default.
  */
-const unlistedParameterDefault = (
+const unownedParameterDefault = (
   bytes: Buffer,
   reader: BinaryReader,
   layout: ManagedMetadataLayout,
   constant: ManagedConstantReader,
+  runs: ParamRuns,
 ): ManagedReaderFailure | null => {
+  const declares = (row: number, reason: string) => {
+    const { offset, flags } = readParamRow(reader, layout, row);
+    return constant(8, row, flags) === null
+      ? null
+      : managedFailure(
+          "invalid-row",
+          `metadata.Param:${metadataToken(8, row)}`,
+          `Param row declares a default, but ${reason}, so its method is unknown; parameter defaults are unknown`,
+          offset,
+        );
+  };
   const rows = layout.table(8)?.rowCount ?? 0;
   for (let row = 1; row <= rows; row += 1) {
     if (memberListListsDefinition(bytes, layout, 8, row)) continue;
-    const { offset, flags } = readParamRow(reader, layout, row);
-    if (constant(8, row, flags) === null) continue;
-    return managedFailure(
-      "invalid-row",
-      `metadata.Param:${metadataToken(8, row)}`,
-      "Param row declares a default, but no ParamPtr row lists it, so its method is unknown; parameter defaults are unknown",
-      offset,
+    const failure = declares(row, "no ParamPtr row lists it");
+    if (failure !== null) return failure;
+  }
+  // Valid runs follow MethodDef order, so the smallest valid start is the
+  // first position any method owns.
+  let first = runs.sentinel;
+  for (let row = 1; row < runs.starts.length - 1; row += 1) {
+    const start = runs.starts[row] ?? 0;
+    if (start !== 0 && start < first) first = start;
+  }
+  for (let position = 1; position < first; position += 1) {
+    const failure = declares(
+      memberListDefinitionRow(bytes, layout, 8, position),
+      "its list position precedes every MethodDef ParamList run",
     );
+    if (failure !== null) return failure;
   }
   return null;
 };
@@ -194,7 +216,7 @@ export const createManagedParameterDefaultReader = (
 ): ((methodRow: number) => ParameterDefault[] | null) => {
   const reader = new BinaryReader(bytes, true, "managed");
   let runs: ParamRuns | undefined;
-  let unlisted: ManagedReaderFailure | null | undefined;
+  let unowned: ManagedReaderFailure | null | undefined;
   return (methodRow) => {
     // Without Param rows no method owns a parameter default, whatever its
     // list coordinate says.
@@ -202,8 +224,14 @@ export const createManagedParameterDefaultReader = (
     try {
       runs ??= readParamRuns(bytes, layout);
       const { start, end } = attributedRun(bytes, layout, runs, methodRow);
-      unlisted ??= unlistedParameterDefault(bytes, reader, layout, constant);
-      if (unlisted !== null) throw unlisted;
+      unowned ??= unownedParameterDefault(
+        bytes,
+        reader,
+        layout,
+        constant,
+        runs,
+      );
+      if (unowned !== null) throw unowned;
       const defaults: ParameterDefault[] = [];
       for (let position = start; position < end; position += 1) {
         const row = memberListDefinitionRow(bytes, layout, 8, position);
