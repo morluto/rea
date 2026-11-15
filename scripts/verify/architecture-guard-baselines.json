@@ -396,7 +396,6 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "cleanup-resolve-push": {
-    "src/browser/WebSourceMapFetcher.ts": 2,
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
