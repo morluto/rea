@@ -5,7 +5,10 @@ import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import { constants as bufferConstants } from "node:buffer";
-import { imageFileSizeRemediation } from "./StableArtifactFailure.js";
+import {
+  imageFileSizeRemediation,
+  readerIntegrityFailure,
+} from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
@@ -222,5 +225,27 @@ it("keeps the named integrity check when a descriptor close failure rebuilds the
   ).toMatchObject({
     code: "cleanup_incomplete",
     details: { integrity_check: "read-coverage", cleanup: "incomplete" },
+  });
+});
+
+it("keeps a reader's named check when a provider supplies its own cause and options", () => {
+  const failure = new ArtifactReaderFailure("integrity", "region changed", {
+    integrityCheck: "reconstruction",
+  });
+  const wrapper = new Error("cleanup wrapper", { cause: failure });
+  const capturedOutput = { stdout: "out", stderr: "", truncated: false };
+  const changed = readerIntegrityFailure("inspect_gpu", "/target", failure, {
+    cause: wrapper,
+    capturedOutput,
+  });
+  expect(changed).toMatchObject({
+    cause: wrapper,
+    capturedOutput,
+    reason: "region changed",
+    integrityCheck: "reconstruction",
+  });
+  expect(projectAnalysisError(changed)).toMatchObject({
+    code: "artifact_changed",
+    details: { integrity_check: "reconstruction" },
   });
 });

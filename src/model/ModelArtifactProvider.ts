@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.js";
@@ -17,7 +18,6 @@ import {
 } from "../domain/model/modelArtifact.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -149,12 +149,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&

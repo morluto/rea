@@ -247,3 +247,45 @@ it("keeps an artifact directory, owned by the verifier and named on stderr", asy
     await parent.release();
   }
 });
+
+it("keeps a root on request after its cleanups confirm, and names it", async () => {
+  let closes = 0;
+  const order: string[] = [];
+  const fixture = new VerifierFixture({
+    path: "/fixture/kept",
+    close: async () => {
+      closes += 1;
+    },
+  });
+  let failing = true;
+  fixture.releaseAfter(() => {
+    order.push("client");
+    if (failing) throw new Error("client did not close");
+  });
+  const written: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string) => {
+    written.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    // An unconfirmed cleanup retains the root as release would.
+    await expect(fixture.keep("kept for review")).rejects.toMatchObject({
+      cleanupLeases: [fixture],
+    });
+    expect(written).toEqual([]);
+    failing = false;
+    await fixture.keep("kept for review");
+    expect(written).toEqual([
+      "Keeping verifier fixture /fixture/kept: kept for review\n",
+    ]);
+  } finally {
+    process.stderr.write = write;
+  }
+  expect(order).toEqual(["client", "client"]);
+  expect(closes).toBe(0);
+  expect(fixture.released).toBe(false);
+  expect(() => fixture.releaseAfter(() => undefined)).toThrow(
+    /already being released/u,
+  );
+});

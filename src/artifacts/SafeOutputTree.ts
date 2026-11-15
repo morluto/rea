@@ -339,6 +339,7 @@ export class SafeOutputTree {
           throw new ArtifactReaderFailure(
             "integrity",
             `Extracted content exceeds the inventoried size: ${path}`,
+            { integrityCheck: "declared-size" },
           );
         bytes += chunk.length;
         hash.update(chunk);
@@ -348,12 +349,14 @@ export class SafeOutputTree {
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content size disagrees with inventory: ${path}`,
+          { integrityCheck: "declared-size" },
         );
       const sha256 = hash.digest("hex");
       if (sha256 !== expected.sha256)
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content disagrees with inventory: ${path}`,
+          { integrityCheck: "member-identity" },
         );
       await this.#assertLineage(lineage);
       await assertFilePathIdentity(destination, fileIdentity);
@@ -375,6 +378,7 @@ export class SafeOutputTree {
         throw new ArtifactReaderFailure(
           "integrity",
           `Durable readback verification failed: ${path}`,
+          { integrityCheck: "output-readback" },
         );
       return { relativePath: path, sha256, bytesWritten: bytes };
     } catch (cause: unknown) {
@@ -517,6 +521,7 @@ export class SafeOutputTree {
         "integrity",
         `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
         {
+          integrityCheck: "output-lifecycle",
           cause: removalFailure,
           cleanup: {
             reason:
@@ -686,11 +691,13 @@ export class SafeOutputTree {
       throw new ArtifactReaderFailure(
         "integrity",
         "Extraction tree is already committed",
+        { integrityCheck: "output-lifecycle" },
       );
     if (this.#cleanup.status !== "not-required")
       throw new ArtifactReaderFailure(
         "integrity",
         "Extraction tree cleanup has already started",
+        { integrityCheck: "output-lifecycle" },
       );
   }
 

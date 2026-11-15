@@ -1,28 +1,10 @@
-import {
-  espFlashAddressSchema,
-  parseEspFlashAddress,
-} from "../domain/firmware/espFlashSelection.js";
-import type { ArtifactTargetSelection } from "../application/DirectAnalysis.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  cliEvidenceDeliveryInputError,
-  publishCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { z } from "incur";
-import { cliDecimalField } from "./options.js";
-import { producerLimitsOption } from "./producerLimitsOption.js";
-import { artifactReaderLimitsInputSchema } from "../domain/artifactReaderLimits.js";
-
 import {
-  ARTIFACT_TOOL_CONTRACTS,
-  artifactExtractionInputSchema,
-} from "../contracts/artifactToolContracts.js";
-import { contractNamed } from "./contractCliDescription.js";
+  contractNamed,
+  type CliSessionTarget,
+} from "./contractCliDescription.js";
 import {
   registerContractCommand,
   runOnSessionTarget,
@@ -31,180 +13,110 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { registerArtifactComparisonCommand } from "./artifactComparisonCommand.js";
-import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-
-const artifactLimitsOption = producerLimitsOption(
-  artifactReaderLimitsInputSchema,
-  "artifact-limits",
-).describe(
-  "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
-);
 
 export const registerArtifactCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  registerInspectionCommand(cli, logger, runProviderAnalysis);
-  registerExtractionCommand(cli, logger, runProviderAnalysis);
+  registerInventoryCommands(cli, logger, runProviderAnalysis);
   registerArtifactComparisonCommand(cli, logger);
   registerAppleBundleCommands(cli, logger, runProviderAnalysis);
 };
 
-/** Options that read a dump as an ESP flash image with caller inputs. */
-const espFlashSelectionOptions = {
-  targetFormat: z
-    .enum(["esp-flash-image"])
-    .optional()
-    .describe(
-      "Read the target as an ESP flash dump; required with --flash-offset or --partition-table-offset",
-    ),
-  flashOffset: espFlashAddressSchema
-    .optional()
-    .describe("Flash address (0xhex) of the dump's first byte"),
-  partitionTableOffset: espFlashAddressSchema
-    .optional()
-    .describe(
-      "Flash address (0xhex, a multiple of 0x1000) of the partition table; disables the table scan",
-    ),
-};
+/**
+ * The artifact as an MCP client opens it: an ESP flash dump is selected with
+ * `open_binary`'s format and flash fields.
+ */
+const artifactTarget = {
+  description: "Application or package path",
+  open: {
+    contract: OPEN_BINARY_TOOL_CONTRACT,
+    fields: {
+      format: {
+        name: "targetFormat",
+        values: ["esp-flash-image"],
+        description:
+          "Read the target as an ESP flash dump; required with --flash-offset or --partition-table-offset",
+      },
+      flash_offset: {
+        description: "Flash address (0xhex) of the dump's first byte",
+      },
+      partition_table_offset: {
+        description:
+          "Flash address (0xhex, a multiple of 0x1000) of the partition table; disables the table scan",
+      },
+    },
+  },
+} as const satisfies CliSessionTarget;
 
-const espFlashTargetSelection = (options: {
-  readonly targetFormat?: "esp-flash-image" | undefined;
-  readonly flashOffset?: string | undefined;
-  readonly partitionTableOffset?: string | undefined;
-}): ArtifactTargetSelection => ({
-  ...(options.targetFormat === undefined
-    ? {}
-    : { formatHint: options.targetFormat }),
-  ...(options.flashOffset === undefined &&
-  options.partitionTableOffset === undefined
-    ? {}
-    : {
-        espFlash: {
-          ...(options.flashOffset === undefined
-            ? {}
-            : { flashOffset: parseEspFlashAddress(options.flashOffset) }),
-          ...(options.partitionTableOffset === undefined
-            ? {}
-            : {
-                partitionTableOffset: parseEspFlashAddress(
-                  options.partitionTableOffset,
-                ),
-              }),
+const artifactFields = {
+  artifact_limits: {
+    description:
+      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
+  },
+  integrity_policy: {
+    description: "Behavior when declared artifact integrity does not match",
+  },
+} as const;
+
+/** Inventory and extraction run on the artifact the CLI opens. */
+const registerInventoryCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+): void => {
+  const run = runOnSessionTarget(
+    runProviderAnalysis,
+    logger,
+    ARTIFACT_GRAPH_PROVIDER.id,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ARTIFACT_TOOL_CONTRACTS, "inspect_artifact"),
+    {
+      command: CLI_COMMANDS.inspectArtifact,
+      description:
+        "Inspect one artifact and return all available observations and next probes",
+      sessionTarget: artifactTarget,
+      jsonText: ["artifact_limits"],
+      fields: artifactFields,
+      evidenceDelivery: true,
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ARTIFACT_TOOL_CONTRACTS, "extract_artifact"),
+    {
+      command: CLI_COMMANDS.extractArtifact,
+      description:
+        "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
+      sessionTarget: artifactTarget,
+      jsonText: ["artifact_limits"],
+      fields: {
+        ...artifactFields,
+        occurrence_ids: {
+          name: "occurrenceId",
+          description:
+            "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
         },
-      }),
-});
-
-const registerExtractionCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.extractArtifact, {
-    description:
-      "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
-    args: z.object({
-      path: localPathStringSchema.describe("Application or package path"),
-    }),
-    options: z.object({
-      // Incur needs an ordinary optional; keep the owning contract's metadata.
-      artifactLimits: artifactLimitsOption,
-      outputRoot: artifactExtractionInputSchema.shape.output_root
-        .unwrap()
-        .optional()
-        .meta(artifactExtractionInputSchema.shape.output_root.meta() ?? {}),
-      occurrenceId: artifactExtractionInputSchema.shape.occurrence_ids
-        .unwrap()
-        .optional()
-        .describe(
-          "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
-        ),
-      integrityPolicy: z
-        .enum(["fail", "record-and-continue"])
-        .default("fail")
-        .describe("Behavior when declared artifact integrity does not match"),
-      ...espFlashSelectionOptions,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "extract-artifact", () =>
-        runProviderAnalysis(
-          args.path,
-          "extract_artifact",
-          {
-            integrity_policy: options.integrityPolicy,
-            ...(options.artifactLimits === undefined
-              ? {}
-              : { artifact_limits: options.artifactLimits }),
-            output_root: createArtifactExtractionDestination(
-              options.outputRoot,
-            ),
-            ...(options.occurrenceId === undefined
-              ? {}
-              : { occurrence_ids: options.occurrenceId }),
-          },
-          logger,
-          undefined,
-          undefined,
-          espFlashTargetSelection(options),
-        ).then(projectCliAnalysisResult),
+      },
+    },
+    (input, context) =>
+      run(
+        {
+          ...input,
+          output_root: createArtifactExtractionDestination(input.output_root),
+        },
+        context,
       ),
-  });
-};
-
-const registerInspectionCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.inspectArtifact, {
-    description:
-      "Inspect one artifact and return all available observations and next probes",
-    args: z.object({
-      path: localPathStringSchema.describe("Application or package path"),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      artifactLimits: artifactLimitsOption,
-      integrityPolicy: z
-        .enum(["fail", "record-and-continue"])
-        .default("fail")
-        .describe("Behavior when declared artifact integrity does not match"),
-      ...espFlashSelectionOptions,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-artifact", () =>
-        withCommandCancellation(async (signal) => {
-          const delivery = {
-            providerId: ARTIFACT_GRAPH_PROVIDER.id,
-            operation: "inspect_artifact",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          const complete = await runProviderAnalysis(
-            args.path,
-            "inspect_artifact",
-            {
-              integrity_policy: options.integrityPolicy,
-              ...(options.artifactLimits === undefined
-                ? {}
-                : { artifact_limits: options.artifactLimits }),
-            },
-            logger,
-            signal,
-            undefined,
-            espFlashTargetSelection(options),
-          );
-          return publishCliAnalysisEvidence(complete, delivery);
-        }),
-      ),
-  });
+  );
 };
 
 /**

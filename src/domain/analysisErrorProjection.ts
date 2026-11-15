@@ -619,6 +619,7 @@ const BROWSER_ERROR_CODES: Readonly<
   window_not_found: "unreadable_output",
   window_metadata_missing: "unreadable_output",
   process_ownership_unavailable: "unreadable_output",
+  application_already_running: "target_unavailable",
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
@@ -748,6 +749,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {

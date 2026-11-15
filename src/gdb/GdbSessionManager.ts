@@ -45,7 +45,7 @@ import type {
 } from "../domain/commandObservation.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -377,9 +377,6 @@ export class GdbSessionManager {
     const parsed = parseDebuggerCommandDeadline(this.#environment);
     if (!parsed.ok) throw parsed.error;
     return parsed.value;
-  }
-  get #commandTimeoutMs(): number {
-    return this.#commandDeadline.value;
   }
   get #commandOutput(): DebuggerAdmissionLimit {
     const override =
@@ -1016,6 +1013,13 @@ export class GdbSessionManager {
           session.knownInferiorIdentities.clear();
           if (commandMayChangeInferiorOutput(command))
             session.inferiorTtyVerified = false;
+          const accepted = readRuntimeSetting(() => ({
+            deadline: this.#commandDeadline,
+            output: this.#commandOutput,
+          }));
+          if (!accepted.ok) return accepted;
+          const { deadline: acceptedDeadline, output: acceptedOutput } =
+            accepted.value;
           try {
             const result = await this.#request(
               session,
@@ -1023,6 +1027,7 @@ export class GdbSessionManager {
               signal,
               "gdb_console",
               command,
+              accepted.value,
             );
             const evidence = createEvidence(undefined, session.provider, {
               predicateType: "rea.debugger.console-observation",
@@ -1069,7 +1074,7 @@ export class GdbSessionManager {
                     ]
                   : []),
                 "MI records are returned as decoded text; their semantics depend on GDB version and target.",
-                ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                ...gdbRetainedOutputLimitations(result, acceptedOutput),
                 ...(result.output_invalid_utf8
                   ? [
                       "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
@@ -1080,7 +1085,6 @@ export class GdbSessionManager {
             });
             return ok({ result, evidence });
           } catch (cause) {
-            if (cause instanceof ConfigurationError) return err(cause);
             if (cause instanceof AnalysisCancelledError) return err(cause);
             if (cause instanceof AnalysisCapabilityUnavailableError)
               return err(cause as AnalysisError);
@@ -1106,7 +1110,7 @@ export class GdbSessionManager {
                   "The active GDB inferior identity is not established by the debugger session identifier.",
                 limitations: [
                   "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
-                  ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                  ...gdbRetainedOutputLimitations(result, acceptedOutput),
                 ],
               });
               const stopped = await this.#stopDebuggerOnly(session);
@@ -1123,9 +1127,8 @@ export class GdbSessionManager {
                         (limit) => limit.kind === "command_bytes",
                       )
                         ? {
-                            diagnostics: debuggerAdmissionDiagnostics(
-                              this.#commandOutput,
-                            ),
+                            diagnostics:
+                              debuggerAdmissionDiagnostics(acceptedOutput),
                           }
                         : {}),
                     },
@@ -1134,11 +1137,11 @@ export class GdbSessionManager {
               return ok({ result, evidence });
             }
             return err(
-              new AnalysisTimeoutError("gdb_console", this.#commandTimeoutMs, {
+              new AnalysisTimeoutError("gdb_console", acceptedDeadline.value, {
                 cause,
                 ...configurableDeadlineGuidance(
                   "The GDB MI command",
-                  this.#commandDeadline,
+                  acceptedDeadline,
                 ),
               }),
             );
@@ -1815,6 +1818,10 @@ export class GdbSessionManager {
     signal?: AbortSignal,
     operation: "gdb_console" | "start_gdb_session" = "gdb_console",
     evidenceCommand: string = command,
+    accepted?: {
+      readonly deadline: DebuggerAdmissionLimit;
+      readonly output: DebuggerAdmissionLimit;
+    },
   ): Promise<GdbCommandResult> {
     const stdin = session.launched.process.stdin;
     if (session.exited)
@@ -1834,9 +1841,9 @@ export class GdbSessionManager {
       return Promise.reject(new Error(message));
     }
     const token = session.nextToken++;
-    const acceptedDeadline = this.#commandDeadline;
+    const acceptedDeadline = accepted?.deadline ?? this.#commandDeadline;
     const acceptedOutput = command.startsWith("-interpreter-exec console ")
-      ? this.#commandOutput
+      ? (accepted?.output ?? this.#commandOutput)
       : debuggerControlReplyOutput;
     return new Promise<GdbCommandResult>((resolve, reject) => {
       let abortListener!: () => void;
