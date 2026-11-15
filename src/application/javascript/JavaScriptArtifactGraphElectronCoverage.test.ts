@@ -283,7 +283,7 @@ it("reports the same Electron applicability as the retained static fact", async 
   const entry = await analyzedEntry(
     `const worker = new Worker(new URL("electron", import.meta.url));\n`,
   );
-  expect(entry.javascript?.analysis_coverage?.applicability.electron).toBe(
+  expect(entry.javascript?.analysis_coverage.applicability.electron).toBe(
     "unknown",
   );
   const graph = await graphFor(
@@ -408,7 +408,7 @@ it("reports partial coverage when a successful static pass stopped at a limit", 
     `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
     (entry) => {
       const javascript = entry.javascript!;
-      const coverage = javascript.analysis_coverage!;
+      const coverage = javascript.analysis_coverage;
       return {
         ...entry,
         javascript: {
