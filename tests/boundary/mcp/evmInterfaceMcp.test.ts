@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   advertisedMcpToolSchemas,
@@ -21,7 +22,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { registerEvmTools } from "../../../src/server/registerEvmTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
@@ -61,19 +62,18 @@ mcpTest(
       undefined,
       createToolResultDelivery(undefined),
     );
-    registerEvmTools(
+    const service = new EvmInterfaceService({ inspect });
+    registerServiceTools(
       server,
-      new EvmInterfaceService({ inspect }),
-      silentLogger,
+      { evmInterface: service },
+      { logger: silentLogger },
     );
     const client = await mcp.connect(server, {
       name: "evm-detail",
       version: "1",
     });
-    const { inputSchema } = await advertisedMcpToolSchemas(
-      client,
-      "inspect_evm_interface",
-    );
+    const { canonicalInputSchema: inputSchema } =
+      await advertisedMcpToolSchemas(client, "inspect_evm_interface");
     expect(inputSchema).toHaveProperty(["properties", "detail"], {
       type: "string",
       enum: ["complete", "summary"],
@@ -123,9 +123,13 @@ mcpTest(
         approval: true,
       }),
     ).toBe(false);
-    expect(() => registerEvmTools(server, service, silentLogger)).toThrow(
-      /inspect_evm_interface.*already registered/,
-    );
+    expect(() =>
+      registerServiceTools(
+        server,
+        { evmInterface: service },
+        { logger: silentLogger },
+      ),
+    ).toThrow(/inspect_evm_interface.*already registered/);
     expect(inspect).not.toHaveBeenCalled();
     expect(
       (await client.listTools()).tools.filter(
@@ -362,11 +366,12 @@ it("returns the exact inferred interface summary while preserving complete defau
   const definition = (await harness.client.listTools()).tools.find(
     (tool) => tool.name === "inspect_evm_interface",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing EVM output schema");
+  if (definition === undefined) throw new Error("Missing EVM output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = definition.inputSchema;
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const input = { path: value.artifact.path, encoding: "hex" };

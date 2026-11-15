@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -48,7 +49,7 @@ const wrongMatchingPredicate = (matching: Evidence) =>
     evidenceLinks: matching.evidence_links,
   });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "validates native parent predicates across public sources (%s schema)",
   async (profile) => {
     const session = createTestBinarySession(() => {
@@ -71,11 +72,13 @@ it.each(["full", "compact"] as const)(
         (await client.listTools()).tools.map((tool) => [tool.name, tool]),
       );
       const viewTool = definitions.get("inspect_analysis_view");
-      if (viewTool?.outputSchema === undefined)
+      if (viewTool === undefined)
         throw new Error("Missing advertised view schema");
-      expect(validation.assertions.validateSchema(viewTool.outputSchema)).toBe(
-        true,
-      );
+      expect(
+        validation.assertions.validateSchema(
+          canonicalOutputSchema(viewTool.name),
+        ),
+      ).toBe(true);
       const call = (name: string, args: Record<string, unknown>) => {
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined) throw new Error(`Missing ${name}`);

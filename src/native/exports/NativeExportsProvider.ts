@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -21,11 +22,7 @@ import type { NativeExportsPort } from "../../application/binaryDiagnostics/Nati
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
@@ -35,11 +32,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
+  binaryResourceAllowance,
 } from "../metadata/BinaryContainer.js";
 import {
-  NativeExportLimitFailure,
+  NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
 } from "./NativeExportParser.js";
@@ -135,28 +132,13 @@ const nativeExportsFailurePrimary = (
       {
         cause,
         ...limitRecovery(
-          cause instanceof NativeExportLimitFailure ? cause.limit : null,
+          binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
           cause.maximum_bytes,
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          {
-            cause,
-          },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

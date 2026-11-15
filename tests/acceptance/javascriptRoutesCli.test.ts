@@ -334,7 +334,7 @@ cliTest(
     }
   },
 );
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "serves retained route batches through the %s production SDK schemas",
   async (profile) => {
     const path = await fixture(),

@@ -1,5 +1,5 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { isUtf8 } from "node:buffer";
-import { TextDecoder } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {
@@ -8,10 +8,12 @@ import type {
   ModelArtifactPartialTensor,
 } from "../domain/model/modelArtifact.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
+import { unsupportedInput } from "../domain/parseFailure.js";
 import {
   MODEL_ARRAY_PREVIEW,
   MODEL_METADATA_NESTING,
-  ModelFormatFailure,
+  MODEL_FORMAT,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
 } from "./ModelFormat.js";
@@ -80,7 +82,7 @@ export class GgufHeader {
         rejectModel("GGUF string is not valid UTF-8");
       return "";
     }
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const decoder = strictUtf8Decoder("preserve");
     let result = "";
     try {
       for (let left = length; left > 0;) {
@@ -125,10 +127,9 @@ export class GgufHeader {
       // occupies one, so charge it on entry instead of on a child visit.
       const frames = enclosingFrames + 1;
       if (frames > MODEL_METADATA_NESTING)
-        throw new ModelFormatFailure(
-          "capacity",
-          `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
+        throw modelCapacityFailure(
           "metadata-nesting",
+          `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
         );
       const element = Number(await this.#unsigned(4));
       const rawCount = await this.#unsigned(8);
@@ -262,8 +263,8 @@ export class GgufHeader {
       this.#little = false;
       version = bigVersion;
     } else {
-      throw new ModelFormatFailure(
-        "unsupported",
+      throw unsupportedInput(
+        MODEL_FORMAT,
         `GGUF version bytes ${versionBytes.toString("hex")} are unsupported (little-endian ${String(littleVersion)}, big-endian ${String(bigVersion)}; byte order unknown); supported versions are 2 and 3`,
       );
     }

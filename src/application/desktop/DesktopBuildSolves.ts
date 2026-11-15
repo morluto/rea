@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   parsePortableBundleName,
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
@@ -20,9 +21,10 @@ import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   difficultyRecord,
@@ -391,13 +393,15 @@ export const measureBuildTask = async (
         (signal.aborted &&
           cause.fileCleanupFailure.outcome.kind === "completed");
       const failure = cancelled
-        ? new AnalysisCancelledError(MEASURE, {
-            cause:
+        ? cancelledBy(
+            MEASURE,
+            carriedReason(
               cause.cancellation === undefined
                 ? signal.reason
                 : cause.cancellation.reason,
-            cleanup,
-          })
+            ),
+            { cleanup },
+          )
         : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
             userMessage: `Measuring ${task} could not close an input file.`,
             cause,
@@ -410,7 +414,7 @@ export const measureBuildTask = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted
-          ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
+          ? cancelledBy(MEASURE, signal)
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
               userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
               remediationAction:
@@ -437,7 +441,7 @@ export const measureInFreshComputers = async (
   if (!taskName.ok) return taskName;
   const environment = await resolveBuildComputerEnvironment(
     host.environment,
-    process.platform,
+    HOST_PLATFORM.platform,
     host.defaults,
   );
   return measureBuildTask(

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -9,9 +10,10 @@ import {
   AnalysisOutputError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
@@ -37,7 +39,7 @@ import {
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -66,6 +68,8 @@ export class ByteEntropyService {
       "open" | "stat"
     > = { open, stat },
     resources: ArtifactResourceScope = new ArtifactResourceScope(),
+    // The selected path is read on this host unless a caller selects one.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.#resources = resources;
   }
@@ -188,7 +192,7 @@ export class ByteEntropyService {
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not
       // replace symlink/junction/8.3 aliases or touch source-derived paths.
-      if (process.platform === "win32") {
+      if (this.platform === "win32") {
         const canonical = await realpath(input.path).catch(() => undefined);
         assertArtifactReadActive(options?.signal);
         if (canonical?.toLowerCase() === input.path.toLowerCase())
@@ -349,43 +353,46 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(outcome.cause),
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            { cleanup: cause.cleanup },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         const cancellation = completion?.cancellation;
         if (cancellation !== undefined) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: cancellation.reason,
-            partialObservation: cleanup.partialObservation,
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(cancellation.reason),
+            {
+              partialObservation: cleanup.partialObservation,
+              cleanup: cause.cleanup,
+            },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         if (outcome.kind === "failed") {
           const primary = readFailure(outcome.cause);
           return err(
-            analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              OPERATION,
-            ).bindCleanupDependencies([primary, cleanup]),
+            analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
           );
         }
         return err(cleanup);
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            ...(completion === undefined
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            completion === undefined
               ? {}
-              : { partialObservation: completedObservation(completion.value) }),
-          });
+              : {
+                  partialObservation: completedObservation(completion.value),
+                },
+          );
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }

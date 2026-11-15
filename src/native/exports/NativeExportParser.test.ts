@@ -9,7 +9,6 @@ import {
 import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
-  NativeExportLimitFailure,
   parseNativeExports,
   parseNativeExportsSteps,
 } from "./NativeExportParser.js";
@@ -573,9 +572,14 @@ describe("PE export directories", () => {
     const cause = refusal(
       peExportImage({ functions: [], declaredFunctions: 0x40001 }),
     );
-    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
     expect(cause).toMatchObject({
-      limit: "rows",
+      failure: {
+        kind: "limit",
+        limit: {
+          name: "rows",
+          maximum: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+        },
+      },
       boundary: "structure",
       maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
       message: expect.stringContaining("262144-entry export inventory"),
@@ -740,9 +744,9 @@ describe("ELF version index 0 unversioned exports", () => {
   });
 });
 
-describe("historical ELF export evidence", () => {
-  it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
-    const historical = {
+describe("ELF export evidence without visibility", () => {
+  it("refuses an ELF export row without visibility", () => {
+    const withoutVisibility = {
       artifact,
       format: "elf" as const,
       architecture: "amd64",
@@ -769,10 +773,9 @@ describe("historical ELF export evidence", () => {
       issues: [],
       limitations: [],
     };
-    const parsed = nativeExportContracts.nativeExportsSchema.parse(historical);
-    expect(parsed.format).toBe("elf");
-    if (parsed.format !== "elf") throw new Error("Expected ELF result");
-    expect(parsed.exports[0]?.visibility).toBe("unknown");
+    const parsed =
+      nativeExportContracts.nativeExportsSchema.safeParse(withoutVisibility);
+    expect(parsed.error?.issues[0]?.path).toEqual(["exports", 0, "visibility"]);
   });
 });
 
@@ -1082,9 +1085,11 @@ describe("export inventory review regressions", () => {
 
     expect(bytes.length).toBeLessThan(100_000);
     const cause = refusal(bytes);
-    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
     expect(cause).toMatchObject({
-      limit: "retained_text",
+      failure: {
+        kind: "limit",
+        limit: { name: "retained_text", maximum: 16_777_216 },
+      },
       boundary: "structure",
       maximum_bytes: 16_777_216,
       message: expect.stringContaining("16777216-byte retained-text"),
@@ -1376,3 +1381,99 @@ it.each(
     expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
   },
 );
+
+describe("ELF sections of a once-only type", () => {
+  const SHT_DYNSYM = 11;
+  const SHT_GNU_VERDEF = 0x6ffffffd;
+  const SHT_GNU_VERNEED = 0x6ffffffe;
+  const SHT_GNU_VERSYM = 0x6fffffff;
+  /**
+   * Retype the first ELF64 little-endian section header of type `from`,
+   * optionally relinking it to another section index.
+   */
+  const retype = (
+    bytes: Buffer,
+    from: number,
+    to: number,
+    link?: number,
+  ): Buffer => {
+    const copy = Buffer.from(bytes);
+    const offset = Number(copy.readBigUInt64LE(0x28));
+    const width = copy.readUInt16LE(0x3a);
+    const count = copy.readUInt16LE(0x3c);
+    for (let index = 0; index < count; index++) {
+      const at = offset + index * width;
+      if (copy.readUInt32LE(at + 4) !== from) continue;
+      copy.writeUInt32LE(to, at + 4);
+      if (link !== undefined) copy.writeUInt32LE(link, at + 40);
+      return copy;
+    }
+    throw new Error(`No section of type ${String(from)}`);
+  };
+  const symbols = [{ name: "stdout", type: 1, value: 0x28268n, version: 3 }];
+  const required = () =>
+    elfExportImage({
+      symbols,
+      versionRequirements: [{ index: 3, name: "GLIBC_2.2.5" }],
+    });
+
+  it("refuses an image that declares two dynamic symbol tables", () => {
+    expect(
+      refusal(retype(required(), SHT_GNU_VERSYM, SHT_DYNSYM)),
+    ).toMatchObject({
+      kind: "malformed",
+      message: "ELF image has more than one SHT_DYNSYM",
+    });
+  });
+
+  it("keeps exports but names no requirement when two requirement tables are declared", () => {
+    // The empty definition table becomes a second requirement table; the
+    // symbol version table stays linked to .dynsym.
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERNEED));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version requirements: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+    expect(result.exports).toHaveLength(1);
+    expect(result.exports[0]).toMatchObject({ name: "stdout" });
+    expect(JSON.stringify(result.exports[0])).not.toContain("GLIBC_2.2.5");
+  });
+
+  it("names no version when two definition tables are declared", () => {
+    // The empty requirement table becomes a second definition table.
+    const result = parse(
+      retype(
+        elfExportImage({ symbols, versionDefinitions: ["lib", "V1", "V2"] }),
+        SHT_GNU_VERNEED,
+        SHT_GNU_VERDEF,
+      ),
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version definitions: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+    expect(result.exports).toHaveLength(1);
+    expect(JSON.stringify(result.exports[0])).not.toMatch(/"V[12]"/u);
+  });
+
+  it("marks versions unknown when two version tables link to .dynsym", () => {
+    // The empty definition table becomes a second symbol version table
+    // linked to .dynsym (section 1).
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERSYM, 1));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message: "2 symbol version tables link to the dynamic symbol table",
+      }),
+    );
+    expect(result.exports).toEqual([
+      expect.objectContaining({ name: "stdout", version: "unknown" }),
+    ]);
+  });
+});

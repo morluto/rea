@@ -6,6 +6,7 @@ import {
   machoImage,
 } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { appleIpsBytes } from "../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -112,5 +113,37 @@ cliTest.for([11, 99])(
     );
     if (subtype === 99)
       expect(report.join.limitations.join(" ")).toContain("UUID is unknown");
+  },
+);
+
+cliTest(
+  "records the caller's spelling of the report and the joined image",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ips-join-spelling-");
+    await writeFile(
+      join(root, "report.ips"),
+      appleIpsBytes({ arch: "armv7", base: 0x8000 }),
+    );
+    await writeFile(join(root, "image.bin"), armImage(9));
+    const joined = await cli.run({
+      cwd: root,
+      arguments: [
+        "inspect-apple-ips",
+        "./report.ips",
+        "--join-path",
+        "./image.bin",
+        "--json",
+      ],
+    });
+    expect(joined.exitCode, joined.stderr).toBe(0);
+    const evidence = parseEvidence(joined.json);
+    expect(evidence.caller_input_path).toBe("./report.ips");
+    expect(evidence.caller_input_paths).toEqual({ join_path: "./image.bin" });
+    const alone = await cli.run({
+      cwd: root,
+      arguments: ["inspect-apple-ips", "./report.ips", "--json"],
+    });
+    expect(alone.exitCode, alone.stderr).toBe(0);
+    expect(parseEvidence(alone.json).caller_input_paths).toBeUndefined();
   },
 );

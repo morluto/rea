@@ -1,5 +1,6 @@
 import {
-  artifactFileCancellationCause,
+  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -14,10 +15,11 @@ import type { Writable } from "node:stream";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { KunaDocumentError } from "./KunaDocumentError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -27,7 +29,6 @@ import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipOb
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
-  kunaCopyFailureFacts,
   runKunaCommand,
   type KunaInputPrefix,
   type KunaProcessLauncher,
@@ -42,6 +43,10 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 interface WorkspaceRoot {
@@ -80,6 +85,42 @@ export interface KunaTargetCommandRequest {
 }
 
 /** Own the digest-checked target copy and every command that can still use it. */
+const workspaceCopyFailure = (cause: unknown) =>
+  new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", { cause });
+
+/**
+ * How a failed workspace copy is reported. The shared classifier keeps typed
+ * failures and the copy's cancellation; a copy whose descriptor cleanup failed
+ * reports that cleanup with the copy's own failure as its primary.
+ */
+const KUNA_WORKSPACE_COPY_DIALECT: ProviderFailureDialect = {
+  providerId: KUNA_PROVIDER_ID,
+  operation: "kuna:workspace",
+  readCleanup: (read, primary) => {
+    // A completed copy's cleanup is the only failure; an unfinished plain
+    // read keeps its own failure as the primary.
+    const reported =
+      primary ??
+      (read instanceof ArtifactFileCleanupFailure
+        ? undefined
+        : workspaceCopyFailure(artifactFilePrimaryFacts(read).cause));
+    const error = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      {
+        operation: "kuna:workspace",
+        cause: read,
+        ...(reported === undefined ? {} : { cleanupPrimary: reported }),
+      },
+    );
+    bindArtifactFileCleanup(read, error);
+    return error;
+  },
+  unclassified: (cause) =>
+    workspaceCopyFailure(artifactFilePrimaryFacts(cause).cause),
+};
+
 export class KunaTargetCommands {
   readonly #resources = new ArtifactResourceScope();
   readonly #retained: {
@@ -108,11 +149,11 @@ export class KunaTargetCommands {
       request.releaseRun?.();
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             request.operation,
             request.signal.aborted
-              ? { cause: request.signal.reason }
-              : undefined,
+              ? request.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -125,11 +166,11 @@ export class KunaTargetCommands {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             "kuna:workspace",
             this.lifetime.signal.aborted
-              ? { cause: this.lifetime.signal.reason }
-              : undefined,
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -149,11 +190,11 @@ export class KunaTargetCommands {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             operation,
             this.lifetime.signal.aborted
-              ? { cause: this.lifetime.signal.reason }
-              : undefined,
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -198,8 +239,10 @@ export class KunaTargetCommands {
         if (outcome.kind === "retained") {
           const process = new AnalysisCleanupLease(async () => {
             const stopped = await outcome.owner?.stop();
-            if (stopped === undefined || stopped.status === "incomplete")
-              throw new KunaDocumentError("stop_unproven");
+            if (stopped === undefined)
+              throw new Error("Kuna process ownership remains unresolved");
+            if (stopped.status === "incomplete")
+              throw new Error(stopped.reason, { cause: stopped });
             releaseRun?.();
           }, outcome.processResources);
           new AnalysisCleanupLeaseGroup(outcome.error, [
@@ -327,7 +370,7 @@ export class KunaTargetCommands {
         return err(failure);
       }
       if (this.#closing && cause instanceof ArtifactReaderFailure)
-        return err(new AnalysisCancelledError(operation, { cause }));
+        return err(cancelledBy(operation, carriedReason(cause)));
       throw cause;
     }
   }
@@ -367,7 +410,10 @@ export class KunaTargetCommands {
             : { keep: this.lifetime.inputPrefix }),
         });
       } catch (cause: unknown) {
-        return await this.#workspaceFailure(this.#copyFailure(cause), owned);
+        return await this.#workspaceFailure(
+          classifyProviderFailure(cause, KUNA_WORKSPACE_COPY_DIALECT),
+          owned,
+        );
       }
       if (copied.sha256 !== this.target.sha256)
         return await this.#workspaceFailure(
@@ -412,47 +458,6 @@ export class KunaTargetCommands {
     }
   }
 
-  #copyFailure(cause: unknown): AnalysisError {
-    const facts = kunaCopyFailureFacts(cause);
-    const completion = facts.completion;
-    const primaryCause = facts.cause;
-    const cancellation =
-      completion?.cancellation ??
-      (facts.origin === "owned-or-classified" &&
-      primaryCause instanceof ArtifactReaderFailure &&
-      primaryCause.reason === "cancelled"
-        ? { reason: artifactFileCancellationCause(primaryCause) }
-        : undefined);
-    const primary =
-      cancellation !== undefined
-        ? new AnalysisCancelledError("kuna:workspace", {
-            cause: cancellation.reason,
-          })
-        : completion === undefined
-          ? new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
-              cause: primaryCause,
-            })
-          : undefined;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-      const error = new ProviderCleanupError(
-        KUNA_PROVIDER_ID,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        {
-          operation: "kuna:workspace",
-          cause,
-          ...(primary === undefined ? {} : { cleanupPrimary: primary }),
-        },
-      );
-      bindArtifactFileCleanup(cause, error);
-      return error;
-    }
-    return (
-      primary ??
-      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", { cause })
-    );
-  }
-
   /** Rollback and the original outcome share the exact root cleanup lease. */
   async #workspaceFailure(
     primary: AnalysisError,
@@ -482,9 +487,7 @@ export class KunaTargetCommands {
       this.lifetime.signal.aborted
         ? analysisErrorWithCancellation(
             failure,
-            new AnalysisCancelledError("kuna:workspace", {
-              cause: this.lifetime.signal.reason,
-            }),
+            cancelledBy("kuna:workspace", this.lifetime.signal),
           )
         : failure,
     );

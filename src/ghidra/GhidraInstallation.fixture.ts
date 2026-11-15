@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { tmpdir } from "node:os";
 import { join, parse, relative } from "node:path";
 import { onTestFinished } from "vitest";
@@ -42,7 +43,7 @@ export const createSimulatedInstallDirectory = async (
   readonly dispose: () => Promise<void>;
 }> => {
   const root =
-    process.platform === "win32"
+    HOST_PLATFORM.platform === "win32"
       ? join(process.cwd(), "build")
       : await realpath(tmpdir());
   await mkdir(root, { recursive: true });
@@ -51,7 +52,7 @@ export const createSimulatedInstallDirectory = async (
   );
   return {
     path:
-      process.platform === "win32"
+      HOST_PLATFORM.platform === "win32"
         ? `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`
         : owned,
     dispose: () => removeTestWorkspace(owned),

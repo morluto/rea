@@ -379,7 +379,7 @@ export const parseKunaIncomingReferences = (
     });
   } catch (cause: unknown) {
     if (cause instanceof KunaDocumentError) {
-      const field = cause.detail?.field;
+      const field = cause.facts?.field;
       return err(
         typeof field === "string"
           ? { code: cause.code, field }

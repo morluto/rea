@@ -3,11 +3,12 @@ import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -25,6 +26,7 @@ import {
 import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import type { OwnedMcpTransportFailure } from "../process/OwnedMcpStdioTransport.js";
 import { jadxHeapExhausted } from "./JadxProtocol.js";
 import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
 
@@ -45,6 +47,13 @@ type DiagnosticFailure = {
   | { readonly kind: "startup"; readonly command: string }
   | { readonly kind: "execution" }
   | { readonly kind: "output"; readonly reason: string }
+  | {
+      readonly kind: "output_limit";
+      readonly limit: Extract<
+        OwnedMcpTransportFailure,
+        { readonly kind: "output_limit" }
+      >;
+    }
   | { readonly kind: "cancelled" }
   | { readonly kind: "timeout"; readonly timeoutMs: number }
 );
@@ -116,9 +125,7 @@ const observeJadxFailure = (
             cause: cancellation.reason,
             ...jadxOperationTimeoutGuidance(timeoutMs),
           })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
+        : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
     const reason =
       cause.cleanupCause instanceof Error
@@ -141,9 +148,10 @@ const observeJadxFailure = (
               cause: nestedCancellation.reason,
               ...jadxOperationTimeoutGuidance(timeoutMs),
             })
-          : new AnalysisCancelledError(request.operation, {
-              cause: nestedCancellation.reason,
-            });
+          : cancelledBy(
+              request.operation,
+              carriedReason(nestedCancellation.reason),
+            );
     const snapshotObservation =
       completed === undefined
         ? undefined
@@ -239,6 +247,13 @@ const observeJadxFailure = (
       kind: "output",
       reason: "JADX response violated the pinned upstream protocol",
     };
+  if (observed?.kind === "output_limit")
+    return {
+      ...diagnostic,
+      cause: observed.cause,
+      kind: "output_limit",
+      limit: observed,
+    };
   if (observed?.kind === "protocol")
     return {
       ...diagnostic,
@@ -315,12 +330,14 @@ const presentDiagnosticFailure = (
   failure: DiagnosticFailure,
 ): AnalysisError => {
   const output = failure.transport?.diagnostics();
-  const options = {
-    cause: failure.cause,
-    ...(output === undefined ? {} : { capturedOutput: output }),
-  };
+  const captured = output === undefined ? {} : { capturedOutput: output };
+  const options = { cause: failure.cause, ...captured };
   if (failure.kind === "cancelled")
-    return new AnalysisCancelledError(failure.operation, options);
+    return cancelledBy(
+      failure.operation,
+      carriedReason(failure.cause),
+      captured,
+    );
   if (failure.kind === "timeout")
     return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
       ...options,
@@ -328,6 +345,24 @@ const presentDiagnosticFailure = (
     });
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
+  if (failure.kind === "output_limit") {
+    const { scope, ceiling } = failure.limit;
+    return new AnalysisResourceConstraintError(
+      failure.operation,
+      "transport",
+      `${failure.limit.cause.message}; no partial Evidence was returned.`,
+      {
+        [scope === "frame" ? "max_response_bytes" : "max_operation_bytes"]:
+          ceiling.limit,
+      },
+      {
+        ...options,
+        // REA bounds JADX stdio output at fixed sizes with no runtime override.
+        retryable: false,
+        fixedAllowance: ceiling,
+      },
+    );
+  }
   if (failure.kind === "startup") {
     // Before the handshake the retained stderr is the only evidence of why the
     // launcher stopped; a heap shortage there is a resource limit, not setup.

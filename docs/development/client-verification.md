@@ -15,7 +15,9 @@ not establish live model-service acceptance.
 
 `rea mcp doctor --json` starts the production MCP adapter with the current runtime
 executable and environment. A healthy result establishes that adapter's
-initialization, discovery and target-free request flow; it does not verify a
+initialization, discovery and target-free request flow, with the request-flow
+reply validated against the canonical `binary_session` output contract whatever
+output schema profile the server lists. It does not verify a
 client's configured launcher or its inherited environment. Test the generated
 registration through the actual client, including a reduced `PATH` when checking
 desktop or service startup. Record the client version and launch environment
@@ -28,12 +30,10 @@ declaration renderers rendered the full `compare_web_captures` input as
 `args: unknown`: its generated TypeScript type exceeds Pi's 16,000-character
 default. REA keeps the full advertisement's fields by inlining references when
 the shared form would exceed Pi's 32-reference expansion limit; retaining that
-shared form would leave later fields unknown instead. The existing
-`REA_MCP_INPUT_SCHEMA_PROFILE=compact` profile lets callers stay below
-its character limit by advertising reduced nested validation structure, while
-REA continues to validate calls against the complete canonical input schema.
-Compact is the default for the server's advertised inputs; an explicit `full`
-choice is preserved. See the [compact input schema profile](../reference/mcp-contracts.md#compact-input-schema-profile)
+shared form would leave later fields unknown instead. The compact
+input presentation keeps advertised inputs below its character limit by
+reducing nested validation structure, while REA continues to validate calls
+against the complete canonical input schema. See the [compact input schema profile](../reference/mcp-contracts.md#compact-input-schema-profile)
 for details of its reduced forms.
 
 Custom renderer hosts can raise `inputMaxChars` through `renderToolSignature` or
@@ -48,8 +48,9 @@ and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5a
 The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
 using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
 That run checked client config listing and a direct registered-server MCP
-handshake (254 tools on that build). It predates the verifier lifecycle changes
-below and does not establish their real-client behavior.
+handshake that listed the complete catalog of that build. It predates the
+verifier lifecycle changes below and does not establish their real-client
+behavior.
 
 `npm run verify:cline-client` creates its sandbox home before launching commands
 and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
@@ -80,9 +81,9 @@ does not write in this release.
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
 macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
-published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+published `rea-agents@6.5.0` package. `GET /tools` exposed REA tools without
 enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
-207 forwarded names, descriptions and input schemas matched a direct MCP client.
+forwarded names, descriptions and input schemas matched a direct MCP client.
 
 Calls through `POST /tools` returned session metadata and JavaScript analysis
 Evidence for a fixture at a Unicode path. A missing target returned REA's input
@@ -205,39 +206,30 @@ ID). Every actual HTTP request's model is checked and recorded separately.
 Both `HOME` and `USERPROFILE` point to the disposable account; native `skill add`
 still selects the installed skill directory explicitly.
 
-The same native client passed full-profile chat and analysis with the actual
-wire model `gpt-4.1` under a distinct BYOK model ID:
+The same native client passed chat and analysis under REA's former full input
+profile with the actual wire model `gpt-4.1` under a distinct BYOK model ID:
 
 ```bash
 REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
 REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- call
 ```
 
-These runs retain full canonical input/output schemas, all tools, installed-skill
-loading and complete Evidence readback. They use the fixture's requested
-one-million-token BYOK prompt setting; effective capacity and live API acceptance
-remain unknown. With the built-in `gpt-4.1` model ID, the verified client still
-blocks the full input-schema profile before HTTP with
-`compaction_static_context_blocked`, even when requesting a larger BYOK prompt
-capacity. The effective capacity is unknown. The default verifier preserves
-the complete catalog and full schemas. To verify the existing compact profile:
+Those runs used the fixture's requested one-million-token BYOK prompt setting;
+effective capacity and live API acceptance remain unknown. With the built-in
+`gpt-4.1` model ID, the verified client blocked the former full input-schema
+profile before HTTP with `compaction_static_context_blocked`. That profile was
+removed, so the verifier now compares the input schemas forwarded by Copilot
+with REA's compact advertisement:
 
 ```bash
-REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- chat
-REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- call
+REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
+REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- call
 ```
 
-The verifier explicitly writes either selected profile into its disposable
-registration and compares the input schemas forwarded by Copilot with that
-profile's advertised schemas. A run must not infer `full` from an unset setting:
-REA's runtime default is now `compact`. The recorded client results above remain
-scoped to their executed revisions; this verifier correction is not a new client run.
-
-Both native workflows passed with the complete tool inventory. The verifier selects the
-profile only in its disposable Copilot registration and records it in the
-receipt. Compact advertisements can reduce nested validation structure; the
-server still validates complete canonical inputs. This is a tested alternate
-workflow, not a fix for the full-profile client/model limit tracked in #1554.
+The recorded client results above remain scoped to their executed revisions;
+this verifier change is not a new client run. Compact native workflows passed
+with the complete tool inventory. Compact advertisements can reduce nested
+validation structure; the server still validates complete canonical inputs.
 Live model APIs, native Windows and default OS-home skill discovery remain
 unverified.
 

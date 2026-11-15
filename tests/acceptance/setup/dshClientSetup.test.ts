@@ -308,7 +308,10 @@ async function verifyGeneratedLauncher(
     command: registration.command,
     args: registration.args,
     cwd: home,
-    env: { PATH: process.env.PATH ?? "", ...environment },
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...environment,
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "dsh-setup-lifecycle", version: "1" });

@@ -1,5 +1,11 @@
 import { open } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posix } from "node:path";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedFileHandle,
+} from "../filesystem/OwnedRegularFile.js";
 
 /** Memory facts for the cgroup v2 group that holds this process. */
 export interface LinuxCgroupMemoryState {
@@ -131,11 +137,15 @@ export const readLinuxCgroupMemoryState = async (
     readonly platform?: NodeJS.Platform;
     readonly procCgroupPath?: string;
     readonly procMountInfoPath?: string;
+    readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
   } = {},
 ): Promise<LinuxCgroupMemoryState | undefined> => {
-  if ((options.platform ?? process.platform) !== "linux") return undefined;
+  if ((options.platform ?? HOST_PLATFORM.platform) !== "linux")
+    return undefined;
   const membership = await readKernelFile(
     options.procCgroupPath ?? "/proc/self/cgroup",
+    undefined,
+    options.retainFailedClose,
   );
   const path =
     membership === undefined ? undefined : parseLinuxCgroupV2Path(membership);
@@ -143,17 +153,26 @@ export const readLinuxCgroupMemoryState = async (
   const mountInfo = await readKernelFile(
     options.procMountInfoPath ?? "/proc/self/mountinfo",
     MOUNT_INFO_BYTES,
+    options.retainFailedClose,
   );
   const group =
     mountInfo === undefined
       ? undefined
       : linuxCgroupDirectory(parseLinuxCgroup2Mounts(mountInfo), path);
   if (group === undefined) return undefined;
-  const events = await readKernelFile(posix.join(group, "memory.events"));
+  const events = await readKernelFile(
+    posix.join(group, "memory.events"),
+    undefined,
+    options.retainFailedClose,
+  );
   const oomKills =
     events === undefined ? undefined : parseLinuxCgroupOomKills(events);
   if (oomKills === undefined) return undefined;
-  const limit = await readKernelFile(posix.join(group, "memory.max"));
+  const limit = await readKernelFile(
+    posix.join(group, "memory.max"),
+    undefined,
+    options.retainFailedClose,
+  );
   return {
     path,
     oomKills,
@@ -169,28 +188,38 @@ export const readLinuxCgroupMemoryState = async (
 const readKernelFile = async (
   path: string,
   maxBytes = KERNEL_FILE_BYTES,
+  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
 ): Promise<string | undefined> => {
   try {
-    const handle = await open(path, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes + 1);
-      let length = 0;
-      for (;;) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          length,
-          buffer.length - length,
-          null,
-        );
-        if (bytesRead === 0) break;
-        length += bytesRead;
-        if (length > maxBytes) return undefined;
-      }
-      return buffer.subarray(0, length).toString("utf8");
-    } finally {
-      await handle.close();
-    }
-  } catch {
+    return await withOwnedFileHandle(
+      path,
+      new OwnedFileHandle(await open(path, "r")),
+      retainFailedClose === undefined
+        ? {}
+        : { retainFailedClose: (owner) => retainFailedClose(path, owner) },
+      async (handle) => {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        let length = 0;
+        for (;;) {
+          const { bytesRead } = await handle.read(
+            buffer,
+            length,
+            buffer.length - length,
+            null,
+          );
+          if (bytesRead === 0) break;
+          length += bytesRead;
+          if (length > maxBytes) return undefined;
+        }
+        return buffer.subarray(0, length).toString("utf8");
+      },
+    );
+  } catch (cause: unknown) {
+    if (
+      cause instanceof RegularFileCleanupFailure &&
+      cause.retention.kind !== "callback_returned"
+    )
+      throw cause;
     return undefined;
   }
 };

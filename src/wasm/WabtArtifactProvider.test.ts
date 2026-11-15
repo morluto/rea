@@ -18,6 +18,12 @@ import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
 
+/** Classify a raw failure the way the provider does, through WABT's dialect. */
+const wabtFailure = (
+  cause: unknown,
+  ...dialect: Parameters<typeof wabtFailureDialect>
+) => classifyProviderFailure(cause, wabtFailureDialect(...dialect));
+
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
 it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
   expect(WABT_ACCEPTED_RANGE).toBe(">=1.0.42 <1.1.0");
@@ -27,7 +33,8 @@ it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
   expect(admitWabtVersion("1.1.0").status).toBe("unsupported");
   expect(admitWabtVersion("2.0.0").status).toBe("unsupported");
 });
-import { wabtFailure } from "./WabtFailures.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
 const nodeHostEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
@@ -51,12 +58,27 @@ const fileCloseFailure = vi.hoisted(() => ({
   attempts: 0,
   failFirst: false,
   failRead: undefined as (() => Error) | undefined,
+  abortSnapshotWrite: undefined as AbortController | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...fs,
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      const [, , options] = args;
+      const abort = fileCloseFailure.abortSnapshotWrite;
+      // The provider's private snapshot is the only exclusive (wx) write.
+      if (
+        abort !== undefined &&
+        typeof options === "object" &&
+        options?.flag === "wx"
+      ) {
+        fileCloseFailure.abortSnapshotWrite = undefined;
+        abort.abort({ source: "caller cancelled the snapshot write" });
+      }
+      return fs.writeFile(...args);
+    },
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args);
       if (!samePath(String(args[0]), fileCloseFailure.selectedPath))
@@ -822,6 +844,48 @@ it.each([
     }
   },
 );
+
+it("reports a snapshot write the caller cancelled as that caller's cancellation", async () => {
+  const root = await realpath(
+    await createTestTempDirectory("rea-wabt-snapshot-cancel-"),
+  );
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+    await writeFile(join(root, name + suffix), "owned executable seam", {
+      mode: 0o700,
+    });
+  const modulePath = join(root, "selected.wasm");
+  await writeFile(modulePath, Buffer.alloc(76, 1));
+  const commands: string[][] = [];
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: root },
+    (input) => {
+      commands.push([...input.arguments]);
+      return spawnOwnedProviderProcess({
+        ...input,
+        hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+        command: process.execPath,
+        arguments: ["-e", 'process.stdout.write("1.0.42\\n");'],
+      });
+    },
+  );
+  const controller = new AbortController();
+  fileCloseFailure.abortSnapshotWrite = controller;
+  try {
+    const result = await provider.inspect(
+      { path: modulePath, glue_paths: [], candidate_paths: [] },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(controller.signal.reason);
+    // Only the version probes ran; no producer command saw the snapshot.
+    expect(commands.every((args) => args[0] === "--version")).toBe(true);
+  } finally {
+    fileCloseFailure.abortSnapshotWrite = undefined;
+    await provider.close();
+  }
+});
 
 it("admits a compatible caller WABT release and records the observed banner", async () => {
   const root = await realpath(
