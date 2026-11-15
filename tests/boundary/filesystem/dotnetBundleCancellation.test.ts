@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { dotnetBundleFixture } from "../../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:zlib", async (importOriginal) => {
@@ -42,12 +43,18 @@ it("retains cancellation before decoder cleanup while compressed input is pendin
   const started = createDeferred<void>();
   const pending = createDeferred<void>();
   let restore = () => {};
+  let retire = async () => {};
   try {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     expect(entries[0]?.compressedSize).toBeGreaterThan(64 * 1024);
     const controller = new AbortController();
     const output = await reader.open(entries[0]!, controller.signal);
+    const settled = finished(output).catch((cause: unknown) => cause);
+    retire = async () => {
+      output.destroy();
+      await settled;
+    };
     const originalRead = handle.read.bind(handle);
     const spy = vi
       .spyOn(handle, "read")
@@ -60,30 +67,44 @@ it("retains cancellation before decoder cleanup while compressed input is pendin
     restore = () => spy.mockRestore();
     const ready = once(output, "readable");
     output.read(0);
-    await ready;
-    await started.promise;
+    await awaitAcknowledgement(
+      ready.then(() => undefined),
+      settled,
+      "member readable",
+    );
+    await awaitAcknowledgement(
+      started.promise,
+      settled,
+      "descriptor read started",
+    );
     // The factory is a pass-through spy: observe genuine native decoder bytes.
     const created = vi.mocked(createInflateRaw).mock.results.at(-1);
     if (created?.type !== "return") throw new Error("Missing native decoder");
     const decoder = created.value;
-    while (decoder.readableLength === 0) await once(decoder, "readable");
+    while (decoder.readableLength === 0)
+      await awaitAcknowledgement(
+        once(decoder, "readable").then(() => undefined),
+        settled,
+        "decoder readable",
+      );
     expect(decoder.destroyed).toBe(false);
     const closed = new Promise<void>((resolve) =>
       decoder.once("close", () => resolve()),
     );
-    const settled = finished(output).catch((cause: unknown) => cause);
+    const decoderSettled = finished(decoder).catch((cause: unknown) => cause);
     const reason = { stop: "compressed prefetch" };
     controller.abort(reason);
     output.resume();
-    await closed;
+    await awaitAcknowledgement(closed, decoderSettled, "decoder closed");
     pending.resolve();
     const failure = await settled;
     expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
     expect((failure as Error).cause).toBe(reason);
   } finally {
     pending.resolve();
-    restore();
+    await retire();
     await reader.close();
+    restore();
     await handle.close();
   }
 });
@@ -105,11 +126,17 @@ it.each([false, true])(
       code: "EIO",
     });
     let restore = () => {};
+    let retire = async () => {};
     try {
       const entries = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const controller = new AbortController();
       const output = await reader.open(entries[0]!, controller.signal);
+      const settled = finished(output).catch((cause: unknown) => cause);
+      retire = async () => {
+        output.destroy();
+        await settled;
+      };
       const originalStat = handle.stat.bind(handle);
       const spy = vi
         .spyOn(handle, "stat")
@@ -121,9 +148,12 @@ it.each([false, true])(
         });
       restore = () => spy.mockRestore();
       output.resume();
-      await started.promise;
+      await awaitAcknowledgement(
+        started.promise,
+        settled,
+        "final validation started",
+      );
       const reason = { stop: "final validation" };
-      const settled = finished(output).catch((cause: unknown) => cause);
       controller.abort(reason);
       pending.resolve();
       const failure = await settled;
@@ -131,8 +161,9 @@ it.each([false, true])(
       expect((failure as Error).cause).toBe(fails ? physical : reason);
     } finally {
       pending.resolve();
-      restore();
+      await retire();
       await reader.close();
+      restore();
       await handle.close();
     }
   },
@@ -158,12 +189,17 @@ it("preserves a prefetched descriptor failure when a suspended consumer cancels"
     code: "EIO",
   });
   let restore = () => {};
+  let retire = async () => {};
   try {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     const controller = new AbortController();
     const output = await reader.open(entries[0]!, controller.signal);
-    output.on("error", () => undefined);
+    const settled = finished(output).catch((cause: unknown) => cause);
+    retire = async () => {
+      output.destroy();
+      await settled;
+    };
     const originalRead = handle.read.bind(handle);
     const spy = vi
       .spyOn(handle, "read")
@@ -176,20 +212,29 @@ it("preserves a prefetched descriptor failure when a suspended consumer cancels"
     restore = () => spy.mockRestore();
     const ready = once(output, "readable");
     output.read(0);
-    await ready;
-    await started.promise;
+    await awaitAcknowledgement(
+      ready.then(() => undefined),
+      settled,
+      "member readable",
+    );
+    await awaitAcknowledgement(
+      started.promise,
+      settled,
+      "descriptor read started",
+    );
     expect(output.readableLength).toBeGreaterThan(0);
     pending.resolve();
     controller.abort({ stop: "prefetch pending" });
     output.resume();
-    await expect(finished(output)).rejects.toMatchObject({
+    expect(await settled).toMatchObject({
       reason: "io",
       cause: physical,
     });
   } finally {
     pending.resolve();
-    restore();
+    await retire();
     await reader.close();
+    restore();
     await handle.close();
   }
 });
@@ -213,19 +258,24 @@ it.each(cases)(
       for await (const entry of reader.entries()) entries.push(entry);
       const controller = new AbortController();
       const output = await reader.open(entries[0]!, controller.signal);
+      const settled = finished(output).catch((cause: unknown) => cause);
       const errors: Error[] = [];
       output.on("error", (error) => errors.push(error));
       if (phase === "backpressured") {
         const ready = once(output, "readable");
         output.read(0);
-        await ready;
+        await awaitAcknowledgement(
+          ready.then(() => undefined),
+          settled,
+          "idle member readable",
+        );
         expect(output.readableLength).toBeGreaterThan(0);
       }
       const reason = reasonKind === "null" ? null : { stop: "idle member" };
       controller.abort(reason);
       // Cancellation must not require a consumer to resume the iterator first.
       expect(output.destroyed).toBe(true);
-      await expect(finished(output)).rejects.toMatchObject({
+      expect(await settled).toMatchObject({
         reason: "cancelled",
       });
       expect(errors[0]?.cause).toBe(reason);
