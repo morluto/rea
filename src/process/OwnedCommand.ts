@@ -31,7 +31,7 @@ import {
   type OwnedProcessGroup,
   type ProcessCleanupFailure,
 } from "./ProcessOwnership.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "./AbortablePromise.js";
 import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
@@ -427,7 +427,7 @@ const collectOwnedCommand = async (
     }
     // Output has closed, but the sink may still be parsing what it buffered.
     const sinkFailure = await waitForAbortable(consumed, collectionSignal);
-    if (sinkFailure !== ABORTED) processFailure ??= sinkFailure;
+    if (!(sinkFailure instanceof AbortedWait)) processFailure ??= sinkFailure;
     await waitForAbortable(inputCompleted, collectionSignal);
     const snapshot = supervisor.snapshot();
     const interrupted = interruptionOrObservedFailure(
