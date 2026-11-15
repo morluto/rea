@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_NODE_TIMER_DELAY_MS } from "../analysisResourceLimits.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const absolutePathSchema = z
@@ -37,7 +38,13 @@ const actionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     step_id: z.string().min(1),
     kind: z.literal("wait"),
-    duration_ms: z.int().min(0),
+    duration_ms: z
+      .int()
+      .min(0)
+      .max(MAX_NODE_TIMER_DELAY_MS)
+      .describe(
+        `Wait this many milliseconds, from 0 to ${String(MAX_NODE_TIMER_DELAY_MS)}; the wait ends early on cancellation.`,
+      ),
     window_index: windowIndexSchema.optional(),
   }),
   z.strictObject({

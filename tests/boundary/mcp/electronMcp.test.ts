@@ -838,6 +838,37 @@ it("reports every unresolved Electron path without starting a provider", async (
   await client.ping();
 });
 
+it("refuses an Electron wait longer than Node can schedule", async () => {
+  const capture = vi.fn();
+  const client = await activePathAdmissionClient(capture);
+  // Playwright's waitForTimeout(2 ** 31) returns after 1 ms.
+  const result = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [{ step_id: "settle", kind: "wait", duration_ms: 2 ** 31 }],
+    },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["actions", 0, "duration_ms"],
+            reason: "out_of_range",
+            maximum: 2_147_483_647,
+          }),
+        ]),
+      },
+    },
+  });
+  expect(capture).not.toHaveBeenCalled();
+  await client.ping();
+});
+
 it.skipIf(process.platform === "win32")(
   "refuses obstructed Electron selections and admits native symlink traversal through MCP",
   async () => {

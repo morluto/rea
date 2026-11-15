@@ -80,10 +80,6 @@ export const MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 1;
 export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
 /**
- * A positive whole-millisecond duration Node can schedule exactly. Zero and
- * negative values are not a deadline.
- */
-/**
  * The per-call control of a caller-selectable millisecond deadline, named by
  * its contract field; each adapter names the option that sets it.
  */
@@ -102,6 +98,10 @@ export const deadlineParameterLimit = (
   applies_at: "next_call",
 });
 
+/**
+ * A positive whole-millisecond duration Node can schedule exactly. Zero and
+ * negative values are not a deadline.
+ */
 export const timerDurationMsSchema = z
   .int()
   .min(1)
