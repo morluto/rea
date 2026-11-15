@@ -1,28 +1,28 @@
 import { createHash } from "node:crypto";
 import { setImmediate as immediate } from "node:timers/promises";
-import { err, ok, type Result } from "../../domain/result.js";
-import { dexDescriptorSchema } from "../../domain/android/dexTypes.js";
+import { err, ok, type Result } from "../result.js";
+import { dexDescriptorSchema } from "./dexTypes.js";
 import type {
   AndroidJniLibraryFacts,
   AndroidJniLibraryFailure,
   AndroidJniTableEntry,
   AndroidJniTableSlot,
-} from "../../domain/android/androidJniLibraryFacts.js";
-import { parseNativeExportsSteps } from "../exports/NativeExportParser.js";
-import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
-import { readElfImage } from "../../domain/native/elfImage.js";
+} from "./androidJniLibraryFacts.js";
+import { parseNativeExportsSteps } from "../native/nativeExportParser.js";
+import { readElfDirectoryFromBuffer } from "../native/nativeSectionDirectory.js";
+import { readElfImage } from "../native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
   isBinaryStringReadLimit,
   createFileMappingIndex,
-} from "../../domain/binaryContainer.js";
+} from "../binaryContainer.js";
 import {
   readElfPointerRelocationsSteps,
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
-} from "../../domain/native/elfPointerRelocations.js";
+} from "../native/elfPointerRelocations.js";
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;

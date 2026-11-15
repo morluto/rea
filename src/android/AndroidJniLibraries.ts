@@ -14,7 +14,7 @@ import type {
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { inspectAndroidJniLibrary } from "../native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
 import {
   JadxInterruption,
   throwIfJadxInterrupted,
