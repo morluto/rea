@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
@@ -12,15 +9,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -34,6 +23,10 @@ import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-ins
 import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -73,7 +66,10 @@ const entrypoint =
     ? fileURLToPath(new URL("./rea.mjs", import.meta.url))
     : join(packageRoot, "scripts", "rea.mjs");
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-com-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-com-proof-",
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const fixture = buildDosComFixture();
@@ -107,7 +103,24 @@ let report;
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     await client.connect(transport);
     connected = true;
@@ -476,26 +489,7 @@ await withVerifierCleanup(async () => {
     if (stderr.trim()) process.stderr.write(stderr);
     throw error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-    verifierRun = await completeVerifierRun(run);
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 assert.ok(report);
 verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
