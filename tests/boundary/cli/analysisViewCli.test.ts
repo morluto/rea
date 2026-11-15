@@ -91,6 +91,41 @@ cliTest(
 );
 
 cliTest(
+  "summarizes an independent fresh decompile with the analysis it selected",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fresh-pseudocode-view-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "main", analysis: "independent_fresh" },
+        result: "int main(void) { return 0; }",
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "summary" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stdout).toBe(0);
+    expect(parseEvidence(response.json).normalized_result).toMatchObject({
+      kind: "summary",
+      summary: {
+        selection: { procedure: "main", analysis: "independent_fresh" },
+        pseudocode: { available: true, code_units: 28 },
+      },
+    });
+  },
+);
+
+cliTest(
   "reads selected batch rows and one body from a saved bundle without a provider",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-batch-view-cli-");
