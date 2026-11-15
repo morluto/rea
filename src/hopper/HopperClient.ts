@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   JsonLineBridgeReader,
   type JsonLineBridgeFailure,
@@ -113,7 +114,7 @@ import {
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
-const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
+const SESSION_ROOT = HOST_PLATFORM.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
 export interface HopperClientOptions<
