@@ -641,3 +641,37 @@ it("retains the exact in-flight detach after the bounded wait expires", async ()
   await retry;
   expect(cdp.detachCalls).toBe(1);
 });
+
+it.each([
+  [
+    "Runtime.executionContextCreated",
+    { context: { id: 4, origin: "https://storage.example.test", name: 7 } },
+  ],
+  [
+    "Runtime.executionContextCreated",
+    {
+      context: {
+        id: 4,
+        origin: "https://storage.example.test",
+        name: "seed",
+        auxData: { frameId: 3 },
+      },
+    },
+  ],
+  ["Runtime.executionContextDestroyed", { executionContextId: "4" }],
+  ["Debugger.scriptParsed", { scriptId: "seed-script", url: "seed" }],
+  ["Debugger.paused", { callFrames: [{ callFrameId: "frame" }] }],
+  ["Target.detachedFromTarget", {}],
+] as const)(
+  "records a malformed %s payload as a protocol failure",
+  async (method, params) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const owner = await createInitializedStorage(contextApi, page);
+    cdp.emit(method, params);
+    await expect(owner?.settle()).rejects.toMatchObject({
+      reason: "protocol_error",
+    });
+    await owner?.close();
+  },
+);

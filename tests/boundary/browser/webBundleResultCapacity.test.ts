@@ -50,6 +50,7 @@ const buildWideScriptResult = (
     name,
     description: null,
     schema_property_names: [],
+    schema_property_names_coverage: "not_present" as const,
     trust: "page-declared-untrusted" as const,
     location,
   });

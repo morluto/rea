@@ -1,5 +1,7 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
@@ -1197,9 +1199,7 @@ const readTracerOutput = async (
   if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value.value,
-    );
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
   } catch (cause: unknown) {
     return err(cause);
   }
@@ -1334,7 +1334,9 @@ const releaseLldbRuntime = async (
   owner: RetainedLldbResources,
 ): Promise<void> => {
   if (!owner.processStopped || !owner.targetStopped || owner.files.hasPending)
-    throw new Error("LLDB runtime still owns unresolved child resources");
+    throw invariantViolation(
+      "LLDB runtime still owns unresolved child resources",
+    );
   await owner.rootLease.release();
 };
 

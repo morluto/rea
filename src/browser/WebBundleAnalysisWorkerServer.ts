@@ -25,6 +25,7 @@ import {
   webBundleWorkerMessageSchema,
   type WebBundleWorkerMessage,
 } from "./WebBundleAnalysisWorkerProtocol.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 export interface WebBundleScriptAnalyzer {
   (
@@ -120,7 +121,7 @@ const analyzeJob = async (
     let script: IncludedScript;
     try {
       const decoded: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(source.bytes),
+        decodeStrictUtf8(source.bytes, "strip-signature"),
       );
       script = includedWebScriptSchema.parse(decoded);
     } catch (cause) {

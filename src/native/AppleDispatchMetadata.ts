@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   malformedInput,
   parseFailureFromCause,
@@ -65,6 +66,7 @@ import {
   createSwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -164,9 +166,7 @@ export function* decodeAppleDispatchMetadataSteps(
       );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(start, end),
-    );
+    return decodeStrictUtf8(bytes.subarray(start, end), "preserve");
   };
   const result = objcSwiftMetadataSchema.parse({
     db_save_result: null,
@@ -379,7 +379,9 @@ export const inspectAppleDispatchMetadata = async (
 ) => {
   const { signal } = options;
   if (target.kind !== "executable" || !isMachOFormat(target.format))
-    throw new TypeError("Apple dispatch metadata requires a Mach-O target");
+    throw invariantViolation(
+      "Apple dispatch metadata requires a Mach-O target",
+    );
   const admission =
     options.maxInputBytes === undefined
       ? {

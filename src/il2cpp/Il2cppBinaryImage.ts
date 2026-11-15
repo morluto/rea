@@ -122,6 +122,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
           zeroFills: container.zero_fills,
         },
         IL2CPP_BINARY_BYTES,
+        { symbolResolution: "image-definitions" },
       );
   } catch (cause) {
     if (cause instanceof ElfPointerRelocationFailure) {

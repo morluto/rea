@@ -3,6 +3,7 @@ import {
   sameRegularFileState,
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { Stats } from "node:fs";
 import {
   assertKunaProjectState,
@@ -57,7 +58,7 @@ import {
   kunaExportFileNames,
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
-  kunaExportFailure,
+  kunaExportFailureDialect,
   readKunaExport,
   type KunaExport,
   type KunaExportStatus,
@@ -524,7 +525,7 @@ export class KunaProjectCache {
           throw this.#replaceHashCloseError(
             key,
             null,
-            kunaExportFailure(cause, signal),
+            classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
             cause,
           );
         if (regularFileCancellation(cause) !== undefined) throw cause;
@@ -997,7 +998,9 @@ export class KunaProjectCache {
       await this.#sweep(signal);
       staging = await mkdtemp(join(root, "staging", "build-"));
     } catch (cause: unknown) {
-      return err(kunaExportFailure(cause, signal));
+      return err(
+        classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
+      );
     }
     const built = await this.#exportAndPublish(
       key,
@@ -1006,7 +1009,9 @@ export class KunaProjectCache {
       signal,
       onStatus,
     ).catch((cause: unknown): StagedResult => ({
-      result: err(kunaExportFailure(cause, signal)),
+      result: err(
+        classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
+      ),
       retainStaging: false,
       ...(cause instanceof RegularFileCleanupFailure
         ? { fileCleanupFailure: cause }
