@@ -11,10 +11,7 @@
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
   "src/ghidra/GhidraProviderClient.ts": 2,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
-  "src/native/AppleDispatchMetadata.ts": 1,
   "src/native/NativePlistSource.ts": 1,
-  "src/native/pwntools/PwntoolsDecoder.ts": 2,
-  "src/native/pwntools/PwntoolsFailures.ts": 4,
   "src/rust/RustBinaryProvider.ts": 6,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }
