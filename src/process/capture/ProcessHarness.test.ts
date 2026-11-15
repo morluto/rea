@@ -5,6 +5,8 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
   captureProcessScenario,
+  capturedRootProcess,
+  retainRootIdentity,
   retainRootSignaller,
 } from "./ProcessHarness.js";
 import {
@@ -806,10 +808,11 @@ it("retains the root start identity once at launch and signals only with it", as
     identity: "id-launch",
   }));
   const signal = vi.fn(async () => "signaled" as const);
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe,
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", observe),
     signal,
-  });
+  );
 
   expect(
     observe,
@@ -854,10 +857,11 @@ it.each([
   "never signals without a retained identity: %s",
   async (_label, read, delivery) => {
     const signal = vi.fn(async () => "signaled" as const);
-    const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-      observe: read,
+    const signalRoot = retainRootSignaller(
+      4242,
+      retainRootIdentity(4242, "captured-run", read),
       signal,
-    });
+    );
 
     expect(
       await signalRoot("SIGTERM"),
@@ -867,33 +871,55 @@ it.each([
   },
 );
 
-it("does not read an identity when there is no finalization interval", async () => {
-  const observe = vi.fn(async () => undefined);
-  const signalRoot = retainRootSignaller(4242, 0, "captured-run", {
-    observe,
-    signal: vi.fn(async () => "signaled" as const),
-  });
-
-  expect(
-    observe,
-    "the zero-interval path never inspects the root",
-  ).not.toHaveBeenCalled();
-  expect(
-    await signalRoot("SIGKILL"),
-    "an unretained identity stays unverified",
-  ).toEqual({
-    delivery: "unverified",
-    reason: "root identity was not retained",
-  });
-});
+it.each([
+  [
+    "a readable identity",
+    { state: "identity", identity: "id-launch" } as const,
+    false,
+    { state: "observed", pid: 4242, start_time: "id-launch" },
+  ],
+  [
+    "PID normalization",
+    { state: "identity", identity: "id-launch" } as const,
+    true,
+    { state: "withheld-by-caller" },
+  ],
+  [
+    "a vanished root",
+    { state: "gone" } as const,
+    false,
+    {
+      state: "unknown",
+      reason: "the root process exited before its start identity was read",
+    },
+  ],
+  [
+    "an unverified identity",
+    { state: "unverified", reason: "token mismatch" } as const,
+    false,
+    { state: "unknown", reason: "token mismatch" },
+  ],
+])(
+  "records the root process from the launch identity: %s",
+  (_label, identity, pidsNormalized, expected) => {
+    expect(
+      capturedRootProcess(4242, identity, pidsNormalized),
+      "a PID is recorded only with its start identity, and never when the caller normalized PIDs",
+    ).toEqual(expected);
+  },
+);
 
 it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
   "reports the identity-checked delivery result %s unchanged",
   async (delivery) => {
-    const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-      observe: async () => ({ state: "readable", identity: "id-launch" }),
-      signal: async () => delivery,
-    });
+    const signalRoot = retainRootSignaller(
+      4242,
+      retainRootIdentity(4242, "captured-run", async () => ({
+        state: "readable",
+        identity: "id-launch",
+      })),
+      async () => delivery,
+    );
 
     expect(
       await signalRoot("SIGKILL"),
@@ -940,12 +966,13 @@ it("seeds a finalization observation only for a scenario with an interval", () =
 });
 
 it("keeps a non-empty reason when the identity inspection fails without a message", async () => {
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe: async () => {
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => {
       throw new Error();
-    },
-    signal: vi.fn(async () => "signaled" as const),
-  });
+    }),
+    vi.fn(async () => "signaled" as const),
+  );
 
   const result = await signalRoot("SIGTERM");
 
@@ -957,10 +984,14 @@ it("keeps a non-empty reason when the identity inspection fails without a messag
 });
 
 it("keeps a non-empty reason when the identity diagnostic is empty", async () => {
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe: async () => ({ state: "unavailable" as const, reason: "" }),
-    signal: vi.fn(async () => "signaled" as const),
-  });
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => ({
+      state: "unavailable" as const,
+      reason: "",
+    })),
+    vi.fn(async () => "signaled" as const),
+  );
 
   const result = await signalRoot("SIGTERM");
 

@@ -66,12 +66,15 @@ export interface FileTargetIdentity {
 /**
  * Why an observation names no target: it derives from linked Evidence that
  * already commits to its sources, the producer did not observe the target's
- * identity, or the target is not a kind REA can identify.
+ * identity, the target is not a kind REA can identify, or REA observed the
+ * identity and the caller chose not to record it (for example PID
+ * normalization).
  */
 export const unknownTargetReasonSchema = z.enum([
   "derived-from-linked-evidence",
   "not-observed",
   "unsupported-subject",
+  "withheld-by-caller",
 ]);
 
 /** A target whose identity is unknown, with the reason it is unknown. */
@@ -138,12 +141,36 @@ export interface UrlTargetIdentity {
 }
 
 /**
+ * A live process named by its PID and the start identity the `src/process`
+ * identity primitives read for that PID. A PID alone does not identify a
+ * process after exit or reuse, so the start identity is required. The
+ * executable digest is null when the executable could not be read stably
+ * across launch.
+ */
+export const processTargetIdentitySchema = z.strictObject({
+  kind: z.literal("process"),
+  pid: z.int().positive(),
+  start_time: z.string().min(1),
+  executable_sha256: digestSchema.nullable(),
+});
+
+/** A live process named by its PID and start identity. */
+export interface ProcessTargetIdentity {
+  readonly kind: "process";
+  readonly pid: number;
+  /** Platform start identity from `src/process`; opaque, compared only for equality. */
+  readonly start_time: string;
+  readonly executable_sha256: string | null;
+}
+
+/**
  * What an observation or cache entry is about. Tagged by `kind`; see
  * docs/adr/evidence/target-identity.md for the kinds later slices add.
  */
 export type TargetIdentity =
   | FileTargetIdentity
   | UrlTargetIdentity
+  | ProcessTargetIdentity
   | UnknownTargetIdentity;
 
 /** A target identity that names no file, and so has no file display facts. */
@@ -153,6 +180,7 @@ export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
 export const nonFileTargetIdentitySchema = z.union([
   unknownTargetIdentitySchema,
   urlTargetIdentitySchema,
+  processTargetIdentitySchema,
 ]);
 
 /** The universal Mach-O slice a target selects, with its FAT CPU declaration when admitted. */

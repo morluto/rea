@@ -1032,12 +1032,19 @@ facts outside the ID. The subject has no separate `digest`, `format` or
 `architecture` members; read them from `subject.identity`. A live browser page
 observation names the page's reported URL,
 `{ "kind": "url", "url": …, "origin": … }`, with userinfo removed and `origin`
-`null` for an opaque origin; its `name` and `local_path` are `null`. Every
+`null` for an opaque origin; its `name` and `local_path` are `null`. A process
+capture names its launched root,
+`{ "kind": "process", "pid": …, "start_time": …, "executable_sha256": … }`,
+where `start_time` is the platform start identity read for that PID at launch
+and `executable_sha256` is `null` when the executable was not stable across
+spawn; its `name` and `local_path` are `null`. Every
 record has a subject: one whose target REA did not identify names
 `{ "kind": "unknown", "reason": … }`, where the reason is
 `derived-from-linked-evidence` (comparisons and workflows, whose sources are
-committed through `evidence_links`), `not-observed` or `unsupported-subject`,
-and its `name` and `local_path` are `null`. Retention has no
+committed through `evidence_links`), `not-observed`, `unsupported-subject`, or
+`withheld-by-caller` (REA observed the target and the caller chose not to
+record its identity, as with process capture PID normalization), and its
+`name` and `local_path` are `null`. Retention has no
 automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
