@@ -77,10 +77,10 @@ export interface CliContractProjection<
   readonly positionals?: readonly Field[];
   /**
    * Positional selectors the caller may instead give with a named option,
-   * for values that begin with a dash. The positional becomes optional and
-   * neither spelling may be empty; equal values agree and different ones are
-   * refused before the target is opened, as is neither when the field is
-   * required.
+   * for values that begin with a dash. The positional becomes optional;
+   * equal values agree and different ones are refused before the target is
+   * opened, as is neither when the field is required. The contract field
+   * must refuse an empty selector.
    */
   readonly selectorOptions?: { readonly [Key in Field]?: CliSelectorOption };
   /**
@@ -1256,10 +1256,12 @@ export const describeContractCommand = <
     if (selector !== undefined) {
       if (!(value instanceof z.ZodString))
         throw new Error(`${contract.name}.${field} is not a text selector`);
-      // Either spelling may supply the selector. A selector names one
-      // object, so an empty one is refused even where the contract's text
-      // admits it.
-      schema = value.min(1).optional();
+      // A selector names one object. Its contract refuses an empty one, so
+      // the CLI and MCP agree without a CLI-only rule.
+      if (value.safeParse("").success)
+        throw new Error(`${contract.name}.${field} admits an empty selector`);
+      // Either spelling may supply the selector.
+      schema = schema.optional();
       if (description !== undefined) schema = schema.describe(description);
       selectorOption = {
         key: selector.name,
