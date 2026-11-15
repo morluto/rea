@@ -4,6 +4,7 @@ import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 import {
   CdpDocumentTracker,
   cdpRootDocument,
+  compareCdpDocuments,
   type CdpDocumentComparison,
   type CdpDocumentIdentity,
   type CdpTargetSession,
@@ -17,7 +18,9 @@ import {
 /**
  * What one root-frame navigation event established about the selected
  * document. `unidentified` is a root event whose frame, parent or loader
- * identity could not be read, so the document can no longer be proven.
+ * identity could not be read, so the document can no longer be proven; a
+ * root event naming another frame is a proven change (`navigated`, `changed`)
+ * even when its loader is malformed.
  */
 export type CdpRootNavigation =
   | { readonly kind: "unidentified"; readonly frame: CdpFrameEvent }
@@ -103,6 +106,15 @@ export class CdpTargetDocument {
     return document === undefined ? undefined : this.observe(document);
   }
 
+  /**
+   * Compare a reply's document with the selected one directly. A loader
+   * learned from an event since selection does not prove continuity with a
+   * selection that had none.
+   */
+  compareSelected(document: CdpDocumentIdentity): CdpDocumentComparison {
+    return compareCdpDocuments(this.#tracker.selected, document);
+  }
+
   /** Observe a root document a consumer already identified from a reply. */
   observe(document: CdpDocumentIdentity): CdpDocumentComparison {
     return this.#tracker.observe(document);
@@ -144,9 +156,16 @@ export class CdpTargetDocument {
     const url = observedFrameUrl(frame.url);
     if (facts.loaderIssue !== null) {
       // A malformed loader cannot prove the document, but another root frame
-      // still proves a change.
-      this.#tracker.observe({ frameId: identity.frameId, url });
-      this.#notify({ kind: "unidentified", frame });
+      // still proves a change, which every consumer reports as one.
+      const comparison = this.#tracker.observe({
+        frameId: identity.frameId,
+        url,
+      });
+      this.#notify(
+        comparison === "changed"
+          ? { kind: "navigated", frame, frameId: identity.frameId, comparison }
+          : { kind: "unidentified", frame },
+      );
       return;
     }
     const comparison = this.#tracker.observe(

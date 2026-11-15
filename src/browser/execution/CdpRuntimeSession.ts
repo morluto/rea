@@ -233,7 +233,7 @@ export class CdpRuntimeSession {
       this.allowedOrigins,
       this.operation,
     );
-    const comparison = this.document.observe(frame.document);
+    this.document.observe(frame.document);
     this.#assertObservedDocument();
     runtimeFrameUrl(
       frame,
@@ -242,7 +242,7 @@ export class CdpRuntimeSession {
     );
     const selected = this.document.selected;
     if (
-      comparison === "unknown" &&
+      this.document.compareSelected(frame.document) === "unknown" &&
       (frame.document.url !== selected.url ||
         frame.document.loaderId !== selected.loaderId)
     )

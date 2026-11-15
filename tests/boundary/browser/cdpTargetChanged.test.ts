@@ -489,6 +489,52 @@ describe("root navigation events through the target session's document owner", (
       expect(result).toMatchObject({ ok: false, error: { reason } });
     },
   );
+
+  // A selection without a loader cannot be proven continuous with a document
+  // that later reports one, even when an event taught the owner that loader
+  // before the next frame-tree read.
+  it("runtime listener inspection reports a loader first seen after a loaderless selection", async () => {
+    let committed = false;
+    const browser = await startRuntimeBrowser({
+      eventsBeforeReply: ["DOM.getDocument"],
+      commandResult: (command, origin) =>
+        command.method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  url: `${origin}/app`,
+                  ...(committed ? { loaderId: "document-next" } : {}),
+                },
+              },
+            }
+          : undefined,
+      commandEvents: (command, origin) => {
+        if (command.method !== "DOM.getDocument") return undefined;
+        committed = true;
+        return [
+          frameNavigated(command, {
+            id: "runtime-main",
+            loaderId: "document-next",
+            url: `${origin}/app`,
+          }),
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpWebRuntimeProvider().inspectEventListeners(
+      inspectWebEventListenersInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        selector: "#selected",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "target_changed" },
+    });
+  });
 });
 
 describe("observation window replay", () => {
