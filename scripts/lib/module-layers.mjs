@@ -219,17 +219,183 @@ const ENTRY_IMPORTER_LAYERS = new Set([
 ]);
 
 /**
- * Units below the providers layer that every other unit reaches only through
- * their entry file `src/<unit>/index.ts`: the shared provider toolkit in
- * `src/resources` (stable reads, artifact readers, resource scopes, cleanup
- * leases and their failure projections).
+ * Declared entry files of each unit, relative to `src/<unit>/`: the only
+ * files that outside code may import.
+ *
+ * - `src/resources`, the shared provider toolkit (stable reads, artifact
+ *   readers, resource scopes, cleanup leases and their failure projections),
+ *   is reached from every other unit through its `index.ts`.
+ * - A provider folder is reached from application, composition and the CLI/MCP
+ *   adapters through the files listed here: the provider classes, identities,
+ *   metadata, worker servers, doctors and commands that composition wires.
+ *   There is no per-provider barrel, because composition, the capability
+ *   declarations and the CLI load single provider files lazily or for metadata
+ *   only, and a barrel would pull in the whole provider.
+ *
+ * Adding a file here widens that unit's public surface; review it as such.
+ * Imports of any other file are counted in the baseline's `entry` map.
  */
-export const ENTRY_UNITS = Object.freeze(["resources"]);
+export const ENTRY_FILES = Object.freeze(
+  Object.fromEntries(
+    Object.entries({
+      resources: ["index.ts"],
+      adb: ["AdbProvider.ts", "AdbProviderIdentity.ts"],
+      android: [
+        "JadxDoctor.ts",
+        "JadxMcpTransport.ts",
+        "JadxProvider.ts",
+        "JadxRelease.ts",
+      ],
+      apkSignature: ["ApkSignatureProvider.ts", "ApkSignatureRelease.ts"],
+      apktool: ["ApktoolProvider.ts", "ApktoolProviderIdentity.ts"],
+      artifacts: [
+        "ArtifactProvider.ts",
+        "ArtifactProviderMetadata.ts",
+        "DesktopApplicationReader.ts",
+        "ReleaseExposureReader.ts",
+      ],
+      browser: [
+        "CdpBrowserProvider.ts",
+        "CdpElectronProvider.ts",
+        "IsolatedWebBundleAnalyzer.ts",
+        "PlaywrightBrowserScenarioProvider.ts",
+        "PlaywrightElectronActiveProvider.ts",
+        "PlaywrightScenarioSession.ts",
+        "WebBundleAnalysisWorkerServer.ts",
+        "assets/WebSourceLocationArtifacts.ts",
+        "execution/CdpWebRuntimeProvider.ts",
+        "history/CaptureProviderIdentities.ts",
+        "history/HistoricalCaptureDecoder.ts",
+        "history/MitmproxyCaptureAdapter.ts",
+        "history/NodeCaptureAdapter.ts",
+        "history/playwrightTrace/PlaywrightTraceDecoder.ts",
+        "modules/NativeModuleResolver.ts",
+        "modules/WebModuleArtifacts.ts",
+        "providerIdentities.ts",
+      ],
+      captures: ["TsharkCaptureProvider.ts", "TsharkProviderIdentity.ts"],
+      cutter: [
+        "CutterBridgeClient.ts",
+        "CutterBridgeService.ts",
+        "CutterProviderIdentity.ts",
+      ],
+      desktop: [
+        "AgentEnvComputer.ts",
+        "BuildComputerEnvironment.ts",
+        "DconfDatabaseReader.ts",
+        "DesktopBuildDoctorFacts.ts",
+        "DesktopSessionRequests.ts",
+      ],
+      dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
+      electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
+      erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
+      evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
+      firmware: [
+        "FirmwareCommand.ts",
+        "FirmwareProvider.ts",
+        "FirmwareProviderIdentities.ts",
+        "devicetree/DevicetreeProvider.ts",
+      ],
+      flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
+      frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
+      gdb: ["GdbProviderIdentity.ts", "GdbSessionManager.ts"],
+      ghidra: [
+        "GhidraDoctor.ts",
+        "GhidraProvider.ts",
+        "GhidraProviderMetadata.ts",
+      ],
+      go: ["GoBinaryProvider.ts", "GoBinaryProviderIdentity.ts"],
+      gpu: ["GpuCodeObjectsProvider.ts", "GpuCodeObjectsProviderIdentity.ts"],
+      hopper: [
+        "HopperProvider.ts",
+        "HopperProviderMetadata.ts",
+        "LinuxPrivateDisplayProbe.ts",
+      ],
+      ida: [
+        "IdaConfiguration.ts",
+        "IdaDoctor.ts",
+        "IdaMcpConnection.ts",
+        "IdaProvider.ts",
+        "IdaProviderMetadata.ts",
+      ],
+      il2cpp: [
+        "Il2CppMetadataProviderIdentity.ts",
+        "Il2cppGhidraSeedWriter.ts",
+        "Il2cppMetadataProvider.ts",
+      ],
+      inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
+      javascript: [
+        "analysis/JavaScriptAnalysisTransfer.ts",
+        "analysis/JavaScriptAnalysisWorkerServer.ts",
+        "recovery/WakaruCommand.ts",
+        "recovery/WakaruProvider.ts",
+        "recovery/WakaruProviderIdentity.ts",
+        "sourceMaps/SourceMapDecoder.ts",
+      ],
+      jeb: ["JebMcpConnection.ts", "JebProvider.ts", "JebProviderIdentity.ts"],
+      kuna: ["KunaDoctor.ts", "KunaProvider.ts", "KunaProviderMetadata.ts"],
+      model: ["ModelArtifactProvider.ts", "ModelArtifactProviderIdentity.ts"],
+      native: [
+        "NativeMacOSProvider.ts",
+        "NativeMacOSProviderMetadata.ts",
+        "NativeMacosProviderIdentity.ts",
+        "apple/AppleIpsProvider.ts",
+        "elf/ElfNotesProvider.ts",
+        "elf/ElfUnwindRangesProvider.ts",
+        "elf/KernelBuildConfigProvider.ts",
+        "elf/KernelModuleProvider.ts",
+        "exports/NativeExportsProvider.ts",
+        "hardening/BinaryHardeningProvider.ts",
+        "initializers/NativeInitializersProvider.ts",
+        "pe/PeCertificatesProvider.ts",
+        "pe/PeImportsProvider.ts",
+        "pe/PeLoadConfigProvider.ts",
+        "pe/PeResourcesProvider.ts",
+        "pwntools/PwntoolsDecoder.ts",
+        "pwntools/PwntoolsLayoutProvider.ts",
+        "pwntools/PwntoolsProviderIdentity.ts",
+        "pwntools/PwntoolsRecordedCrashProvider.ts",
+        "windows/WindowsShortcutProvider.ts",
+      ],
+      objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
+      pcap: [
+        "PcapConfiguration.ts",
+        "PcapProvider.ts",
+        "PcapProviderIdentity.ts",
+      ],
+      python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
+      reference: [],
+      rizin: [
+        "RizinCommand.ts",
+        "RizinDebugSessionManager.ts",
+        "RizinDebuggerProviderIdentity.ts",
+        "RizinProviderIdentity.ts",
+      ],
+      rust: ["RustBinaryProvider.ts", "RustBinaryProviderIdentity.ts"],
+      signals: ["SigrokProviderIdentity.ts", "SigrokRecordingProvider.ts"],
+      sqlite: ["SqliteDatabaseProvider.ts"],
+      v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
+      wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
+    }).map(([unit, files]) => [unit, Object.freeze(files)]),
+  ),
+);
 
-/** Whether an import from `from` into `to` must use `to`'s entry file. */
+/**
+ * Whether an import from `from` into `to` must use one of `to`'s entry
+ * files: every import of a non-provider unit that declares entry files, and
+ * every application, composition or adapter import of a provider folder (a
+ * provider without declared entry files has none).
+ */
 const requiresEntry = (from, to) =>
-  ENTRY_UNITS.includes(to) ||
-  (isProviderUnit(to) && ENTRY_IMPORTER_LAYERS.has(UNIT_LAYERS[from]));
+  isProviderUnit(to)
+    ? ENTRY_IMPORTER_LAYERS.has(UNIT_LAYERS[from])
+    : ENTRY_FILES[to] !== undefined;
+
+/** Whether a resolved target is one of its unit's declared entry files. */
+const isEntryFile = (unit, target) =>
+  (ENTRY_FILES[unit] ?? []).some(
+    (file) => sourcePath(target) === `src/${unit}/${file}`,
+  );
 
 const sortedCounts = (counts) =>
   Object.fromEntries(
@@ -241,14 +407,12 @@ const sortedCounts = (counts) =>
  *
  * A provider folder may import the domain, contracts, foundation and ports
  * layers, the shared provider core (its own layer, below providers) and its
- * own files. An import of another
- * provider folder is an explicit, recorded exception (for example inspector
+ * own files. An import of another provider folder is an explicit, recorded exception (for example inspector
  * reusing browser's CDP helpers): `crossProvider` counts them per pair, and a
  * pair that is not in the baseline fails. Application, composition and the
- * CLI/MCP adapters reach a provider only through its entry file
- * `src/<provider>/index.ts`, and every unit reaches an ENTRY_UNITS unit only
- * through its `index.ts`: `entry` counts the imports of any other file in such
- * a unit. Both counts may only shrink.
+ * CLI/MCP adapters reach a provider only through its declared ENTRY_FILES, and
+ * every unit reaches src/resources only through its `index.ts`: `entry` counts
+ * the imports of any other file in such a unit. Both counts may only shrink.
  */
 export const providerBoundaryFacts = (imports) => {
   const cross = new Map();
@@ -260,10 +424,7 @@ export const providerBoundaryFacts = (imports) => {
     const key = `${from} -> ${to}`;
     if (isProviderUnit(from) && isProviderUnit(to))
       cross.set(key, (cross.get(key) ?? 0) + 1);
-    else if (
-      requiresEntry(from, to) &&
-      sourcePath(target) !== `src/${to}/index.ts`
-    )
+    else if (requiresEntry(from, to) && !isEntryFile(to, target))
       entry.set(key, (entry.get(key) ?? 0) + 1);
   }
   return {
