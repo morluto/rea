@@ -184,6 +184,16 @@ check(
   /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
 );
 
+// An unrecognised command outcome is reported only by the shared outcome
+// classifier, which attaches the outcome it examined; a provider reports it
+// through the dialect's `unclassified` callback.
+check(
+  "UnclassifiedProviderFailure construction outside classifyProviderOutcome (use the dialect's unclassified report)",
+  files,
+  /\bnew\s+UnclassifiedProviderFailure\b/u,
+  ["src/process/classifyProviderOutcome.ts"],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
