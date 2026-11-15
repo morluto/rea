@@ -437,7 +437,9 @@ request to change it.
   retry a startup that returns the same unchanged result: tell the user REA
   could not start, ask them to restart the MCP client, then run `rea doctor`.
 - Unexpected process-command failure: do not repeat the command. Tell the user
-  to check the input files, then run `rea doctor`.
+  the reported reason and ask them to check the scenario or capture files it
+  read; if they are valid, report the failure with its diagnostics. Doctor does
+  not check process commands.
 - `cleanup_incomplete`: the operation is not retryable. Retry that exact
   cleanup owner, named in `details.resources`, and wait until it confirms
   release before admitting new work on those resources
