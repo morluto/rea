@@ -121,11 +121,19 @@ export interface FinalizationHost {
   readonly signal: typeof signalProcessWithStartIdentity;
 }
 
-/** The captured root's launch-time start identity, bound to its run token. */
+/**
+ * The captured root's launch-time start identity, bound to its run token. A
+ * read that failed through the inspection owner keeps that owner's failure,
+ * including any descriptor whose close failed, for the capture to retain.
+ */
 export type RetainedRootIdentity =
   | { readonly state: "identity"; readonly identity: string }
   | { readonly state: "gone" }
-  | { readonly state: "unverified"; readonly reason: string };
+  | {
+      readonly state: "unverified";
+      readonly reason: string;
+      readonly inspectionFailure?: ProcessCaptureInspectionFailure;
+    };
 
 /**
  * Read the captured root's start identity once at launch, bound to its run
@@ -151,14 +159,19 @@ export const retainRootIdentity = (
                   ? "start identity is unavailable without a diagnostic"
                   : observation.reason,
             } as const),
-    (cause: unknown) =>
-      ({
+    (cause: unknown) => {
+      const [inspectionFailure] = captureInspectionFailures(
+        normalizeCaptureFailure(cause),
+      );
+      return {
         state: "unverified",
         reason: describeUnverifiedCause(
           cause,
           "start identity inspection failed without a message",
         ),
-      }) as const,
+        ...(inspectionFailure === undefined ? {} : { inspectionFailure }),
+      } as const;
+    },
   );
 
 /** Signal the captured root only while its retained launch identity still matches. */
@@ -454,14 +467,19 @@ const startCaptureRuntime = async (
     try {
       await stopSampler?.();
     } catch (samplingCause: unknown) {
-      failure = retainSamplingFailure(
+      failure = retainSecondaryInspectionFailure(
         failure,
         samplingCause,
         options.resourceScope,
         options.inspectionFailures,
       );
     }
-    await rootIdentity;
+    failure = retainRootIdentityFailure(
+      failure,
+      await rootIdentity,
+      options.resourceScope,
+      options.inspectionFailures,
+    );
     return cleanupFailedStartup({
       cause: failure,
       timers: options.timers,
@@ -497,8 +515,30 @@ const retainRunInspectionFailures = (
   return failure;
 };
 
-/** A sampler's final rejection cannot skip cleanup or replace an earlier physical failure. */
-const retainSamplingFailure = (
+/**
+ * A failed launch identity read through the inspection owner fails the
+ * capture like a sampler read: its descriptors stay owned for cleanup.
+ */
+const retainRootIdentityFailure = (
+  primary: unknown,
+  identity: RetainedRootIdentity | undefined,
+  resources: ProcessCaptureResourceScope,
+  inspections: Set<ProcessCaptureInspectionFailure>,
+): unknown =>
+  identity?.state === "unverified" && identity.inspectionFailure !== undefined
+    ? retainSecondaryInspectionFailure(
+        primary,
+        identity.inspectionFailure,
+        resources,
+        inspections,
+      )
+    : primary;
+
+/**
+ * A sampler's or identity read's final rejection cannot skip cleanup or
+ * replace an earlier physical failure.
+ */
+const retainSecondaryInspectionFailure = (
   primary: unknown,
   cause: unknown,
   resources: ProcessCaptureResourceScope,
@@ -556,7 +596,7 @@ const finishProcessRun = async (options: {
   try {
     await options.stopSampler();
   } catch (cause: unknown) {
-    executionFailure = retainSamplingFailure(
+    executionFailure = retainSecondaryInspectionFailure(
       executionFailure,
       cause,
       options.resourceScope,
@@ -565,7 +605,12 @@ const finishProcessRun = async (options: {
   }
   // Join the launch identity read on every exit; it never rejects and, like
   // other cleanup reads, runs without the caller's signal so it can finish.
-  await options.runtime?.rootIdentity;
+  executionFailure = retainRootIdentityFailure(
+    executionFailure,
+    await options.runtime?.rootIdentity,
+    options.resourceScope,
+    options.inspectionFailures,
+  );
   const sampledProcessGroupIds =
     options.runtime === undefined
       ? undefined

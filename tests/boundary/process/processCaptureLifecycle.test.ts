@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { failedInspectionDescriptor } from "../../fixtures/processInspectionCleanup.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
 import {
@@ -1016,6 +1017,52 @@ itWithCaptureCapability(
       "the capture does not return while its identity read is still running",
     ).toBeDefined();
     expect(readSettledAt!).toBeLessThanOrEqual(returnedAt);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "fails the capture and keeps the descriptor a failed launch identity read could not close",
+  async () => {
+    const root = await createTestTempDirectory("rea-root-identity-owner-");
+    const file = await failedInspectionDescriptor(root);
+    const finalizationHost: FinalizationHost = {
+      observe: async () => {
+        throw file.failure;
+      },
+      signal: async () => "signaled" as const,
+    };
+    const resources = new ProcessCaptureResourceScope();
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: ["-e", ""],
+        working_directory: root,
+        timeout_ms: 5_000,
+        idle_timeout_ms: 5_000,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      resources,
+      finalizationHost,
+    );
+
+    if (result.ok)
+      throw new Error("expected the unclosed identity descriptor to fail");
+    expect(
+      result.error.cleanupResources,
+      "the failure names the descriptor the identity read left open",
+    ).toContain(file.path);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(file.handle.fd, "the descriptor stays owned").not.toBe(-1);
+    file.allow();
+    await resources.close();
+    expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
   },
   15_000,
 );
