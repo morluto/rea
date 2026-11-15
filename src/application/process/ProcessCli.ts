@@ -319,7 +319,9 @@ const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") => {
     `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
     [side],
     "invalid_value",
-    issuePath === undefined ? undefined : { issue_path: [...issuePath] },
+    issuePath === undefined
+      ? undefined
+      : { issue_path: ["normalized_result", ...issuePath] },
   );
 };
 

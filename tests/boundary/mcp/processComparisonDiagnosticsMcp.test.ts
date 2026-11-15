@@ -496,7 +496,10 @@ it("names the side and constraint when Evidence is not a usable capture", async 
 
   const coverage = EMPTY_PROCESS_CAPTURE_EXAMPLE.truncation_details;
   const invalidCaptures = [
-    { result: { manifest: {} }, issuePath: ["manifest", "rea_version"] },
+    {
+      result: { manifest: {} },
+      issuePath: ["normalized_result", "manifest", "rea_version"],
+    },
     {
       result: {
         ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
@@ -512,6 +515,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
         },
       },
       issuePath: [
+        "normalized_result",
         "truncation_details",
         "rendered_terminal",
         "normalization_over_budget_frames",
@@ -596,7 +600,10 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
     error: {
       code: "evidence_integrity_mismatch",
       message: expect.stringContaining(remaining),
-      details: { side: "right", issue_path: ["manifest", "completed_at"] },
+      details: {
+        side: "right",
+        issue_path: ["normalized_result", "manifest", "completed_at"],
+      },
     },
   });
   expect(await compareViaCli(capture, mixed)).toMatchObject({
@@ -607,7 +614,9 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
       issues: [
         {
           path: ["right"],
-          observed: { issue_path: ["manifest", "completed_at"] },
+          observed: {
+            issue_path: ["normalized_result", "manifest", "completed_at"],
+          },
         },
       ],
     },

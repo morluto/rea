@@ -137,7 +137,7 @@ export const readProcessComparisonSource = (
           {
             cause: failure.cause,
             side,
-            ...issuePathFact(failure.cause),
+            ...issuePathFact(failure.cause, ["normalized_result"]),
             userMessage: `The ${side} Evidence has an invalid process capture result (${describeValidationFailure(failure.cause)}). Recreate the capture with capture_process_scenario.`,
           },
         ),
@@ -145,9 +145,15 @@ export const readProcessComparisonSource = (
   }
 };
 
-const issuePathFact = (cause: unknown) => {
+/** Issue paths are relative to the Evidence record, as for `readEvidence`. */
+const issuePathFact = (
+  cause: unknown,
+  within: readonly (string | number)[] = [],
+) => {
   const issuePath = firstValidationIssuePath(cause);
-  return issuePath === undefined ? {} : { issuePath };
+  return issuePath === undefined
+    ? {}
+    : { issuePath: [...within, ...issuePath] };
 };
 
 /** Report the same provider admission failure at both public adapters. */
