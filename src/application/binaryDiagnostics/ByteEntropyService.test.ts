@@ -628,14 +628,15 @@ it("reads an admitted file even when Windows casing lookup is unavailable", asyn
   // The injected descriptor represents a readable share while the optional
   // host spelling lookup has no path on this filesystem.
   const selected = join(root, "share-selection.bin");
-  const platform = vi
-    .spyOn(process, "platform", "get")
-    .mockReturnValue("win32");
-  const service = new ByteEntropyService({
-    stat: ((...args: Parameters<typeof stat>) =>
-      stat(path, args[1])) as typeof stat,
-    open: async () => open(path, "r"),
-  });
+  const service = new ByteEntropyService(
+    {
+      stat: ((...args: Parameters<typeof stat>) =>
+        stat(path, args[1])) as typeof stat,
+      open: async () => open(path, "r"),
+    },
+    undefined,
+    "win32",
+  );
   try {
     const result = await service.inspect({ path: selected });
     if (!result.ok) throw result.error;
@@ -645,6 +646,5 @@ it("reads an admitted file even when Windows casing lookup is unavailable", asyn
     expect(result.value.caller_input_path).toBe(selected);
   } finally {
     await service.close();
-    platform.mockRestore();
   }
 });

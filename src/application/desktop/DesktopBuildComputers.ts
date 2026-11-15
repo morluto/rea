@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -705,7 +706,7 @@ export class DesktopBuildComputers {
     if (!settings.ok) return settings;
     const environment = await resolveBuildComputerEnvironment(
       this.environment,
-      process.platform,
+      HOST_PLATFORM.platform,
       this.defaults,
     );
     return ok({ ...environment, ...settings.value });
