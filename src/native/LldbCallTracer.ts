@@ -820,7 +820,12 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     if (output !== undefined && output.status !== "traced")
       return failureWithPartial((partialObservation) =>
-        tracerFailure(output, lifecycleCleanup, partialObservation),
+        tracerFailure(
+          output,
+          lifecycleCleanup,
+          partialObservation,
+          exited.targetIdentityFailure,
+        ),
       );
     const processCleanupFailure = exited.cleanupFailure;
     if (processCleanupFailure !== undefined)
@@ -989,6 +994,7 @@ const tracerFailure = (
   },
   cleanup?: AnalysisCleanupObservation,
   partialObservation?: NativeCallPartialObservation,
+  targetIdentityFailure?: string,
 ): AnalysisError => {
   const options = {
     ...(cleanup === undefined ? {} : { cleanup }),
@@ -1006,6 +1012,9 @@ const tracerFailure = (
       diagnostics: {
         reason: message,
         constraint: "target process start identity could not be verified",
+        ...(targetIdentityFailure === undefined
+          ? {}
+          : { identity_observation: targetIdentityFailure }),
       },
     });
   if (output.status === "tracer-error")
@@ -1388,6 +1397,8 @@ type LldbExit =
       /** False proves LLDB never started and could not have created a target. */
       readonly targetLaunched: boolean;
       readonly targetIdentity: string | undefined;
+      /** Why the host acknowledged the launched target's identity as unavailable. */
+      readonly targetIdentityFailure?: string;
       readonly cleanupFailure: string | undefined;
       /** The work budget elapsed before this physical LLDB exit was selected. */
       readonly overran?: true;
@@ -1435,6 +1446,7 @@ const runLldb = async (
     options.signal,
   );
   let targetIdentity: string | undefined;
+  let targetIdentityFailure: string | undefined;
   let supervisor: ProviderProcessSupervisor | undefined;
   let retained = false;
   let processFailureBeforeInterruption:
@@ -1466,6 +1478,7 @@ const runLldb = async (
       ...selectedOutcome,
       targetLaunched: supervisor !== undefined,
       targetIdentity,
+      ...(targetIdentityFailure === undefined ? {} : { targetIdentityFailure }),
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
       ...(overran === undefined ? {} : { overran }),
@@ -1517,8 +1530,14 @@ const runLldb = async (
         let observation: ProcessIdentityObservation | undefined;
         try {
           observation = await observeProcessStartIdentity(pid);
-        } catch {
+          if (observation === undefined)
+            targetIdentityFailure = `PID ${String(pid)} had exited or was absent from the process table`;
+          else if (observation.state !== "readable")
+            targetIdentityFailure = observation.reason;
+        } catch (cause: unknown) {
           observation = undefined;
+          targetIdentityFailure =
+            cause instanceof Error ? cause.message : String(cause);
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
