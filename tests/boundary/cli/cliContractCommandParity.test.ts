@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../../../src/cli.js";
 import {
   describeContractCommand,
+  describeOperationChoices,
   describeContractDocumentCommand,
   type ContractCliDescription,
   type ContractCliParameter,
@@ -108,12 +109,9 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
-  // The named option may supply a selector in place of the positional, and
-  // a selector names one object, so it is never empty.
-  if (parameter.selectorOption !== undefined) {
-    if (value === undefined) return true;
-    if (value === "") return false;
-  }
+  // The named option may supply a selector in place of the positional.
+  if (parameter.selectorOption !== undefined && value === undefined)
+    return true;
   if (parameter.jsonText) {
     // JSON text is decoded once, then the contract field admits the value.
     if (typeof value !== "string")
@@ -245,6 +243,9 @@ const ARGV_SATISFYING_RULES: Readonly<
   "annotate-native-function": { name: "renamed" },
   "search-bytes": { pattern: "41 ??" },
   "inspect-native-data-type": { type: "/struct" },
+  "capture-native-ui-scenario": {
+    steps: '[{"kind":"wait","milliseconds":0}]',
+  },
 };
 
 const each = descriptions.map(
@@ -298,6 +299,15 @@ const MIGRATED_COMMANDS = [
   "trace",
   "function",
   "instructions",
+  "decompile",
+  "search",
+  "decompile-all",
+  "observe-native-ui",
+  "capture-native-ui-scenario",
+  "inspect-macho",
+  "inspect-signature",
+  "list-architectures",
+  "demangle-swift",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -341,7 +351,9 @@ describe("CLI commands projected from tool contracts", () => {
           ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
           ...description.parameters.flatMap(({ selectorOption }) =>
-            selectorOption === undefined ? [] : [selectorOption.key],
+            [selectorOption, selectorOption?.alternative].flatMap((option) =>
+              option === undefined ? [] : [option.key],
+            ),
           ),
         ].toSorted(),
       );
@@ -369,8 +381,12 @@ describe("CLI commands projected from tool contracts", () => {
           ).toBe(true);
         }
         if (parameter.runtimeJson !== undefined) {
-          // JSON text decoded when the command runs; see below.
-          for (const value of [undefined, "", "{", "{}"])
+          // JSON text decoded when the command runs; see below. Argv
+          // requires the text of a required field.
+          expect(admits(cliField, undefined), parameter.key).toBe(
+            admits(contractField, undefined),
+          );
+          for (const value of ["", "{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
           continue;
         }
@@ -409,6 +425,10 @@ describe("CLI commands projected from tool contracts", () => {
         description,
         ARGV_SATISFYING_RULES[command] ?? {},
       );
+      // Runtime JSON text is decoded as admission does.
+      for (const { key, runtimeJson } of description.parameters)
+        if (runtimeJson !== undefined && typeof values[key] === "string")
+          values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
       expect(description.contract.inputSchema.safeParse(input).error).toBe(
         undefined,
@@ -693,7 +713,9 @@ describe("Session targets of contract commands", () => {
       expect(Object.values(description.toContractInput(values))).not.toContain(
         "rel/app",
       );
-      expect(description.callerInputs(values)).toEqual({});
+      expect(
+        Object.values(description.callerInputs(values)).flat(),
+      ).not.toContain("rel/app");
     },
   );
 
@@ -1264,6 +1286,59 @@ describe("Positional selectors with a named option", () => {
     },
   );
 
+  const alternatives = selecting.flatMap(
+    ([command, description, parameter, option]) =>
+      option.alternative === undefined
+        ? []
+        : [[command, description, parameter, option.alternative] as const],
+  );
+  it.each(alternatives)(
+    "%s maps its alternative selector option onto the same field",
+    (_command, description, parameter, alternative) => {
+      const option = parameter.selectorOption!;
+      const admit = (values: Record<string, unknown>) =>
+        description.admit({
+          [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...values,
+        });
+      const alone = admit({ [alternative.valueKey]: "0x10" });
+      expect(alone.ok && alone.value.input[parameter.field]).toBe(
+        alternative.selects("0x10"),
+      );
+      const agreeing = admit({
+        [alternative.valueKey]: "0x10",
+        [option.valueKey]: alternative.selects("0x10"),
+      });
+      expect(agreeing.ok).toBe(true);
+      for (const conflicting of [
+        { [alternative.valueKey]: "0x10", [parameter.key]: "main" },
+        { [alternative.valueKey]: "0x10", [option.valueKey]: "main" },
+      ]) {
+        const result = admit(conflicting);
+        expect(result.ok ? [] : result.error.issues).toEqual([
+          expect.objectContaining({
+            path: [alternative.key],
+            reason: "invalid_value",
+          }),
+        ]);
+      }
+    },
+  );
+
+  it("refuses a selector whose contract admits an empty value", () => {
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ text: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["text"],
+          selectorOptions: { text: { name: "text", description: "Text" } },
+        },
+      ),
+    ).toThrow("probe.text admits an empty selector");
+  });
+
   it("refuses a selector option on a field that is not a positional text selector", () => {
     const describeSelector = (
       positionals: readonly ("text" | "count")[],
@@ -1286,6 +1361,62 @@ describe("Positional selectors with a named option", () => {
     );
     expect(() => describeSelector(["count"], "count")).toThrow(
       "probe.count is not a text selector",
+    );
+  });
+});
+
+describe("Operation choices selected by an option", () => {
+  it("refuses an operation choice whose contract projects other options", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z.object({ text: z.string(), extra: z.string() }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      { name: "probe", inputSchema: z.object({ text: z.string() }) },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
+    );
+  });
+
+  it("refuses an operation choice whose contract projects other option rules", () => {
+    const projection = {
+      command: "probe",
+      description: "Probe",
+      operationBy: {
+        option: "kind",
+        contracts: {
+          other: {
+            name: "other",
+            inputSchema: z
+              .object({ text: z.string(), limit: z.number().optional() })
+              .meta({ dependentRequired: { limit: ["text"] } }),
+          },
+        },
+      },
+    };
+    const base = describeContractCommand(
+      {
+        name: "probe",
+        inputSchema: z.object({
+          text: z.string(),
+          limit: z.number().optional(),
+        }),
+      },
+      projection,
+    );
+    expect(() => describeOperationChoices(base, projection)).toThrow(
+      "other does not project to probe's options",
     );
   });
 });
