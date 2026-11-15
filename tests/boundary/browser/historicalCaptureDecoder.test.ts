@@ -160,16 +160,11 @@ fs.writeFileSync(request.reply_path, ${JSON.stringify(JSON.stringify({ ok: true,
     const command = MitmproxyCaptureAdapter.prototype.command;
     vi.spyOn(MitmproxyCaptureAdapter.prototype, "command").mockImplementation(
       function (this: MitmproxyCaptureAdapter, request, runtime) {
-        const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-        Object.defineProperty(process, "platform", {
-          ...platform,
-          value: "linux",
-        });
-        try {
-          return command.call(this, request, runtime);
-        } finally {
-          Object.defineProperty(process, "platform", platform);
-        }
+        return command.call(
+          new MitmproxyCaptureAdapter(this.environment, "linux"),
+          request,
+          runtime,
+        );
       },
     );
     onTestFinished(() => {
