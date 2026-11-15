@@ -279,9 +279,12 @@ it("follows a late close rejection's own retry owner when no leases were supplie
   });
   if (finalized.kind !== "completed-cleanup-retained")
     throw new Error(`expected retained cleanup, got ${finalized.kind}`);
+  expect(finalized.error.cleanupResources).toEqual([`${operation} resources`]);
   rejectClose(producerCleanup);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(finalized.error.cleanupIncomplete).toBe(true);
+  // The late owner names the resources still held.
+  expect(finalized.error.cleanupResources).toEqual(["/owned/root"]);
   // The producer's own retry confirms release; the late failure follows it.
   producerCleanup.resolveCleanup();
   expect(finalized.error.cleanupIncomplete).toBe(false);
@@ -400,4 +403,90 @@ it("treats an empty lease list as none when close outlasts the finalize budget",
   finishClose();
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(finalized.error.cleanupIncomplete).toBe(false);
+});
+
+it("reports a work timeout when work throws the budget's abort reason", async () => {
+  const finalized = await runOwned(
+    async (signal) => {
+      signal?.throwIfAborted();
+      return ok({ count: 1 });
+    },
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(0),
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(finalized.kind).toBe("failed");
+  const error = failure(finalized);
+  expect(error).toBeInstanceOf(AnalysisTimeoutError);
+  expect(error.cause).toBeInstanceOf(AnalysisCancelledError);
+  expect((error.cause as AnalysisError).cause).toBe(
+    OwnerCancellation.deadlineElapsed,
+  );
+});
+
+it("reports a cancellation when work throws the caller's abort reason", async () => {
+  const caller = new AbortController();
+  const callerReason = { caller: "stop" };
+  caller.abort(callerReason);
+  const finalized = await runOwned(
+    async (signal) => {
+      signal?.throwIfAborted();
+      return ok({ count: 1 });
+    },
+    {
+      providerId: "fixture",
+      operation,
+      signal: caller.signal,
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(finalized.kind).toBe("cancelled");
+  expect(failure(finalized).cause).toBe(callerReason);
+});
+
+it("keeps failures the work recorded when a budget cancellation is replaced", async () => {
+  const recorded = new ProviderCleanupError("fixture", [], {
+    reason: "recorded during work",
+  });
+  const timedOut = await runOwned(
+    async (signal) => {
+      const result = await untilAborted(signal);
+      if (!result.ok) result.error.retainSecondaryFailure(recorded);
+      return result;
+    },
+    {
+      providerId: "fixture",
+      operation,
+      deadline: Deadline.after(5),
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(failure(timedOut)).toBeInstanceOf(AnalysisTimeoutError);
+  expect(failure(timedOut).secondaryFailures).toContain(recorded);
+
+  const caller = new AbortController();
+  const cancelled = await runOwned(
+    async (signal) => {
+      const result = await untilAborted(signal);
+      if (!result.ok) result.error.retainSecondaryFailure(recorded);
+      caller.abort({ caller: "stop" });
+      return result;
+    },
+    {
+      providerId: "fixture",
+      operation,
+      signal: caller.signal,
+      deadline: Deadline.after(5),
+      close: async () => undefined,
+      partial: project,
+    },
+  );
+  expect(cancelled.kind).toBe("cancelled");
+  expect(failure(cancelled).secondaryFailures).toContain(recorded);
 });

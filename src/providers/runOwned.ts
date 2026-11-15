@@ -279,8 +279,9 @@ const closeWithin = async (
   new AnalysisCleanupLeaseGroup(failure, leases);
   if (supplied === undefined) {
     // A late rejection names its own retry owner: a producer-bound error, or
-    // an artifact reader failure with its leases. Completion then follows
-    // that owner, the same way an in-budget close failure would.
+    // an artifact reader failure with its leases. Completion and resource
+    // attribution then follow that owner, the same way an in-budget close
+    // failure would; an unattributed rejection keeps the close's fallback.
     let late: AnalysisError | undefined;
     failure.bindCleanupReleaseClaim({
       get cleanupReleased() {
@@ -289,12 +290,14 @@ const closeWithin = async (
     });
     void leases[0]!.release().catch((cause: unknown) => {
       late = closeFailure(cause, options);
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.cleanup !== undefined &&
-        cause.cleanupLeases !== undefined
-      )
-        new AnalysisCleanupLeaseGroup(late, cause.cleanupLeases);
+      const readerLeases =
+        cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+          ? cause.cleanupLeases
+          : undefined;
+      if (readerLeases !== undefined)
+        new AnalysisCleanupLeaseGroup(late, readerLeases);
+      if (cause instanceof AnalysisError || readerLeases !== undefined)
+        failure.bindCleanupResourceOwner(late);
     });
   } else void closing.catch(() => undefined);
   return failure;
@@ -317,9 +320,13 @@ export const runOwned = async <Value>(
       error:
         cause instanceof AnalysisError
           ? cause
-          : new ProviderAdapterError(options.providerId, options.operation, {
-              cause,
-            }),
+          : // Work that throws its signal's abort reason (throwIfAborted)
+            // observed that abort, the same as one returning a cancellation.
+            isAborted(bound.signal) && Object.is(cause, bound.signal.reason)
+            ? cancelledBy(options.operation, bound.signal)
+            : new ProviderAdapterError(options.providerId, options.operation, {
+                cause,
+              }),
     };
   }
   bound.stop();
@@ -433,19 +440,25 @@ export const runOwned = async <Value>(
       primaryError.cause === OwnerCancellation.deadlineElapsed
     );
   };
-  // A replacement keeps the replaced error's live cleanup as its own
-  // dependency, so its resources and completion are not lost.
+  // A replacement keeps the failures the replaced error recorded, and its
+  // live cleanup as its own dependency, so neither is lost.
   const replacing = (
     replaced: AnalysisError,
     replacement: AnalysisError,
-  ): AnalysisError =>
-    replaced.cleanupIncomplete
+  ): AnalysisError => {
+    for (const secondary of new Set([
+      ...replaced.secondaryFailures,
+      ...primaryAnalysisError(replaced).secondaryFailures,
+    ]))
+      replacement.retainSecondaryFailure(secondary);
+    return replaced.cleanupIncomplete
       ? analysisErrorWithCleanupFailure(
           replacement,
           replaced,
           options.operation,
         ).bindCleanupDependencies([replaced])
       : replacement;
+  };
   if (budgetElapsed && isAborted(signal)) {
     // The caller aborted after the budget, during work or cleanup: a caller
     // abort stays a cancellation, and its reason replaces the budget's. A
