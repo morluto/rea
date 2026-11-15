@@ -1,4 +1,5 @@
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -75,10 +76,10 @@ it.each(["digest", "format"] as const)(
   (field) => {
     const input = parent();
     if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = {
-      ...input.subject,
-      ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
-    };
+    const subject = changedEvidenceSubject(
+      input.subject,
+      field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {},
+    );
     const result = projectAnalysisView(
       {
         ...input,
@@ -110,10 +111,9 @@ it.each([
     const input = parent();
     if (input.subject?.format !== "elf")
       throw new Error("Expected ELF subject");
-    const subject = {
-      ...input.subject,
+    const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
-    };
+    });
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },
@@ -141,7 +141,9 @@ it("revalidates the parent subject after immutable Go report facts have been cac
     projectAnalysisView(
       {
         ...input,
-        subject: { ...input.subject, digest: { sha256: "b".repeat(64) } },
+        subject: changedEvidenceSubject(input.subject, {
+          digest: { sha256: "b".repeat(64) },
+        }),
       },
       { kind: "summary" },
     ).ok,

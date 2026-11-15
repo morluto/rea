@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
@@ -159,7 +160,9 @@ it("checks each parent's subject even after its immutable capture has been valid
     projectAnalysisView(
       {
         ...source,
-        subject: { ...source.subject, digest: { sha256: "e".repeat(64) } },
+        subject: changedEvidenceSubject(source.subject, {
+          digest: { sha256: "e".repeat(64) },
+        }),
       },
       { kind: "summary" },
     ).ok,
@@ -243,7 +246,9 @@ it("retains explicitly unknown digests and rejects a different subject digest", 
   const mismatched = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject, digest: { sha256: "e".repeat(64) } },
+      subject: changedEvidenceSubject(parent.subject, {
+        digest: { sha256: "e".repeat(64) },
+      }),
     },
     { kind: "summary" },
   );

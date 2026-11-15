@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { interfaceBuilderAnalysisSchema } from "../apple/interfaceBuilderGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 
@@ -125,7 +126,9 @@ describe("Interface Builder immutable interpretation", () => {
       expect(parse).toHaveBeenCalledTimes(1);
       const changed = {
         ...source,
-        subject: { ...source.subject!, digest: { sha256: "d".repeat(64) } },
+        subject: changedEvidenceSubject(source.subject!, {
+          digest: { sha256: "d".repeat(64) },
+        }),
       };
       const rejected = projectAnalysisView(changed, { kind: "summary" });
       if (rejected.ok)

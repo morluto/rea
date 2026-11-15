@@ -304,23 +304,23 @@ export const evidenceSubject = (
   });
 
 /** The target identity an Evidence record commits to, or null when it has no subject. */
-export const evidenceTargetIdentity = (
-  evidence: Pick<Evidence, "subject">,
-): TargetIdentity | null => evidence.subject?.identity ?? null;
+export const evidenceTargetIdentity = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): TargetIdentity | null => evidence.subject?.identity ?? null;
 
 /** The file identity an Evidence record names, when its subject is a file. */
-export const evidenceFileTarget = (
-  evidence: Pick<Evidence, "subject">,
-): FileTargetIdentity | undefined => {
+export const evidenceFileTarget = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): FileTargetIdentity | undefined => {
   const identity = evidenceTargetIdentity(evidence);
   return identity?.kind === "file" ? identity : undefined;
 };
 
 /** Display facts beside the subject identity; never part of the Evidence ID. */
-export const evidenceSubjectDisplay = (
-  evidence: Pick<Evidence, "subject">,
-): { readonly name: string; readonly local_path: string } | undefined =>
-  evidence.subject === null
+export const evidenceSubjectDisplay = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): { readonly name: string; readonly local_path: string } | undefined =>
+  evidence.subject == null
     ? undefined
     : { name: evidence.subject.name, local_path: evidence.subject.local_path };
 
