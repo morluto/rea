@@ -65,6 +65,7 @@ import {
   createSwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -379,7 +380,9 @@ export const inspectAppleDispatchMetadata = async (
 ) => {
   const { signal } = options;
   if (target.kind !== "executable" || !isMachOFormat(target.format))
-    throw new TypeError("Apple dispatch metadata requires a Mach-O target");
+    throw invariantViolation(
+      "Apple dispatch metadata requires a Mach-O target",
+    );
   const admission =
     options.maxInputBytes === undefined
       ? {

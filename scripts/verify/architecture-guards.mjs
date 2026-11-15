@@ -425,10 +425,17 @@ checkCounted(
 // An input fault is a ParseFailureError; a broken internal assumption is a
 // defect, not an input fault, and throws invariantViolation from
 // src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
   /throw new (?:Error|TypeError|RangeError)\(/gu,
   [],
 );

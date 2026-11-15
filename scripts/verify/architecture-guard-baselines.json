@@ -3,9 +3,6 @@
     "src/gdb/GdbSessionManager.ts": 1,
     "src/process/ownedDebuggerSession.ts": 1
   },
-  "parser-format-failure-class": {
-    "src/domain/evidenceFormat.ts": 1
-  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
@@ -22,39 +19,6 @@
     "src/native/apple/losslessJson.ts": 1,
     "src/native/parsers/plist.ts": 1,
     "src/rust/RustAuditableReader.ts": 1
-  },
-  "parser-plain-throw": {
-    "src/android/JadxJavaProbe.ts": 1,
-    "src/android/JadxWorkspaceRoot.ts": 4,
-    "src/artifacts/DirectoryArtifactReader.ts": 1,
-    "src/artifacts/NativeDmgArtifactReader.ts": 1,
-    "src/artifacts/ReleaseExposureReader.ts": 1,
-    "src/artifacts/StreamBytes.ts": 1,
-    "src/artifacts/ZipArtifactReader.ts": 1,
-    "src/domain/native/functionByteCoverage.ts": 1,
-    "src/domain/python/marshalUtf8.ts": 1,
-    "src/dotnet/ManagedArtifactInspector.ts": 1,
-    "src/dotnet/ManagedDecodeBudget.ts": 1,
-    "src/dotnet/ManagedMemberInspector.ts": 2,
-    "src/dotnet/ManagedSnapshot.ts": 1,
-    "src/dotnet/ManagedStaticProvider.ts": 1,
-    "src/firmware/FirmwareCommand.ts": 2,
-    "src/il2cpp/Il2cppMetadataFile.ts": 2,
-    "src/model/ModelHeaderReader.ts": 1,
-    "src/native/AppleDispatchMetadata.ts": 1,
-    "src/native/LldbCallTracer.ts": 1,
-    "src/native/LldbRetainedObservations.ts": 1,
-    "src/native/MachoCommandNames.ts": 1,
-    "src/native/NativeMacOSProvider.ts": 2,
-    "src/native/NativeMachoInspection.ts": 4,
-    "src/native/NativeUiHelperRuntime.ts": 1,
-    "src/native/NativeUiInterruptionControl.ts": 1,
-    "src/native/apple/AppleIpsFieldReader.ts": 1,
-    "src/native/parsers/demangle.ts": 3,
-    "src/native/parsers/lipo.ts": 1,
-    "src/native/pwndbg/PwndbgCoreContext.ts": 2,
-    "src/native/pwntools/PwntoolsDecoder.ts": 2,
-    "src/native/pwntools/PwntoolsResourceLimits.ts": 1
   },
   "raw-buffer-read": {
     "src/application/BinaryTargetResolver.ts": 1,
