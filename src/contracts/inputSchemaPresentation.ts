@@ -296,6 +296,20 @@ const INPUT_NORMALIZATION: NormalizationOptions = { literals: true };
 const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
 
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
+/**
+ * Keywords normalization may remove or rename: a widened `not` or `if` is
+ * dropped with its branches, and a widened `oneOf` becomes `anyOf`.
+ */
+const REMOVABLE_KEYWORDS = new Set(["oneOf", "not", "if", "then", "else"]);
+
+/** Whether a pointer passes through a keyword normalization may remove. */
+const throughRemovableLocation = (path: readonly string[]): boolean =>
+  path.some(
+    (segment, index) =>
+      REMOVABLE_KEYWORDS.has(segment) &&
+      (index === 0 || !schemaMaps.has(path[index - 1]!)),
+  );
+
 const normalizationContext = (
   root: Readonly<Record<string, unknown>>,
   options: NormalizationOptions,
@@ -383,9 +397,7 @@ const normalizationContext = (
     }
     if (typeof schema.$ref === "string") {
       const target = references.resolve(scope, schema.$ref);
-      // A pointer through `oneOf` may lose its target when a widened branch
-      // renames that union to `anyOf`.
-      if (target.kind === "target" && !target.path.includes("oneOf")) {
+      if (target.kind === "target" && !throughRemovableLocation(target.path)) {
         const dependency = factAt(target.value, scope);
         dependency?.dependents.add(fact);
         dependency?.evaluationDependents.add(fact);
@@ -396,9 +408,10 @@ const normalizationContext = (
         )
           fact.opaqueReference = dependency;
       } else if (target.kind !== "unresolved") {
-        // Named anchors and pointers through `oneOf` are not followed by this
-        // owner. Relax them when normalizing so a widened or moved target
-        // cannot make a negation stricter or leave a dangling reference.
+        // Named anchors and pointers into removable locations are not
+        // followed by this owner. Relax them when normalizing so a widened or
+        // moved target cannot make a negation stricter or leave a dangling
+        // reference.
         fact.opaqueReference = fact;
         if (!fact.changed) {
           fact.changed = true;
