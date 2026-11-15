@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   AnalysisTimeoutError,
   cancelledBy,
@@ -35,7 +36,10 @@ export const withPlaywrightExecutionBoundary = <Value>(
         fail(timeoutError());
         return;
       }
-      timer = setTimeout(scheduleTimeout, Math.min(remaining, 2_147_483_647));
+      timer = setTimeout(
+        scheduleTimeout,
+        Math.min(remaining, MAX_NODE_TIMER_DELAY_MS),
+      );
       timer.unref();
     };
     const cleanup = (): void => {

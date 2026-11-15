@@ -1,7 +1,7 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
 } from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -178,7 +178,7 @@ export const openCdpEndpoint = async (
   // The browser-socket handshake and discovery commands stay on the discovery
   // deadline. The selected command deadline starts only after discovery returns.
   const discoveryGuardTimeoutMs = Math.min(
-    MAX_BROWSER_DEADLINE_MS,
+    MAX_NODE_TIMER_DELAY_MS,
     discoveryTimeoutMs + 1_000,
   );
   const discoveryLimits = {

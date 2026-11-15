@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
@@ -27,8 +28,6 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
 /** Shortest valid registration request timeout. */
 const MIN_IDA_REQUEST_TIMEOUT_MS = 1;
-/** Node timer ceiling. Larger registration values would be clamped instead of honored. */
-export const MAX_IDA_REQUEST_TIMEOUT_MS = 2_147_483_647;
 /** Loopback names plus the Docker and Podman gateway names for the container's host. */
 const LOCAL_IDA_HTTP_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
@@ -50,7 +49,7 @@ const common = {
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
-    .max(MAX_IDA_REQUEST_TIMEOUT_MS)
+    .max(MAX_NODE_TIMER_DELAY_MS)
     .default(DEFAULT_IDA_REQUEST_TIMEOUT_MS),
   workspaceRoot: z
     .string()
@@ -98,7 +97,7 @@ const registrationConstraint = (
   issue: AnalysisInputIssue,
 ): string | undefined => {
   if (issue.path.length === 1 && issue.path[0] === "timeoutMs")
-    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} milliseconds`;
+    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds`;
   return issue.message === undefined
     ? undefined
     : `${issue.path.join(".") || "registration"}: ${issue.message}`;
@@ -323,7 +322,7 @@ export const idaRegistrationTimeoutGuidance = (
       : ceilingMs === timeoutMs
         ? `This IDA request reached the registration timeoutMs deadline of ${String(timeoutMs)} ms (deadlineExpired).`
         : `This IDA request reached its ${String(timeoutMs)} ms deadline (deadlineExpired), within the registration timeoutMs ceiling of ${String(ceilingMs)} ms.`,
-  remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+  remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */

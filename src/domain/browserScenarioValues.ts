@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "./analysisResourceLimits.js";
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
@@ -349,15 +350,9 @@ const locatorSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-// Playwright forwards these intervals to Node timers.
-const MAX_BROWSER_SCENARIO_TIMEOUT_MS = 2_147_483_647;
-
 const stepBase = {
   step_id: scenarioIdentifierSchema,
-  timeout_ms: z
-    .int()
-    .min(1)
-    .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
+  timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
       "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation.",
@@ -452,13 +447,9 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
   z.strictObject({
     step_id: scenarioIdentifierSchema,
     action: z.literal("wait_for_timeout"),
-    duration_ms: z
-      .int()
-      .min(1)
-      .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
-      .describe(
-        "Wait this many milliseconds; the wait ends early on cancellation.",
-      ),
+    duration_ms: timerDurationMsSchema.describe(
+      "Wait this many milliseconds; the wait ends early on cancellation.",
+    ),
   }),
 ]);
 export type BrowserScenarioAction = z.infer<typeof browserScenarioActionSchema>;

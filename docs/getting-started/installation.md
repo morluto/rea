@@ -434,12 +434,15 @@ selected engine. See [provider selection](cli.md#choose-a-provider).
 ### Linux owned-process prerequisite
 
 On Linux, REA's shared process supervisor requires a procps-compatible `ps`
-on REA's `PATH` for ownership checks before launching a child. Ghidra, JADX,
-firmware tools and static JavaScript/Electron analysis use these checks.
-Install your distribution's `procps` or `procps-ng` package, or put another
-procps-compatible `ps` on `PATH` before
+for ownership checks before launching a child. Ghidra, JADX, firmware tools
+and static JavaScript/Electron analysis use these checks. REA runs the first
+executable of `/bin/ps`, `/usr/bin/ps` and `/run/current-system/sw/bin/ps`
+(NixOS), and searches its own `PATH` only when none exists, so a wrapper or
+agent `PATH` cannot replace the system `ps`. On macOS REA always runs
+`/bin/ps`. Install your distribution's `procps` or `procps-ng` package before
 running those workflows. A missing or incompatible command causes a refusal
-before the supervised child starts.
+before the supervised child starts; its message and `ps_command` and
+`ps_source` diagnostics name the `ps` REA ran.
 
 The public error code varies by caller: `capability_unavailable`,
 `provider_unavailable` or `execution_failure`. Some provider adapters report
