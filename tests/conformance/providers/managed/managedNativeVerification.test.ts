@@ -1,4 +1,5 @@
 import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import { machoRuntimeSymbolName } from "../../../../src/domain/native/machoSymbolName.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
@@ -13,7 +14,10 @@ import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/Mana
 import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
-import { managedNativeVerificationResultSchema } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
+import {
+  managedNativeVerificationResultSchema,
+  pinvokeVerificationSchema,
+} from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
@@ -63,6 +67,7 @@ const nativeEvidenceWithExports = (
           ...macho.exports,
           items: names.map((name, index) => ({
             name,
+            runtime_name: machoRuntimeSymbolName(name),
             address: `0x${(0x1000 + index).toString(16)}`,
             weak: false,
             reexport: false,
@@ -907,6 +912,66 @@ it("retains every observed native candidate", () => {
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
 });
 
+it("reports coverage unknown when the managed boundary inspection is unavailable", () => {
+  const withManagedCoverage = (
+    state: "partial" | "unavailable",
+    nativeObservations: ReturnType<typeof nativeEvidenceWithExports>[],
+  ) => {
+    const input = exampleInput();
+    const managed = input.managed_boundaries;
+    const normalized = managedNativeBoundaryInspectionSchema.parse(
+      managed.normalized_result,
+    );
+    return verifyManagedNativeVerificationSource(
+      readFixtureSource({
+        ...input,
+        managed_boundaries: createEvidence(undefined, managed.provider, {
+          operation: managed.operation,
+          parameters: managed.parameters,
+          result: {
+            ...normalized,
+            ...(state === "unavailable"
+              ? { module_refs: [], pinvoke_imports: [] }
+              : {}),
+            coverage: { ...normalized.coverage, state },
+          },
+          rawResult: null,
+        }),
+        native_observations: nativeObservations,
+      }),
+    );
+  };
+  const exhaustive = nativeEvidenceWithExports(["open_native"]);
+  const macho = inspectMachoSchema.parse(exhaustive.normalized_result);
+  const partialExports = createEvidence(
+    exhaustive.subject === null
+      ? undefined
+      : {
+          path: exhaustive.subject.local_path,
+          sha256: exhaustive.subject.digest.sha256,
+          format: exhaustive.subject.format,
+        },
+    exhaustive.provider,
+    {
+      operation: exhaustive.operation,
+      parameters: exhaustive.parameters,
+      result: { ...macho, exports: { ...macho.exports, exhaustive: false } },
+      rawResult: null,
+    },
+  );
+
+  // Nothing was read on the managed side, so the result is unknown, and
+  // unknown wins beside the known gap of non-exhaustive native exports.
+  for (const native of [exhaustive, partialExports])
+    expect(withManagedCoverage("unavailable", [native]).coverage).toEqual({
+      status: "unknown",
+    });
+  // A partial inspection is a known gap.
+  expect(withManagedCoverage("partial", [exhaustive]).coverage).toEqual({
+    status: "partial",
+  });
+});
+
 describe("managed/native verification result algebra", () => {
   it("rejects states without their required native match", () => {
     const result = verifyManagedNativeVerificationSource(
@@ -917,30 +982,41 @@ describe("managed/native verification result algebra", () => {
     if (verification === undefined) return;
 
     expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        pinvoke_imports: [
-          {
-            ...verification,
-            matched_native: null,
-            candidates: [],
-          },
-        ],
+      pinvokeVerificationSchema.safeParse({
+        ...verification,
+        matched_native: null,
+        candidates: [],
+      }).success,
+    ).toBe(false);
+    const unresolved = {
+      ...verification,
+      status: "unresolved",
+      basis: "no-native-candidate",
+      confidence: "unknown",
+      matched_native: null,
+      candidates: [],
+    };
+    expect(pinvokeVerificationSchema.safeParse(unresolved).success).toBe(true);
+    expect(
+      pinvokeVerificationSchema.safeParse({
+        ...unresolved,
+        matched_native: verification.matched_native,
       }).success,
     ).toBe(false);
     expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        pinvoke_imports: [
-          {
-            ...verification,
-            status: "unresolved",
-            basis: "no-native-candidate",
-            confidence: "unknown",
-          },
-        ],
+      pinvokeVerificationSchema.safeParse({
+        ...unresolved,
+        candidates: verification.candidates,
       }).success,
     ).toBe(false);
+    // Valid item semantics cannot repair contradictory aggregate counts.
+    expect(
+      managedNativeVerificationResultSchema.safeParse({
+        ...result,
+        pinvoke_imports: [unresolved],
+      }).success,
+    ).toBe(false);
+    // Removed legacy fields are rejected by the strict coverage contract.
     expect(
       managedNativeVerificationResultSchema.safeParse({
         ...result,

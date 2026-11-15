@@ -1,5 +1,7 @@
+import { javaScriptSemanticPrecisionSchema } from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { javaScriptSemanticResourceLimitSchema } from "./javascriptSemanticValueTypes.js";
+import { javaScriptRefusedPhaseSchema } from "./javascriptSemanticWorkAllowance.js";
 
 /** Independent observations from one inert static pass; no runtime completeness claim. */
 export const javaScriptStaticCoverageSchema = z.strictObject({
@@ -31,7 +33,10 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
   examination: z.strictObject({
     status: z.enum(["complete", "limited", "not-examined"]),
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
+    semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
     electron_call_paths_limited: z.boolean(),
+    /** The analysis phase whose work allowance refused this source. */
+    refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
   }),
   applicability: z.strictObject({ electron: z.enum(["observed", "unknown"]) }),
   unexamined_reason: z.string().min(1).exactOptional(),
@@ -49,6 +54,7 @@ export const javaScriptStaticParseStatus = (
   coverage.syntax.status === "not-examined"
     ? "failed"
     : coverage.syntax.status === "recovered" ||
+        coverage.examination.status === "not-examined" ||
         (coverage.semantics.unknown_findings ?? 0) > 0 ||
         coverage.examination.semantic_resource_limits.includes(
           "alias-selections",

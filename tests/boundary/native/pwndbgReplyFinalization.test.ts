@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
+import { resolvePwntoolsLimits } from "../../../src/domain/native/pwntoolsResourceLimits.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 const replyClose = vi.hoisted(() => ({
@@ -74,11 +74,14 @@ const fixture = async (
   replyClose.denied = false;
   replyClose.onClose = undefined;
   replyClose.handles = [];
-  const environment = snapshotEnvironment({
-    REA_PWNDBG_GDB: process.execPath,
-    REA_PWNDBG_GDBINIT: init,
-    REA_PWNDBG_VENV_PATH: venv,
-  });
+  const environment = snapshotEnvironment(
+    {
+      REA_PWNDBG_GDB: process.execPath,
+      REA_PWNDBG_GDBINIT: init,
+      REA_PWNDBG_VENV_PATH: venv,
+    },
+    process.platform,
+  );
   const provider = new PwntoolsRecordedCrashProvider(environment);
   onTestFinished(async () => {
     replyClose.denied = false;
@@ -112,6 +115,7 @@ const fixture = async (
       resources,
       options: { signal },
       timeoutMs: 10_000,
+      producerLimits: resolvePwntoolsLimits(),
       runCommand: async (spawn) => {
         const output = await runOwnedCommand(
           {

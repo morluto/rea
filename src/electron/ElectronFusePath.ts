@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
@@ -215,10 +216,7 @@ const resolveInside = async (
       try {
         // A replacement character can alias a different, valid sibling name.
         // Preserve a literal UTF-8 BOM too: it is part of a filesystem name.
-        target = new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(rawTarget);
+        target = decodeStrictUtf8(rawTarget, "preserve");
       } catch {
         throw new ElectronFusePathFailure(
           "invalid_value",

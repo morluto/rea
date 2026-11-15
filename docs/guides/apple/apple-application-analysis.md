@@ -215,7 +215,10 @@ Resolution follows dyld:
   image that loaded it, up to the process root.
 - Dependencies load dependents-first in load-command order, and each image
   loads once per process. A later @rpath request whose install name matches an
-  already loaded image reuses it.
+  already loaded image reuses it. Loading an image and expanding its dependencies
+  are separate: an already loaded sibling can first be expanded through another
+  dependency, inheriting that traversal's rpath stack. Cycles do not expand an
+  image twice, and lazy edges do not establish a launch-time traversal chain.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.
 - Dyld path components are POSIX names. On Windows hosts, link text uses `\`
@@ -252,8 +255,12 @@ one of:
 
 A `conditional` image is still traced, because it is an in-root candidate
 that may load. Every edge below it has `loader_conditional: true`, and a
-request that reuses it by install name is `conditional` too. An in-root dylib
-with no platform load command remains unknown unless the root is an executable
+request that reuses it by install name is `conditional` too. A definitely loaded
+image can also first expand through a conditional chain: its dependency edges
+then have `loader_conditional: true`, while later reuse of the image retains its
+definite first-load result.
+
+An in-root dylib with no platform load command remains unknown unless the root is an executable
 with observed macOS platform and the candidate's CPU type is x86_64, i386, or arm64. In that macOS context,
 [Apple's dyld](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/mach_o/UnsafeHeader.cpp#L1137-L1145) supplies an implicit macOS platform to legacy dylibs on those CPU
 types. The candidate records `platform_basis: "macos-dyld-implicit"`; the

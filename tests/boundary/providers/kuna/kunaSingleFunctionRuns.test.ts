@@ -1,4 +1,7 @@
 import { expect, it as test, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
@@ -8,6 +11,7 @@ import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProce
 import {
   fakeKunaCalls,
   fakeKunaExits,
+  releaseFakeKunaCommand,
   setFakeKunaBehavior,
 } from "./fakeKuna.js";
 import {
@@ -15,6 +19,7 @@ import {
   run,
   session,
   unprovenCleanupLauncher,
+  awaitKunaCommand,
 } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -48,24 +53,29 @@ it("shares one single-function run among concurrent requests for one entry", asy
 it("keeps a shared run for the callers still waiting when one cancels", async () => {
   const { kuna, open } = await session("rea-kuna-single-cancel-", {
     project: "hang",
-    decompileDelayMs: 500,
+    gatedCommands: ["decompile"],
   });
   const client = open();
   const caller = new AbortController();
+  const leaving = client.execute(
+    "procedure_pseudo_code",
+    { procedure: "main" },
+    { signal: caller.signal },
+  );
+  const staying = client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
   try {
-    const leaving = client.execute(
-      "procedure_pseudo_code",
-      { procedure: "main" },
-      { signal: caller.signal },
-    );
-    const staying = run(client, "procedure_pseudo_code", { procedure: "main" });
-    await expect.poll(() => decompilesOf(kuna)).toHaveLength(1);
+    await awaitKunaCommand(kuna, "decompile", Promise.all([leaving, staying]));
     caller.abort();
     expect(await leaving).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-    expect((await staying).rawResult).toMatchObject({
+    await releaseFakeKunaCommand(kuna, "decompile");
+    const completed = await staying;
+    if (!completed.ok) throw completed.error;
+    expect(completed.value.rawResult).toMatchObject({
       source: { kind: "single-function" },
     });
     const [call] = await decompilesOf(kuna);
@@ -73,7 +83,10 @@ it("keeps a shared run for the callers still waiting when one cancels", async ()
     expect(await decompilesOf(kuna)).toHaveLength(1);
   } finally {
     caller.abort();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    await releaseFakeKunaCommand(kuna, "decompile");
+    const closed = await client.close();
+    await Promise.allSettled([leaving, staying]);
+    expect(closed).toEqual({ ok: true, value: null });
   }
 });
 
@@ -111,25 +124,42 @@ it("admits no more concurrent single-function runs than its slots", async () => 
 it("answers a queued request from the export once it finishes first", async () => {
   const { kuna, open } = await session(
     "rea-kuna-single-yield-",
-    { delayMs: 400, decompile: "hang" },
+    { gatedCommands: ["decompile-project"], decompile: "hang" },
     {},
     undefined,
     1,
   );
   const client = open();
   const holder = new AbortController();
-  try {
-    // This run holds the only slot until its caller leaves.
-    const holding = client.execute(
-      "procedure_pseudo_code",
-      { procedure: "main" },
-      { signal: holder.signal },
-    );
-    await expect.poll(() => decompilesOf(kuna)).toHaveLength(1);
-    const queued = await run(client, "procedure_pseudo_code", {
-      procedure: "parse",
+  const admission = deferred<void>();
+  const acquire = KunaRunSlots.prototype.acquire;
+  let arrivals = 0;
+  const requests = vi
+    .spyOn(KunaRunSlots.prototype, "acquire")
+    .mockImplementation(function (this: KunaRunSlots, signal) {
+      const pending = acquire.call(this, signal);
+      if (++arrivals === 2) admission.resolve();
+      return pending;
     });
-    expect(queued).toMatchObject({
+  let queued: ReturnType<typeof client.execute> | undefined;
+  // This run holds the only slot until its caller leaves.
+  const holding = client.execute(
+    "procedure_pseudo_code",
+    { procedure: "main" },
+    { signal: holder.signal },
+  );
+  try {
+    await awaitKunaCommand(kuna, "decompile", holding);
+    queued = client.execute("procedure_pseudo_code", { procedure: "parse" });
+    await awaitAcknowledgement(
+      admission.promise,
+      queued,
+      "queued single-function admission",
+    );
+    await releaseFakeKunaCommand(kuna, "decompile-project");
+    const completed = await queued;
+    if (!completed.ok) throw completed.error;
+    expect(completed.value).toMatchObject({
       result: "int parse(void)\n{\n  return 1;\n}",
       rawResult: { source: { kind: "project-export" } },
     });
@@ -141,7 +171,11 @@ it("answers a queued request from the export once it finishes first", async () =
     });
   } finally {
     holder.abort();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    await releaseFakeKunaCommand(kuna, "decompile-project");
+    const closed = await client.close();
+    await Promise.allSettled([holding, queued]);
+    requests.mockRestore();
+    expect(closed).toEqual({ ok: true, value: null });
   }
 });
 
@@ -150,29 +184,57 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
   const { kuna, open } = await session(
     "rea-kuna-single-retained-slot-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
     unproven.launcher,
     1,
   );
   const client = open();
   const waiter = new AbortController();
+  let queued: ReturnType<typeof client.execute> | undefined;
+  let restoreAcquire: (() => void) | undefined;
   try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
     expect(
-      await client.execute("procedure_pseudo_code", { procedure: "main" }),
+      await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+        () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ),
     ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
     // The timed-out tree may still run, so the next run must not start.
-    const queued = client.execute(
+    const admission = deferred<void>();
+    const acquire = KunaRunSlots.prototype.acquire;
+    let granted = false;
+    const requests = vi
+      .spyOn(KunaRunSlots.prototype, "acquire")
+      .mockImplementation(function (this: KunaRunSlots, signal) {
+        const pending = acquire.call(this, signal);
+        void pending.then(() => {
+          granted = true;
+        });
+        admission.resolve();
+        return pending;
+      });
+    restoreAcquire = () => requests.mockRestore();
+    queued = client.execute(
       "procedure_pseudo_code",
       { procedure: "parse" },
       { signal: waiter.signal },
     );
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await awaitAcknowledgement(
+      admission.promise,
+      queued,
+      "retained single-function slot",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(granted).toBe(false);
     expect(await decompilesOf(kuna)).toHaveLength(1);
     waiter.abort();
     expect(await queued).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    restoreAcquire();
+    restoreAcquire = undefined;
     expect((await client.close()).ok).toBe(false);
     unproven.release();
     expect(await client.close()).toEqual({ ok: true, value: null });
@@ -192,6 +254,8 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
     waiter.abort();
     unproven.release();
     await client.close();
+    await Promise.allSettled([queued]);
+    restoreAcquire?.();
   }
 });
 
@@ -310,13 +374,17 @@ it("does not keep a failed run, so a repeat runs again", async () => {
   const { kuna, open } = await session(
     "rea-kuna-single-failed-not-kept-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "200" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
   );
   const client = open();
   try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
     for (let repeat = 0; repeat < 2; repeat += 1)
       expect(
-        await client.execute("procedure_pseudo_code", { procedure: "main" }),
+        await runWithAnalysisOperationSnapshot(
+          { revision: 1, overrides: { "kuna.function_timeout_ms": 200 } },
+          () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+        ),
       ).toMatchObject({ ok: false });
     expect(await decompilesOf(kuna)).toHaveLength(2);
   } finally {
@@ -357,25 +425,27 @@ it("names the setting that owns a single-function deadline", async () => {
   const { open } = await session(
     "rea-kuna-function-deadline-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
   );
   const client = open();
   try {
-    const result = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
-    });
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    const result = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+      () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+    );
     if (result.ok) throw new Error("the hanging run answered");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
-      message: expect.stringMatching(
-        /kuna decompile.*REA_KUNA_TIMEOUT_MS.*300 ms/i,
-      ),
-      remediation: {
-        action: expect.stringMatching(
-          /raise.*REA_KUNA_TIMEOUT_MS.*restart REA/i,
-        ),
+      details: {
+        timeout_ms: 300,
+        limit: {
+          setting: "kuna.function_timeout_ms",
+          effective_value: 300,
+          update_mode: "runtime",
+          pending_restart: false,
+        },
       },
-      details: { timeout_ms: 300 },
     });
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });

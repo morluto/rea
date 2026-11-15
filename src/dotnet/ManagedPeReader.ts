@@ -171,14 +171,16 @@ const resolveRva = (
       `${scope} has an invalid RVA range`,
     );
   // VirtualSize owns RVA containment; raw size also includes alignment padding.
-  const selected = sections.find((section) => {
+  const mapped = sections.filter((section) => {
+    if (section.virtualSize === 0) return false;
+    const end = section.virtualAddress + section.virtualSize;
+    return size === 0
+      ? rva >= section.virtualAddress && rva < end
+      : rva < end && rva + size > section.virtualAddress;
+  });
+  const selected = mapped.find((section) => {
     const within = rva - section.virtualAddress;
-    return (
-      section.virtualSize > 0 &&
-      within >= 0 &&
-      within < section.virtualSize &&
-      size <= section.virtualSize - within
-    );
+    return within >= 0 && size <= section.virtualSize - within;
   });
   if (selected === undefined)
     throw managedFailure(
@@ -186,20 +188,12 @@ const resolveRva = (
       scope,
       `${scope} RVA is not covered by one PE section`,
     );
-  for (const section of sections) {
-    if (section === selected || section.virtualSize === 0) continue;
-    const end = section.virtualAddress + section.virtualSize;
-    const intersects =
-      size === 0
-        ? rva >= section.virtualAddress && rva < end
-        : rva < end && rva + size > section.virtualAddress;
-    if (intersects)
-      throw managedFailure(
-        "invalid-directory",
-        scope,
-        `${scope} RVA range has ambiguous overlapping PE section mappings`,
-      );
-  }
+  if (mapped.length > 1)
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} RVA range has ambiguous overlapping PE section mappings`,
+    );
   const within = rva - selected.virtualAddress;
   if (within > selected.rawSize || size > selected.rawSize - within)
     throw managedFailure(
@@ -252,7 +246,7 @@ const readCliHeader = (
     bytes,
     sections,
     rva: directory.rva,
-    size: 72,
+    size: 16,
     scope: "cli.header",
   });
   const prefix = readManagedCliHeaderPrefix(
@@ -273,6 +267,15 @@ const readCliHeader = (
       "CLI header size is outside its PE data directory",
       offset,
     );
+  // cb owns the complete header extent, including opaque backed extensions.
+  // Admit it before reading remaining fields or publishing a location range.
+  mapRva({
+    bytes,
+    sections,
+    rva: directory.rva,
+    size: headerSize,
+    scope: "cli.header",
+  });
   if (metadata.rva === 0 || metadata.size === 0)
     throw managedFailure(
       "invalid-cli-header",

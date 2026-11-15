@@ -1,12 +1,16 @@
 import { Readable } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 import { createInflateRaw } from "node:zlib";
+import {
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  type DotnetBundleReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   ArtifactReaderFailure,
@@ -14,6 +18,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import {
   findDotnetBundleHeader,
@@ -39,6 +44,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | DotnetBundleAdmission,
+    private readonly limits: DotnetBundleReaderLimits = DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   ) {
     if (admitted !== undefined && "kind" in admitted) {
       this.#admission = admitted;
@@ -61,7 +67,10 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     });
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const bundle = await this.#scope.run(async () => {
       this.#assertOpen(signal);
       const source = await this.#source.readSelectedPath(signal);
@@ -83,6 +92,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           source.initial.size,
           header,
           signal,
+          this.limits,
         );
         this.#admission = undefined;
       }
@@ -126,6 +136,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       yield entry;
     }
     await this.#source.readSelectedPath(signal);
+    // Every manifest file is listed; manifest damage fails the traversal.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -186,7 +198,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     const input =
       storedBytes === 0
         ? Readable.from([])
-        : readFileHandleChunks(source.handle, {
+        : readArtifactFileChunks(source.handle, {
             start: file.offset,
             end: file.offset + storedBytes - 1,
             signal,
@@ -221,7 +233,6 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         );
       await this.#source.readSelectedPath(signal);
     } catch (cause) {
-      abortIfNeeded(signal);
       if (cause instanceof ArtifactReaderFailure) throw cause;
       const malformedCompression =
         inflater !== undefined &&

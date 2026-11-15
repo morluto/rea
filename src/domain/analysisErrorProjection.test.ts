@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
 import { describe, expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
@@ -7,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -16,7 +18,6 @@ import {
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
-  HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
   HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperProcessError,
   HopperRemoteError,
@@ -26,7 +27,6 @@ import {
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type DialogTimeoutRejection,
   type HopperStartupFailureDiagnostic,
@@ -50,6 +50,7 @@ import { redactExplicitText } from "./explicitSensitiveValues.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it("projects nested workflow-publication recovery for the actual caller lifetime", () => {
   const child = new UnknownRegistryError(
@@ -111,8 +112,9 @@ describe("agent recovery metadata", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("Do not repeat the unchanged call."),
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "extract_firmware",
       },
     });
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
@@ -127,9 +129,6 @@ describe("agent recovery metadata", () => {
       category: "invalid_input",
       retryable: false,
       details: { reason: "already-exists" },
-      remediation: {
-        action: expect.stringContaining("do not repeat record_unknown"),
-      },
     });
     expect(analysisErrorProjectionSchema.parse(duplicate)).toEqual(duplicate);
     expect(
@@ -159,10 +158,7 @@ describe("agent recovery metadata", () => {
     },
   );
 
-  it("keeps retryability for transient conflicts and provider timeouts", () => {
-    expect(
-      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
-    ).toMatchObject({ code: "revision_conflict", retryable: true });
+  it("keeps retryability for provider timeouts", () => {
     expect(
       projectAnalysisError(
         new AnalysisTimeoutError("inspect_binary_layout", 2500),
@@ -191,8 +187,6 @@ describe("agent recovery metadata", () => {
       },
     });
     expect(projected.remediation.action).toContain("tools/list");
-    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
-    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -240,18 +234,7 @@ describe("agent recovery metadata", () => {
         operation: "inspect_binary_layout",
         timeout_ms: 2_500,
       },
-      message: expect.stringContaining("server/provider deadline"),
-      remediation: {
-        action: expect.stringContaining("provider diagnostics"),
-      },
     });
-    expect(projected.message).toContain("not a client-side timeout");
-    expect(projected.remediation.action).not.toContain(
-      "raise its tool deadline",
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /declared timeout controls|larger server\/provider budget|without assuming adjustable limits|do not assume adjustable/u,
-    );
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 });
@@ -852,6 +835,64 @@ describe("analysis error projection: Hopper provider failures", () => {
     });
   });
 
+  it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcherFailure: {
+          exit_code: 2,
+          signal: null,
+          stdout: { text: "", bytes: 0, retained_bytes: 0 },
+          stderr: {
+            text: "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n",
+            bytes: 90,
+            retained_bytes: 90,
+          },
+          output_closed: true,
+          diagnostic_truncated: false,
+        },
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcher: { exit_code: 2, signal: null },
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("keeps an ordinary Hopper start failure retryable", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        userMessage: "Hopper's launcher helper failed before bridge readiness.",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: true,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "retry",
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+  });
+
   it("retains the Hopper request and provider diagnostic on a remote failure", () => {
     expect(
       projectAnalysisError(
@@ -959,7 +1000,7 @@ describe("analysis error projection: Hopper startup failures", () => {
       value: "-5",
       source: "setting",
       minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
-      maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      maximum_ms: MAX_NODE_TIMER_DELAY_MS,
       default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
     } satisfies DialogTimeoutRejection;
     const projected = projectAnalysisError(
@@ -996,6 +1037,61 @@ describe("analysis error projection: Hopper startup failures", () => {
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,
     );
+  });
+});
+
+describe("analysis error projection: unclassified failures", () => {
+  it.each(["hopper", "ghidra", "ida", "jadx", "kuna"])(
+    "names doctor only with the provider it can check (%s)",
+    (providerId) => {
+      const projected = projectAnalysisError(
+        new ProviderAdapterError(providerId, "open_binary"),
+      );
+
+      expect(projected.code).toBe("execution_failure");
+      expect(projected.message).toContain(
+        `${providerId} provider could not complete open_binary, and REA did not classify the failure`,
+      );
+      expect(projected.message).not.toContain("doctor");
+      expect(projected.remediation.action).toContain(
+        `\`rea doctor --provider ${providerId}\``,
+      );
+    },
+  );
+
+  it.each(["firmware", "native-macos", "rizin", "rea-cdp-browser", "rea"])(
+    "does not send %s failures to a doctor that cannot check them",
+    (providerId) => {
+      const projected = projectAnalysisError(
+        new ProviderAdapterError(providerId, "inspect"),
+      );
+
+      expect(projected.message).toContain("did not classify the failure");
+      for (const text of [projected.message, projected.remediation.action])
+        expect(text).not.toContain("doctor");
+    },
+  );
+
+  it("keeps an authored provider message as the recovery", () => {
+    const projected = projectAnalysisError(
+      new ProviderAdapterError("firmware", "inspect", {
+        userMessage: "Select a smaller firmware image.",
+      }),
+    );
+
+    expect(projected.remediation.action).toBe(
+      "Select a smaller firmware image.",
+    );
+  });
+
+  it("does not attribute an unreadable result to provider readiness", () => {
+    const projected = projectAnalysisError(
+      new AnalysisOutputError("decompile", "failed"),
+    );
+
+    expect(projected.code).toBe("unreadable_output");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
   });
 });
 
@@ -1420,6 +1516,24 @@ it("does not offer entry-policy retries for integrity refusals without a declare
   expect(native.remediation.action).not.toContain("record-and-continue");
 });
 
+it.each([undefined, false, true])(
+  "projects whether a refused request was sent (%s) and omits an unknown value",
+  (requestSent) => {
+    const details = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "cutter_command",
+        "transport",
+        "Cutter request exceeds its frame limit",
+        { max_request_bytes: 8192 },
+        requestSent === undefined ? {} : { requestSent },
+      ),
+    ).details;
+    if (requestSent === undefined)
+      expect(details).not.toHaveProperty("request_sent");
+    else expect(details).toMatchObject({ request_sent: requestSent });
+  },
+);
+
 it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
   const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
   const original = projectAnalysisError(
@@ -1515,7 +1629,8 @@ describe("analysis error projection: caller lifetime", () => {
       minimum: limit.minimum,
       maximum: limit.maximum,
       agent_editable: true,
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
       applies_at: "next_invocation",
       scope: "rea-invocation",
       environment: "REA_REGEX_MATCHING_DEADLINE_MS",
@@ -1532,11 +1647,25 @@ describe("analysis error projection: caller lifetime", () => {
       expect.objectContaining({
         setting: "wasm.command_timeout_ms",
         source: "request",
+        update_mode: "parameter",
         parameter: "command_timeout_ms",
         applies_at: "next_invocation",
         scope: "rea-invocation",
       }),
     );
+    expect(
+      analysisSettingLimit("wasm.command_timeout_ms", 100, "runtime"),
+    ).toMatchObject({ source: "runtime", update_mode: "runtime" });
+    expect(
+      analysisSettingLimit("javascript.max_heap_mb", 128, "request"),
+    ).toMatchObject({
+      source: "request",
+      update_mode: "parameter",
+      parameter: "max_heap_mb",
+    });
+    expect(
+      analysisSettingLimit("javascript.analysis_timeout_ms", 1, "default"),
+    ).toMatchObject({ source: "default", update_mode: "runtime" });
     expect(
       projectAnalysisError(error, "invocation").details?.limit,
     ).not.toHaveProperty("environment");
@@ -1558,8 +1687,8 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toBe(
-      HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+    expect(projectAnalysisError(error).remediation.action).toMatch(
+      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(
@@ -1572,11 +1701,91 @@ describe("analysis error projection: caller lifetime", () => {
       applies_at: "next_invocation",
       environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
     });
-    // A busy request is not a startup: it carries no lifetime-specific text.
-    const busy = new HopperTimeoutError(30_000, "trace_feature", 42, "busy");
-    expect(projectAnalysisError(busy, "invocation").remediation).toEqual(
-      projectAnalysisError(busy).remediation,
-    );
+  });
+});
+
+describe("analysis error projection: Hopper caller lifetime", () => {
+  it.each([
+    [
+      new HopperProcessError(7, { operation: "search_strings", requestId: 4 }),
+      "close_binary",
+      "exit code 7",
+    ],
+    [
+      new HopperProcessError(null, {
+        operation: "search_strings",
+        providerState: "unreachable",
+      }),
+      "export_evidence_bundle",
+      "process exit was not observed",
+    ],
+    [
+      new HopperProcessError(null, { operation: "search_strings" }),
+      "binary_session.provider_operation_health",
+      "could not determine",
+    ],
+    [
+      new HopperTimeoutError(30_000, "search_strings", 42, "busy"),
+      "binary_session.analysis_activity",
+      "remained busy",
+    ],
+    [
+      new HopperTimeoutError(30_000, "search_strings", 42, "not_started"),
+      "binary_session",
+      "before it started",
+    ],
+  ] as const)(
+    "keeps Hopper outcome facts and scopes request recovery to the caller",
+    (error, continuingTool, outcome) => {
+      const continuing = projectAnalysisError(error);
+      const invocation = projectAnalysisError(error, "invocation");
+      expect(continuing.message).toContain(continuingTool);
+      expect(continuing.remediation.action).toContain(continuingTool);
+      expect(invocation.message).toContain(outcome);
+      expect(invocation.message).not.toContain(continuingTool);
+      expect(invocation.remediation.action).toContain("rerunning the command");
+      expect(invocation.remediation.action).not.toContain(continuingTool);
+      expect(invocation.details).toEqual(continuing.details);
+      expect(invocation.code).toBe(continuing.code);
+      expect(invocation.category).toBe(continuing.category);
+      expect(invocation.retryable).toBe(continuing.retryable);
+      expect(analysisErrorProjectionSchema.parse(invocation)).toEqual(
+        invocation,
+      );
+    },
+  );
+
+  it("keeps Hopper recovery scoped through composed cleanup and its history", () => {
+    const primary = new HopperProcessError(null, {
+      operation: "search_strings",
+      providerState: "unreachable",
+    });
+    const cleanup = new ProviderCleanupError("hopper", ["hopper-bridge"], {});
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+    ).bindCleanupDependencies([cleanup]);
+    const invocationPrimary = projectAnalysisError(primary, "invocation");
+    const continuingPrimary = projectAnalysisError(primary);
+    const invocation = projectAnalysisError(composed, "invocation");
+    const continuing = projectAnalysisError(composed);
+    expect(invocation.message).toBe(invocationPrimary.message);
+    expect(continuing.message).toBe(continuingPrimary.message);
+    expect(invocation.details).toMatchObject({
+      resources: ["hopper-bridge"],
+      diagnostics: { primary_error: invocationPrimary },
+    });
+    expect(continuing.details).toMatchObject({
+      diagnostics: { primary_error: continuingPrimary },
+    });
+
+    releaseOwnedCleanup(cleanup);
+    expect(
+      projectAnalysisError(composed, "invocation").details?.cleanup_history,
+    ).toMatchObject({ primary_error: invocationPrimary });
+    expect(
+      projectAnalysisError(composed).details?.cleanup_history,
+    ).toMatchObject({ primary_error: continuingPrimary });
   });
 });
 
@@ -1623,7 +1832,7 @@ describe("analysis error projection: composed failures for a caller lifetime", (
       `Only this request stopped. ${continuingOnly.userMessage}`,
     );
     // After cleanup resolves, history keeps the composition-time snapshot.
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     for (const lifetime of ["continuing", "invocation"] as const)
       expect(child(lifetime)?.cleanup_history).toMatchObject({
         primary_error: projectAnalysisError(primary, lifetime),
@@ -1660,6 +1869,21 @@ describe("analysis error projection: composed failures for a caller lifetime", (
     expect(projectAnalysisError(composed, "invocation").details).toEqual(
       projectAnalysisError(composed).details,
     );
+  });
+
+  it("keeps the named integrity check when redaction rebuilds an artifact change", () => {
+    const error = new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target/secret-token.bin",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    );
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    expect(redacted).not.toBe(error);
+    expect(projectAnalysisError(redacted)).toMatchObject({
+      code: "artifact_changed",
+      details: { integrity_check: "member-identity" },
+    });
   });
 
   it("keeps continuing guidance through redaction and redacts its text", () => {

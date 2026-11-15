@@ -10,6 +10,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import {
   artifactSelectedPathErrno,
+  artifactReadCancelledBy,
   assertArtifactReadActive,
 } from "./ArtifactFileOperation.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
@@ -32,7 +33,7 @@ export const assertArtifactFileSelectedSource = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `${diagnosticLabel} source identity changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }),
@@ -44,6 +45,7 @@ export const assertArtifactFileSelectedSource = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `${diagnosticLabel} source identity changed: ${path}`,
+      { integrityCheck: "container-identity" },
     );
 };
 
@@ -51,7 +53,12 @@ export const assertArtifactFileSelectedSource = async (
 export class ArtifactFileSource {
   readonly #scope = new ArtifactResourceScope();
   #owner: OwnedFileHandle | undefined;
-  #opening: Promise<StableRegularFileDescriptor> | undefined;
+  #opening:
+    | {
+        readonly signal: AbortSignal | undefined;
+        readonly promise: Promise<StableRegularFileDescriptor>;
+      }
+    | undefined;
   #boundSha256: string | undefined;
 
   constructor(
@@ -141,7 +148,7 @@ export class ArtifactFileSource {
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} carrier changed after inventory`,
-        undefined,
+        { integrityCheck: "container-identity" },
         artifactIntegrityDetails(
           ".",
           { algorithm: "sha256", digest: expectedSha256 },
@@ -155,13 +162,13 @@ export class ArtifactFileSource {
 
   async #verify(signal?: AbortSignal): Promise<StableRegularFileDescriptor> {
     assertArtifactReadActive(signal);
-    this.#opening ??= this.#admit(signal);
-    const source = await this.#opening;
+    const source = await this.#open(signal);
     const observed = await source.handle.stat();
     if (!sameRegularFileState(source.initial, observed))
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} source identity changed: ${this.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(signal);
     return source;
@@ -171,8 +178,7 @@ export class ArtifactFileSource {
     signal?: AbortSignal,
   ): Promise<StableRegularFileDescriptor> {
     assertArtifactReadActive(signal);
-    this.#opening ??= this.#admit(signal);
-    const source = await this.#opening;
+    const source = await this.#open(signal);
     await assertArtifactFileSelectedSource(
       this.path,
       source,
@@ -180,6 +186,31 @@ export class ArtifactFileSource {
     );
     assertArtifactReadActive(signal);
     return source;
+  }
+
+  async #open(signal?: AbortSignal): Promise<StableRegularFileDescriptor> {
+    for (;;) {
+      assertArtifactReadActive(signal);
+      const pending = (this.#opening ??= {
+        signal,
+        promise: this.#admit(signal),
+      });
+      try {
+        return await pending.promise;
+      } catch (cause: unknown) {
+        // A failed close still owns its descriptor until source shutdown.
+        if (this.#owner === undefined && this.#opening === pending)
+          this.#opening = undefined;
+        if (
+          this.#owner === undefined &&
+          pending.signal !== signal &&
+          signal?.aborted !== true &&
+          artifactReadCancelledBy(cause, pending.signal)
+        )
+          continue;
+        throw cause;
+      }
+    }
   }
 
   async #admit(signal?: AbortSignal): Promise<StableRegularFileDescriptor> {

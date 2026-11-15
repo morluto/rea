@@ -14,10 +14,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
-import {
-  GHIDRA_SESSION_RETAINED,
-  ghidraDecompileTimeoutRecovery,
-} from "../../../src/ghidra/GhidraProviderClient.js";
+import { ghidraDecompileTimeoutRecovery } from "../../../src/ghidra/GhidraProviderClient.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -32,6 +29,7 @@ const environment = {
 };
 const BRIDGE_MESSAGE =
   "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)";
+const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 
 const ghidraSession = (launcher: GhidraFixtureLauncher) => {
   const config = parseConfig(environment);
@@ -72,7 +70,8 @@ const enforcedLimit = {
   minimum: 1,
   maximum: 2_147_483,
   agent_editable: true,
-  rea_restart_required: false,
+  update_mode: "runtime",
+  pending_restart: false,
 };
 /** A finished invocation can act only through a new invocation's launch value. */
 const invocationLimit = {
@@ -127,7 +126,7 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
   const { message } = cliFailure.parse(projected);
   expect(message.startsWith(BRIDGE_MESSAGE)).toBe(true);
   expect(message).not.toContain(GHIDRA_SESSION_RETAINED);
-}, 30_000);
+});
 
 it("keeps same-session and runtime-update guidance for a continuing MCP connection", async () => {
   const launcher = new GhidraFixtureLauncher("decompile_timed_out");
@@ -185,4 +184,4 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
     await harness.close();
     await expectReleased(launcher);
   }
-}, 30_000);
+});

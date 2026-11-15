@@ -138,7 +138,9 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
         error: {
           operation: "inspect_web_page",
           reason: "protocol_error",
-          userMessage: expect.stringContaining("scriptSource must be a string"),
+          userMessage: expect.stringContaining(
+            "Debugger.getScriptSource returned a malformed result at /scriptSource",
+          ),
         },
       });
       expect(browser.commands.map(({ method }) => method)).toContain(
@@ -281,9 +283,17 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
         observation_ms: 0,
       }),
     );
+    // A root navigation to another loader proves the selected document
+    // changed, even though the final frame tree shows the selected loader.
+    if (kind === "replacement") {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      return;
+    }
     if (!result.ok) throw result.error;
-    if (kind === "replacement" || kind === "malformed")
-      expect(result.value.tools.items).toEqual([]);
+    if (kind === "malformed") expect(result.value.tools.items).toEqual([]);
     else
       expect(result.value.tools.items).toEqual([
         expect.objectContaining({
@@ -318,11 +328,16 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
                       id: "child",
+                      loaderId: "loader-child",
                       parentId: "frame-main",
                       url: `${origin}/child`,
                     },
@@ -416,7 +431,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
@@ -1028,9 +1047,8 @@ describe("CdpBrowserProvider: frame scope and screenshots", () => {
     expect(names).toEqual(
       expect.arrayContaining(["search_orders", "update_order"]),
     );
-    expect(names).not.toEqual(
-      expect.arrayContaining(["child_tool", "escaped_child_tool"]),
-    );
+    expect(names).not.toContain("child_tool");
+    expect(names).not.toContain("escaped_child_tool");
     expect(result.value.completeness.policy_filtered_sections).toContain(
       "webmcp_tools",
     );
@@ -1214,7 +1232,11 @@ it.each([undefined, 7, ""])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {

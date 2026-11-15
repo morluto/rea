@@ -21,6 +21,82 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { parseEvidence } from "../domain/evidence.js";
 
+it.each(
+  (["observe", "inspect"] as const).flatMap((operation) =>
+    (
+      [
+        "valid",
+        "sha256",
+        "utf8_bytes",
+        "utf16_units",
+        "unavailable",
+        "excluded",
+      ] as const
+    ).map((field) => ({ operation, field })),
+  ),
+)(
+  "verifies $operation captured source facts for $field",
+  async ({ operation, field }) => {
+    const captured = {
+      state: "captured" as const,
+      text: 'const value = "🎋";',
+      sha256:
+        "2f5ea9ea003c0c49a16865421e2531b36218e82b46e0eeb10210e83288f24d2e",
+      utf8_bytes: 21,
+      utf16_units: 19,
+    };
+    const source = {
+      script_id: "17",
+      url: "https://app.test/main.js",
+      execution_context_id: null,
+      reported_execution_context: null,
+      reported_script_context_aux_data: null,
+      frame_id: "main-frame",
+      producer_hash: null,
+      source_map_url: null,
+      has_source_url: false,
+      language: "JavaScript",
+      resource_start: null,
+      source:
+        field === "unavailable" || field === "excluded"
+          ? { state: field, reason: "Source not retained" }
+          : {
+              ...captured,
+              ...(field === "sha256" ? { sha256: "a".repeat(64) } : {}),
+              ...(field === "utf8_bytes" ? { utf8_bytes: 22 } : {}),
+              ...(field === "utf16_units" ? { utf16_units: 20 } : {}),
+            },
+    };
+    const provider = recordingWebRuntimePort();
+    const service = new WebRuntimeService({
+      identity: provider.identity,
+      observeExecution: async () =>
+        ok({ ...webExecutionFixture(), sources: [source] }),
+      inspectEventListeners: async () =>
+        ok({ ...webListenersFixture(), sources: [source] }),
+    });
+    const scope = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "selected-page",
+    };
+    const result =
+      operation === "observe"
+        ? await service.observe({ ...scope, observation_ms: 5 })
+        : await service.inspect({ ...scope, selector: "#selected" });
+    const valid =
+      field === "valid" || field === "unavailable" || field === "excluded";
+    expect(result.ok).toBe(valid);
+    if (result.ok)
+      expect(result.value.normalized_result).toMatchObject({
+        sources: [source],
+      });
+    else {
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(result.error.message).toContain(field);
+    }
+  },
+);
+
 it("rejects malformed input and prior cancellation without calling a provider", async () => {
   const provider = recordingWebRuntimePort();
   const service = new WebRuntimeService({

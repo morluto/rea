@@ -6,7 +6,11 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { readAsarListing } from "../../../src/artifacts/AsarListing.js";
+import {
+  BLOCK_INTEGRITY_LIMITATION,
+  readAsarListing,
+} from "../../../src/artifacts/AsarListing.js";
+import { resolveAsarHeaderAdmission } from "../../../src/artifacts/AsarHeader.js";
 import {
   asarHeaderBytes,
   nestedAsarHeader,
@@ -48,9 +52,40 @@ it("rejects path expansion before publishing any inventory, preserving the input
   const path = await archiveWith(bytes);
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "limit",
-    message: "ASAR expanded listing exceeds its 64 MiB representation budget",
+    admission: {
+      kind: "asar-listing",
+      maximumBytes: 67108864,
+      source: "default",
+    },
   });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+});
+
+it("recovers expanded listing admission independently of the unchanged header budget", async () => {
+  const bytes = asarHeaderBytes(
+    JSON.stringify({ files: { member: { size: 0, offset: "0" } } }),
+  );
+  const path = await archiveWith(bytes);
+  const list = async (maximum: string) => {
+    const reader = new AsarArtifactReader(path, {
+      headerAdmission: resolveAsarHeaderAdmission({
+        REA_ASAR_MAX_LISTING_BYTES: maximum,
+      }),
+    });
+    try {
+      const paths: string[] = [];
+      for await (const entry of reader.entries()) paths.push(entry.path);
+      return paths;
+    } finally {
+      await reader.close();
+    }
+  };
+  await expect(list("128")).rejects.toMatchObject({
+    reason: "limit",
+    admission: { kind: "asar-listing", maximumBytes: 128, source: "setting" },
+  });
+  expect(await list("1024")).toEqual(["member"]);
+  expect((await readFile(path)).equals(bytes)).toBe(true);
 });
 
 it("reads deeply nested packed metadata without recursive listing or member lookup", async () => {
@@ -58,9 +93,11 @@ it("reads deeply nested packed metadata without recursive listing or member look
   const reader = new AsarArtifactReader(path);
   try {
     let count = 0;
+    let files = 0;
     for await (const entry of reader.entries()) {
       count++;
       if (entry.kind === "file") {
+        files++;
         expect(entry.path).toBe(`${"d/".repeat(3500)}f0`);
         expect(
           Buffer.compare(
@@ -71,6 +108,7 @@ it("reads deeply nested packed metadata without recursive listing or member look
       }
     }
     expect(count).toBe(3501);
+    expect(files).toBe(1);
   } finally {
     await reader.close();
   }
@@ -510,14 +548,7 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
     const row = occurrence(name);
     expect(row.declared_integrity).toEqual({ algorithm: "sha256", digest });
     expect(row.hash_status).toBe("verified");
-    expect(row.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
-    expect(row.limitations[0]).toContain(
-      "does not establish block integrity or Electron runtime acceptance",
-    );
+    expect(row.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   }
   for (const [name, declaration, reason] of [
     ["unsupported", unsupported, "unsupported algorithm"],
@@ -589,11 +620,7 @@ it.each([
       algorithm: "sha256",
       digest: "a".repeat(64),
     });
-    expect(entries[0]?.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
+    expect(entries[0]?.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   },
 );
 
@@ -610,6 +637,10 @@ it("admits escaped integrity source retention before formatting its limitation",
     }),
   ).rejects.toMatchObject({
     reason: "limit",
-    message: "ASAR expanded listing exceeds its 64 MiB representation budget",
+    admission: {
+      kind: "asar-listing",
+      maximumBytes: 67108864,
+      source: "default",
+    },
   });
 });

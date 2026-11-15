@@ -1,8 +1,8 @@
+import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import {
   HOST_RESTRICTED_FEATURES,
-  type AvailabilityPolicy,
   type HostRestrictedFeature,
-} from "../application/CapabilityInventory.js";
+} from "../contracts/toolAvailability.js";
 import { platform } from "node:process";
 import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 
@@ -68,6 +68,11 @@ export const sessionAvailabilityPolicy = (
         ? {}
         : {
             optionalProviderLoadFailures: defaults.optionalProviderLoadFailures,
+          }),
+      ...(defaults.commandProviderFailures === undefined
+        ? {}
+        : {
+            commandProviderFailures: defaults.commandProviderFailures,
           }),
       ...(defaults.hostUnsupported === undefined
         ? {}

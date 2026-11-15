@@ -762,5 +762,9 @@ it("preserves the caller's cancellation reason after the final identity read", a
   };
   await expect(
     readProcessOwnershipFacts([row], host, controller.signal),
-  ).rejects.toBe(reason);
+  ).rejects.toMatchObject({
+    _tag: "ProcessOwnershipInspectionCancelled",
+    reason,
+    cause: reason,
+  });
 });

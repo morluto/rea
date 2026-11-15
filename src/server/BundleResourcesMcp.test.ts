@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../tests/fixtures/canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -82,6 +83,15 @@ it("routes bundle resource MCP calls with null executable identity and retained 
   });
 
   await expectResourceSchemaBranches(client);
+
+  const advertised = (await client.listTools()).tools;
+  for (const name of ["open_binary", "open_bundle_resources", "close_binary"]) {
+    const tool = advertised.find((candidate) => candidate.name === name);
+    expect(tool?.annotations, name).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  }
 
   const unbound = await client.callTool({
     name: "inspect_plist",
@@ -431,9 +441,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       contract.outputSchema.safeParse(malformedEvidence).success,
       `${name} canonical rejects missing resource_root`,
     ).toBe(false);
-    const advertised = advertisedTools.get(name)?.outputSchema;
-    expect(advertised, `${name} is advertised`).toBeDefined();
-    if (advertised === undefined) continue;
+    const advertised = canonicalOutputSchema(name);
     const validateAdvertised = new Ajv2020({
       strict: false,
       validateFormats: false,

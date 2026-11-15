@@ -1,9 +1,10 @@
 import {
-  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -132,8 +133,7 @@ export const runAdbCapture = async (
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
 ): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
-  if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   try {
     return ok(
       await execFileBytes(selection.binary, arguments_, {
@@ -148,12 +148,13 @@ export const runAdbCapture = async (
     const failure = execFileOutputFailure(cause);
     if (cause instanceof ExecFileOutputCancelledError)
       return err(
-        new AnalysisCancelledError(operation, {
-          cause: cause.cause,
-          ...(failure === undefined
+        cancelledBy(
+          operation,
+          carriedReason(cause.cause),
+          failure === undefined
             ? {}
-            : { capturedOutput: execFileFailureCapturedOutput(failure) }),
-        }),
+            : { capturedOutput: execFileFailureCapturedOutput(failure) },
+        ),
       );
     if (failure === undefined)
       return err(

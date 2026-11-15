@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpOperationResult,
@@ -9,13 +10,10 @@ import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
@@ -32,6 +30,10 @@ import {
 } from "./verify-real-ghidra-switch-assertions.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { verifySwitchEvidenceControls } from "./verify-real-ghidra-switch-controls.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // Narrow compiler-shape lane; no cross compiler or game artifact prerequisites.
 const { values } = parseArgs({
@@ -87,7 +89,12 @@ if (!compilerOnly) {
   assert.equal(installation.status, "available", JSON.stringify(installation));
 }
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-switch-proof-"));
+// Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-switch-proof-",
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const source = join(workspace, "switch.c");
@@ -95,7 +102,18 @@ await writeFile(source, buildSwitchSource());
 const flags = ["-O2", "-g", "-fno-pie", "-no-pie"];
 const results = [];
 let productionControls = null;
-try {
+// The workspace is removed only once no owned runtime or process survives.
+workspaceFixture.releaseAfter(async () => {
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  const cleanup = await completeVerifierRun(run);
+  assert.equal(cleanup.process_lineage.status, "verified");
+  assert.deepEqual(cleanup.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   for (const compiler of ["gcc", "clang"]) {
     const original = join(workspace, `${compiler}-optimized`);
     await exec(commands[compiler], [...flags, source, "-o", original]);
@@ -169,17 +187,7 @@ try {
       });
     }
   }
-} finally {
-  try {
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-}
+});
 const lifecycle = await completeVerifierRun(run);
 if (lifecycle.process_lineage.status === "verified")
   assert.deepEqual(lifecycle.process_lineage.descendants, []);
@@ -212,7 +220,7 @@ async function verifyTarget(path, sha256, fixtures, variant) {
   let opened = false;
   let stderr = "";
   const observations = [];
-  try {
+  return withVerifierCleanup(async () => {
     await client.connect(transport);
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
@@ -287,17 +295,13 @@ async function verifyTarget(path, sha256, fixtures, variant) {
       });
     }
     return { observations, stderr };
-  } finally {
-    try {
+  }, [
+    async () => {
       if (opened) await call(client, "close_binary");
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    }
-  }
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
 }
 function assertWorkflowIdentity(evidence, sha256) {
   assert.equal(evidence.subject.digest.sha256, sha256);

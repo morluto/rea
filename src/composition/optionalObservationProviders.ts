@@ -1,4 +1,5 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   OptionalObservationProviders,
@@ -28,7 +29,10 @@ export const createOptionalObservationFactories = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
   settings?: AnalysisSettingsReader,
 ): OptionalObservationFactories => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const environment = snapshotEnvironment(
+    selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
   let runtimeAdmission: V8InspectorAdmission | undefined;
   let webBundleAdmission: WebBundleAnalysisAdmission | undefined;
   return {
@@ -37,7 +41,11 @@ export const createOptionalObservationFactories = (
       const { WebBundleAnalysisAdmission: Admission } =
         await import("../browser/IsolatedWebBundleAnalyzer.js");
       webBundleAdmission ??= new Admission();
-      return browser.createBrowserObservationProvider(webBundleAdmission);
+      return browser.createBrowserObservationProvider(
+        webBundleAdmission,
+        environment,
+        settings,
+      );
     },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(

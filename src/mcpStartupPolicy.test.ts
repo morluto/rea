@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 
 import { parseClientConfiguration } from "./application/ClientConfigurationDocument.js";
@@ -54,6 +55,8 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
         }),
         "json",
       ),
+      undefined,
+      HOST_PLATFORM.platform,
     );
     if (!details.ok) throw details.error;
     expect(details.value.timeoutInputs).toMatchObject({

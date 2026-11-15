@@ -471,7 +471,7 @@ it("does not leave a provider running when a target open is queued behind shutdo
     },
   });
   expect(session.activeTarget()).toBeUndefined();
-  expect(session.activeBundleResourceRoot()).toBeUndefined();
+  expect(await session.status()).toMatchObject({ open: false });
   expect(created).toBe(closed);
 });
 

@@ -1,6 +1,7 @@
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -15,6 +16,8 @@ import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
+import { parseAsarListingAdmission } from "../config/asarListingAdmission.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -28,7 +31,11 @@ export const resolveAsarHeaderAdmission = (
     environment[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  const listing = parseAsarListingAdmission(
+    environment.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listing.ok) throw listing.error;
+  return { ...parsed.value, listing: listing.value };
 };
 
 const MEBIBYTE = 1024 * 1024;
@@ -429,9 +436,7 @@ export const readAsarHeader = async (
     throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
   let json: string;
   try {
-    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    json = strictUtf8Decoder("preserve").decode(bytes);
   } catch (cause: unknown) {
     throw new ArtifactReaderFailure(
       "format",
@@ -439,5 +444,22 @@ export const readAsarHeader = async (
       { cause },
     );
   }
-  return JSON.parse(json) as unknown;
+  const header = JSON.parse(json) as unknown;
+  rejectDuplicateAsarHeaderMembers(json);
+  return header;
+};
+
+/**
+ * `JSON.parse` keeps only the last of repeated member names, so a second
+ * declaration of a path would hide the first from the listing while coverage
+ * still read as complete. Treat a repeated name as a malformed index, like the
+ * unsafe path components the listing already refuses.
+ */
+const rejectDuplicateAsarHeaderMembers = (json: string): void => {
+  const duplicate = findDuplicateJsonMember(json);
+  if (duplicate !== undefined)
+    throw new ArtifactReaderFailure(
+      "format",
+      `ASAR JSON header declares member ${JSON.stringify(duplicate.name)} more than once in one object (offset ${String(duplicate.offset)})`,
+    );
 };

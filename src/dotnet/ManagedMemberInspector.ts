@@ -11,8 +11,10 @@ import {
 } from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
+  type ManagedCliHeader,
   type ManagedPeLayout,
 } from "./ManagedPeReader.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   readManagedResourceDirectory,
   readManagedMetadataInventory,
@@ -85,6 +87,7 @@ const unavailable = (
       },
       types: [],
       signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,
@@ -111,10 +114,12 @@ const unavailable = (
     }),
   );
 
-const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
-  const cli = pe.cli;
-  if (cli === null)
-    throw new TypeError("Managed inventory requires CLI metadata");
+const readMemberLayout = (
+  bytes: Buffer,
+  pe: ManagedPeLayout,
+  cli: ManagedCliHeader,
+  maxRepresentationBytes?: number,
+) => {
   const rootOffset = pe.rvaToOffset(
     cli.metadata.rva,
     cli.metadata.size,
@@ -124,6 +129,7 @@ const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
     bytes,
     rootOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
   const memberLists = readTypeMemberListFacts(bytes, layout);
   return { layout, memberLists };
@@ -172,12 +178,14 @@ export const inspectManagedMembersBytes = (
     methodOffset = 0,
     methodLimit = Number.MAX_SAFE_INTEGER,
     userStrings: readUserStrings = true,
+    maxRepresentationBytes,
   }: {
     readonly typeNames?: readonly string[];
     /** Zero-based offset into MethodDef rows. */
     readonly methodOffset?: number;
     readonly methodLimit?: number;
     readonly userStrings?: boolean;
+    readonly maxRepresentationBytes?: number;
   } = {},
 ): ManagedMemberInspection => {
   if (
@@ -186,7 +194,7 @@ export const inspectManagedMembersBytes = (
     !Number.isSafeInteger(methodLimit) ||
     methodLimit < 0
   )
-    throw new RangeError(
+    throw invariantViolation(
       "methodOffset and methodLimit must be non-negative safe integers",
     );
   const pe = readManagedPeLayout(bytes);
@@ -195,7 +203,12 @@ export const inspectManagedMembersBytes = (
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
   try {
-    const { layout, memberLists } = readMemberLayout(bytes, pe);
+    const { layout, memberLists } = readMemberLayout(
+      bytes,
+      pe,
+      pe.cli,
+      maxRepresentationBytes,
+    );
     const methodTotal = layout.table(6)?.rowCount ?? 0;
     const methodRows = {
       offset: Math.min(methodOffset, methodTotal),
@@ -292,15 +305,17 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const { name: resolveTypeName, isResolvedTypeSpec } = typeNameLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      signatureTypeName,
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
       typeName: resolveTypeName,
+      isResolvedTypeSpec,
       signatureTypeName,
       displayTypeName,
       declarationTypeName,

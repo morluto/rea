@@ -20,6 +20,7 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 it.each([false, true])(
   "refreshes state published by close on alias switch (incoming fails: %s)",
@@ -87,6 +88,9 @@ it.each([false, true])(
         analysis_provider_binding: {
           selection_source: "auto-single-candidate",
         },
+        analysis_provider_candidates: [
+          { selected: true, selection_source: "auto-single-candidate" },
+        ],
       });
       expect((await session.execute("list_strings", {})).ok).toBe(true);
       expect(starts).toEqual([0, 1]);
@@ -222,7 +226,7 @@ it.each([
             restorationCloseCalls += 1;
             if (cleanupFails && restorationCloseCalls === 1)
               return err(cleanupFailure);
-            cleanupFailure.resolveCleanup();
+            releaseOwnedCleanup(cleanupFailure);
             return ok(null);
           },
         };

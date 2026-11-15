@@ -9,7 +9,11 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
-const hashedSourceEntry = (path: string, source: string) => ({
+const hashedSourceEntry = (
+  path: string,
+  source: string,
+  limitations: readonly string[] = [],
+) => ({
   path,
   kind: "file",
   sha256: createHash("sha256").update(source).digest("hex"),
@@ -17,7 +21,7 @@ const hashedSourceEntry = (path: string, source: string) => ({
   language: "JavaScript",
   classifications: ["source"],
   content_state: "hashed",
-  limitations: [],
+  limitations: [...limitations],
 });
 
 const memberFixtures = [
@@ -173,5 +177,15 @@ it("distinguishes computed require member values from literal members in source 
   ]);
   expect(graph.entries).toHaveLength(Object.keys(sources).length);
   for (const [path, source] of Object.entries(sources))
-    expect(graph.entries).toContainEqual(hashedSourceEntry(path, source));
+    expect(graph.entries).toContainEqual(
+      hashedSourceEntry(
+        path,
+        source,
+        path === "unknown.cjs"
+          ? [
+              "A CommonJS module target in unknown.cjs could not be determined statically.",
+            ]
+          : [],
+      ),
+    );
 });

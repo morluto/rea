@@ -1,9 +1,15 @@
+import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
+import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
-import type { AnalysisSettingLimit } from "./analysisSettings.js";
+import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
+import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
+import type { HistoricalSourceGraph } from "./referenceSourceGraph.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -94,7 +100,7 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly cleanupPrimary?: AnalysisError | undefined;
   /** Producer-owned, caller-safe facts retained through every typed projection. */
   readonly diagnostics?: Readonly<Record<string, JsonValue>> | undefined;
-  readonly limit?: AnalysisSettingLimit | undefined;
+  readonly limit?: AnalysisLimit | undefined;
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
@@ -113,6 +119,11 @@ export interface AnalysisErrorOptions extends ErrorOptions {
 /** Exact cleanup owner that can attribute its currently unresolved resources. */
 export interface AnalysisCleanupResourceOwner {
   readonly cleanupResources: readonly string[] | undefined;
+}
+
+/** A lease-backed claim whose owner records the confirmed release. */
+export interface AnalysisCleanupReleaseClaim {
+  readonly cleanupReleased: boolean;
 }
 
 /** Result completed before its source Evidence could be published. */
@@ -154,9 +165,9 @@ export interface SourcePublicationRecovery {
 
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
-  limit: Readonly<AnalysisSettingLimit> | undefined;
+  limit: Readonly<AnalysisLimit> | undefined;
   /** Bind the accepted setting at its producing boundary. */
-  bindLimit(limit: AnalysisSettingLimit): this {
+  bindLimit(limit: AnalysisLimit): this {
     this.limit = Object.freeze({ ...limit });
     return this;
   }
@@ -166,7 +177,6 @@ export abstract class AnalysisError extends Error {
   #cleanupResourceProjection:
     | { readonly cleanupResources: readonly string[] }
     | undefined;
-  #cleanupDependents: WeakRef<AnalysisError>[] = [];
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
@@ -174,12 +184,22 @@ export abstract class AnalysisError extends Error {
   readonly invocationDiagnostics:
     | Readonly<Record<string, JsonValue>>
     | undefined;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  #capturedOutput: AnalysisCapturedOutput | undefined;
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput;
+  }
   readonly cleanup: AnalysisCleanupObservation | undefined;
-  cleanupIncomplete: boolean;
+  /**
+   * Whether cleanup is still unsettled. Once settled it stays settled; until
+   * then completion is read from the owners when asked, never pushed here.
+   */
+  #cleanupIncomplete: boolean;
+  /** Whether this error ever owned cleanup, apart from whether it finished. */
+  #carriesCleanup: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
+  readonly #cleanupReleaseClaims = new Set<AnalysisCleanupReleaseClaim>();
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -198,12 +218,13 @@ export abstract class AnalysisError extends Error {
       options?.invocationDiagnostics === undefined
         ? undefined
         : structuredClone(options.invocationDiagnostics);
-    this.capturedOutput =
+    this.#capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
-    this.cleanupIncomplete = options?.cleanup !== undefined;
+    this.#cleanupIncomplete = options?.cleanup !== undefined;
+    this.#carriesCleanup = this.#cleanupIncomplete;
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
@@ -228,28 +249,80 @@ export abstract class AnalysisError extends Error {
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
   }
+
+  /**
+   * Whether owned resources remain unreleased: this error's own record AND
+   * every bound dependency's record, each read from its owner when asked.
+   * Completion is monotonic, so a later binding cannot reopen it.
+   */
+  get cleanupIncomplete(): boolean {
+    if (!this.#cleanupIncomplete) return false;
+    if (this.#ownCleanupPending()) return true;
+    for (const dependency of this.#cleanupDependencies ?? [])
+      if (dependency.cleanupIncomplete) return true;
+    this.#cleanupIncomplete = false;
+    this.#cleanupDependencies?.clear();
+    this.#cleanupReleaseClaims.clear();
+    return false;
+  }
+
+  /**
+   * This error's own completion record. A bound release claim is its owner's
+   * record; without one, an error composed only of dependencies has no
+   * resources of its own, and any other error waits for its owner.
+   */
+  #ownCleanupPending(): boolean {
+    if (this.#cleanupReleaseClaims.size === 0)
+      return this.#cleanupDependencies === undefined;
+    for (const claim of this.#cleanupReleaseClaims)
+      if (claim.cleanupReleased) return false;
+    return true;
+  }
+
+  /**
+   * Read completion from a lease owner instead of having it pushed here.
+   * Binding the same claim again is a no-op, so retries do not grow it.
+   */
+  bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
+    this.#carriesCleanup = true;
+    this.#cleanupReleaseClaims.add(claim);
+    return this;
+  }
+
+  /** A subclass whose own resources are unreleased when it is constructed. */
+  protected markCleanupIncomplete(incomplete: boolean): void {
+    this.#cleanupIncomplete = incomplete;
+    if (incomplete) this.#carriesCleanup = true;
+  }
   /** Later typed failures retained without changing the primary error cause. */
   get secondaryFailures(): readonly AnalysisError[] {
     return [...this.#secondaryFailures];
   }
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 
-  /** Live dependencies own current resource attribution; cleanup keeps history. */
+  /**
+   * Live owners own current resource attribution; cleanup keeps history. A
+   * composed error's own resources usually summarize its dependencies, so
+   * pending dependencies attribute; once only the owner's record is pending,
+   * its own resources do.
+   */
   get cleanupResources(): readonly string[] {
-    if (this.#cleanupDependencies === undefined)
-      return (
-        this.#cleanupResourceOwner?.cleanupResources ??
-        this.#ownedCleanupResources
-      );
+    const own =
+      this.#cleanupResourceOwner?.cleanupResources ??
+      this.#ownedCleanupResources;
+    if (this.#cleanupDependencies === undefined) return own;
     const pending = [...this.#cleanupDependencies].filter(
       (dependency) => dependency.cleanupIncomplete,
     );
-    if (pending.length === 0) return [];
-    if (this.#cleanupResourceProjection !== undefined)
-      return this.#cleanupResourceProjection.cleanupResources;
-    return [
-      ...new Set(pending.flatMap((dependency) => dependency.cleanupResources)),
-    ];
+    if (pending.length > 0)
+      return (
+        this.#cleanupResourceProjection?.cleanupResources ?? [
+          ...new Set(
+            pending.flatMap((dependency) => dependency.cleanupResources),
+          ),
+        ]
+      );
+    return this.#cleanupIncomplete && this.#ownCleanupPending() ? own : [];
   }
 
   /** Whether cleanup follows an explicit owner or dependent errors. */
@@ -259,6 +332,16 @@ export abstract class AnalysisError extends Error {
       this.#cleanupCompletionOwner !== undefined ||
       this.#cleanupDependencies !== undefined
     );
+  }
+
+  /**
+   * Whether this error owns cleanup at all: its own resources, a release
+   * claim, or an owner it follows. Unlike `cleanupIncomplete`, this stays
+   * true after that cleanup finished, so a consumer can tell a released
+   * owner from a failure (such as a cancellation) that never had one.
+   */
+  get carriesCleanup(): boolean {
+    return this.#carriesCleanup || this.hasCleanupOwner;
   }
 
   /** Bind attribution only to the producer that owns the complete cleanup set. */
@@ -305,6 +388,19 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Retain facts on every primary that cleanup settlement can reveal. */
+  retainPrimaryDiagnostics(
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ): this {
+    for (
+      let error: AnalysisError | undefined = this;
+      error !== undefined;
+      error = error.cleanupPrimary
+    )
+      error.retainDiagnostics(diagnostics);
+    return this;
+  }
+
   /** Diagnostics recorded for a caller with this lifetime. */
   diagnosticsFor(
     callerLifetime: AnalysisCallerLifetime,
@@ -330,42 +426,26 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
+    // Settle the dependencies already bound before adding more: completion is
+    // monotonic, so a dependency bound after they released cannot reopen it.
+    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies) {
-      if (!dependency.cleanupIncomplete || pending.has(dependency)) continue;
-      pending.add(dependency);
-      dependency.#cleanupDependents = [
-        ...dependency.#cleanupDependents.filter(
-          (reference) => reference.deref() !== undefined,
-        ),
-        new WeakRef(this),
-      ];
-    }
-    if (pending.size === 0) this.resolveCleanup();
-    return this;
-  }
-
-  /** Clear live cleanup status only after its owning resource confirms retry success. */
-  resolveCleanup(): this {
-    if (
-      [...(this.#cleanupDependencies ?? [])].some(
-        (dependency) => dependency.cleanupIncomplete,
-      )
-    )
-      return this;
-    this.#cleanupDependencies?.clear();
-    this.cleanupIncomplete = false;
-    for (const reference of this.#cleanupDependents)
-      reference.deref()?.resolveCleanup();
-    this.#cleanupDependents = [];
+    for (const dependency of dependencies)
+      if (dependency.cleanupIncomplete) pending.add(dependency);
     return this;
   }
 
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /** Keep command output observed before this error without replacing the owner. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    this.#capturedOutput ??= { ...output };
     return this;
   }
 
@@ -411,7 +491,10 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
-import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
+import type {
+  ElectronActiveObservationResult,
+  ElectronActivePartialObservation,
+} from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
   ArtifactInventoryPartialObservation,
@@ -421,7 +504,10 @@ import type { WebScriptExportPartialObservation } from "./webScriptExport.js";
 import type { JavaScriptRecoveryPartialObservation } from "./javascript/javascriptRecovery.js";
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
-import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
+import type {
+  ElectronPageInspection,
+  ElectronPagePartialObservation,
+} from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
@@ -464,6 +550,8 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | InterfaceBuilderAnalysis
+  | PartialTaskMeasurement
   | {
       readonly kind: "omitted-observation";
       readonly reason:
@@ -472,6 +560,7 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ApiContract
   | GraphqlContract
   | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
@@ -481,6 +570,7 @@ export type AnalysisPartialObservation =
   | FridaDeviceList
   | FridaProcessList
   | WebModuleResolutionObservation
+  | HistoricalSourceGraph
   | WebNetworkCapture
   | NativeLoadImagePartialObservation
   | NativeAotSnapshotObservation
@@ -490,6 +580,7 @@ export type AnalysisPartialObservation =
   | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
+  | ElectronActiveObservationResult
   | BrowserScenarioPartialObservation
   | WebPageInspection
   | WebBundleAnalysis
@@ -502,10 +593,12 @@ export type AnalysisPartialObservation =
   | ArtifactInventoryPartialObservation
   | ArtifactExtractionPartialObservation
   | WebScriptExportPartialObservation
+  | EnvironmentBundlePublication
   | JavaScriptRecoveryPartialObservation
   | Evidence
   | BinaryLayout
   | RecordedCrash
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
@@ -513,6 +606,7 @@ export type AnalysisPartialObservation =
   | InspectSignature
   | InspectMacho
   | ElectronPagePartialObservation
+  | ElectronPageInspection
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation

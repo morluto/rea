@@ -1,3 +1,10 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -9,12 +16,15 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { Deadline } from "../domain/deadline.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   hashStableFile,
@@ -27,12 +37,13 @@ import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
+  kunaCopyFailureFacts,
   KUNA_INVENTORY_OUTPUT_BYTES,
   kunaFileCleanupError,
   runKunaCommand,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
-import { kunaProjectDeadline } from "./KunaConfiguration.js";
+import type { KunaDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
 import {
@@ -131,12 +142,15 @@ export interface KunaExportRequest {
   /** Directory, inside the workspace, that receives the export's files. */
   readonly output: string;
   readonly signal: AbortSignal;
+  readonly copyResources: ArtifactResourceScope;
   readonly retainFailedFileClose: (
     owner: OwnedFileHandle,
     resource: string,
   ) => void;
   readonly onStatus: (status: KunaExportStatus) => void;
   readonly launcher?: KunaProcessLauncher | undefined;
+  /** Deadline accepted when the export started. Later setting changes do not rewrite it. */
+  readonly deadline: KunaDeadline;
 }
 
 const message = (cause: unknown): string =>
@@ -147,26 +161,71 @@ const isMissing = (cause: unknown): boolean =>
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");
 
-/** Map an unexpected failure to a typed one, preferring cancellation. */
-export const kunaExportFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): AnalysisError => {
-  if (cause instanceof RegularFileCleanupFailure)
-    return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
-  const cancellation = regularFileCancellation(cause);
-  if (cancellation !== undefined)
-    return new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
-      cause: cancellation.reason,
-    });
-  if (cause instanceof AnalysisError) return cause;
-  if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
-    return new AnalysisCancelledError(KUNA_EXPORT_OPERATION, { cause });
-  return new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+const projectCacheFailure = (cause: unknown) =>
+  new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
     userMessage: `Kuna project cache failed: ${message(cause)}`,
   });
+
+/** A project-cache read's own report, apart from its cleanup. */
+const projectCacheReadFailure = (read: ArtifactReaderFailure) => {
+  const { completion } = kunaCopyFailureFacts(read);
+  return read.reason === "cancelled" || completion?.cancellation !== undefined
+    ? cancelledBy(
+        KUNA_EXPORT_OPERATION,
+        carriedReason(
+          completion?.cancellation === undefined
+            ? artifactFileCancellationCause(read)
+            : completion.cancellation.reason,
+        ),
+      )
+    : projectCacheFailure(read);
 };
+
+/**
+ * How the project export reports a failure, preferring cancellation. The
+ * shared classifier keeps typed failures and a cancelled read; a failure
+ * while the caller's signal was aborted is that caller's cancellation.
+ */
+export const kunaExportFailureDialect = (
+  signal: AbortSignal | undefined,
+): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation: KUNA_EXPORT_OPERATION,
+  recognise: (cause) => {
+    if (cause instanceof RegularFileCleanupFailure)
+      return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
+    const cancellation = regularFileCancellation(cause);
+    return cancellation === undefined
+      ? undefined
+      : cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cancellation.reason));
+  },
+  readCleanup: (read) => {
+    const cleanup = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      { cause: read, operation: KUNA_EXPORT_OPERATION },
+    );
+    bindArtifactFileCleanup(read, cleanup);
+    // A completed read's cleanup is the only failure.
+    const { completion } = kunaCopyFailureFacts(read);
+    if (completion !== undefined && completion.cancellation === undefined)
+      return cleanup;
+    return analysisErrorWithCleanupFailure(
+      projectCacheReadFailure(read),
+      cleanup,
+      KUNA_EXPORT_OPERATION,
+    ).bindCleanupDependencies([cleanup]);
+  },
+  unclassified: (cause) => {
+    if (cause instanceof ArtifactReaderFailure)
+      return projectCacheReadFailure(cause);
+    if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
+      return cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cause));
+    return projectCacheFailure(cause);
+  },
+});
 
 const unusable = (reason: string): KunaExportOutcome => ({
   kind: "done",
@@ -214,13 +273,16 @@ export const exportKunaProject = async (
   request: KunaExportRequest,
 ): Promise<KunaExportOutcome> => {
   const { installation, signal } = request;
-  const { configuration } = installation;
-  const deadline = Date.now() + configuration.projectTimeoutMs;
+  const acceptedDeadline = request.deadline;
+  const deadline = Deadline.after(acceptedDeadline.ms);
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
 
-  const copied = await copyAndHash(request.targetPath, input, signal);
+  const copied = await copyAndHash(request.targetPath, input, {
+    signal,
+    resources: request.copyResources,
+  });
   if (copied.sha256 !== request.targetSha256)
     return {
       kind: "done",
@@ -239,8 +301,8 @@ export const exportKunaProject = async (
       arguments: arguments_,
       workspace: request.workspace,
       operation: KUNA_EXPORT_OPERATION,
-      timeoutMs: deadline - Date.now(),
-      deadline: kunaProjectDeadline(configuration),
+      timeoutMs: deadline.remainingMs(),
+      deadline: acceptedDeadline,
       outputBytes,
       signal,
       launcher: request.launcher,
@@ -275,8 +337,6 @@ export const exportKunaProject = async (
   if (!listed.ok) return listed.outcome;
   const inventory = parseKunaInventory(listed.snapshot.stdout.text);
   if (!inventory.ok) return unusable(inventory.error);
-  if (listed.snapshot.stdout.invalidUtf8 === true)
-    return unusable("the function inventory is not valid UTF-8");
   await writeFile(
     join(request.output, INVENTORY_FILE),
     listed.snapshot.stdout.text,
@@ -291,7 +351,7 @@ export const exportKunaProject = async (
       "-o",
       request.output,
       "--jobs",
-      String(configuration.jobs),
+      String(installation.configuration.jobs),
     ],
     // Kuna prints one summary line per export on stdout.
     KUNA_DIAGNOSTIC_BYTES,

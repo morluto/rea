@@ -81,16 +81,28 @@ const fixture = async (
     readonly maximumInputElements?: number;
     readonly evidenceReferenceAlternative?: boolean;
     readonly progressive?: boolean;
+    readonly unionOutput?: boolean;
+    readonly mode?: "legacy" | "auto";
   } = {},
 ) => {
   const started = barrier();
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
   const closed = vi.fn();
   let loads = 0;
+  const canonicalOutput = options.unionOutput
+    ? z.union([output, z.strictObject({ message: z.string() })])
+    : output;
+  const recorded = {
+    ...catalog,
+    tools: catalog.tools.map((tool) => ({
+      ...tool,
+      outputSchema: z.toJSONSchema(canonicalOutput),
+    })),
+  };
   const server = new DeferredEvidenceMcpServer(
     options.evidenceReferenceAlternative
-      ? { ...catalog, evidenceReferenceAlternatives: ["fixture"] }
-      : catalog,
+      ? { ...recorded, evidenceReferenceAlternatives: ["fixture"] }
+      : recorded,
     new ToolResultDelivery(1024 * 1024),
     async (target) => {
       loads++;
@@ -106,7 +118,7 @@ const fixture = async (
       target.materialize(() => {
         target.registerTool(
           "fixture",
-          { inputSchema: input, outputSchema: output },
+          { inputSchema: input, outputSchema: canonicalOutput },
           async (args, context) => {
             calls(args.n, context);
             await options.execute?.();
@@ -144,9 +156,14 @@ const fixture = async (
         );
       });
     },
-    options.maximumInputElements,
+    { maximumInputElements: options.maximumInputElements },
   );
-  const client = new Client({ name: "deferred-fixture-client", version: "1" });
+  const client = new Client(
+    { name: "deferred-fixture-client", version: "1" },
+    options.mode === undefined
+      ? undefined
+      : { versionNegotiation: { mode: options.mode } },
+  );
   if (options.progressive) server.enableProgressiveCatalog();
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -258,7 +275,10 @@ it("discovers without initialization, then shares one canonical runtime and pres
   const hold = barrier();
   const f = await fixture({ hold });
   const before = await f.client.listTools();
-  expect(before.tools).toEqual(catalog.tools);
+  // Listings omit the recorded output schemas (the default `off` profile).
+  expect(before.tools).toEqual(
+    catalog.tools.map(({ outputSchema: _output, ...tool }) => tool),
+  );
   expect((await f.client.listPrompts()).prompts).toEqual(
     catalog.prompts.map(({ parameters: _parameters, ...prompt }) => prompt),
   );
@@ -299,6 +319,43 @@ it("preserves output validation after deferred registration", async () => {
   const result = await f.client.callTool({ name: "fixture", arguments: {} });
   expect(result.isError).toBe(true);
 });
+
+it.each(["legacy", "auto"] as const)(
+  "canonically validates deferred object-union outputs over %s",
+  async (mode) => {
+    const valid = await fixture({ unionOutput: true, mode });
+    const before = await valid.client.listTools();
+    expect(
+      before.tools.find(({ name }) => name === "fixture")?.outputSchema,
+    ).toBeUndefined();
+    expect(valid.loads()).toBe(0);
+    const success = await valid.client.callTool({
+      name: "fixture",
+      arguments: { n: 7 },
+    });
+    expect(success.isError).not.toBe(true);
+    expect(success.structuredContent).toEqual({ n: 7 });
+    expect(valid.calls).toHaveBeenCalledOnce();
+    expect(await valid.client.listTools()).toEqual(before);
+
+    const invalid = await fixture({
+      unionOutput: true,
+      invalidOutput: true,
+      mode,
+    });
+    const rejected = await invalid.client.callTool({
+      name: "fixture",
+      arguments: {},
+    });
+    // The handler actually returned malformed data. A server-side validation
+    // error must arrive, rather than success or only a client-validator throw.
+    expect(invalid.calls).toHaveBeenCalledOnce();
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toBeUndefined();
+    expect(invalid.loads()).toBe(1);
+    expect(await invalid.client.listTools()).toEqual(before);
+  },
+);
 
 it("initializes through prompt retrieval or completion without an internal client", async () => {
   const f = await fixture();

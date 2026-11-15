@@ -102,6 +102,8 @@ export interface MemberCore {
   readonly genericArity?: number | null;
   /** Nominal declaring type, name and decoded signature; never runtime binding. */
   readonly identitySha256?: string | null;
+  /** Parsed TypeSpec owner and member signature establish a local row, not a nominal name. */
+  readonly rowResolved?: boolean;
 }
 
 export const memberTargetIdentity = (
@@ -1182,30 +1184,6 @@ const projectSignature = (
         : resolvedSha256(blob, operands, typeName),
     ...decoded,
   };
-};
-
-/** Standalone signature decoding used by tests and signature identity utilities. */
-export const signature = (
-  blob: Buffer,
-  rawSha256?: string,
-  typeName: SignatureTypeName = () => null,
-  displayTypeName?: SignatureDisplayTypeName,
-): ManagedSignature => {
-  const operands: TypeOperand[] = [];
-  return projectSignature(
-    blob,
-    rawSha256,
-    typeName,
-    decodeSignature(
-      blob,
-      undefined,
-      operands,
-      undefined,
-      "signature",
-      displayTypeName,
-    ),
-    operands,
-  );
 };
 
 /** Decode a metadata-owned signature while validating referenced table rows. */

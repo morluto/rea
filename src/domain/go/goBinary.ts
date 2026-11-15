@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { constants as bufferConstants } from "node:buffer";
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import {
   machoSelectionContainsRange,
@@ -18,24 +19,126 @@ const sourceRangeSchema = z.strictObject({
   bytes: z.int().nonnegative(),
 });
 
-export const DEFAULT_MAX_GO_STRING_LITERALS = 2000;
-export const MAX_GO_STRING_LITERALS_LIMIT = 10_000;
-export const MAX_GO_STRING_LITERAL_BYTES = 4096;
-export const MAX_GO_STRING_AGGREGATE_BYTES = 512 * 1024;
-export const MAX_GO_STRING_HEADER_SCAN_BYTES = 64 * 1024 * 1024;
+/** Defaults applied at the owning reader; omitted request fields stay omitted in Evidence. */
+export const GO_ANALYSIS_BUDGET_DEFAULTS = {
+  max_input_bytes: 256 * 1024 * 1024,
+  max_report_bytes: 8 * 1024 * 1024,
+  max_build_info_bytes: 1024 * 1024,
+  max_header_search_bytes: 256 * 1024 * 1024,
+  max_string_literals: 2000,
+  max_string_literal_bytes: 4096,
+  max_string_bytes: 512 * 1024,
+  max_string_header_scan_bytes: 64 * 1024 * 1024,
+  max_string_candidates: 100_000,
+} as const;
 
-export const goMaxStringLiteralsSchema = z
-  .number()
-  .int()
-  .min(1)
-  .max(MAX_GO_STRING_LITERALS_LIMIT);
+/** Actual single-buffer/string representability; work and row counts remain safe integers. */
+export const GO_ANALYSIS_BUDGET_MAXIMA = {
+  max_input_bytes: bufferConstants.MAX_LENGTH,
+  max_report_bytes: bufferConstants.MAX_STRING_LENGTH,
+  max_build_info_bytes: Math.floor(bufferConstants.MAX_STRING_LENGTH / 4) * 3,
+  max_header_search_bytes: Number.MAX_SAFE_INTEGER,
+  max_string_literals: Number.MAX_SAFE_INTEGER,
+  max_string_literal_bytes: bufferConstants.MAX_STRING_LENGTH,
+  max_string_bytes: Number.MAX_SAFE_INTEGER,
+  max_string_header_scan_bytes: Number.MAX_SAFE_INTEGER,
+  max_string_candidates: Number.MAX_SAFE_INTEGER,
+} as const;
+
+export const goMaxStringLiteralsSchema = z.int().positive();
+export type GoAnalysisBudgets = {
+  readonly [Key in keyof typeof GO_ANALYSIS_BUDGET_DEFAULTS]: number;
+};
+const budget = (parameter: keyof GoAnalysisBudgets, description: string) =>
+  z
+    .int()
+    .positive()
+    .max(GO_ANALYSIS_BUDGET_MAXIMA[parameter])
+    .exactOptional()
+    .describe(
+      `${description} Default ${String(GO_ANALYSIS_BUDGET_DEFAULTS[parameter])}. Positive safe integer, maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}; byte maxima reflect runtime Buffer/string representability including base64 expansion. Applies on the next inspection without restart.`,
+    );
+export const goResourceBudgetFields = {
+  max_input_bytes: budget(
+    "max_input_bytes",
+    "Stable input byte admission; does not raise report or parser budgets.",
+  ),
+  max_report_bytes: budget(
+    "max_report_bytes",
+    "Complete normalized Go report byte admission; independent of MCP response delivery.",
+  ),
+  max_build_info_bytes: budget(
+    "max_build_info_bytes",
+    "Aggregate embedded Go build-info string bytes, including compiler version and framed module text.",
+  ),
+  max_header_search_bytes: budget(
+    "max_header_search_bytes",
+    "Cumulative Go build-info discovery bytes; overlapping search ranges consume work.",
+  ),
+  max_string_literals: budget(
+    "max_string_literals",
+    "Maximum returned inferred strings; requires include_string_literals: true.",
+  ),
+  max_string_literal_bytes: budget(
+    "max_string_literal_bytes",
+    "Largest inferred string candidate in bytes; requires include_string_literals: true.",
+  ),
+  max_string_bytes: budget(
+    "max_string_bytes",
+    "Aggregate returned inferred string bytes; requires include_string_literals: true.",
+  ),
+  max_string_header_scan_bytes: budget(
+    "max_string_header_scan_bytes",
+    "Static string-header and candidate-byte scan work; requires include_string_literals: true.",
+  ),
+  max_string_candidates: budget(
+    "max_string_candidates",
+    "Distinct static string candidates tracked before projection; requires include_string_literals: true.",
+  ),
+} as const;
+export const goAnalysisBudgets = (
+  selection: Partial<GoAnalysisBudgets> = {},
+): GoAnalysisBudgets => ({
+  max_input_bytes:
+    selection.max_input_bytes ?? GO_ANALYSIS_BUDGET_DEFAULTS.max_input_bytes,
+  max_report_bytes:
+    selection.max_report_bytes ?? GO_ANALYSIS_BUDGET_DEFAULTS.max_report_bytes,
+  max_build_info_bytes:
+    selection.max_build_info_bytes ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_build_info_bytes,
+  max_header_search_bytes:
+    selection.max_header_search_bytes ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_header_search_bytes,
+  max_string_literals:
+    selection.max_string_literals ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_string_literals,
+  max_string_literal_bytes:
+    selection.max_string_literal_bytes ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_string_literal_bytes,
+  max_string_bytes:
+    selection.max_string_bytes ?? GO_ANALYSIS_BUDGET_DEFAULTS.max_string_bytes,
+  max_string_header_scan_bytes:
+    selection.max_string_header_scan_bytes ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_string_header_scan_bytes,
+  max_string_candidates:
+    selection.max_string_candidates ??
+    GO_ANALYSIS_BUDGET_DEFAULTS.max_string_candidates,
+});
+export const GO_STRING_BUDGET_KEYS = [
+  "max_string_literals",
+  "max_string_literal_bytes",
+  "max_string_bytes",
+  "max_string_header_scan_bytes",
+  "max_string_candidates",
+] as const;
+export type GoStringBudgetKey = (typeof GO_STRING_BUDGET_KEYS)[number];
 
 /** One distinct printable UTF-8 literal inferred from static (ptr, len) headers. */
 export const goStringLiteralSchema = z.strictObject({
   value: z.string().min(1),
   location: z.strictObject({
     offset: z.int().nonnegative(),
-    bytes: z.int().min(1).max(MAX_GO_STRING_LITERAL_BYTES),
+    bytes: z.int().min(1),
   }),
   first_header_offset: z.int().nonnegative(),
   reference_count: z.int().positive(),
@@ -44,11 +147,12 @@ export const goStringLiteralSchema = z.strictObject({
 /** Bounded static (ptr, len) string-header inventory, separate from observed build_info. */
 export const goStringLiteralsSchema = z.strictObject({
   evidence_kind: z.literal("inferred"),
-  items: z.array(goStringLiteralSchema).max(MAX_GO_STRING_LITERALS_LIMIT),
+  items: z.array(goStringLiteralSchema),
   discovered_count: z.int().nonnegative(),
-  aggregate_bytes: z.int().nonnegative().max(MAX_GO_STRING_AGGREGATE_BYTES),
+  aggregate_bytes: z.int().nonnegative(),
   max_items: goMaxStringLiteralsSchema,
   truncated: z.boolean(),
+  limits_reached: z.array(z.enum(GO_STRING_BUDGET_KEYS)).exactOptional(),
 });
 
 const moduleIdentitySchema = z.strictObject({
@@ -86,11 +190,7 @@ export const inspectGoBinaryInputSchema = z
       .describe(
         "Also recover bounded inferred Go UTF-8 string literals referenced by static (ptr, len) headers in non-executable mapped data",
       ),
-    max_string_literals: goMaxStringLiteralsSchema
-      .describe(
-        `Maximum distinct recovered string literals (1-${String(MAX_GO_STRING_LITERALS_LIMIT)}; default ${String(DEFAULT_MAX_GO_STRING_LITERALS)}; requires include_string_literals: true)`,
-      )
-      .exactOptional(),
+    ...goResourceBudgetFields,
     detail: z
       .enum(["complete", "summary"])
       .default("complete")
@@ -99,16 +199,17 @@ export const inspectGoBinaryInputSchema = z
       ),
   })
   .superRefine((input, context) => {
-    if (
-      input.max_string_literals !== undefined &&
-      input.include_string_literals !== true
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["max_string_literals"],
-        message:
-          "max_string_literals requires include_string_literals to be true.",
-      });
+    for (const parameter of GO_STRING_BUDGET_KEYS) {
+      if (
+        input[parameter] !== undefined &&
+        input.include_string_literals !== true
+      )
+        context.addIssue({
+          code: "custom",
+          path: [parameter],
+          message: `${parameter} requires include_string_literals to be true.`,
+        });
+    }
   });
 
 /** Compiler-written build information and its original file-backed source ranges. */

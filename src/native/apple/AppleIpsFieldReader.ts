@@ -3,6 +3,7 @@ import {
   type AppleIpsTypeMismatch,
   type RecordedInteger,
 } from "../../domain/native/appleIps.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
 import type { LosslessJson } from "./losslessJson.js";
 
@@ -72,13 +73,51 @@ export class FieldReader {
     const a = this.#integers.get(left);
     const b = this.#integers.get(right);
     if (a === undefined || b === undefined)
-      throw new Error("IPS integer facts do not belong to this field reader");
+      throw invariantViolation(
+        "IPS integer facts do not belong to this field reader",
+      );
     const reserved = this.#reserve(
       Math.max(left.decimal.length, right.decimal.length) + 1,
       true,
     );
     const value = a + b;
     return this.#retain(value, value.toString(), reserved);
+  }
+
+  /** Charge each serialized appearance of a borrowed integer, without reinterpreting it. */
+  retainIntegerReference(
+    value: RecordedInteger | null,
+  ): RecordedInteger | null {
+    const bytes = appleIpsIntegerTextBytes(value);
+    if (bytes > this.maximumIntegerTextBytes - this.#integerTextBytes)
+      throw new AppleIpsResourceFailure(
+        "integer_text",
+        this.maximumIntegerTextBytes,
+        "Repeated join integer exceeds the retained text allowance",
+      );
+    this.#integerTextBytes += bytes;
+    return value;
+  }
+
+  recordedUnsigned64(value: bigint): RecordedInteger {
+    const reserved = this.#reserve(20, true);
+    const result = this.#retain(value, value.toString(), reserved);
+    this.#integers.set(result, value);
+    return result;
+  }
+
+  decimalText64(value: bigint): string {
+    const reserved = this.#reserve(20, false);
+    const result = value.toString();
+    this.#integerTextBytes -= reserved - result.length * 2;
+    return result;
+  }
+
+  hexText32(value: number): string {
+    const reserved = this.#reserve(10, false);
+    const result = `0x${value.toString(16)}`;
+    this.#integerTextBytes -= reserved - result.length * 2;
+    return result;
   }
 
   mismatch(path: string, expected: string, value: LosslessJson | undefined) {
@@ -164,10 +203,13 @@ export class FieldReader {
   }
 
   /** An array element is always recorded, so `null` there is a mismatch too. */
-  row(value: LosslessJson, path: string): Members {
-    if (value.kind === "object") return value.members;
+  row(
+    value: LosslessJson,
+    path: string,
+  ): { members: Members; unlisted: readonly string[] } {
+    if (value.kind === "object") return value;
     this.mismatch(path, "object", value);
-    return {};
+    return { members: {}, unlisted: [] };
   }
 
   array(

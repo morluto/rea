@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
 /** Authored byte-validation failure, distinct from arbitrary upstream protocol diagnostics. */
@@ -14,7 +15,7 @@ export const validateMcpHttpResponse = (
 ): Response => {
   // Failed HTTP responses belong to each adapter's existing diagnostic policy.
   if (!response.ok || response.body === null) return response;
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   const validate = (bytes?: Uint8Array): void => {
     try {
       decoder.decode(bytes, { stream: bytes !== undefined });

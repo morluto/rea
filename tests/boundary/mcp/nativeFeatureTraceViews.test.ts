@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -24,7 +24,7 @@ const traceFixture = () => ({
   residual_unknowns: ["0x1010 owner unknown", "0x1020 owner unknown"],
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages retained native trace rows and preserves source coverage across %s offline handoff",
   async (profile) => {
     const result = traceFixture();

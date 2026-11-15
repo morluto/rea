@@ -1122,6 +1122,34 @@ it("keeps independent native sessions discoverable without an unrelated binary t
   );
 });
 
+it("reports standalone reverse-engineering tools unavailable when launch failure is observed", () => {
+  const repair =
+    "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command.";
+  const entries = buildCapabilityInventory(status(), {
+    ...enabledPolicy,
+    commandProviderFailures: {
+      inspect_with_objdump: {
+        reason: "Could not launch selected objdump executable",
+        remediation: repair,
+      },
+    },
+  });
+  expect(
+    entries.find((entry) => entry.name === "inspect_with_objdump"),
+  ).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: repair,
+  });
+  expect(
+    entries.find((entry) => entry.name === "execute_rizin_command"),
+  ).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+});
+
 it.each(["darwin", "linux", "win32"] as const)(
   "reports the persistent debugger start host restriction on %s",
   (platform) => {
@@ -1186,5 +1214,62 @@ describe("summary tool availability", () => {
         .map(({ surface: _s, effects: _e, annotations: _a, ...entry }) => entry)
         .toSorted(byName),
     );
+  });
+});
+
+describe("declared contract availability", () => {
+  const declared = TOOL_CONTRACTS.flatMap((contract) =>
+    "availability" in contract && contract.availability !== undefined
+      ? [{ name: contract.name, availability: contract.availability }]
+      : [],
+  );
+  const failed = { providerId: "fixture", reason: "load failed" };
+  const inventory = (policy: Parameters<typeof buildCapabilityInventory>[1]) =>
+    new Map(
+      buildCapabilityInventory({ open: false, capabilities: [] }, policy).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+  it("keeps standalone workflows available without providers, a target or configuration", () => {
+    const tools = inventory({
+      processCaptureEnabled: false,
+      optionalProviderLoadFailures: {
+        browserObservation: failed,
+        browserScenarioCapture: failed,
+        electronObservation: failed,
+        electronActiveObservation: failed,
+        javascriptRuntimeObservation: failed,
+        fridaInstrumentation: failed,
+      },
+    });
+    const standalone = declared.filter(
+      ({ availability }) => availability === "standalone",
+    );
+    expect(standalone.length).toBeGreaterThan(0);
+    for (const { name } of standalone)
+      expect(tools.get(name), name).toMatchObject({
+        available: true,
+        reason: "available",
+      });
+  });
+
+  it("refuses each host-restricted declaration on an unsupported host before its configuration", () => {
+    const hosted = declared.flatMap(({ name, availability }) =>
+      availability === "standalone" ? [] : [{ name, ...availability }],
+    );
+    expect(hosted.length).toBeGreaterThan(0);
+    const tools = inventory({
+      processCaptureEnabled: true,
+      hostUnsupported: Object.fromEntries(
+        hosted.map(({ host }) => [host, true]),
+      ),
+    });
+    for (const { name } of hosted)
+      expect(tools.get(name), name).toMatchObject({
+        available: false,
+        reason: "unsupported_host",
+        remediation: expect.any(String),
+      });
   });
 });

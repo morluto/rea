@@ -217,7 +217,7 @@ export const projectModelArtifactView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     limitations: boundedViewMessages(
-      parent.limitations,
+      [...parent.limitations, ...report.limitations],
       parent.evidenceId,
       "limitations",
     ),
@@ -243,7 +243,7 @@ export const projectModelArtifactView = (
           "limitations",
         ),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows =
     view.collection === "tensors"

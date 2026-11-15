@@ -41,6 +41,11 @@ it.each([
     files: [],
   });
   const projected = projectAnalysisError(error);
+  expect(projected.details?.partial_observation).toEqual({
+    kind: "web-artifact-acquisition",
+    analysis: "not-performed",
+    files: [],
+  });
   expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   const validate = new Ajv2020({ strict: false }).compile(
     analysisErrorJsonSchema,

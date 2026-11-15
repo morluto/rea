@@ -118,9 +118,28 @@ export const reconstructionVerificationResultSchema = z
   })
   .superRefine((result, context) => {
     const { summary } = result;
+    const claims = result.claims.items;
     const expectedStatus =
       summary.failed > 0 ? "fail" : summary.unknown > 0 ? "unknown" : "pass";
     const issues = [
+      [
+        summary.passed !==
+          claims.filter(({ status }) => status === "pass").length ||
+          summary.failed !==
+            claims.filter(({ status }) => status === "fail").length ||
+          summary.unknown !==
+            claims.filter(({ status }) => status === "unknown").length,
+        "Claim status counts must summarize retained claims",
+        ["summary"],
+      ],
+      [
+        summary.behavioral !==
+          claims.filter(({ kind }) => kind === "behavioral").length ||
+          summary.structural !==
+            claims.filter(({ kind }) => kind !== "behavioral").length,
+        "Claim kind counts must summarize retained claims",
+        ["summary"],
+      ],
       [
         summary.total !== summary.passed + summary.failed + summary.unknown,
         "Claim status counts must equal the summary total",

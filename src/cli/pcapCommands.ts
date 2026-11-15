@@ -1,5 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import { createPcapAnalysisProvider } from "../composition/pcap.js";
@@ -53,10 +54,9 @@ export const registerPcapCommands = (
     description:
       "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Local pcap or pcapng capture file to inspect"),
+      path: localPathStringSchema.describe(
+        "Local pcap or pcapng capture file to inspect",
+      ),
     }),
     run: ({ args }) =>
       execute(

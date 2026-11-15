@@ -3,10 +3,8 @@ import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
-import {
-  inspectMachoSchema,
-  retainedInspectMachoSchema,
-} from "../native/nativeInspection.js";
+import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -56,7 +54,7 @@ export const machoViewRows = {
   imports: exactRows(shape.imports.shape.items),
   exports: exactRows(shape.exports.shape.items),
   segments: exactRows(shape.segments.shape.items),
-  encryption: exactRows(shape.encryption.shape.items),
+  encryption: z.array(machoSliceEncryptionViewSchema),
   provenance: exactRows(shape.provenance),
 };
 
@@ -96,7 +94,7 @@ type MachoReport = z.output<typeof inspectMachoSchema>;
 const parseMachoReport = (
   parent: AnalysisViewParent,
 ): Result<MachoReport, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(retainedInspectMachoSchema, parent);
+  const parsed = parseAnalysisViewResult(inspectMachoSchema, parent);
   if (!parsed.ok) return parsed;
   if (parent.subject != null && !isMachOFormat(parent.subject.format))
     return err(
@@ -212,7 +210,7 @@ export const projectMachoView = (
       ...shared,
       limitations,
       summary,
-      coverage: completeWithinViewCoverage(returned, returned),
+      coverage: completeWithinViewCoverage(returned),
     });
   }
   const source =

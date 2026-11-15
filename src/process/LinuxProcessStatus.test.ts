@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   linuxEnvironmentRestriction,
+  linuxUidMapsDiffer,
   parseLinuxProcessIds,
 } from "./LinuxProcessStatus.js";
 
@@ -70,3 +71,16 @@ it("does not derive a credential restriction without caller credentials", () => 
     }),
   ).toBeUndefined();
 });
+
+it.each([
+  ["0 1000 1\n", "0 0 1\n", true],
+  [" 0\t0   1\n", "0 0 1\n", false],
+  ["", "0 0 1\n", undefined],
+  ["0 0 1\n", undefined, undefined],
+  ["0 0 1 extra\n", "0 0 1\n", undefined],
+] as const)(
+  "compares readable UID maps conservatively",
+  (target, caller, expected) => {
+    expect(linuxUidMapsDiffer(target, caller)).toBe(expected);
+  },
+);

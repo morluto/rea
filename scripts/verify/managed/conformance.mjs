@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
@@ -19,21 +16,22 @@ import {
   buildNativePeFixture,
 } from "../../fixtures/managed/pe.mjs";
 import { createManagedConformanceSupport } from "./support.mjs";
-import {
-  comparisonLimits,
-  defaultIlBody,
-  inspectionLimits,
-  memberLimits,
-  nativeBoundaryLimits,
-} from "./config.mjs";
+import { defaultIlBody } from "./config.mjs";
 import { createManagedCompletionReport } from "./completion-report.mjs";
 import {
   completeVerifierRun,
   createVerifierRun,
 } from "../../lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-managed-conformance-",
+});
+const workspace = workspaceFixture.path;
 let completionReportInput;
 let finalReport;
 const {
@@ -45,12 +43,10 @@ const {
   sha256,
 } = createManagedConformanceSupport({
   workspace,
-  inspectionLimits,
-  memberLimits,
   defaultIlBody,
 });
 
-try {
+await withVerifierFixture(workspaceFixture, async () => {
   const modern = await fixture("modern-anycpu.exe", {
     references: ["System.Runtime"],
     resourceData: Buffer.from("source-owned managed resource"),
@@ -58,7 +54,6 @@ try {
   const modernArtifact = inspectManagedArtifactBytes(
     modern.bytes,
     modern.target,
-    inspectionLimits,
   );
   assert.equal(modernArtifact.classification.status, "managed");
   assert.equal(modernArtifact.classification.runtime_family, "modern-dotnet");
@@ -83,7 +78,6 @@ try {
   const frameworkArtifact = inspectManagedArtifactBytes(
     framework.bytes,
     framework.target,
-    inspectionLimits,
   );
   assert.equal(
     frameworkArtifact.classification.runtime_family,
@@ -93,7 +87,6 @@ try {
   const frameworkBoundaries = inspectManagedNativeBoundariesBytes(
     framework.bytes,
     framework.target,
-    nativeBoundaryLimits,
   );
   assert.equal(frameworkBoundaries.pinvoke_imports.length, 1);
   assert.equal(
@@ -108,14 +101,13 @@ try {
   const frameworkMembers = inspectManagedMembersBytes(
     framework.bytes,
     framework.target,
-    memberLimits,
   );
   const frameworkArtifactEvidence = createEvidence(
     framework.target,
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_artifact",
-      parameters: inspectionLimits,
+      parameters: {},
       result: frameworkArtifact,
       rawResult: null,
       limitations: frameworkArtifact.limitations,
@@ -127,7 +119,7 @@ try {
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_members",
-      parameters: memberLimits,
+      parameters: {},
       result: frameworkMembers,
       rawResult: null,
       limitations: frameworkMembers.limitations,
@@ -139,7 +131,7 @@ try {
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_native_boundaries",
-      parameters: nativeBoundaryLimits,
+      parameters: {},
       result: frameworkBoundaries,
       rawResult: null,
       limitations: frameworkBoundaries.limitations,
@@ -221,7 +213,6 @@ try {
   const r2rArtifact = inspectManagedArtifactBytes(
     readyToRun.bytes,
     readyToRun.target,
-    inspectionLimits,
   );
   assert.equal(r2rArtifact.pe.architecture, "x86_64");
   assert.equal(
@@ -231,7 +222,6 @@ try {
   const r2rBoundaries = inspectManagedNativeBoundariesBytes(
     readyToRun.bytes,
     readyToRun.target,
-    nativeBoundaryLimits,
   );
   assert.equal(r2rBoundaries.summary.ready_to_run, true);
   assert.equal(r2rBoundaries.native_implementations[0]?.code_type, "native");
@@ -248,7 +238,6 @@ try {
   const obfuscatedMembers = inspectManagedMembersBytes(
     obfuscated.bytes,
     obfuscated.target,
-    memberLimits,
   );
   assert.equal(obfuscatedMembers.types[0]?.full_name, "Fixture.ꙮType");
   assert.equal(obfuscatedMembers.methods[0]?.name, "λ⛧");
@@ -309,11 +298,6 @@ try {
   const comparison = await compareManagedMemberPaths({
     leftPath: left.path,
     rightPath: right.path,
-    memberLimits: {
-      maxFileBytes: 1024 * 1024,
-      ...memberLimits,
-    },
-    comparisonLimits,
   });
   assert.equal(comparison.ok, true);
   const comparisonResult = comparison.value.normalized_result;
@@ -341,11 +325,6 @@ try {
   const partialBodyComparison = await compareManagedMemberPaths({
     leftPath: unavailableBodyLeft.path,
     rightPath: unavailableBodyRight.path,
-    memberLimits: {
-      maxFileBytes: 1024 * 1024,
-      ...memberLimits,
-    },
-    comparisonLimits,
   });
   assert.equal(partialBodyComparison.ok, true);
   const partialBodyMethod =
@@ -363,7 +342,6 @@ try {
   const nativeResult = inspectManagedArtifactBytes(
     nativeOnly.bytes,
     nativeOnly.target,
-    inspectionLimits,
   );
   assert.equal(nativeResult.classification.status, "not-managed");
 
@@ -373,7 +351,6 @@ try {
   const malformedResult = inspectManagedArtifactBytes(
     malformed.bytes,
     malformed.target,
-    inspectionLimits,
   );
   assert.equal(malformedResult.classification.status, "malformed");
 
@@ -430,9 +407,7 @@ try {
       configured: false,
     },
   };
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});
 finalReport.completionReport = createManagedCompletionReport(
   completionReportInput,
   await completeVerifierRun(verifierRun),

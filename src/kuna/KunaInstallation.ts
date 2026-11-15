@@ -4,12 +4,16 @@ import {
 } from "../filesystem/RegularFile.js";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -38,6 +42,7 @@ import type {
   ProviderProcessSnapshot,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { admitKunaCommand } from "./KunaAdmission.js";
 import {
   readKunaConfiguration,
   type KunaConfiguration,
@@ -170,7 +175,7 @@ export const kunaInstallationCancellation = (
 };
 
 /** One installation inspection's retained owners and originating errors. */
-export interface KunaResourceScope {
+interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;
@@ -188,12 +193,10 @@ export const createKunaResourceScope = (
 ): KunaResourceScope => {
   const leases = new Map<
     Parameters<RetainedResourceScope["retain"]>[0],
-    { readonly lease: AnalysisCleanupLease }
+    AnalysisCleanupLease
   >();
   const pendingLeases = () =>
-    [...leases.values()]
-      .map(({ lease }) => lease)
-      .filter((lease) => !lease.released);
+    [...leases.values()].filter((lease) => !lease.released);
   const bindPendingFailure = (error: AnalysisError) => {
     const retained = pendingLeases();
     if (retained.length > 0) new AnalysisCleanupLeaseGroup(error, retained);
@@ -218,8 +221,7 @@ export const createKunaResourceScope = (
       const cancellation = kunaInstallationCancellation(cause);
       if (cancellation === undefined) return undefined;
       const pending = pendingLeases();
-      const error = new AnalysisCancelledError(operation, {
-        cause: cancellation.reason,
+      const error = cancelledBy(operation, carriedReason(cancellation.reason), {
         diagnostics: cancellation.diagnostics,
         ...(pending.length === 0
           ? {}
@@ -236,7 +238,7 @@ export const createKunaResourceScope = (
     owner: {
       retain: (owner, resource) => {
         const lease = AnalysisCleanupLease.forCloseOwner(owner, resource);
-        leases.set(owner, { lease });
+        leases.set(owner, lease);
         parent.retain(
           {
             close: () => lease.release(),
@@ -383,32 +385,24 @@ export const inspectKunaInstallation = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   options: KunaInstallationOptions,
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
-  const configuration = readKunaConfiguration(environment, options.platform);
-  if (!configuration.ok)
-    return err({
-      code: configuration.error.code,
-      reason: configuration.error.reason,
-      remediation: configuration.error.remediation,
-      diagnostics: {
-        configured: configuration.error.code !== "not_configured",
-        ...(configuration.error.setting === null
-          ? {}
-          : { setting: configuration.error.setting }),
-      },
-    });
-  const { command } = configuration.value;
+  // An already-cancelled caller keeps its cancellation, not a lookup result.
   assertRegularFileActive(options.signal);
+  const admission = admitKunaCommand(environment, options.platform);
+  if (!admission.ok) {
+    const { code, reason, remediation, diagnostics } = admission.error;
+    return err(
+      code === "executable_missing"
+        ? { code, reason, diagnostics }
+        : { code, reason, remediation, diagnostics },
+    );
+  }
+  const configuration = admission;
+  const { command } = configuration.value;
 
+  // Admission established an executable regular file; resolve its identity.
   let executable: string;
   try {
     executable = await realpath(command);
-    await access(executable, constants.X_OK);
-    if (!(await stat(executable)).isFile())
-      return failure(
-        "executable_missing",
-        `REA_KUNA_COMMAND is not a regular file: ${command}. ${KUNA_COMMAND_REMEDIATION}`,
-        { command },
-      );
   } catch (cause: unknown) {
     return failure(
       "executable_missing",

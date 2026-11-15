@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -243,7 +244,7 @@ it.skipIf(process.platform === "win32")(
       resourceScope: resources,
     });
     operations.push(pending);
-    await observed;
+    await awaitAcknowledgement(observed, pending, "Ghidra endpoint read");
     let closed = false;
     const closing = resources.close().then(() => {
       closed = true;

@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
@@ -12,11 +13,11 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -155,9 +156,10 @@ export const nativePlistFailure = (
         ? nativePlistPrimaryFailure(artifactFilePrimaryFacts(cause), selection)
         : physical?.completionCancellation === undefined
           ? undefined
-          : new AnalysisCancelledError("inspect_plist", {
-              cause: physical.completionCancellation.reason,
-            });
+          : cancelledBy(
+              "inspect_plist",
+              carriedReason(physical.completionCancellation.reason),
+            );
     const previousProjection =
       previous === undefined ? null : projectAnalysisError(previous);
     const failure = new ProviderCleanupError(
@@ -185,9 +187,10 @@ const nativePlistPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_plist", {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        "inspect_plist",
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"
@@ -203,12 +206,7 @@ const nativePlistPrimaryFailure = (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "integrity"
     )
-      return new AnalysisArtifactChangedError(
-        "inspect_plist",
-        selection.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure("inspect_plist", selection.path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const resource = cause.boundary ?? "memory";
       return resource === "file-size"
@@ -334,6 +332,7 @@ export const readNativePlistBytes = (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected plist changed during read: ${input.selection.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(input.signal);
     return bytes;

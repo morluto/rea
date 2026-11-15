@@ -97,6 +97,23 @@ export const nativeValueTraceSchema = z.strictObject({
       procedure: z.string(),
       address: z.string().nullable(),
       reason: z.string(),
+      related_procedure: z
+        .string()
+        .exactOptional()
+        .describe(
+          "The procedure this unknown names, such as a thunk target the trace did not examine. Omitted for other unknowns and in historical traces.",
+        ),
+      call_inputs: z
+        .strictObject({
+          call_node_id: z.string(),
+          destination: z.string(),
+          evidence_id: z.string(),
+          input_indices: z.array(z.int().positive()).min(1),
+        })
+        .exactOptional()
+        .describe(
+          "Recovered CALL input positions with no recovered parameter binding after complete callee parameter examination. Index 0 is the call destination and is excluded. This does not establish formal parameters or a variadic signature. Omitted in historical traces and other unknowns.",
+        ),
     }),
   ),
   total_nodes: z.int().nonnegative(),

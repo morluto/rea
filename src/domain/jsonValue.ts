@@ -1,6 +1,7 @@
 import { types } from "node:util";
 import { z } from "zod";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
+import { isRecord } from "./isRecord.js";
 
 /** Maximum JSON nesting accepted before recursive result cloning. */
 export const MAX_JSON_DEPTH = 1000;
@@ -14,8 +15,6 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */

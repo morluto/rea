@@ -121,7 +121,7 @@ describe("exportDesktopApplication between named checkpoints", () => {
     expect(result.normalized_result).toMatchObject({
       checkpoints: { seed: "seed", end: "end" },
       seed_files: [".config/notes/settings.ini", NOTE],
-      task: { name: "add-eggs", failing_on_seed: ["eggs"] },
+      tasks: [{ name: "add-eggs", failing_on_seed: ["eggs"] }],
     });
     const seed = join(directory, "envs/notes/seed");
     expect(await readFile(join(seed, NOTE), "utf8")).toBe(SAVED_NOTE);
@@ -157,7 +157,7 @@ describe("exportDesktopApplication between named checkpoints", () => {
     if (atExit.result instanceof Error) throw atExit.result;
     expect(atExit.result.normalized_result).toMatchObject({
       checkpoints: { seed: "seed", end: "exit" },
-      task: { failing_on_seed: ["eggs", "wrap"] },
+      tasks: [{ failing_on_seed: ["eggs", "wrap"] }],
     });
   });
 
@@ -184,7 +184,7 @@ describe("exportDesktopApplication between named checkpoints", () => {
     if (between.result instanceof Error) throw between.result;
     expect(between.result.normalized_result).toMatchObject({
       checkpoints: { seed: "seed", end: "end" },
-      task: { failing_on_seed: ["eggs"] },
+      tasks: [{ failing_on_seed: ["eggs"] }],
     });
     expect(
       (fromBaseline.result as { userMessage: string }).userMessage,

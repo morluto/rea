@@ -27,6 +27,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** One decode's descriptors and root; removal follows confirmed child cleanup. */
 export class ApktoolWorkspace {
@@ -181,7 +182,7 @@ export class ApktoolWorkspace {
         signal,
         async ({ handle: file, initial }) => {
           admitted = true;
-          const bytes = Buffer.alloc(budget + 1);
+          const bytes = Buffer.alloc(Math.min(initial.size, budget) + 1);
           let length = 0;
           while (length < bytes.length) {
             assertArtifactReadActive(signal);
@@ -203,7 +204,7 @@ export class ApktoolWorkspace {
           const sourceBytes = Math.min(length, budget);
           try {
             return {
-              text: new TextDecoder("utf-8", { fatal: true }).decode(
+              text: strictUtf8Decoder("strip-signature").decode(
                 bytes.subarray(0, sourceBytes),
                 { stream: truncated },
               ),

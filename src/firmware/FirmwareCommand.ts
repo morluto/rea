@@ -1,4 +1,9 @@
 import {
+  processInspectionCancellationError,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
@@ -14,7 +19,9 @@ import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -24,8 +31,7 @@ import type {
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareCancellation,
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwareLimitRecovery,
   firmwarePhaseInterruption,
   firmwareProcessLimitRecovery,
@@ -78,6 +84,28 @@ export const firmwareToolUnavailable = (
 export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
 
+const failureReason = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+/**
+ * Why a configured tool path cannot run, or undefined when `accessPath` grants
+ * `mode` and `statPath` is a regular file.
+ */
+const executableRegularFileRefusal = async (
+  accessPath: string,
+  statPath: string,
+  mode: number,
+): Promise<string | undefined> => {
+  try {
+    await access(accessPath, mode);
+    return (await stat(statPath)).isFile()
+      ? undefined
+      : "Configured path is not a regular file";
+  } catch (cause: unknown) {
+    return failureReason(cause);
+  }
+};
+
 /** Resolve explicitly supplied executable paths; never install or search for engines. */
 export const resolveFirmwareCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
@@ -104,24 +132,29 @@ export const resolveFirmwareCommand = async (
       throw firmwareToolUnavailable(
         engine,
         operation,
-        `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `${variable} is unavailable: ${failureReason(cause)}`,
       );
     },
   );
   const command = selection.invocationPath;
+  const engineUnavailable = (reason: string) =>
+    firmwareToolUnavailable(
+      engine,
+      operation,
+      `${variable} is not a readable executable regular file: ${command}: ${reason}`,
+    );
+  const engineRefusal = await executableRegularFileRefusal(
+    command,
+    command,
+    constants.R_OK | constants.X_OK,
+  );
+  if (engineRefusal !== undefined) throw engineUnavailable(engineRefusal);
   let sha256: string;
   try {
-    await access(command, constants.R_OK | constants.X_OK);
-    if (!(await stat(command)).isFile())
-      throw new TypeError("Configured path is not a regular file");
     sha256 = await files.hash(selection.resolvedPath, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `${variable} is not a readable executable regular file: ${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+    throw engineUnavailable(failureReason(cause));
   }
   const limiter =
     environment.REA_FIRMWARE_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
@@ -131,20 +164,25 @@ export const resolveFirmwareCommand = async (
       operation,
       "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
     );
+  const limiterUnavailable = (reason: string) =>
+    firmwareToolUnavailable(
+      engine,
+      operation,
+      `Resource limiter is not an executable regular file: ${limiter}: ${reason}; provide util-linux prlimit`,
+    );
   let limiterSelection: ArtifactCommandPath;
   try {
     limiterSelection = await selectArtifactCommandPath(limiter, signal);
-    await access(limiterSelection.resolvedPath, constants.X_OK);
-    if (!(await stat(limiter)).isFile())
-      throw new TypeError("Configured path is not a regular file");
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `Resource limiter is not an executable regular file: ${limiter}: ${cause instanceof Error ? cause.message : String(cause)}; provide util-linux prlimit`,
-    );
+    throw limiterUnavailable(failureReason(cause));
   }
+  const limiterRefusal = await executableRegularFileRefusal(
+    limiterSelection.resolvedPath,
+    limiter,
+    constants.X_OK,
+  );
+  if (limiterRefusal !== undefined) throw limiterUnavailable(limiterRefusal);
   return {
     command: selection,
     limiter: limiterSelection,
@@ -201,11 +239,17 @@ export const runFirmwareCommand = async (context: {
   signal: AbortSignal;
   deadline: FirmwareDeadline;
   launcher?: FirmwareLauncher;
+  resources: ArtifactResourceScope;
   outputBudget?: { root: string; bytes: number; entries: number };
   acceptReportedExtractionFailure?: boolean;
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
+  const dialect = firmwareFailureDialect({
+    engine,
+    operation,
+    phase: { signal, deadline: context.deadline },
+  });
   const fileSizeBytes = firmwareFileSizeLimit(
     context.fileSizeCeiling,
     context.outputBudget?.bytes,
@@ -250,18 +294,25 @@ export const runFirmwareCommand = async (context: {
       NO_COLOR: "1",
     },
   }).catch((cause: unknown) => {
-    // Owned admission can reject before a supervisor/child exists. Attribute
-    // only this signal's raw reason or a linked Node AbortError, never an
-    // unrelated failure merely because a timer also fired.
-    if (
-      signal.aborted &&
-      (cause === signal.reason ||
-        (cause instanceof Error &&
-          cause.name === "AbortError" &&
-          cause.cause === signal.reason))
-    )
-      throw firmwareCancellation(operation, signal.reason, context.deadline);
-    throw cause;
+    const cancellation = processInspectionCancellationError(cause, operation);
+    // The phase deadline reports its own expiry; any other inspection
+    // cancellation keeps its ownership-inspection origin.
+    const interruption =
+      cancellation === undefined
+        ? undefined
+        : firmwarePhaseInterruption(operation, signal, context.deadline);
+    const primary =
+      cancellation === undefined
+        ? classifyProviderFailure(cause, dialect)
+        : interruption instanceof AnalysisTimeoutError
+          ? interruption
+          : cancellation;
+    throw retainProcessInspectionCleanup(
+      cause,
+      primary,
+      context.resources,
+      operation,
+    );
   });
   let failure: AnalysisError | undefined;
   const isFailedExit = (code: number | null | undefined) =>
@@ -355,12 +406,13 @@ export const runFirmwareCommand = async (context: {
           fileSizeBytes,
           operation,
           signal,
+          context.deadline,
         );
     }
     checkDiagnostics();
     checkInterruption();
   } catch (cause: unknown) {
-    failure ??= firmwareFailure(cause, context);
+    failure ??= classifyProviderFailure(cause, dialect);
   }
   const stopped = await supervisor.stop();
   // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
@@ -417,6 +469,7 @@ export const readFirmwareCommandReport = async (context: {
   execution: Awaited<ReturnType<typeof runFirmwareCommand>>;
   files: FirmwareFileAccess;
   signal?: AbortSignal;
+  deadline?: FirmwareDeadline;
 }): Promise<unknown> => {
   try {
     return await context.files.report(
@@ -425,7 +478,32 @@ export const readFirmwareCommandReport = async (context: {
       context.signal,
     );
   } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof ArtifactReaderFailure) {
+      const { engine, operation, execution, deadline } = context;
+      const signal = context.signal ?? deadline?.signal;
+      const failure = classifyProviderFailure(
+        cause,
+        firmwareFailureDialect({
+          engine,
+          operation,
+          phase:
+            deadline === undefined || signal === undefined
+              ? undefined
+              : { signal, deadline },
+        }),
+      );
+      if (cause.partialObservation !== undefined)
+        failure.retainPartialObservation(cause.partialObservation);
+      throw failure.retainCapturedOutput({
+        stdout: execution.stdout.text,
+        stderr: execution.stderr.text,
+        stdout_bytes: execution.stdout.bytes,
+        stderr_bytes: execution.stderr.bytes,
+        exit_code: execution.exit_code ?? null,
+        signal: execution.signal,
+        truncated: false,
+      });
+    }
     const { engine, operation, execution } = context;
     const reportFailure =
       cause instanceof AnalysisOutputError

@@ -1,3 +1,4 @@
+import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
 import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -9,8 +10,8 @@ import {
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   withEvidenceCallerInputPath,
@@ -38,6 +39,11 @@ import {
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
 import { inspectAnalysisViewValidated } from "./analysisView/AnalysisViewService.js";
+import {
+  finalizedResult,
+  runOwned,
+  type RunOwnedOptions,
+} from "../providers/runOwned.js";
 
 /** Validate a standalone bundle and report its complete record/revision counts. */
 export const importEvidenceBundleCommand = async (
@@ -84,21 +90,25 @@ export const exportEvidenceBundleCommand = async (
     signal,
   );
   if (!loaded.ok) return loaded;
-  const written = await persistEvidenceBundleCommand(
-    loaded.value,
-    outputPath,
-    overwrite,
-    signal,
-    "export_evidence_bundle",
+  const written = await finalizeBundleWork(
+    () =>
+      persistEvidenceBundleCommand(
+        loaded.value,
+        outputPath,
+        overwrite,
+        signal,
+        "export_evidence_bundle",
+      ),
+    {
+      providerId: "rea",
+      operation: "export_evidence_bundle",
+      signal,
+      // Deliver interrupts queued during publication cleanup before deciding
+      // whether a written bundle survives cancellation.
+      close: dispatchQueuedInterrupts,
+      diagnostics: (receipt) => ({ evidence_bundle: { ...receipt } }),
+    },
   );
-  await dispatchQueuedInterrupts();
-  if (written.ok && signal?.aborted)
-    return err(
-      new AnalysisCancelledError("export_evidence_bundle", {
-        cause: signal.reason,
-        diagnostics: { evidence_bundle: { ...written.value } },
-      }),
-    );
   return projectWrite(loaded.value, written);
 };
 
@@ -138,7 +148,9 @@ export const deliverAnalysisEvidence = async (
   // Later inspect_analysis_view requests are separate questions and do not
   // inherit the parent's selected input path.
   const selected =
-    detail === "summary" && evidence.caller_input_path !== undefined
+    detail === "summary" &&
+    (evidence.caller_input_path !== undefined ||
+      evidence.caller_input_paths !== undefined)
       ? withEvidenceCallerInputPath(
           delivered.value,
           evidence.caller_input_path,
@@ -178,6 +190,17 @@ export const publishEvidenceDelivery = async (input: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<Result<PublishedEvidenceDelivery, AnalysisError>> => {
   const { signal, operation } = input;
+  // Partial analysis can hold only some of its linked sources. Both delivery
+  // adapters must establish closure before committing a complete source bundle.
+  const sources = new Map(
+    input.bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  const closure = resolveInvestigationEvidenceClosure(
+    { evidenceForAnalysis: (id) => sources.get(id) },
+    [input.complete.evidence_id],
+  );
+  if (!closure.ok)
+    return err(closure.error.retainPartialObservation(input.complete));
   const written = await persistEvidenceBundleCommand(
     input.bundle,
     input.outputPath,
@@ -207,8 +230,7 @@ export const publishEvidenceDelivery = async (input: {
   }
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: input.delivered,
         diagnostics: { evidence_bundle: { ...written.value } },
       }),
@@ -293,9 +315,7 @@ const projectWrite = (
   bundle: EvidenceBundle,
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
-  written.ok
-    ? ok(evidenceBundleExportReceipt(bundle, written.value))
-    : err(written.error);
+  written.ok ? ok(evidenceBundleExportReceipt(bundle, written.value)) : written;
 
 /** Standalone bundle discovery shares the same read owner as import and comparison. */
 export const inspectEvidenceBundleCommand = async (
@@ -334,21 +354,49 @@ const withBundleReadResources = async <Value extends JsonValue>(
   signal?: AbortSignal,
 ): Promise<Result<Value, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
-  let result: Result<Value, AnalysisError>;
-  try {
-    result = await read(resources);
-  } finally {
-    // Read errors own their retained leases and observe resolution or remaining
-    // failure in place. A retry must not replace the original read failure.
-    await resources.close().catch(() => undefined);
-    await dispatchQueuedInterrupts();
-  }
-  return result.ok && signal?.aborted
-    ? err(
-        new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          diagnostics: { completed_result: result.value },
-        }),
-      )
-    : result;
+  let readFailed = false;
+  return finalizeBundleWork(() => read(resources), {
+    providerId: "rea",
+    operation,
+    signal,
+    inspectPrimary: (primary) => {
+      readFailed = !primary.ok;
+    },
+    close: async () => {
+      try {
+        await resources.close();
+      } catch (cause: unknown) {
+        // A failed read already owns its retained leases and observes their
+        // resolution in place; a retry must not replace that failure. Only
+        // a completed read leaves a close failure without another owner.
+        if (!readFailed) throw cause;
+      } finally {
+        await dispatchQueuedInterrupts();
+      }
+    },
+    fallbackResource: `${operation} bundle read resources`,
+    diagnostics: (value) => ({ completed_result: value }),
+  });
+};
+
+/**
+ * Finalize bundle work through runOwned. An unexpected throw is a defect the
+ * adapters report as such, so it is rethrown after cleanup instead of being
+ * typed as a provider failure.
+ */
+const finalizeBundleWork = async <Value>(
+  work: () => Promise<Result<Value, AnalysisError>>,
+  options: RunOwnedOptions<Value>,
+): Promise<Result<Value, AnalysisError>> => {
+  let defect: { readonly cause: unknown } | undefined;
+  const finalized = await runOwned(async () => {
+    try {
+      return await work();
+    } catch (cause: unknown) {
+      defect = { cause };
+      throw cause;
+    }
+  }, options);
+  if (defect !== undefined) throw defect.cause;
+  return finalizedResult(finalized);
 };

@@ -14,6 +14,7 @@ import {
   RecordingIdaMcp,
   createIdaTarget,
 } from "../../tests/fixtures/idaMcp.js";
+import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { IdaProvider } from "./IdaProvider.js";
 
 it.each([
@@ -54,6 +55,19 @@ it.each([
       expect(snapshot.availability.diagnostics).not.toHaveProperty(
         "configuration_remediation",
       );
+      // Doctor reports the runtime's repair for a selected registration.
+      if (selected && snapshot.availability.status === "unavailable") {
+        const doctor = await inspectIdaRegistration(path, {
+          retain: () => undefined,
+          run: (operation) => operation(),
+        });
+        expect(
+          doctor.checks.find(({ name }) => name === "registration"),
+        ).toMatchObject({
+          ok: false,
+          remediation: snapshot.availability.remediation,
+        });
+      }
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
@@ -67,7 +81,11 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
   const path = join(root, "registration.json");
   await writeFile(
     path,
-    JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+    JSON.stringify({
+      mode: "attached",
+      url: "http://127.0.0.1:13337/mcp",
+      protocol: "legacy",
+    }),
   );
   const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
   if (!config.ok) throw config.error;
@@ -143,6 +161,25 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
           )?.reason,
         ).toContain("direct call edges");
       } else expect(snapshot.availability.status).toBe("available");
+      // Doctor projects the same admission, so it agrees on the outcome,
+      // reason and repair.
+      const doctor = await inspectIdaRegistration(registration, {
+        retain: () => undefined,
+        run: (operation) => operation(),
+      });
+      expect(doctor.available).toBe(
+        snapshot.availability.status === "available",
+      );
+      const workspaceCheck = doctor.checks.find(
+        ({ name }) => name === "private_workspace",
+      );
+      if (snapshot.availability.status === "unavailable")
+        expect(workspaceCheck).toMatchObject({
+          ok: false,
+          detail: snapshot.availability.reason,
+          remediation: snapshot.availability.remediation,
+        });
+      else expect(workspaceCheck).toMatchObject({ ok: true });
       expect((await readdir(root)).sort()).toEqual(before);
       expect(connect).not.toHaveBeenCalled();
     } finally {
@@ -296,10 +333,12 @@ it.each(["http", "stdio"] as const)(
             transport === "http"
               ? {
                   url: "http://127.0.0.1:8745/mcp",
+                  protocol: "legacy",
                   headers: { Authorization: token, "X-Input": "retained" },
                 }
               : {
                   command: "fixture",
+                  protocol: "legacy",
                   env: { PRIVATE_VALUE: token, IDADIR: "/fixture/ida" },
                   sensitive: { env: ["PRIVATE_VALUE"] },
                 },
@@ -327,6 +366,7 @@ it.each(["http", "stdio"] as const)(
           transport === "http"
             ? {
                 url: "http://127.0.0.1:8745/mcp",
+                protocol: "legacy",
                 headers: {
                   Authorization: "second credential",
                   "X-Input": "changed input",
@@ -334,6 +374,7 @@ it.each(["http", "stdio"] as const)(
               }
             : {
                 command: "fixture",
+                protocol: "legacy",
                 env: {
                   PRIVATE_VALUE: "second credential",
                   IDADIR: "/changed/ida",
@@ -363,7 +404,11 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
   try {
     await writeFile(
       path,
-      JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+      JSON.stringify({
+        mode: "attached",
+        url: "http://127.0.0.1:13337/mcp",
+        protocol: "legacy",
+      }),
     );
     const parsed = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!parsed.ok) throw parsed.error;

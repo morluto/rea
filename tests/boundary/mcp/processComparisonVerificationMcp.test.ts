@@ -101,11 +101,7 @@ it("rejects an inconsistent imported process comparison while retaining its Evid
     const rejected = await verify(inconsistent.evidence_id, selected);
     expect(parseMcpToolError(rejected).error).toMatchObject({
       code: "evidence_integrity_mismatch",
-      details: {
-        reason: expect.stringContaining(
-          "Process comparison status contradicts its dimensions",
-        ),
-      },
+      details: { constraint: "status-matches-dimensions" },
     });
     const failed = await verify(consistent.evidence_id, selected);
     expect(failed.isError).not.toBe(true);

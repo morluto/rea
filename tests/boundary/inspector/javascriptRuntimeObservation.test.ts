@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,7 +30,7 @@ import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 test("reports static-layer Evidence digest failure at its caller path", () => {
   const layer = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0];
@@ -84,7 +85,7 @@ test("reports browser origin scope mismatch at the caller parameter path", async
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
-      observed.value,
+      { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
     const invalidEvidence = createEvidence(undefined, evidence.provider, {
@@ -919,16 +920,17 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
       parsedCapture.inspection.completeness.unavailable_sections,
     ).not.toContain("scripts");
 
-    const legacySnapshot = {
+    const withoutCount = {
       ...observed.value,
       scripts: {
         ...observed.value.scripts,
       },
     };
-    delete legacySnapshot.scripts.parse_failed_total;
-    const parsedLegacySnapshot =
-      javascriptRuntimeObservationSchema.parse(legacySnapshot);
-    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+    delete (withoutCount.scripts as { parse_failed_total?: number })
+      .parse_failed_total;
+    expect(
+      javascriptRuntimeObservationSchema.safeParse(withoutCount).error?.issues,
+    ).toMatchObject([{ path: ["scripts", "parse_failed_total"] }]);
   } finally {
     await fake.close();
   }
@@ -960,14 +962,14 @@ test("keeps malformed scriptFailedToParse protocol values in the invalid count",
 });
 
 const runtimeFixture = async () => {
-  const root = await createTestTempDirectory("rea-v8-runtime-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-runtime-");
   const entry = join(root, "entry.js");
   await writeFile(entry, "export const value = 1;\n");
   return { root, entry };
 };
 
 const temporaryFile = async (name: string): Promise<string> => {
-  const root = await createTestTempDirectory("rea-v8-outside-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-outside-");
   const path = join(root, name);
   await writeFile(path, "export {};\n");
   return path;
@@ -1024,6 +1026,7 @@ const runtimeObservation = (
       },
     ],
     observed_total: 1,
+    parse_failed_total: 0,
     excluded: {
       unsupported_location: 0,
       invalid_protocol_value: 0,

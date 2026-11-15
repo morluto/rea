@@ -1,7 +1,23 @@
 import { readFile } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
-import type { DebuggerAdmissionLimit } from "../config/debuggerSessionLimits.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import type { AnalysisSettingId } from "../domain/analysisSettings.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+  type AnalysisTimeoutRecovery,
+} from "../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
@@ -11,40 +27,70 @@ export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
   | { readonly status: "incomplete"; readonly reason: string };
 
+const RUNTIME_DEBUGGER_SETTINGS = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, AnalysisSettingId>>;
+
+const runtimeDebuggerSetting = (
+  admission: DebuggerAdmissionLimit,
+): AnalysisSettingId | undefined =>
+  RUNTIME_DEBUGGER_SETTINGS[
+    admission.setting as keyof typeof RUNTIME_DEBUGGER_SETTINGS
+  ];
+
+/** Structured limit for a debugger budget that update_analysis_settings can change. */
+export const debuggerAnalysisLimit = (admission: DebuggerAdmissionLimit) => {
+  const setting = runtimeDebuggerSetting(admission);
+  return setting === undefined
+    ? undefined
+    : analysisSettingLimit(setting, admission.value, admission.source);
+};
+
 /** Structured facts a limit error exposes. The sentence is display text. */
 export const debuggerAdmissionDiagnostics = (
   admission: DebuggerAdmissionLimit,
-): {
-  readonly setting: string;
-  readonly effective_value: number;
-  readonly source: DebuggerAdmissionLimit["source"];
-  readonly default_value: number;
-  readonly minimum: number;
-  readonly maximum: number;
-  readonly unit: DebuggerAdmissionLimit["unit"];
-  readonly restart_required: true;
-} => ({
-  setting: admission.setting,
-  effective_value: admission.value,
-  source: admission.source,
-  default_value: admission.defaultValue,
-  minimum: admission.minimum,
-  maximum: admission.maximum,
-  unit: admission.unit,
-  restart_required: true,
-});
+) => {
+  const analysisSetting = runtimeDebuggerSetting(admission);
+  const update_mode = analysisSetting === undefined ? "restart" : "runtime";
+  return {
+    setting: admission.setting,
+    effective_value: admission.value,
+    source: admission.source,
+    default_value: admission.defaultValue,
+    minimum: admission.minimum,
+    maximum: admission.maximum,
+    unit: admission.unit,
+    update_mode,
+    pending_restart: false as const,
+    ...(analysisSetting === undefined
+      ? {}
+      : { analysis_setting: analysisSetting }),
+  };
+};
 
-/** Name the setting, the effective value, its source, the range, and a restart. */
+/** Name the setting, the effective value, its source, and the range. */
 export const debuggerAdmissionRecovery = (
   admission: DebuggerAdmissionLimit,
-): string =>
-  `The effective ${admission.setting} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+): string => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const identity =
+    facts.analysis_setting === undefined
+      ? admission.setting
+      : `${facts.analysis_setting} (launch seed ${admission.setting})`;
+  const change =
+    facts.update_mode === "runtime"
+      ? `It can be changed at runtime with update_analysis_settings.`
+      : `Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+  return `The effective ${identity} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). ${change}`;
+};
 
 /** Fixed startup deadline. Distinct from the shared command deadline setting. */
 export const fixedDeadlineGuidance = (
   what: string,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): AnalysisTimeoutRecovery => ({
   userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
   remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -53,16 +99,14 @@ export const fixedDeadlineGuidance = (
 export const configurableDeadlineGuidance = (
   what: string,
   admission: DebuggerAdmissionLimit,
-): {
-  readonly userMessage: string;
-  readonly remediationAction: string;
-  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
-} => {
+): AnalysisTimeoutRecovery => {
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return {
     userMessage: `${what} reached its ${String(admission.value)} ms deadline (deadlineExpired). ${recovery}`,
     remediationAction: recovery,
     diagnostics: debuggerAdmissionDiagnostics(admission),
+    ...(limit === undefined ? {} : { limit }),
   };
 };
 
@@ -77,6 +121,7 @@ export const debuggerResourceConstraintError = (
 ): AnalysisResourceConstraintError => {
   const facts = debuggerAdmissionDiagnostics(admission);
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return new AnalysisResourceConstraintError(
     operation,
     resource,
@@ -85,7 +130,40 @@ export const debuggerResourceConstraintError = (
     {
       remediationAction: `${remediation} ${recovery}`,
       diagnostics: facts,
+      ...(limit === undefined ? {} : { limit }),
     },
+  );
+};
+
+/**
+ * Failure a debugger session keeps while its process is not confirmed stopped.
+ * A later cleanup retry reports it again, so it keeps the primary outcome: a
+ * cancellation stays a cancellation with the caller's reason instead of
+ * becoming a capability refusal for the target.
+ */
+export const retainedDebuggerCleanupFailure = (
+  debugger_: { readonly provider: string; readonly displayName: string },
+  operation: string,
+  reason: string,
+  resources: readonly string[],
+  options: AnalysisErrorOptions = {},
+): AnalysisError => {
+  const cleanup = { reason, resources: [...resources] };
+  const primary = options.cause;
+  if (primary instanceof AnalysisCancelledError)
+    return new AnalysisCancelledError(operation, {
+      ...options,
+      cause: primary.cause,
+      capturedOutput: options.capturedOutput ?? primary.capturedOutput,
+      partialObservation:
+        options.partialObservation ?? primary.partialObservation,
+      cleanup,
+    });
+  return new AnalysisCapabilityUnavailableError(
+    debugger_.provider,
+    operation,
+    `The owned ${debugger_.displayName} process could not be confirmed stopped: ${reason}`,
+    { ...options, cleanup },
   );
 };
 
@@ -105,7 +183,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (process.platform !== "linux")
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );
@@ -266,7 +344,7 @@ export const stopOwnedDebuggerProcess = async (
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<OwnedDebuggerStopResult> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (session.exited) {
     if (detachAttempts.has(session))
       return {

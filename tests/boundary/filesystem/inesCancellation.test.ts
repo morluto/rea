@@ -11,6 +11,43 @@ import { inesFixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import {
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+  ArtifactFileCleanupFailure,
+  withArtifactFileHandle,
+} from "../../../src/artifacts/ArtifactFileOperation.js";
+import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
+import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+
+it.each(["close", "cancel"] as const)(
+  "does not complete an iNES inventory after %s while paused",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-ines-paused-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
 // Complete the real I/O, then cancel while its caller is still awaiting it.
 const cancelAfterNextStat = (
   handle: FileHandle,
@@ -315,6 +352,260 @@ it.each([
     } finally {
       restoreStat();
       read.mockRestore();
+    }
+  },
+);
+
+it.each(
+  (["header-read", "read", "stat"] as const).flatMap((phase) =>
+    [false, true].map((sameReason) => [phase, sameReason] as const),
+  ),
+)(
+  "preserves an iNES descriptor %s failure concurrent with cancellation (same reason=%s)",
+  async (phase, sameReason) => {
+    const root = await createTestTempDirectory("rea-ines-physical-failure-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("descriptor I/O failed"), {
+      code: "EIO",
+    });
+    let restore = () => {};
+    try {
+      if (phase === "header-read") {
+        const spy = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async () => {
+            controller.abort(sameReason ? physical : "caller stopped");
+            throw physical;
+          });
+        restore = () => spy.mockRestore();
+        await expect(
+          reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+        ).rejects.toBe(physical);
+        return;
+      }
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Missing iNES region");
+      if (phase === "stat") {
+        const spy = vi
+          .spyOn(handle, "stat")
+          .mockImplementationOnce(async () => {
+            controller.abort(sameReason ? physical : "caller stopped");
+            throw physical;
+          });
+        restore = () => spy.mockRestore();
+        await expect(reader.open(entry, controller.signal)).rejects.toBe(
+          physical,
+        );
+      } else {
+        const stream = await reader.open(entry, controller.signal);
+        const spy = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async () => {
+            controller.abort(sameReason ? physical : "caller stopped");
+            throw physical;
+          });
+        restore = () => spy.mockRestore();
+        await expect(
+          (async () => {
+            for await (const _ of stream) {
+              /* consume */
+            }
+          })(),
+        ).rejects.toMatchObject({ reason: "io", cause: physical });
+      }
+    } finally {
+      restore();
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
+it("preserves the caller reason when a completed iNES read observes cancellation", async () => {
+  const root = await createTestTempDirectory("rea-ines-stream-cancel-");
+  const path = join(root, "source.nes");
+  await writeFile(path, inesFixture());
+  const handle = await open(path, "r");
+  const reader = new InesArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  let restore = () => {};
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing iNES region");
+    const stream = await reader.open(entry, controller.signal);
+    const original = handle.read.bind(handle);
+    const spy = vi
+      .spyOn(handle, "read")
+      .mockImplementationOnce(async (...args) => {
+        const result = await original(...args);
+        controller.abort(reason);
+        return result;
+      });
+    restore = () => spy.mockRestore();
+    await expect(
+      (async () => {
+        for await (const _ of stream) {
+          /* consume */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  } finally {
+    restore();
+    await reader.close();
+    await handle.close();
+  }
+});
+
+it.each(["classification", "hash", "region"] as const)(
+  "preserves physical failure and concurrent cancellation through %s inventory",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-ines-inventory-io-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const sample = await open(path, "r");
+    const prototype = Object.getPrototypeOf(sample) as FileHandle;
+    await sample.close();
+    const originalRead = prototype.read;
+    const originalStat = prototype.stat;
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("inventory descriptor failure"), {
+      code: "EIO",
+    });
+    let afterRead = false;
+    let statCount = 0;
+    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      const arguments_: readonly unknown[] = args;
+      const position = arguments_[3];
+      if (
+        phase === "region" &&
+        afterRead &&
+        (typeof position === "number" || typeof position === "bigint") &&
+        Number(position) === 16
+      ) {
+        controller.abort("caller stopped");
+        throw physical;
+      }
+      const value = await originalRead.call(this, ...args);
+      afterRead = true;
+      return value;
+    });
+    const stat = vi.spyOn(prototype, "stat").mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      if (
+        afterRead &&
+        ++statCount ===
+          (phase === "classification" ? 2 : phase === "hash" ? 3 : -1)
+      ) {
+        controller.abort("caller stopped");
+        throw physical;
+      }
+      return originalStat.call(this, ...args);
+    });
+    try {
+      const failure = await inventoryArtifact(path, {
+        signal: controller.signal,
+      }).catch((cause: unknown) => cause);
+      expect(controller.signal.aborted).toBe(true);
+      expect(failure).not.toMatchObject({ reason: "cancelled" });
+      if (phase === "region")
+        expect(failure).toMatchObject({ reason: "io", cause: physical });
+      else expect(failure).toBe(physical);
+    } finally {
+      read.mockRestore();
+      stat.mockRestore();
+    }
+  },
+);
+
+it.each([
+  ["failed", false],
+  ["failed", true],
+  ["completed", false],
+  ["completed", true],
+] as const)(
+  "retains the physical %s prefix outcome through late abort and final close (close fails=%s)",
+  async (outcome, closeFails) => {
+    const root = await createTestTempDirectory("rea-prefix-completion-");
+    const path = join(root, "source.nes");
+    const bytes = inesFixture();
+    await writeFile(path, bytes);
+    const handle = await open(path, "r");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("physical prefix EIO"), {
+      code: "EIO",
+    });
+    const reason = outcome === "failed" ? physical : { phase: "prefix close" };
+    const cleanupFailure = new Error("prefix close temporarily failed");
+    const nativeClose = handle.close.bind(handle);
+    const close = vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+      controller.abort(reason);
+      if (closeFails) throw cleanupFailure;
+      await nativeClose();
+    });
+    const read =
+      outcome === "failed"
+        ? vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+            controller.abort(physical);
+            throw physical;
+          })
+        : undefined;
+    try {
+      const observed = await withArtifactFileHandle(
+        path,
+        handle,
+        resources,
+        controller.signal,
+        (file) =>
+          readFileHandlePrefix(file, 16, () =>
+            abortIfNeeded(controller.signal),
+          ),
+      ).catch((cause: unknown) => cause);
+      if (outcome === "failed") {
+        expect(artifactFilePrimaryFacts(observed).cause).toBe(physical);
+        expect(artifactFileCompletion(observed)).toBeUndefined();
+      } else {
+        const completion = artifactFileCompletion(observed);
+        expect(completion).toMatchObject({
+          kind: "completed",
+          value: bytes.subarray(0, 16),
+        });
+        expect(completion?.cancellation?.reason).toBe(reason);
+      }
+      expect(resources.hasPending).toBe(closeFails);
+      if (closeFails) {
+        expect(observed).toBeInstanceOf(ArtifactFileCleanupFailure);
+        expect(resources.cleanupResources).toEqual([path]);
+        expect(handle.fd).toBeGreaterThanOrEqual(0);
+      }
+      await resources.close();
+      expect(handle.fd).toBe(-1);
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      read?.mockRestore();
+      close.mockRestore();
+      await resources.close();
+      if (handle.fd >= 0) await handle.close();
     }
   },
 );

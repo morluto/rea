@@ -28,6 +28,7 @@ import {
 } from "../../support/reverseEngineeringCompositionFixtures.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import type { ReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const originalExitCode = process.exitCode;
 
@@ -55,6 +56,7 @@ const runObjdump = async (
     operation?: string;
     symbol?: string;
     commandTimeoutMs?: number;
+    maxOutputBytes?: number;
   } = {},
 ) => {
   const commands = new Map<
@@ -66,6 +68,7 @@ const runObjdump = async (
           followDebugLinks: boolean;
           symbol?: string;
           commandTimeoutMs?: number;
+          maxOutputBytes?: number;
         };
       }): Promise<unknown>;
     }
@@ -80,6 +83,7 @@ const runObjdump = async (
             followDebugLinks: boolean;
             symbol?: string;
             commandTimeoutMs?: number;
+            maxOutputBytes?: number;
           };
         }): Promise<unknown>;
       },
@@ -103,6 +107,9 @@ const runObjdump = async (
     options: {
       followDebugLinks: false,
       ...(selection.symbol === undefined ? {} : { symbol: selection.symbol }),
+      ...(selection.maxOutputBytes === undefined
+        ? {}
+        : { maxOutputBytes: selection.maxOutputBytes }),
       ...(selection.commandTimeoutMs === undefined
         ? {}
         : { commandTimeoutMs: selection.commandTimeoutMs }),
@@ -127,17 +134,21 @@ it("forwards the selected native symbol to the shared workflow", async () => {
   });
 });
 
-it("forwards a selected objdump command deadline and omits the field otherwise", async () => {
+it("forwards selected objdump resource budgets and preserves omission", async () => {
   const inspectWithObjdump = vi.fn(async (_input: unknown) =>
     ok(observation("complete")),
   );
   const service = { inspectWithObjdump, close: async () => undefined };
-  await runObjdump(service, "/tmp/sample", { commandTimeoutMs: 5_000 });
+  await runObjdump(service, "/tmp/sample", {
+    commandTimeoutMs: 5_000,
+    maxOutputBytes: 1234,
+  });
   expect(inspectWithObjdump.mock.calls[0]?.[0]).toEqual({
     path: "/tmp/sample",
     operation: "file_headers",
     follow_debug_links: false,
     command_timeout_ms: 5_000,
+    max_output_bytes: 1234,
   });
   await runObjdump(service, "/tmp/sample");
   expect(inspectWithObjdump.mock.calls[1]?.[0]).toEqual({
@@ -332,7 +343,7 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
   const service = {
     inspectWithObjdump: vi.fn(async () => err(error)),
     close: vi.fn(async () => {
-      error.resolveCleanup();
+      releaseOwnedCleanup(error);
     }),
   };
 
@@ -360,7 +371,7 @@ it("does not project cancellation cleanup as incomplete after a successful retry
   const service = {
     inspectWithObjdump: vi.fn(async () => err(error)),
     close: vi.fn(async () => {
-      error.resolveCleanup();
+      releaseOwnedCleanup(error);
     }),
   };
 

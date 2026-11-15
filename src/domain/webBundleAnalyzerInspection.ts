@@ -1,11 +1,14 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
+import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import {
   isBrowserNetworkRequest,
   createXhrOpenRequestQuery,
 } from "./javascript/javascriptNetworkRequests.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
-import type {
-  AnalysisAccumulator,
-  IncludedScript,
+import {
+  createWebBundleAnalysisAccumulator,
+  type AnalysisAccumulator,
+  type IncludedScript,
 } from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascript/javascriptRouteScan.js";
@@ -19,11 +22,10 @@ import {
   completeSemanticSteps,
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
   isNullishJavaScriptSyntax,
   staticObjectProperty,
   staticObjectPropertyNames,
@@ -54,6 +56,8 @@ type Inference = WebBundleAnalysis["inferences"][number];
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
+  precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
@@ -65,7 +69,12 @@ export const analyzeScript = (
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
   const index = completeSemanticSteps(
-    indexJavaScriptBindingsWithReceiversSteps(file.program),
+    indexJavaScriptBindingsWithReceiversSteps(
+      file.program,
+      undefined,
+      precision,
+      memberMutationAllowance,
+    ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;
@@ -429,6 +438,15 @@ const addWebMcpDeclaration = (
       location: location(script.script_key, node),
     }),
   );
+};
+
+/** Inferences read from script text alone, without syntax or semantic facts. */
+export const scriptTextInferences = (
+  script: IncludedScript,
+): AnalysisAccumulator["inferences"] => {
+  const accumulator = createWebBundleAnalysisAccumulator();
+  detectVendorFingerprints(script, accumulator);
+  return accumulator.inferences;
 };
 
 const detectVendorFingerprints = (

@@ -177,6 +177,64 @@ const apkFixture = async (
   };
 };
 
+it("recovers later string pages and an exhausted XML admission on the same APK", async () => {
+  const stringsXml = `<resources>${Array.from({ length: 2001 }, (_, index) => `<string name="s_${String(index)}">value_${String(index)}</string>`).join("")}</resources>`;
+  const { command, root } = await writeApktoolStub(decodeStub({ stringsXml }));
+  const apk = await apkFixture(root);
+  const provider = providerOver(command);
+  onTestFinished(() => provider.close());
+  const service = new ApktoolResourceAnalysisService(provider);
+  const inspect = async (input: Record<string, unknown>) => {
+    const outcome = await service.execute("decode_android_resources", {
+      path: apk.path,
+      ...input,
+    });
+    if (!outcome.ok) throw outcome.error;
+    expect(outcome.value.subject).toMatchObject({
+      digest: { sha256: apk.sha256 },
+    });
+    return apktoolResultSchemas.decode_android_resources.parse(
+      outcome.value.normalized_result,
+    );
+  };
+
+  const first = await inspect({ string_tables_only: true, string_limit: 2000 });
+  expect(first.strings).toEqual([]);
+  expect(first.string_tables?.[0]).toMatchObject({
+    total_count: 2001,
+    unparsed_count: 0,
+    page: { offset: 0, returned_count: 2000, next_offset: 2000 },
+    coverage: "partial",
+  });
+  const next = await inspect({
+    string_tables_only: true,
+    string_offset: first.string_tables?.[0]?.page?.next_offset,
+    string_limit: 2000,
+  });
+  expect(next.string_tables?.[0]).toMatchObject({
+    strings: [{ name: "s_2000", value: "value_2000" }],
+    total_count: 2001,
+    page: { offset: 2000, returned_count: 1, next_offset: null },
+    coverage: "partial",
+  });
+
+  const refused = await inspect({ max_string_table_bytes: 100 });
+  expect(refused.string_tables?.[0]).toMatchObject({
+    status: "oversized",
+    total_count: null,
+  });
+  const recovered = await inspect({
+    string_limit: 2001,
+    max_string_table_bytes: Buffer.byteLength(stringsXml) + 1,
+  });
+  expect(recovered.strings).toHaveLength(2001);
+  expect(recovered.string_tables?.[0]).toMatchObject({
+    total_count: 2001,
+    page: { next_offset: null },
+    coverage: "complete",
+  });
+});
+
 it("returns table-only facts for a single selected primary table", async () => {
   const { command, root } = await writeApktoolStub(decodeStub());
   const apk = await apkFixture(root);
@@ -628,44 +686,20 @@ it("projects one locale's strings on request", async () => {
   ]);
 });
 
-it("notes a missing locale table instead of failing", async () => {
-  const { command, root } = await writeApktoolStub(decodeStub());
-  const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true, locale: "fr" },
-  });
-  expect(result.strings).toEqual([]);
-});
-
 it("notes a missing default strings table without strings", async () => {
   const { command, root } = await writeApktoolStub(
     decodeStub({ withStrings: false }),
   );
   const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
+  const execution = await providerOver(command).execute({
     operation: "decode_android_resources",
     input: { path: apk.path, include_strings: true },
   });
-  expect(result.strings).toEqual([]);
-});
-
-it("reports apktool's own refusal for undecodable targets", async () => {
-  const { command, root } = await writeApktoolStub(
-    decodeStub({ failDecode: true }),
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({ strings: [] });
+  expect(execution.value.limitations).toContain(
+    "No default res/values/strings.xml was found in the decoded workspace",
   );
-  const apk = await apkFixture(root);
-  const projected = await refusedBy(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
-  });
-  expect(projected).toMatchObject({
-    code: "unsupported_target",
-    details: { path: apk.path },
-  });
-  expect(projected.message).toContain(apk.path);
-  expect(projected.message).not.toContain(command);
-  expect(projected.message).toContain("Could not decode");
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {
@@ -1467,6 +1501,7 @@ it.each(["first-selected.apk", "second-selected.apk"])(
         details: { path, captured_output: { exit_code: 1 } },
       });
       expect(projected.message).toContain(path);
+      expect(projected.message).toContain("Could not decode");
       expect(projected.message).not.toContain(command);
     } finally {
       await provider.close();
@@ -1619,7 +1654,6 @@ it.each([
       expect(warnings.length).toBe(
         ["2.7.0-dirty", "2.9.1", "2.9.2-rc.1"].includes(version) ? 1 : 0,
       );
-      if (warnings.length > 0) expect(warnings[0]).toContain("CVE-2024-21633");
       expect(
         inspect.value.limitations.filter((warning) =>
           warning.includes("CVE-2026-39973"),

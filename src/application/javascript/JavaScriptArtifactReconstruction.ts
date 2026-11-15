@@ -1,6 +1,8 @@
+import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
@@ -30,7 +32,7 @@ import {
   type ElectronBoundarySummary,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
@@ -90,6 +92,7 @@ export const reconstructJavaScriptArtifact = async (
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   overrides?: Readonly<Partial<AnalysisSettingValues>>,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Promise<JavaScriptArtifactReconstructionResult> =>
   scope.run(async () => {
     const reportPhase = async (
@@ -181,15 +184,27 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
+      const heap = selectedAnalysisSetting(
+        input.max_heap_mb,
+        overrides?.["javascript.max_heap_mb"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+      );
+      const timeout = selectedAnalysisSetting(
+        input.analysis_timeout_ms,
+        overrides?.["javascript.analysis_timeout_ms"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      );
       const sourceLimits = {
-        heapMb:
-          input.max_heap_mb ??
-          overrides?.["javascript.max_heap_mb"] ??
-          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-        timeoutMs:
-          input.analysis_timeout_ms ??
-          overrides?.["javascript.analysis_timeout_ms"] ??
-          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+        ...(input.semantic_precision === undefined
+          ? {}
+          : { semanticPrecision: input.semantic_precision }),
+        ...(memberMutationAllowance === undefined
+          ? {}
+          : { memberMutationAllowance }),
+        heapMb: heap.value,
+        heapSource: heap.source,
+        timeoutMs: timeout.value,
+        timeoutSource: timeout.source,
       };
       const preloads = await discoverJavaScriptPreloadPaths(
         files,
@@ -204,8 +219,11 @@ export const reconstructJavaScriptArtifact = async (
         ).length,
         { scope },
       );
-      let outcome;
-      let cleanupFailure: AnalysisError | undefined;
+      let outcome!: Awaited<
+        ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>
+      >;
+      let analysisFailure: { readonly cause: unknown } | undefined;
+      let cleanupAttempt: Awaited<ReturnType<ArtifactResourceScope["release"]>>;
       try {
         outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
           files,
@@ -240,18 +258,28 @@ export const reconstructJavaScriptArtifact = async (
           preloads.paths,
           preloads.limitations,
         );
+      } catch (cause: unknown) {
+        analysisFailure = { cause };
       } finally {
-        try {
-          const cleanup = await scope.release({
-            kind: "javascript-source-analysis",
-            analysis: worker,
-            resource: `JavaScript source analyzer for ${path}`,
-          });
-          if (cleanup.kind === "failed") throw cleanup.cause;
-        } catch (cause: unknown) {
-          if (!(cause instanceof AnalysisError)) throw cause;
-          cleanupFailure = cause;
-        }
+        cleanupAttempt = await scope.release({
+          kind: "javascript-source-analysis",
+          analysis: worker,
+          resource: `JavaScript source analyzer for ${path}`,
+        });
+      }
+      if (analysisFailure !== undefined) {
+        if (cleanupAttempt.kind === "failed")
+          throw scope.cleanupFailure(
+            { kind: "failed", cause: analysisFailure.cause },
+            [cleanupAttempt],
+          );
+        throw analysisFailure.cause;
+      }
+      let cleanupFailure: AnalysisError | undefined;
+      if (cleanupAttempt.kind === "failed") {
+        if (!(cleanupAttempt.cause instanceof AnalysisError))
+          throw cleanupAttempt.cause;
+        cleanupFailure = cleanupAttempt.cause;
       }
       const analysis = outcome.analysis;
       let interruption = outcome.interruption;
@@ -401,11 +429,11 @@ export const reconstructJavaScriptArtifact = async (
           ? interruption
           : interruption === null
             ? cleanupFailure
-            : analysisErrorWithCleanupFailure(
+            : analysisErrorWithCleanupDependencies(
                 interruption,
                 cleanupFailure,
                 OPERATION,
-              ).bindCleanupDependencies([interruption, cleanupFailure]);
+              );
       if (failure !== null) {
         const { electron_summary: summary, ...application } = completed;
         const partial = await completeJavaScriptAnalysisSteps(

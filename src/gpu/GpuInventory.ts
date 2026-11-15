@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
@@ -20,7 +21,7 @@ import type {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
 } from "../native/metadata/BinaryContainer.js";
 import {
   readElfSectionDirectory,
@@ -194,10 +195,7 @@ export class GpuInventory {
             continue;
           }
           if (!isGpuSection(section.name)) continue;
-          if (
-            !section.file_backed ||
-            (directory.format === "elf" && (section.flags & 0x800n) !== 0n)
-          ) {
+          if (!section.file_backed || section.compressed) {
             this.discovery = "partial";
             const message = `GPU section ${section.index} has no supported uncompressed file range`;
             this.#retain(message);
@@ -290,18 +288,14 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
-    if (
-      !(cause instanceof BinaryFormatFailure) &&
-      !(cause instanceof BinaryResourceFailure)
-    )
-      throw cause;
-    row.inspection =
-      cause instanceof BinaryResourceFailure ||
-      cause instanceof BinaryStringReadLimitFailure
-        ? "capacity"
-        : cause.kind === "unsupported"
-          ? "unsupported"
-          : "malformed";
+    const capacity =
+      cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
+    if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
+    row.inspection = capacity
+      ? "capacity"
+      : cause.kind === "unsupported"
+        ? "unsupported"
+        : "malformed";
     this.#objectLimitations(row, [cause.message]);
   }
   async #payload(
@@ -368,10 +362,7 @@ export class GpuInventory {
         const content = bytes.subarray(0, length);
         let text: string;
         try {
-          text = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(content);
+          text = decodeStrictUtf8(content, "preserve");
         } catch {
           return rejectGpu("PTX is not valid UTF-8 text");
         }

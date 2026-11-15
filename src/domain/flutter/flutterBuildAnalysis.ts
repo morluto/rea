@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { maxCodePoints } from "../schemaConstraints.js";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
@@ -29,20 +30,48 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  */
 /** Shared refusal for an ABI label that is not a lib/ directory name. */
 const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
-const abiSelectorSchema = z
-  .string()
-  .min(1, ABI_SELECTOR_MESSAGE)
-  .refine(
-    (label) => {
-      const characters = label[Symbol.iterator]();
-      for (let count = 0; count <= ABI_SELECTOR_MAX_CHARACTERS; count += 1)
-        if (characters.next().done) return true;
-      return false;
-    },
-    { message: ABI_SELECTOR_MESSAGE, abort: true },
-  )
-  .regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE)
-  .meta({ maxLength: ABI_SELECTOR_MAX_CHARACTERS });
+const abiSelectorSchema = maxCodePoints(
+  z.string().min(1, ABI_SELECTOR_MESSAGE),
+  ABI_SELECTOR_MAX_CHARACTERS,
+  ABI_SELECTOR_MESSAGE,
+).regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE);
+
+/** Bounded printable-run selection, independent of snapshot structural coverage. */
+const DART_POOL_DEFAULTS = {
+  uri_limit: 500,
+  token_limit: 2000,
+  run_bytes: 1024,
+  token_bytes: 128,
+} as const;
+export const dartPoolPolicySchema = z.strictObject({
+  uri_limit: z.int().positive().optional(),
+  token_limit: z.int().positive().optional(),
+  run_bytes: z.int().positive().optional(),
+  token_bytes: z.int().positive().optional(),
+  contains: z
+    .string()
+    .optional()
+    .describe(
+      "Literal case-sensitive substring applied before collection; URI/token counts describe matches, printable_run_count is unfiltered",
+    ),
+});
+type DartPoolPolicyInput = z.infer<typeof dartPoolPolicySchema>;
+export type DartPoolPolicy = {
+  readonly uri_limit: number;
+  readonly token_limit: number;
+  readonly run_bytes: number;
+  readonly token_bytes: number;
+  readonly contains?: string | undefined;
+};
+export const dartPoolPolicy = (
+  selected?: DartPoolPolicyInput,
+): DartPoolPolicy => ({
+  uri_limit: selected?.uri_limit ?? DART_POOL_DEFAULTS.uri_limit,
+  token_limit: selected?.token_limit ?? DART_POOL_DEFAULTS.token_limit,
+  run_bytes: selected?.run_bytes ?? DART_POOL_DEFAULTS.run_bytes,
+  token_bytes: selected?.token_bytes ?? DART_POOL_DEFAULTS.token_bytes,
+  ...(selected?.contains === undefined ? {} : { contains: selected.contains }),
+});
 
 /**
  * Caller intent for Flutter build identification. This family is pure
@@ -54,6 +83,11 @@ export const flutterInputSchemas = {
     path: localPathStringSchema.describe("Local APK file to inspect"),
   }),
   inspect_dart_aot: z.strictObject({
+    pool_policy: dartPoolPolicySchema
+      .optional()
+      .describe(
+        "Printable-run selection and budgets for this call: uri_limit=500 per URI category, token_limit=2000, run_bytes=1024, token_bytes=128; optional contains filters before bounded collection. Positive safe integers. Applies on the next call without restart. Does not raise APK, library, ELF or response limits. Omitted facts can be recovered with a narrower contains or larger relevant budget.",
+      ),
     path: localPathStringSchema.describe(
       "Local APK file carrying a Flutter AOT payload",
     ),
@@ -191,6 +225,7 @@ export const flutterResultSchemas = {
       ),
     }),
     string_pool: z.strictObject({
+      policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
       coverage: z
         .enum(["complete", "partial"])
         .describe(

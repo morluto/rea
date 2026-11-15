@@ -26,6 +26,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 it
   .skipIf(process.platform === "win32")
@@ -75,6 +76,7 @@ it.skipIf(process.platform === "win32")(
 
     const client = {
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       format: "json",
       configPath: existing,
     } as const;
@@ -131,7 +133,12 @@ describe("uninstall backups after edits made since setup", () => {
   const editedSinceSetup = async (prefix: string) => {
     const root = await createTestTempDirectory(prefix);
     const configPath = join(root, "config.json");
-    const client = { name: "cursor", format: "json", configPath } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    } as const;
     const beforeSetup = '{"keep":"before setup"}\n';
     await writeFile(configPath, beforeSetup);
     expect(
@@ -274,7 +281,12 @@ it("accepts a literal UTF-8 replacement character without changing its value", a
   ]);
   await writeFile(configPath, original);
   const result = await configureClientConfiguration(
-    { name: "cursor", format: "json", configPath },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    },
     {},
     ["rea", "mcp"],
   );
@@ -290,7 +302,12 @@ it("previews and creates a current recovery backup while preserving the first ba
   const configPath = join(root, "config.json");
   const firstOriginal = '{"keep":"first"}\n';
   const currentOriginal = '{"keep":"current"}\n';
-  const client = { name: "cursor", format: "json", configPath } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
   await writeFile(configPath, currentOriginal);
   await writeFile(`${configPath}.rea.backup`, firstOriginal);
 
@@ -316,7 +333,12 @@ it("blocks configuration when the planned content-addressed backup is occupied",
   const configPath = join(root, "config.json");
   const firstOriginal = '{"keep":"first"}\n';
   const currentOriginal = '{"keep":"current"}\n';
-  const client = { name: "cursor", format: "json", configPath } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
   await writeFile(configPath, currentOriginal);
   await writeFile(`${configPath}.rea.backup`, firstOriginal);
   const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
@@ -353,6 +375,9 @@ describe("client configuration write failures", () => {
         expect(
           await configure({
             name: format === "toml" ? "codex" : "cursor",
+            registrationProfile: supportedClientRegistrationProfile(
+              format === "toml" ? "codex" : "cursor",
+            ),
             format,
             configPath: join(root, `config.${format}`),
           }),
@@ -379,7 +404,12 @@ describe("TOML client configuration comparison", () => {
     const configPath = join(root, "config.toml");
     const original = `unrelated = ${value}\n[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@6.1.0", "mcp"]\nstartup_timeout_sec = ${value}\n`;
     await writeFile(configPath, original);
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     expect(
       await configureClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toEqual({
@@ -471,7 +501,12 @@ describe("Codex configuration text preservation", () => {
     async ({ original, preserved }) => {
       const root = await createTestTempDirectory("rea-codex-preserve-");
       const configPath = join(root, "config.toml");
-      const client = { name: "codex", format: "toml", configPath } as const;
+      const client = {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        format: "toml",
+        configPath,
+      } as const;
       await writeFile(configPath, original);
 
       expect(
@@ -503,7 +538,12 @@ describe("Codex configuration text preservation", () => {
   it("retains the first backup after uninstall and a later setup", async () => {
     const root = await createTestTempDirectory("rea-codex-backup-");
     const configPath = join(root, "config.toml");
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     const original = 'notify = ["a", "b"]\n';
     await writeFile(configPath, original);
     await configureClientConfiguration(client, {}, ["rea", "mcp"]);
@@ -518,7 +558,12 @@ describe("Codex configuration text preservation", () => {
   it("refuses malformed Codex TOML unchanged without creating a backup", async () => {
     const root = await createTestTempDirectory("rea-codex-malformed-");
     const configPath = join(root, "config.toml");
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     const original =
       "# Keep this explanation.\n[mcp_servers.rea]\ncommand = [broken\n";
     await writeFile(configPath, original);
@@ -553,6 +598,7 @@ it
         (
           await host.removeClient({
             name: "cursor",
+            registrationProfile: supportedClientRegistrationProfile("cursor"),
             format: "json",
             configPath,
           })

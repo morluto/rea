@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
@@ -17,10 +18,6 @@ import {
   type ReadAt,
 } from "./MachoLoadCommandReader.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_ENCRYPTION_INFO = 0x21;
-const LC_ENCRYPTION_INFO_64 = 0x2c;
 // loader.h: encryption_info_command is five 32-bit words; the 64-bit form adds `pad`.
 const ENCRYPTION_COMMAND_SIZE = { 32: 20, 64: 24 } as const;
 // loader.h section types whose bytes occupy no file range.
@@ -117,6 +114,7 @@ const unread = (
   container_file_offset: declaration.offset,
   size: declaration.size,
   status,
+  malformed_kind: status === "malformed" ? "structure" : null,
   reason,
   commands: [],
   range: null,
@@ -143,6 +141,10 @@ const readSlice = async (
   // and dropped so a large table of small commands stays one buffer.
   const commands: MachoEncryptionCommand[] = [];
   let encryptionCommands = 0;
+  const encryption: {
+    first: ValidEncryptionCommand | null;
+    failure: string | null;
+  } = { first: null, failure: null };
   // Null once this slice's segments need more records than the shared
   // mapping budget has left; none are retained past that point.
   let segments: MachoLoadCommand[] | null = [];
@@ -155,6 +157,7 @@ const readSlice = async (
   }: MachoReadIssue): MachoSliceEncryption => ({
     ...base,
     status: status === "unsupported" ? "unknown" : "malformed",
+    malformed_kind: status === "unsupported" ? null : "structure",
     reason,
     commands,
     range: null,
@@ -164,11 +167,15 @@ const readSlice = async (
   const framed = frameLoadCommands(table, (command) => {
     if (isEncryptionCommand(command.command)) {
       encryptionCommands += 1;
+      const decoded = decodeEncryptionCommand(command);
       if (commands.length < RETAINED_ENCRYPTION_COMMANDS)
-        commands.push(decodeEncryptionCommand(command));
+        commands.push(decoded);
+      const checked = classifyCommand(decoded, header, slice.size);
+      if (checked.status === "malformed") encryption.failure ??= checked.reason;
+      else encryption.first ??= checked.command;
     } else if (
       segments !== null &&
-      (command.command === LC_SEGMENT || command.command === LC_SEGMENT_64)
+      (command.command === LC.SEGMENT || command.command === LC.SEGMENT_64)
     ) {
       segmentRecords += mappingRecords(command);
       if (segmentRecords > budget.remaining) segments = null;
@@ -187,15 +194,44 @@ const readSlice = async (
     return {
       ...base,
       status: "malformed",
+      malformed_kind: "structure",
       reason: identityIssue,
       commands,
       range: null,
     };
-  const outcome = classify(commands, encryptionCommands, header, slice.size);
-  if (outcome.status !== "valid")
-    return { ...base, ...outcome, commands, range: null };
+  if (encryption.failure !== null)
+    return {
+      ...base,
+      status: "malformed",
+      malformed_kind: "structure",
+      reason:
+        encryptionCommands > 1
+          ? `slice has ${encryptionCommands} encryption load commands; ${encryption.failure}`
+          : encryption.failure,
+      commands,
+      range: null,
+    };
+  if (encryptionCommands > 1)
+    return {
+      ...base,
+      status: "malformed",
+      malformed_kind: "duplicate-commands",
+      reason: `slice has ${encryptionCommands} encryption load commands`,
+      commands,
+      range: null,
+    };
+  const command = encryption.first;
+  if (command === null)
+    return {
+      ...base,
+      status: "absent",
+      malformed_kind: null,
+      reason: null,
+      commands,
+      range: null,
+    };
   const range = encryptedRange(
-    outcome.command,
+    command,
     header,
     segments,
     slice.offset,
@@ -206,7 +242,8 @@ const readSlice = async (
   if (range.mapping.status === "mapped") budget.remaining -= segmentRecords;
   return {
     ...base,
-    status: outcome.command.cryptid === 0 ? "not-encrypted" : "encrypted",
+    status: command.cryptid === 0 ? "not-encrypted" : "encrypted",
+    malformed_kind: null,
     reason: null,
     commands,
     range,
@@ -214,7 +251,7 @@ const readSlice = async (
 };
 
 const isEncryptionCommand = (command: number): boolean =>
-  command === LC_ENCRYPTION_INFO || command === LC_ENCRYPTION_INFO_64;
+  command === LC.ENCRYPTION_INFO || command === LC.ENCRYPTION_INFO_64;
 
 const decodeEncryptionCommand = ({
   command,
@@ -224,7 +261,7 @@ const decodeEncryptionCommand = ({
   const view = viewOf(body);
   const word = (at: number): number | null =>
     body.byteLength >= at + 4 ? view.getUint32(at, true) : null;
-  const wide = command === LC_ENCRYPTION_INFO_64;
+  const wide = command === LC.ENCRYPTION_INFO_64;
   return {
     kind: wide ? "LC_ENCRYPTION_INFO_64" : "LC_ENCRYPTION_INFO",
     index,
@@ -236,31 +273,23 @@ const decodeEncryptionCommand = ({
   };
 };
 
+type ValidEncryptionCommand = MachoEncryptionCommand & {
+  readonly cryptoff: number;
+  readonly cryptsize: number;
+  readonly cryptid: number;
+};
 type Classification =
   | {
       readonly status: "valid";
-      readonly command: MachoEncryptionCommand & {
-        readonly cryptoff: number;
-        readonly cryptsize: number;
-        readonly cryptid: number;
-      };
+      readonly command: ValidEncryptionCommand;
     }
-  | { readonly status: "absent"; readonly reason: null }
   | { readonly status: "malformed"; readonly reason: string };
 
-const classify = (
-  commands: readonly MachoEncryptionCommand[],
-  count: number,
+const classifyCommand = (
+  command: MachoEncryptionCommand,
   header: MachoSliceHeader,
   sliceSize: number,
 ): Classification => {
-  if (count === 0) return { status: "absent", reason: null };
-  const [command] = commands;
-  if (command === undefined || count > 1)
-    return {
-      status: "malformed",
-      reason: `slice has ${count} encryption load commands`,
-    };
   const width = header.wide ? 64 : 32;
   const expectedKind = header.wide
     ? "LC_ENCRYPTION_INFO_64"
@@ -346,10 +375,10 @@ const mapRange = (
 ): MachoEncryptedRange["mapping"] => {
   const segments: SegmentFacts[] = [];
   for (const command of segmentCommands) {
-    if ((command.command === LC_SEGMENT_64) !== header.wide)
+    if ((command.command === LC.SEGMENT_64) !== header.wide)
       return {
         status: "unknown",
-        reason: `load command ${command.index} ${command.command === LC_SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
+        reason: `load command ${command.index} ${command.command === LC.SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
       };
     const segment = decodeSegment(command);
     if (typeof segment === "string")
@@ -428,7 +457,7 @@ const unmapped = (from: number, to: number) => ({
  * each section record that fits in its `cmdsize`, decoded and reported once.
  */
 const mappingRecords = ({ command, body }: MachoLoadCommand): number => {
-  const wide = command === LC_SEGMENT_64;
+  const wide = command === LC.SEGMENT_64;
   return (
     2 +
     Math.max(
@@ -444,7 +473,7 @@ const decodeSegment = ({
   body,
   index,
 }: MachoLoadCommand): SegmentFacts | string => {
-  const wide = command === LC_SEGMENT_64;
+  const wide = command === LC.SEGMENT_64;
   const parsed = readMachoSegmentHeader(body, wide, true);
   if (!parsed.ok)
     return `load command ${index} is too short for a segment command`;
