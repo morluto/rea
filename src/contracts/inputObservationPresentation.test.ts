@@ -8,8 +8,11 @@ import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import {
   advertisedInputJsonSchema,
+  COMPLETE_OBSERVATION_GUIDANCE,
   toolOutputSchemaWithMetadata,
 } from "./toolSchemaMetadata.js";
+import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
+import { captureSnapshotSchema } from "../domain/webCaptureDiffSchemas.js";
 
 const browserContract = (name: string) => {
   const found = BROWSER_TOOL_CONTRACTS.find(
@@ -22,21 +25,28 @@ const browserContract = (name: string) => {
 it("advertises complete observations as opaque objects only on the wire", () => {
   const comparison = browserContract("compare_web_captures");
   const advertised = advertisedInputJsonSchema(comparison);
-  const guidance = expect.stringContaining("complete canonical observation");
-  expect(advertised).toHaveProperty("properties.before.properties.inspection", {
+  // Each opaque declaration is the field's own description, if any, followed
+  // by the shared instruction.
+  const declared = (description: string | undefined) => ({
     type: "object",
-    description: expect.stringMatching(
-      /^Complete normalized_result from inspect_web_page.*complete canonical observation\.$/u,
-    ),
+    description: [description, COMPLETE_OBSERVATION_GUIDANCE]
+      .filter((text) => text !== undefined)
+      .join(" "),
   });
   expect(advertised).toHaveProperty(
-    "properties.before.properties.webmcp.anyOf.0",
-    { type: "object", description: guidance },
+    "properties.before.properties.inspection",
+    declared(captureSnapshotSchema.shape.inspection.description),
   );
-  expect(advertised).toHaveProperty("properties.before_scenario", {
-    type: "object",
-    description: expect.stringMatching(/^Earlier complete normalized_result/u),
-  });
+  expect(advertised).toHaveProperty(
+    "properties.before.properties.webmcp.anyOf.0",
+    declared(undefined),
+  );
+  expect(advertised).toHaveProperty(
+    "properties.before_scenario",
+    declared(
+      compareBrowserScenariosInputSchema.shape.before_scenario.description,
+    ),
+  );
   // Analyst-authored controls stay explicit.
   expect(advertised).toHaveProperty(
     "properties.normalization.properties.rules.items.required",
@@ -51,7 +61,7 @@ it("advertises complete observations as opaque objects only on the wire", () => 
   const plain = JSON.stringify(
     z.toJSONSchema(comparison.inputSchema, { io: "input" }),
   );
-  expect(plain).not.toContain("complete canonical observation");
+  expect(plain).not.toContain(COMPLETE_OBSERVATION_GUIDANCE);
   expect(plain).not.toContain("x-rea-");
   // The full scenario capture declaration, including its step list.
   expect(plain).toContain('"steps":{');
@@ -61,7 +71,7 @@ it("advertises complete observations as opaque objects only on the wire", () => 
         "~standard"
       ].jsonSchema.output({ target: "draft-2020-12" }),
     ),
-  ).not.toContain("complete canonical observation");
+  ).not.toContain(COMPLETE_OBSERVATION_GUIDANCE);
 });
 
 const referenceWideningCases: readonly {

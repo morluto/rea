@@ -88,7 +88,8 @@ const oncePerContract = <
   return built;
 };
 
-const COMPLETE_OBSERVATION_GUIDANCE =
+/** The instruction an advertised complete observation carries after its description. */
+export const COMPLETE_OBSERVATION_GUIDANCE =
   "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.";
 
 /**

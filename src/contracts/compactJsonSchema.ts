@@ -493,7 +493,13 @@ export const reduceToShallowProperties = (
     ...(typeof schema.minProperties === "number"
       ? { minProperties: schema.minProperties }
       : {}),
-    ...(schema.additionalProperties === false
+    // The reduced form drops `patternProperties`; closing it would then reject
+    // names those patterns admitted.
+    ...(schema.additionalProperties === false &&
+    !(
+      isSchemaObject(schema.patternProperties) &&
+      Object.keys(schema.patternProperties).length > 0
+    )
       ? { additionalProperties: false }
       : {}),
     // Root property dependencies still apply to the shallow properties; a
