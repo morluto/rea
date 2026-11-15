@@ -92,7 +92,7 @@ const customFixture = () => {
           mcpServer: server,
           delivery,
           logger: silentLogger,
-          environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: {},
         },
       }),
   };

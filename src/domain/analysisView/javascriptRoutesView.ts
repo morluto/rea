@@ -425,10 +425,7 @@ export const projectJavaScriptRoutesView = (
         },
       },
       byte_limited: false,
-      coverage: completeWithinViewCoverage(
-        inventory.routes.length,
-        inventory.routes.length,
-      ),
+      coverage: completeWithinViewCoverage(inventory.routes.length),
     };
     return jsonValueByteLength(summary, PROJECTION_BYTES) > PROJECTION_BYTES
       ? tooLarge()

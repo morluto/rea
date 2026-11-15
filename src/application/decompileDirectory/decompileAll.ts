@@ -1,6 +1,7 @@
 import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
+import type { PseudocodeAbsence } from "../../domain/native/pseudocodeAbsence.js";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 
@@ -24,12 +25,15 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  isAborted,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
-import { addressedValueSchema } from "../../domain/native/nativeInventory.js";
+import { listProceduresFact } from "../../domain/native/nativeOperationFacts.js";
+import { executeFact } from "../AnalysisOperationFacts.js";
 import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -118,10 +122,10 @@ export const decompileAll = async (
     input.resume,
   );
   if (!placement.ok) return placement;
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const loaded = await loadProcedures(analysis, input.layout, signal);
   if (!loaded.ok) return loaded;
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const selection = selectProcedures(
     loaded.value.procedures,
     input,
@@ -224,7 +228,7 @@ export const decompileAll = async (
         primary.cause === signal?.reason
       )
     )
-      primary.retainSecondaryFailure(cancelled(signal));
+      primary.retainSecondaryFailure(cancelledBy("decompile_all", signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
     if (
@@ -246,7 +250,7 @@ export const decompileAll = async (
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
   if (isAborted(signal)) {
-    const failure = cancelled(signal);
+    const failure = cancelledBy("decompile_all", signal);
     if (publishedOutput !== undefined)
       failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
     return err(failure);
@@ -304,32 +308,27 @@ const loadProcedures = async (
     AnalysisError
   >
 > => {
-  const observed = await analysis.execute(
-    "list_procedures",
+  const inventory = await executeFact(
+    analysis,
+    listProceduresFact,
     {},
     executionOptions(signal),
   );
-  if (!observed.ok) return observed;
-  const parsed = z.array(addressedValueSchema).safeParse(observed.value.result);
-  if (!parsed.success)
-    return err(
-      new AnalysisOutputError(
-        "list_procedures",
-        "provider returned an invalid procedure inventory",
-      ),
-    );
-  const identity = identityFrom(observed.value, layout);
+  if (!inventory.ok) return inventory;
+  const identity = identityFrom(inventory.value.execution, layout);
   if (!identity.ok) return identity;
   // An empty address cannot name a file or a journal record.
-  const addressed = parsed.data.filter((row) => row.address.length > 0);
+  const addressed = inventory.value.fact.filter(
+    (row) => row.address.length > 0,
+  );
   return ok({
     procedures: addressed.map((row) => ({
       address: row.address,
       name: row.value.length === 0 ? null : row.value,
     })),
     identity: identity.value,
-    unaddressed: parsed.data.length - addressed.length,
-    limitations: observed.value.limitations,
+    unaddressed: inventory.value.fact.length - addressed.length,
+    limitations: inventory.value.execution.limitations,
   });
 };
 
@@ -396,14 +395,16 @@ const publishSelected = async (
 ): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
   for (const procedure of input.procedures) {
-    if (isAborted(input.signal)) return err(cancelled(input.signal));
+    if (isAborted(input.signal))
+      return err(cancelledBy("decompile_all", input.signal));
     const existing = await existingFile(
       input.session,
       procedure.address,
       input.signal,
     );
     if (typeof existing === "object") return err(existing.error);
-    if (isAborted(input.signal)) return err(cancelled(input.signal));
+    if (isAborted(input.signal))
+      return err(cancelledBy("decompile_all", input.signal));
     if (existing === "skip") {
       input.state.skipped += 1;
       // A file that reads back and verifies shows the directory works.
@@ -576,7 +577,7 @@ const publishOne = async (input: {
     if (!recorded.ok) return { result: recorded, bodySupport: body.support };
     if (isAborted(input.signal))
       return {
-        result: err(cancelled(input.signal)),
+        result: err(cancelledBy("decompile_all", input.signal)),
         bodySupport: body.support,
       };
     attemptedIndependent = true;
@@ -647,7 +648,12 @@ const publishOne = async (input: {
               "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
           }
         : pseudocodeFailure(pseudocode);
-    recordFailure(input.state, input.procedure, reason);
+    recordFailure(
+      input.state,
+      input.procedure,
+      reason,
+      decompiled.value.pseudocodeAbsence,
+    );
     return {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
@@ -664,7 +670,10 @@ const publishOne = async (input: {
   // Classify and journal settled failures before a later caller abort. A valid
   // result still needs an active caller before publishing a new function file.
   if (isAborted(input.signal))
-    return { result: err(cancelled(input.signal)), bodySupport: body.support };
+    return {
+      result: err(cancelledBy("decompile_all", input.signal)),
+      bodySupport: body.support,
+    };
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({
@@ -951,14 +960,18 @@ const recordFailure = (
   state: PublishState,
   procedure: SelectedProcedure,
   reason: FailureReason,
+  pseudocodeAbsence?: PseudocodeAbsence,
 ): void => {
   state.failed += 1;
   state.lastFailureCode = reason.code;
-  const failure = {
+  const failure: NamedFailure = {
     address: procedure.address,
     name: procedure.name,
     code: reason.code,
     message: reason.message,
+    ...(pseudocodeAbsence === undefined
+      ? {}
+      : { pseudocode_absence: pseudocodeAbsence }),
   };
   if (state.failures.length < DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT) {
     const comma = state.failures.length === 0 ? 0 : 1;
@@ -999,8 +1012,12 @@ const fitInlineFailure = (
   // Name is display context; address remains the complete lookup identity.
   const { name: _name, ...withoutName } = failure;
   const compactBytes = jsonValueByteLength(withoutName, budget);
-  return compactBytes <= budget
-    ? { row: withoutName, bytes: compactBytes }
+  if (compactBytes <= budget) return { row: withoutName, bytes: compactBytes };
+  // The provider's reason is kept in the index record, so it goes next.
+  const { pseudocode_absence: _absence, ...minimal } = withoutName;
+  const minimalBytes = jsonValueByteLength(minimal, budget);
+  return minimalBytes <= budget
+    ? { row: minimal, bytes: minimalBytes }
     : undefined;
 };
 
@@ -1151,12 +1168,6 @@ const executionOptions = (signal: AbortSignal | undefined) => ({
   ...(signal === undefined ? {} : { signal }),
   selectorOrigin: "provider" as const,
 });
-
-const cancelled = (signal: AbortSignal | undefined): AnalysisCancelledError =>
-  new AnalysisCancelledError("decompile_all", { cause: signal?.reason });
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 const nodeAbsent = (cause: unknown): boolean =>
   typeof cause === "object" &&

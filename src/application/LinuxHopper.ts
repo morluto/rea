@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
@@ -607,7 +609,8 @@ export const systemLinuxHopperPublisher = (
     environment,
     // Only the package family is read here; it does not depend on the
     // architecture that gates automated setup.
-    async () => (await readLinuxDistribution(process.arch))?.packageFamily,
+    async () =>
+      (await readLinuxDistribution(HOST_PLATFORM.architecture))?.packageFamily,
   );
 
 /** Read-only authentication; persistent package retention belongs to approved setup. */
@@ -724,9 +727,6 @@ const installSystemPackage = async (
     };
   return { status: "installed" };
 };
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 /** Retain the publisher's error and any vendor request facts it observed. */
 const publisherFailure = (

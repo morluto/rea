@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   EvidenceMcpServerCore,
@@ -60,23 +61,31 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
     ) => Promise<void>,
-    maximumInputElements?: number,
+    options: {
+      readonly maximumInputElements?: number | undefined;
+      // Recorded tools carry their presented schemas. The selected presentation
+      // still applies to transport discovery, which is not recorded.
+      readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+      readonly identity?: RecordedMcpCatalog["identity"] | undefined;
+    } = {},
   ) {
     super(
       catalog.info,
       {
         capabilities: catalog.capabilities,
         instructions: catalog.instructions,
-        ...(maximumInputElements === undefined
+        ...(options.maximumInputElements === undefined
           ? {}
-          : { maxToolInputElements: maximumInputElements }),
+          : { maxToolInputElements: options.maximumInputElements }),
       },
       undefined,
       delivery,
-      undefined,
-      // `main.ts` only defers the exact full advertisement catalog.
-      "full",
-      catalog.identity,
+      options.compactPresentation,
+      // Recorded tools carry complete output schemas; the default `off`
+      // profile omits them from listings while the runtime still validates
+      // structured results.
+      "off",
+      options.identity ?? catalog.identity,
     );
     for (const name of catalog.evidenceReferenceAlternatives)
       this.registerEvidenceReferenceAlternative(name);
@@ -209,6 +218,21 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
 
   closePartialRuntime(): Promise<void> {
     return this.partialClose?.() ?? Promise.resolve();
+  }
+
+  /**
+   * Recorded tools already list their presented description; keep it rather
+   * than project every canonical input schema when the runtime materializes.
+   */
+  protected override describeTool(
+    name: string,
+    description: string | undefined,
+    guidance: () => readonly string[],
+  ): { description?: string } {
+    const recorded = this.tools.get(name)?.registered.description;
+    if (this.materializing && recorded !== undefined)
+      return { description: recorded };
+    return super.describeTool(name, description, guidance);
   }
 
   protected override bindTool(

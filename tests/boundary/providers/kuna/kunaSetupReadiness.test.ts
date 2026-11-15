@@ -20,7 +20,7 @@ test.each([
     expected: ["kuna", "ghidra"],
   },
 ])(
-  "projects installation separately from $cache cache readiness",
+  "admits Kuna whatever its $cache cache health, but setup advertises only a healthy one",
   async ({ cache, version, expected }) => {
     const root = await createTestTempDirectory("rea-kuna-setup-readiness-");
     const command = await writeFakeKuna(root, {
@@ -34,17 +34,19 @@ test.each([
       REA_KUNA_COMMAND: command,
       REA_KUNA_CACHE_DIR: cachePath,
     });
-    expect(inspection.available).toBe(cache === "ready");
+    // Readiness is runtime's admission; the cache is a health check beside it.
+    expect(inspection.available).toBe(true);
     expect(inspection.checks[0]).toMatchObject({
       name: "installation",
       ok: true,
     });
-    expect(inspection.checks[1]).toMatchObject({
+    expect(inspection.checks[2]).toMatchObject({
       name: "cache",
       ok: cache === "ready",
     });
     if (version === "kuna 1.950\n")
-      expect(inspection.checks[0]).toMatchObject({
+      expect(inspection.checks[1]).toMatchObject({
+        name: "version",
         ok: true,
         detail: expect.stringContaining("project layout is unverified"),
       });

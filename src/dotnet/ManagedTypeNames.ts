@@ -3,6 +3,7 @@ import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   fullName,
   specSignatureFacts,
+  type SignatureTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
@@ -20,7 +21,8 @@ import { readManagedValue } from "./ManagedReaderFailure.js";
 /**
  * Name the type a TypeDef, TypeRef, or generic-instantiation TypeSpec token
  * denotes, in the namespace-qualified form TypeDef `full_name` uses, once per
- * token. Other decoded TypeSpecs stay null: the type is unknown. Malformed or
+ * token. Other decoded TypeSpecs retain a null display name while a resolved
+ * signature can still establish a local row. Malformed or
  * unsupported rows and blobs are reported to `issues` and also stay null,
  * except that a TypeRef with an invalid ResolutionScope keeps its readable name.
  */
@@ -30,10 +32,14 @@ export const typeNameLookup = (
   ranges: readonly TypeRange[],
   issues: ManagedParseIssue[],
   references: ManagedTypeReferenceLookup,
-): ((
-  reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
-) => string | null) => {
-  const names = new Map<string, string | null>();
+  signatureTypeName: SignatureTypeName,
+): {
+  readonly name: (reference: TypeReference) => string | null;
+  readonly isResolvedTypeSpec: (reference: TypeReference) => boolean;
+} => {
+  type Facts = { readonly name: string | null; readonly resolvedSpec: boolean };
+  const unknown: Facts = { name: null, resolvedSpec: false };
+  const names = new Map<string, Facts>();
   const definitionName = (table: 1 | 2, row: number): string | null => {
     if (table === 2) {
       metadataRowOffset(layout, 2, row);
@@ -44,7 +50,7 @@ export const typeNameLookup = (
       ? null
       : fullName(reference.namespace, reference.name);
   };
-  const specName = (row: number): string | null => {
+  const specName = (row: number): Facts => {
     const cursor = metadataRowCursor(bytes, layout, 27, row);
     const spec = readMetadataBlob(
       bytes,
@@ -57,26 +63,41 @@ export const typeNameLookup = (
       scope: `metadata.TypeSpec:${metadataToken(27, row)}`,
       offset: cursor.start,
     } as const;
-    const { nominalGenericType } = specSignatureFacts(layout, spec, owner);
-    return nominalGenericType === null
-      ? null
-      : definitionName(nominalGenericType.table, nominalGenericType.row);
+    const { nominalGenericType, resolvedSha256 } = specSignatureFacts(
+      layout,
+      spec,
+      owner,
+      signatureTypeName,
+    );
+    return {
+      name:
+        nominalGenericType === null
+          ? null
+          : definitionName(nominalGenericType.table, nominalGenericType.row),
+      resolvedSpec: resolvedSha256 !== null,
+    };
   };
-  return (reference) => {
-    if (reference === null) return null;
+  const read = (reference: TypeReference): Facts => {
+    if (reference === null) return unknown;
     const { token, table, row } = reference;
-    if (names.has(token)) return names.get(token) ?? null;
+    if (names.has(token)) return names.get(token) ?? unknown;
     const name =
       readManagedValue(
         () =>
           table === 27
             ? specName(row)
             : table === 1 || table === 2
-              ? definitionName(table, row)
-              : null,
+              ? { name: definitionName(table, row), resolvedSpec: false }
+              : unknown,
         issues,
-      ) ?? null;
+      ) ?? unknown;
     names.set(token, name);
     return name;
   };
+  return {
+    name: (reference) => read(reference).name,
+    isResolvedTypeSpec: (reference) => read(reference).resolvedSpec,
+  };
 };
+
+type TypeReference = Pick<MetadataTokenFact, "table" | "row" | "token"> | null;

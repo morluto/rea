@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -101,6 +102,11 @@ export class KunaReferenceQueries {
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
+        // Read in the requesting operation's snapshot, refused as a value.
+        const deadline = readRuntimeSetting(() =>
+          kunaProjectDeadline(installation.configuration),
+        );
+        if (!deadline.ok) return deadline;
         const pending = this.work.start<KunaCallGraph>(
           (producerSignal) =>
             this.work.scan(
@@ -113,7 +119,7 @@ export class KunaReferenceQueries {
                   "--functions",
                   "",
                 ],
-                deadline: kunaProjectDeadline(installation.configuration),
+                deadline: deadline.value,
               },
               new KunaCallGraphReader(),
               producerSignal,
@@ -247,15 +253,20 @@ export class KunaReferenceQueries {
             "capacity",
             "The session's native reference-query queue is full; await an existing query before starting another.",
             { limit_queries: PENDING_XREF_QUERIES },
+            { measuredExhaustion: true },
           ),
         );
+      const deadline = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!deadline.ok) return deadline;
       pending = this.work.start<KunaIncomingReferences>(
         async (producerSignal) => {
           const run = await this.work.run({
             installation,
             operation: "xrefs",
             arguments: (input) => ["xrefs", input, "--to", address, "--json"],
-            deadline: kunaProjectDeadline(installation.configuration),
+            deadline: deadline.value,
             outputBytes: KUNA_XREF_OUTPUT_BYTES,
             signal: producerSignal,
           });

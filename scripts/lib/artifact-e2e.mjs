@@ -5,6 +5,7 @@ import { createVerifierCommands } from "./verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
+import { withCanonicalOutputSchema } from "./canonical-output-schema.mjs";
 
 // Bind parsed definitions to this connection. Hot/cold catalogs may add tools;
 // refresh a missing name once without throwing away already validated bindings.
@@ -56,7 +57,7 @@ const advertisedTool = async (client, name) => {
   return tool;
 };
 
-/** Call an advertised tool with SDK output validation of its actual schema. */
+/** Call an advertised tool with SDK output validation against its canonical contract. */
 export async function artifactMcpCall(client, parameters, options = {}) {
   options.signal?.throwIfAborted();
   assert.equal(
@@ -64,11 +65,9 @@ export async function artifactMcpCall(client, parameters, options = {}) {
     undefined,
     "Artifact verification owns the advertised schema; pass request options only",
   );
-  const toolDefinition = await advertisedTool(client, parameters.name);
-  assert.notEqual(
-    toolDefinition.outputSchema,
-    undefined,
-    `MCP tool omitted its output schema: ${parameters.name}`,
+  // tools/list omits output schemas by default; bind the canonical contract.
+  const toolDefinition = withCanonicalOutputSchema(
+    await advertisedTool(client, parameters.name),
   );
   options.signal?.throwIfAborted();
   return client.callTool(parameters, { ...options, toolDefinition });

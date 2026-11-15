@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
@@ -67,7 +68,7 @@ const goViewTest = mcpTest.extend<{
               tool.name === "inspect_analysis_view",
           )
           .map((tool) => {
-            const output = tool.outputSchema;
+            const output = canonicalOutputSchema(tool.name);
             if (output === undefined)
               throw new Error(`Missing ${tool.name} output schema`);
             expect(output.$schema).toBe(

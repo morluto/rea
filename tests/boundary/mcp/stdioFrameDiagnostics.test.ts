@@ -16,8 +16,8 @@ const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
 
 workspaceCliTest.for([
-  { mode: "deferred", profile: "full" },
-  { mode: "eager", profile: "off" },
+  { mode: "deferred", profile: "off" },
+  { mode: "eager", profile: "compact" },
 ])(
   "reports frame validation while the $mode stdio connection remains usable",
   async ({ profile }, { workspace }) => {

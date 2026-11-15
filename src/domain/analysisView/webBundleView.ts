@@ -69,7 +69,7 @@ export const webBundleViewRequestSchema = z.discriminatedUnion("collection", [
 
 export const webBundleSummarySchema = z.strictObject({
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  target_origin: recordedBrowserOriginSchema.nullable(),
   scripts_observed: z.number().int().nonnegative(),
   scripts_analyzed: z.number().int().nonnegative(),
   counts: z.strictObject({
@@ -151,10 +151,6 @@ export const projectWebBundleView = (
   if (!parsed.ok) return parsed;
   const report: WebBundleAnalysis = parsed.value;
 
-  const targetOrigin =
-    report.capture.target_origin === undefined
-      ? {}
-      : { target_origin: report.capture.target_origin };
   const sourceLimitations = [
     ...new Set([...parent.limitations, ...report.limitations]),
   ];
@@ -165,7 +161,7 @@ export const projectWebBundleView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.capture.target_url,
-    ...targetOrigin,
+    target_origin: report.capture.target_origin,
     source_unknowns: report.unknowns,
     limitations: boundedViewMessages(
       sourceLimitations,
@@ -200,7 +196,7 @@ export const projectWebBundleView = (
 
   const buildSummary = (): z.output<typeof webBundleSummarySchema> => ({
     target_url: report.capture.target_url,
-    ...targetOrigin,
+    target_origin: report.capture.target_origin,
     scripts_observed: report.capture.scripts_observed,
     scripts_analyzed: report.capture.scripts_analyzed,
     counts: {
@@ -225,7 +221,7 @@ export const projectWebBundleView = (
       view: selected,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,
@@ -246,7 +242,7 @@ export const projectWebBundleView = (
       items: [],
       summary,
       byte_limited: false,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

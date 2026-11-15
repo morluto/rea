@@ -298,16 +298,20 @@ cliTest(
     );
     expect(JSON.stringify(report)).not.toMatch(/kept-source-only|fragment|KEY/);
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "application,session",
     });
     const schemas = await advertisedMcpToolSchemas(
       client,
       "compare_static_and_observed_endpoints",
     );
-    expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+    expect(schemas.ajv.validate(schemas.canonicalInputSchema, input)).toBe(
+      true,
+    );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { ...input, detail: "wrong" }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        ...input,
+        detail: "wrong",
+      }),
     ).toBe(false);
     const retained = {
       application: {

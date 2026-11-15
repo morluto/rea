@@ -43,12 +43,23 @@ describe("build secret files", () => {
     expect(buildSecretsDirectory({ HOME: "/h" })).toBe(
       "/h/.config/rea/build-secrets",
     );
+    // An absolute XDG_CONFIG_HOME decides the folder without consulting the
+    // host account, which a Unix UID without a passwd entry cannot answer.
+    expect(buildSecretsDirectory({ XDG_CONFIG_HOME: "/cfg" }, "linux")).toBe(
+      "/cfg/rea/build-secrets",
+    );
   });
 
   it("reads a file only its owner can read, without its final line break", async () => {
     const directory = await folder({
       master: { text: `${VALUE}\n`, mode: 0o600 },
       crlf: { text: `${VALUE}\r\n`, mode: 0o400 },
+      // An editor's UTF-8 signature is not part of the secret it saved.
+      bom: { text: `﻿${VALUE}\n`, mode: 0o600 },
+    });
+    expect(await readBuildSecretFile(directory, "bom")).toEqual({
+      ok: true,
+      value: VALUE,
     });
     expect(await readBuildSecretFile(directory, "master")).toEqual({
       ok: true,

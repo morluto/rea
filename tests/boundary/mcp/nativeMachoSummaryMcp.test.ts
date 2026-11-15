@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -168,7 +169,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -180,7 +181,7 @@ mcpTest(
       schemaValidation.assertions,
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, source),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), source),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const view = await advertisedMcpToolSchemas(
@@ -247,7 +248,7 @@ mcpTest(
       },
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, historical),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), historical),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const oldView = await client.callTool(
@@ -330,7 +331,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -350,7 +351,7 @@ mcpTest(
         view: { kind: "macho", facet },
       };
       expect(
-        schemas.ajv.validate(schemas.inputSchema, request),
+        schemas.ajv.validate(schemas.canonicalInputSchema, request),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
       const reply = await client.callTool(

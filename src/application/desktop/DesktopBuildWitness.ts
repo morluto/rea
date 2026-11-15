@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { planOutputTree } from "./DesktopOutputTree.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   parseDesktopTask,
@@ -40,9 +41,7 @@ import {
 } from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
-import { admitNewOrEmptyOutputDirectory } from "./DesktopOutputTree.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
 import {
@@ -536,21 +535,14 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    // Admit the folder before starting the recording: a symlink, a regular
-    // file, or an unwritable folder would only fail at publication, after
-    // every stage ran and the recording ended, with no way to save the
-    // finished witness elsewhere.
+    // Admit the folder by the same rule the record is saved under, so the
+    // seed cannot accept a folder (a symlink, a file, a denied path) that the
+    // save would refuse.
     try {
-      await admitNewOrEmptyOutputDirectory(directory);
+      await planOutputTree(directory, { operation: CHECK, field: "directory" });
     } catch (cause: unknown) {
-      return err(
-        desktopOperationFailure(
-          outputDirectoryAdmissionRefusal(CHECK, "directory", cause),
-          signal,
-          CHECK,
-          "Checking the output folder",
-        ),
-      );
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
     }
     let differs: string | undefined;
     if (this.#bundle !== undefined) {

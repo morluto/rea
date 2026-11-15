@@ -201,8 +201,16 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     const { error } = parseMcpToolError(await call(operation));
     expect(error).toMatchObject({
       code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
       details: {
         stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
         launcher: {
           exit_code: 2,
           stderr: {
@@ -213,7 +221,11 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         },
       },
     });
-    expect(error.message).toContain("Automation");
+    expect(error.remediation.action).toContain("client developer");
+    expect(error.remediation.action).toContain("Terminal");
+    expect(error.remediation.action).toContain(
+      "Retrying from the same unauthorized client will not succeed until authorization changes",
+    );
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",
@@ -227,7 +239,16 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   expect(deniedCli.exitCode).toBe(1);
   expect(deniedCli.json).toMatchObject({
     code: "provider_unavailable",
-    details: { launcher: { exit_code: 2 } },
+    category: "unavailable",
+    retryable: false,
+    details: {
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+      launcher: { exit_code: 2 },
+    },
   });
 
   await writeFile(mode, "bridge");

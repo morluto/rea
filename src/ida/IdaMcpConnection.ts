@@ -8,7 +8,8 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  parseMcpJsonOrText,
+  decodeMcpTextReply,
+  type McpTextReplyKind,
 } from "../providers/McpToolResult.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
@@ -17,9 +18,22 @@ import {
 } from "./IdaDiagnosticRedactor.js";
 import { IdaDiagnosticResourceError } from "./IdaDiagnosticWriter.js";
 import { MIMEType } from "node:util";
-import { ChildProcess } from "node:child_process";
-import { Socket } from "node:net";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
+import {
+  OwnedMcpOutputLimitError,
+  OwnedMcpStdioTransport,
+  type OwnedMcpLauncher,
+} from "../process/OwnedMcpStdioTransport.js";
+import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
+import { findWindowsExecutable } from "../process/WindowsExecutable.js";
+import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import {
+  isWindowsBatchFile,
+  windowsBatchCommand,
+} from "../process/WindowsBatchCommand.js";
 import {
   ProtocolError,
   SdkError,
@@ -27,10 +41,6 @@ import {
   SdkHttpError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  DEFAULT_INHERITED_ENV_VARS,
-  StdioClientTransport,
-} from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
 import {
   idaRegistrationTimeoutGuidance,
@@ -47,7 +57,9 @@ import {
   AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   McpHttpUtf8Error,
@@ -63,6 +75,8 @@ export interface IdaMcpConnection {
     options?: {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
+      /** The tool's declared text reply kind; JSON unless the tool returns plain text. */
+      readonly reply?: McpTextReplyKind | undefined;
     },
   ): Promise<JsonValue>;
   readResource?(
@@ -81,6 +95,16 @@ export interface IdaMcpConnection {
 
 export type IdaMcpConnectionDependencies = Readonly<{
   createDiagnosticRedactor?: typeof createIdaDiagnosticRedactor;
+  /**
+   * Host platform that selects the Windows launch resolution and the
+   * environment-name semantics of the child's environment snapshot.
+   * Composition passes the running host.
+   */
+  platform: NodeJS.Platform;
+  /** Owned process acquisition for a stdio registration. */
+  launcher?: OwnedMcpLauncher;
+  /** Largest stdio JSON-RPC message accepted from the upstream server. */
+  maxStdioMessageBytes?: number;
 }>;
 
 const toolResultSchema = mcpToolResultSchema.extend({
@@ -99,22 +123,94 @@ const toolResultSchema = mcpToolResultSchema.extend({
 });
 
 const IDA_STDIO_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+const IDA_STDERR_TAIL_BYTES = 16_384;
 
-const parseIdaJsonText = (text: string): JsonValue => {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
+/**
+ * Windows creates owned processes from an absolute drive-path executable only,
+ * without appending an extension, and runs `.bat`/`.cmd` launchers only through
+ * cmd.exe. Resolve the registration command against the child's PATH/PATHEXT
+ * and route batch launchers through the shared non-AutoRun cmd.exe invocation.
+ */
+const idaStdioLauncher =
+  (
+    platform: NodeJS.Platform,
+    launch: OwnedMcpLauncher,
+    timeoutMs: number,
+  ): OwnedMcpLauncher =>
+  async (options) => {
+    if (platform !== "win32") return launch(options);
+    const environment = mergeEnvironmentOverrides(
+      options.hostEnvironment ?? {},
+      options.env ?? {},
+      "win32",
+    );
+    // The registration timeout bounds the PATH search, and the owned
+    // transport aborts its signal when it closes, so a lookup that stalls on
+    // an unreachable PATH directory holds neither connect nor shutdown open.
+    const deadline = new ProviderStartupDeadline(timeoutMs, options.signal);
+    const found = await findWindowsExecutable(options.command, environment, {
+      signal: deadline.signal,
+      allowBatch: true,
+    }).finally(() => deadline.dispose());
+    if (!found.ok && found.error.kind === "interrupted")
+      throw deadline.interruption === "timeout"
+        ? new AnalysisTimeoutError("ida_mcp_connect", timeoutMs, {
+            cause: found.error,
+            diagnostics: { phase: "windows_path_lookup" },
+            ...idaRegistrationTimeoutGuidance(timeoutMs, "request"),
+          })
+        : (options.signal?.reason ??
+            new Error("IDA MCP command lookup was interrupted"));
+    if (!found.ok) {
+      const failure = found.error;
+      // An unreadable candidate is not a missing command: keep the path and
+      // filesystem code so a denied install is distinguishable from none.
+      throw new Error(
+        failure.kind === "invalid_extension"
+          ? "Windows PATHEXT must contain filename extensions, not paths"
+          : failure.kind === "inspection"
+            ? `IDA MCP command candidate ${JSON.stringify(failure.path)} could not be inspected (${failure.code ?? "unknown error"})`
+            : `IDA MCP command ${JSON.stringify(options.command)} was not found at its path or on the registration PATH/PATHEXT`,
+        { cause: failure.kind === "inspection" ? failure.cause : failure },
+      );
+    }
+    const command = found.value;
+    // The owned Windows launcher creates processes from drive paths only.
+    if (!/^[a-z]:\\/iu.test(command))
+      throw new Error(
+        `IDA MCP command ${JSON.stringify(command)} is not on a drive path; map its network share to a drive letter or install the server locally`,
+      );
+    if (!isWindowsBatchFile(command)) return launch({ ...options, command });
+    return launch({
+      ...options,
+      ...windowsBatchCommand({
+        environment,
+        batchPath: command,
+        arguments: options.arguments,
+      }),
+      windowsVerbatimArguments: true,
+    });
+  };
+
+const parseIdaTextReply = (
+  text: string,
+  reply: McpTextReplyKind = "json",
+): JsonValue => {
+  const decoded = decodeMcpTextReply(text, reply);
+  if (!decoded.ok)
     throw new AnalysisProtocolError("IDA MCP returned malformed JSON text.");
-  }
-  return jsonValueSchema.parse(value);
+  return decoded.value;
 };
 
-/** Decode Python FastMCP's scalar wrapper without dropping structured dictionaries. */
+/**
+ * Decode Python FastMCP's scalar wrapper without dropping structured
+ * dictionaries. A text block is read as the tool's declared reply kind.
+ */
 export const decodeIdaToolResult = (
   input: unknown,
   protocol?: "native",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
+  reply: McpTextReplyKind = "json",
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -145,7 +241,7 @@ export const decodeIdaToolResult = (
       throw new AnalysisProtocolError(
         "Native IDA MCP omitted its complete JSON text result.",
       );
-    return parseIdaJsonText(text);
+    return parseIdaTextReply(text);
   }
   if (result.structuredContent !== undefined) {
     const value = jsonObjectSchema.parse(result.structuredContent);
@@ -157,7 +253,7 @@ export const decodeIdaToolResult = (
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  return parseMcpJsonOrText(text);
+  return parseIdaTextReply(text, reply);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -415,7 +511,7 @@ const retainedTransportCause = (cause: unknown, message: string): Error => {
 export const createIdaMcpConnection = (
   config: IdaConfiguration,
   environment: Readonly<NodeJS.ProcessEnv>,
-  dependencies: IdaMcpConnectionDependencies = {},
+  dependencies: IdaMcpConnectionDependencies,
 ): IdaMcpConnection => {
   const client = new StructuredContentMcpClient({
     name: "rea-ida-provider",
@@ -464,8 +560,7 @@ export const createIdaMcpConnection = (
       return await request(controller.signal);
     } catch (cause: unknown) {
       if (cause === cancellation)
-        throw new AnalysisCancelledError(operation, {
-          cause: signal.reason,
+        throw cancelledBy(operation, signal, {
           capturedOutput: capturedTransportOutput(),
         });
       throw cause;
@@ -478,12 +573,18 @@ export const createIdaMcpConnection = (
     operation = "ida_mcp_response",
     requestTimeoutMs = config.timeoutMs,
   ): never => {
-    const bufferLimit =
-      cause instanceof Error
-        ? /ReadBuffer exceeded maximum size of (\d+) bytes/u.exec(cause.message)
-        : null;
+    // The owned transport records the exceeded frame limit before it closes
+    // the connection, so the SDK's closed-request error is not the reason.
+    const observed = stdio?.observedFailure();
+    const frameLimit =
+      observed?.kind === "protocol" &&
+      observed.cause instanceof OwnedMcpOutputLimitError
+        ? observed.cause.limitBytes
+        : undefined;
     if (cause instanceof IdaDiagnosticResourceError) throw cause;
     if (cause instanceof McpHttpUtf8Error) throw cause;
+    // The Windows command lookup already classified its own deadline.
+    if (cause instanceof AnalysisTimeoutError) throw cause;
     if (
       httpUtf8Failure !== undefined &&
       cause instanceof SdkError &&
@@ -527,13 +628,27 @@ export const createIdaMcpConnection = (
           config.timeoutMs,
         ),
       });
-    if (bufferLimit !== null)
+    if (frameLimit !== undefined)
       throw new AnalysisResourceConstraintError(
         operation,
         "transport",
-        `Upstream IDA MCP reply exceeded the ${bufferLimit[1]}-byte transport limit; no partial Evidence was returned.`,
-        { max_response_bytes: Number(bufferLimit[1]) },
-        { cause, capturedOutput },
+        `Upstream IDA MCP reply exceeded the ${String(frameLimit)}-byte transport limit; no partial Evidence was returned.`,
+        { max_response_bytes: frameLimit },
+        {
+          cause: observed?.kind === "protocol" ? observed.cause : cause,
+          capturedOutput,
+          // REA bounds each stdio message at a fixed size with no runtime override.
+          ...fixedAllowanceOptions(
+            `The upstream IDA MCP reply allowance of ${String(frameLimit)} bytes`,
+            "bytes",
+            {
+              limit: frameLimit,
+              unit: "bytes",
+              narrowing:
+                "Request a smaller result from IDA, such as a narrower address range or fewer items.",
+            },
+          ),
+        },
       );
     if (stderrBytes === 0) throw failure;
     throw new ProviderAdapterError("ida", "transport", {
@@ -542,28 +657,54 @@ export const createIdaMcpConnection = (
       capturedOutput,
     });
   };
-  const transport: StdioClientTransport | StreamableHTTPClientTransport =
+  // Keep a bounded diagnostic tail for genuine failures; never persist ambient variables.
+  const retainStderr = (chunk: unknown): void => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    stderrBytes += bytes.length;
+    const combined = Buffer.concat([stderr, bytes]);
+    stderr = Buffer.from(
+      combined.subarray(Math.max(0, combined.length - IDA_STDERR_TAIL_BYTES)),
+    );
+  };
+  const transport: OwnedMcpStdioTransport | StreamableHTTPClientTransport =
     "command" in config
-      ? new StdioClientTransport({
-          command: config.command,
-          args: config.args,
-          env: {
-            // The SDK always merges ambient defaults. Its string-only environment
-            // API requires empty values to suppress omitted caller-selected keys.
-            ...Object.fromEntries(
-              DEFAULT_INHERITED_ENV_VARS.map((key) => [key, ""]),
+      ? new OwnedMcpStdioTransport(
+          {
+            command: config.command,
+            arguments: config.args,
+            // Only the selected snapshot reaches the child, never REA's ambient environment.
+            hostEnvironment: snapshotEnvironment(
+              environment,
+              dependencies.platform,
             ),
-            ...Object.fromEntries(
-              Object.entries(snapshotEnvironment(environment)).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined,
-              ),
-            ),
-            IDA_MCP_MAX_WORKERS: "1",
-            ...snapshotEnvironment(config.env),
+            env: {
+              IDA_MCP_MAX_WORKERS: "1",
+              ...snapshotEnvironment(config.env, dependencies.platform),
+            },
+            // Registrations commonly launch interpreter-driven scripts.
+            expectedCommand: null,
           },
-          stderr: "pipe",
-          maxBufferSize: IDA_STDIO_MAX_MESSAGE_BYTES,
-        })
+          {
+            provider: "ida",
+            operation: "ida_mcp_close",
+            label: "IDA MCP",
+            maxFrameBytes:
+              dependencies.maxStdioMessageBytes ?? IDA_STDIO_MAX_MESSAGE_BYTES,
+            // Upstream servers release IDA databases on end of input; keep the
+            // SDK's two-second grace before the owned group is stopped.
+            gracefulInputCloseMs: 2_000,
+            // IDA keeps its own redacted tail; the supervisor retains none.
+            maxDiagnosticBytes: { stdout: 0, stderr: 0 },
+            onStderr: retainStderr,
+            // Cleanup failures carry the same redacted tail as other transport failures.
+            capturedOutput: capturedTransportOutput,
+          },
+          idaStdioLauncher(
+            dependencies.platform,
+            dependencies.launcher ?? spawnOwnedProviderProcess,
+            config.timeoutMs,
+          ),
+        )
       : new StreamableHTTPClientTransport(new URL(config.url), {
           requestInit: { headers: config.headers, redirect: "error" },
           fetch: diagnosticFetch(
@@ -577,15 +718,8 @@ export const createIdaMcpConnection = (
             },
           ),
         });
-  // Keep a bounded diagnostic tail for genuine failures; never persist ambient variables.
-  if (transport instanceof StdioClientTransport)
-    transport.stderr?.on("data", (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      const combined = Buffer.concat([stderr, chunk]);
-      stderr = Buffer.from(
-        combined.subarray(Math.max(0, combined.length - 16_384)),
-      );
-    });
+  const stdio =
+    transport instanceof OwnedMcpStdioTransport ? transport : undefined;
   return {
     async connect() {
       await client
@@ -616,8 +750,9 @@ export const createIdaMcpConnection = (
           if (cause instanceof AnalysisCancelledError) throw cause;
           return transportFailure(cause, name, requestTimeoutMs);
         }),
-        config.protocol,
+        config.protocol === "native" ? "native" : undefined,
         redactor,
+        options?.reply,
       );
     },
     async readResource(uri, options) {
@@ -646,7 +781,11 @@ export const createIdaMcpConnection = (
         const failures: unknown[] = [];
         if (!transportClosed) {
           try {
-            await client.close().catch(transportFailure);
+            // Owned stdio teardown notifies the SDK client itself and reports
+            // incomplete process cleanup as its own ProviderCleanupError.
+            if (stdio === undefined)
+              await client.close().catch(transportFailure);
+            else await stdio.close();
             transportClosed = true;
           } catch (cause: unknown) {
             failures.push(cause);
@@ -682,13 +821,7 @@ export const createIdaMcpConnection = (
       return attempt;
     },
     detach() {
-      if (!(transport instanceof StdioClientTransport)) return;
-      // The SDK exposes only the child's pid, not the handles it holds.
-      const child: unknown = Reflect.get(transport, "_process");
-      if (!(child instanceof ChildProcess)) return;
-      child.unref();
-      for (const stream of [child.stdin, child.stdout, child.stderr])
-        if (stream instanceof Socket) stream.unref();
+      stdio?.detach();
     },
   };
 };
@@ -717,5 +850,5 @@ const decodeIdaJsonResource = (uri: string, response: unknown): JsonValue => {
         .length(1),
     })
     .parse(response);
-  return parseIdaJsonText(resource.contents[0]!.text);
+  return parseIdaTextReply(resource.contents[0]!.text);
 };

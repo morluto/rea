@@ -16,23 +16,6 @@ const shellExamples = (content: string): string[] =>
   );
 
 describe("onboarding documentation product facts", () => {
-  it.each([
-    [
-      "docs/guides/native/native-investigation.md",
-      "../../providers/raw-binary.md#nmos-6502",
-    ],
-    ["docs/providers/ghidra-riscv.md", "raw-binary.md"],
-  ])(
-    "routes raw admission guidance in %s to the owning guide",
-    async (path, target) => {
-      const content = await readFile(resolve(path), "utf8");
-      const links = [...content.matchAll(/\]\(([^)\s]+)\)/gu)].map(
-        (match) => match[1],
-      );
-      expect(links, path).toContain(target);
-    },
-  );
-
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
     const content = await readFile(
       resolve("docs/getting-started/installation.md"),

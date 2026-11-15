@@ -312,6 +312,7 @@ export class PyInstallerPyzStore {
       throw new ArtifactReaderFailure(
         "integrity",
         "Private PYZ image changed after parsing",
+        { integrityCheck: "container-identity" },
       );
   }
 }

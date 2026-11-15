@@ -37,6 +37,11 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -111,6 +116,7 @@ type TestMode =
         | "malformed"
         | "wrong-job-failure"
         | "resource-failure"
+        | "work-refusal"
         | "final-frame-held-pipe"
         | "zero-exit-held-pipe"
         | "heap-exit";
@@ -129,6 +135,7 @@ const protocolWorkerProgram = (
     | "malformed"
     | "wrong-job-failure"
     | "resource-failure"
+    | "work-refusal"
     | "final-frame-held-pipe"
     | "zero-exit-held-pipe"
     | "heap-exit",
@@ -166,19 +173,22 @@ const protocolWorkerProgram = (
                       : failure === "resource-failure"
                         ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
                  setInterval(() => {}, 1_000);`
-                        : failure === "final-frame-held-pipe"
-                          ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
+                        : failure === "work-refusal"
+                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: ${JSON.stringify({ [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE })}, message: "work allowance" });
+                 setInterval(() => {}, 1_000);`
+                          : failure === "final-frame-held-pipe"
+                            ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
                const program = "setTimeout(() => { process.stdout.write(" + JSON.stringify(frame + "\\n") + "); setInterval(() => {}, 1000); }, 100);";
                spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
                process.exit(7);`
-                          : failure === "late-failure"
-                            ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
+                            : failure === "late-failure"
+                              ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
            setInterval(() => {}, 1_000);`
-                            : failure === "wrong-id"
-                              ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
-                              : failure === "oversized-control"
-                                ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
-                                : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
+                              : failure === "wrong-id"
+                                ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
+                                : failure === "oversized-control"
+                                  ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
+                                  : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
     }
   });
 `;
@@ -378,7 +388,7 @@ it("retains ownership-helper cleanup until worker close retries it", async () =>
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -419,7 +429,7 @@ it("retains failed helper cleanup without caller cancellation", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const physical = new DarwinProcessOwnershipInspectionError(
@@ -819,6 +829,34 @@ it("does not let a failure frame for another job replace cancellation", async ()
     expect(error).toBeInstanceOf(AnalysisCancelledError);
     expect(error.cause).toBe(reason);
     expect(error.secondaryFailures).toHaveLength(0);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("names the fixed work allowance a worker refusal reports", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({ kind: "protocol", failure: "work-refusal" }),
+  );
+  try {
+    const error = failureOf(
+      await worker.analyze(makeScript("fetch('/work');"), 5_000),
+    );
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a worker resource constraint failure");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      fixedAllowance: {
+        kind: "work",
+        limit: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+      },
+    });
+    expect(error.reportedLimits).toMatchObject({
+      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]:
+        JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+    });
   } finally {
     await worker.close();
   }
