@@ -911,6 +911,30 @@ describe("execFileOutput cancellation provenance", () => {
       expect(failure.cause).toBe(reason);
     },
   );
+  it.skipIf(process.platform === "win32").each([null, "caller stopped"])(
+    "keeps a successful exit when the caller aborts with %s while a descendant holds the pipes",
+    async (reason) => {
+      const directory = await createTestTempDirectory("rea-exec-late-abort-");
+      const exited = join(directory, "exited");
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        'const fs = require("node:fs");',
+        'spawn(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });',
+        'process.stdout.write("done");',
+        `process.on("exit", () => fs.writeFileSync(${JSON.stringify(exited)}, ""));`,
+      ].join("\n");
+      const controller = new AbortController();
+      const execution = execFileOutput(process.execPath, ["-e", script], {
+        signal: controller.signal,
+      });
+      expect(await waitForFile(exited)).toBe(true);
+      // The direct child has exited; its descendant still holds the pipes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      controller.abort(reason);
+      const result = await execution;
+      expect(result.stdout).toBe("done");
+    },
+  );
   it("keeps a completed command failure when its consumer later aborts", async () => {
     const controller = new AbortController();
     const failure: unknown = await execFileOutput(

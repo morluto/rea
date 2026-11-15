@@ -242,7 +242,9 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              isAbortOf(error, signal)
+              // A successful callback's null is not a rejection, even when
+              // the caller's abort reason is also null.
+              error !== null && isAbortOf(error, signal)
                 ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
