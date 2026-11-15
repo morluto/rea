@@ -28,7 +28,7 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -227,14 +227,7 @@ describe("skill regular-file cleanup ownership", () => {
     await mkdir(dirname(manifest), { recursive: true });
     await writeFile(manifest, "stale managed skill\n");
     const resources = new ArtifactResourceScope();
-    let beginRead!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      beginRead = resolve;
-    });
-    let unblockRead!: () => void;
-    const readGate = new Promise<void>((resolve) => {
-      unblockRead = resolve;
-    });
+    const skillRead = phaseGate();
     let heldRead = false;
     openMock.mockImplementation(async (...args) => {
       const handle = await actualFs.open(...args);
@@ -242,8 +235,7 @@ describe("skill regular-file cleanup ownership", () => {
       heldRead = true;
       const nativeRead = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        beginRead();
-        await readGate;
+        await skillRead.hold();
         return nativeRead(...readArgs);
       });
       return handle;
@@ -252,19 +244,19 @@ describe("skill regular-file cleanup ownership", () => {
     const reading = readSkillFile(manifest, resources);
     let closing: Promise<void> | undefined;
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(readStarted, reading, "skill read");
+      await skillRead.reached(reading, "skill read");
       let closed = false;
       closing = resources.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
       expect(closed).toBe(false);
-      unblockRead();
+      skillRead.release();
       expect(await reading).toBe("stale managed skill\n");
       await closing;
       expect(closed).toBe(true);
     }, [
-      unblockRead,
+      skillRead.release,
       async () => {
         await reading;
       },
