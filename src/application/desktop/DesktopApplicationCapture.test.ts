@@ -97,8 +97,6 @@ const fixture = async () => {
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
-      // Bound failed child startup after the caller releases the fixture barrier.
-      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; touch "${join(root, "children-not-ready")}"; exit 97; }`,
       "while :; do sleep 0.1; done",
     ].join("\n"),
   );
@@ -161,6 +159,8 @@ const installProcessFamily = async (root: string, path: string) => {
       `"${child}" "${join(root, "group-term")}" "${readyFiles[0]}" "${start}" &`,
       `setsid "${child}" "${join(root, "setsid-term")}" "${readyFiles[1]}" "${start}" &`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
+      // Bound failed child startup after the caller releases the fixture barrier.
+      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; touch "${join(root, "children-not-ready")}"; exit 97; }`,
       loop,
     ].join("\n"),
   );
