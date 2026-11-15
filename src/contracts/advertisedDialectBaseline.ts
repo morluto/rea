@@ -3,6 +3,11 @@
 // definition the server can list (all catalog and output profiles). Counts may
 // only shrink: the catalog test requires an exact match, so removing a
 // construct lowers its count here, and any key not listed is enforced at zero.
+// The one exception is a fix that restores a contract declaration the
+// presentation had lost (for example a borrowed Evidence union advertised as an
+// unconstrained value): its constructs count again, and the PR names the
+// restored declaration. A new contract or presentation construct never raises
+// a count.
 
 // Every advertised pattern, input and output, is enforced at zero: the
 // presentation re-emits each one in the portable grammar.
