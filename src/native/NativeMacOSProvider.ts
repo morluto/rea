@@ -343,7 +343,7 @@ class NativeMacOSClient implements AnalysisClient {
               signal: options?.signal,
               objcClassImportAddresses: input.data.objc_class_import_addresses,
               objcClassImportAddressesComplete:
-                input.data.objc_class_import_addresses_complete ?? true,
+                input.data.objc_class_import_addresses_complete,
               maxInputBytes: input.data.max_input_bytes,
             },
           ),

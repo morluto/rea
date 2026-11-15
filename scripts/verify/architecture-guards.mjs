@@ -61,6 +61,14 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
+
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
   "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
