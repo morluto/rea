@@ -703,7 +703,7 @@ describe("layer baseline ratchet", () => {
 
   /**
    * A tree with one import of another provider folder, one composition import
-   * past a provider entry (beside an import of the entry itself) and one
+   * past ghidra's entry files (beside an import of a declared one) and one
    * import of a toolkit file past src/resources/index.ts.
    */
   const providerTree = async (baseline: object) => {
@@ -713,9 +713,9 @@ describe("layer baseline ratchet", () => {
       "src/gpu/Probe.ts":
         'import type { R } from "../native/Reader.js";\nexport type G = R;\n',
       "src/ghidra/Doctor.ts": "export type D = 1;\n",
-      "src/ghidra/index.ts": 'export type { D } from "./Doctor.js";\n',
+      "src/ghidra/GhidraDoctor.ts": 'export type { D } from "./Doctor.js";\n',
       "src/composition/ghidra.ts":
-        'import type { D } from "../ghidra/Doctor.js";\nimport type { D as E } from "../ghidra/index.js";\nexport type C = D | E;\n',
+        'import type { D } from "../ghidra/Doctor.js";\nimport type { D as E } from "../ghidra/GhidraDoctor.js";\nexport type C = D | E;\n',
       "src/resources/Scope.ts": "export type S = 1;\n",
       "src/resources/index.ts": 'export type { S } from "./Scope.js";\n',
       "src/process/Lease.ts":

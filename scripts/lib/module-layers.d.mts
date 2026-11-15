@@ -17,16 +17,20 @@ export function sourceUnit(path: string): string | undefined;
 /** Whether a unit is a provider folder. */
 export function isProviderUnit(unit: string): boolean;
 
-/** Units every other unit reaches only through src/<unit>/index.ts. */
-export declare const ENTRY_UNITS: readonly string[];
+/**
+ * Declared entry files per unit, relative to src/<unit>/: src/resources is
+ * reached only through them from every unit, a provider folder from
+ * application, composition and the CLI/MCP adapters.
+ */
+export declare const ENTRY_FILES: Readonly<Record<string, readonly string[]>>;
 
 export interface ProviderBoundaryFacts {
   /** Imports from one provider folder into another, per unit pair. */
   readonly crossProvider: Readonly<Record<string, number>>;
   /**
-   * Imports past an entry file: application, composition and adapter imports
-   * of a provider file other than its index.ts, and any outside import of an
-   * ENTRY_UNITS file other than its index.ts.
+   * Imports past the entry files: application, composition and adapter
+   * imports of a provider file not in its ENTRY_FILES, and any outside import
+   * of another non-provider unit's file not in its ENTRY_FILES.
    */
   readonly entry: Readonly<Record<string, number>>;
 }

@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
+  ENTRY_FILES,
   UNIT_LAYERS,
   compareLayerBaseline,
   layerGraphFacts,
@@ -131,24 +133,35 @@ describe("top-level module layers", () => {
 });
 
 describe("provider boundaries", () => {
-  it("counts cross-provider imports and imports past a provider entry", () => {
+  it("counts cross-provider imports and imports past a provider's entry files", () => {
     expect(
       providerBoundaryFacts([
         edge("src/gpu/A.ts", "src/native/B.js"),
-        edge("src/gpu/A.ts", "src/native/index.js"),
+        edge("src/gpu/A.ts", "src/native/NativeMacOSProvider.js"),
         edge("src/gpu/A.ts", "src/providers/Core.js"),
         edge("src/gpu/A.ts", "src/resources/index.js"),
         edge("src/gpu/A.ts", "src/gpu/C.js"),
         edge("src/composition/D.ts", "src/ghidra/E.js"),
+        edge("src/composition/D.ts", "src/ghidra/GhidraDoctor.js"),
         edge("src/composition/D.ts", "src/ghidra/index.js"),
+        edge("src/application/G.ts", "src/ghidra/GhidraProvider.js"),
         edge("src/server/F.ts", "src/ghidra/E.js"),
         edge("src/providers/Core.ts", "src/ghidra/E.js"),
         edge("src/composition/D.test.ts", "src/ghidra/E.js"),
       ]),
     ).toEqual({
       crossProvider: { "gpu -> native": 2 },
-      entry: { "composition -> ghidra": 1, "server -> ghidra": 1 },
+      entry: { "composition -> ghidra": 2, "server -> ghidra": 1 },
     });
+  });
+
+  it("names only existing files as entry files", () => {
+    const missing = Object.entries(ENTRY_FILES).flatMap(([unit, files]) =>
+      files
+        .map((file) => `src/${unit}/${file}`)
+        .filter((path) => !existsSync(path)),
+    );
+    expect(missing).toEqual([]);
   });
 
   it("counts every outside import of a toolkit file past src/resources/index.ts", () => {

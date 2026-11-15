@@ -25,8 +25,12 @@ acquiring targets; optional adapter failures must preserve successful peers. Run
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 It also checks each top-level `src/` unit against its layer in
 [`scripts/lib/module-layers.mjs`](scripts/lib/module-layers.mjs) (a new
-directory must declare one) and against the counted outward and mutual imports
-in `scripts/lib/module-layers.baseline.json`. The baseline may only shrink: a
+directory must declare one) and against the counted outward, mutual,
+cross-provider and past-entry imports in
+`scripts/lib/module-layers.baseline.json`. Application, composition and the
+adapters import a provider through the entry files it declares in that table
+([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
+widens the provider's public surface. The baseline may only shrink: a
 change that removes such imports lowers it with
 `node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
