@@ -24,7 +24,6 @@ import {
   artifactReadCancelledBy,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
@@ -53,6 +52,7 @@ import {
 import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
 import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
 import { readPyInstallerBytes } from "./pyinstaller/PyInstallerBytes.js";
+import { abortIfNeeded } from "../resources/index.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
 const MAX_RETAINED_ENTRY_BYTES = 64 * 1024 * 1024;

@@ -10,7 +10,7 @@ import {
 } from "../../../resources/index.js";
 import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
 import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
-import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
+import { hashStableRootArtifactHandle } from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,

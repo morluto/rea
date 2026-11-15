@@ -48,7 +48,7 @@ import type { HashResult } from "../ArtifactHash.js";
 import {
   hashStableRootArtifact,
   hashStableRootArtifactHandle,
-} from "./hashStableRootArtifact.js";
+} from "../../resources/index.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,

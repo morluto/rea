@@ -25,7 +25,7 @@ import {
 } from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
+import { targetDigestChangedFailure } from "../../resources/index.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
 import {
   DylibFileAccess,

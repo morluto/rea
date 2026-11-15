@@ -11,7 +11,7 @@ import {
   ArtifactReaderFailure,
 } from "../resources/index.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import { withArtifactTargetIdentity } from "../resources/index.js";
 import {
   invariantViolation,
   InternalInvariantError,

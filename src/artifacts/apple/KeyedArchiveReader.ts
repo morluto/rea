@@ -1,5 +1,5 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
+import { targetDigestChangedFailure } from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,

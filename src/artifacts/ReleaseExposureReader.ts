@@ -55,7 +55,7 @@ import {
   hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
-} from "./inventory/hashStableRootArtifact.js";
+} from "../resources/index.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

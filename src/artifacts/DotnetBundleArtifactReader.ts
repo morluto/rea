@@ -19,13 +19,13 @@ import {
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { readArtifactFileChunks } from "../resources/index.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,
   type DotnetBundle,
   type DotnetBundleFile,
 } from "./dotnet/DotnetBundle.js";
+import { abortIfNeeded } from "../resources/index.js";
 
 /** Stable, range-streamed .NET bundle reader; extraction paths remain owned by SafeOutputTree. */
 export class DotnetBundleArtifactReader implements ArtifactReader {

@@ -39,10 +39,10 @@ import {
   readSliceCommandTable,
   type ReadAt,
 } from "../apple/MachoLoadCommandReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
+import { abortIfNeeded } from "../../resources/index.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;

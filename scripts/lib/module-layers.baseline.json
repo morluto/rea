@@ -24,7 +24,7 @@
     "artifacts -> dotnet": 3,
     "artifacts -> javascript": 1,
     "artifacts -> native": 2,
-    "browser -> artifacts": 6,
+    "browser -> artifacts": 5,
     "browser -> electron": 5,
     "browser -> javascript": 1,
     "captures -> pcap": 2,
@@ -41,7 +41,7 @@
     "kuna -> artifacts": 1,
     "kuna -> native": 2,
     "model -> artifacts": 1,
-    "native -> artifacts": 13,
+    "native -> artifacts": 10,
     "rust -> native": 2
   },
   "entry": {

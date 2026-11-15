@@ -25,7 +25,7 @@ import {
   streamChunkToBuffer,
 } from "../resources/index.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { abortIfNeeded } from "../resources/index.js";
 
 export const INES_LIMITATION =
   "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";

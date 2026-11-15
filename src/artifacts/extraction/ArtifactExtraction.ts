@@ -10,7 +10,8 @@ import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
-} from "../inventory/hashStableRootArtifact.js";
+  abortIfNeeded,
+} from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
@@ -45,7 +46,6 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
