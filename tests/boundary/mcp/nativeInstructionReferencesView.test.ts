@@ -169,11 +169,13 @@ it.each(["compact"] as const)(
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
+      const listed = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (advertised === undefined)
+      if (listed === undefined)
         throw new Error("Missing advertised view schema");
+      // Every call, including continuation pages, checks the whole reply.
+      const advertised = withCanonicalOutputSchema(listed);
       expect(
         validation.assertions.validateSchema(
           canonicalOutputSchema(advertised.name),
@@ -243,7 +245,7 @@ it.each(["compact"] as const)(
               },
             },
           },
-          { toolDefinition: withCanonicalOutputSchema(advertised) },
+          { toolDefinition: advertised },
         );
         expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
         const page = analysisViewResultSchema.parse(
