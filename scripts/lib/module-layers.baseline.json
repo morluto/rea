@@ -8,17 +8,13 @@
     "main <-> server"
   ],
   "crossProvider": {
-    "android -> artifacts": 2,
     "apktool -> artifacts": 2,
-    "browser -> artifacts": 2,
     "captures -> pcap": 2,
     "desktop -> electron": 1,
-    "flutter -> artifacts": 1,
     "gpu -> artifacts": 2,
     "model -> artifacts": 1
   },
   "entry": {
-    "application -> artifacts": 1,
     "application -> browser": 2,
     "application -> desktop": 41,
     "application -> frida": 2,

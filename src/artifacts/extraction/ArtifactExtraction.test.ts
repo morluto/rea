@@ -9,11 +9,11 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { openRegularFile } from "../../filesystem/RegularFile.js";
-import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
 import { extractArtifact } from "./ArtifactExtraction.js";
+import { ZipArtifactReader } from "../../resources/index.js";
 
 const zipBytes = async (content?: string): Promise<Buffer> => {
   const writer = new ZipWriter(new Uint8ArrayWriter());

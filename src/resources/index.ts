@@ -127,3 +127,9 @@ export {
   targetDigestChangedFailure,
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
+export {
+  ZIP_READER_OPTIONS,
+  ZipArtifactReader,
+  decodeZipEntryText,
+  zipEntryPath,
+} from "./ZipArtifactReader.js";

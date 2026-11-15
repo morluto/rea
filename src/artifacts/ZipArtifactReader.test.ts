@@ -28,11 +28,13 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "../resources/index.js";
+import {
+  translateArtifactFailure,
+  ZipArtifactReader,
+} from "../resources/index.js";
 
 import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
 import { waitFor } from "../../tests/support/testWait.js";
