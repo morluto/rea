@@ -328,7 +328,7 @@ export const opaqueCodeMayReachBindingReference = (
  * direct eval that may reach the object it references (an escape of its whole
  * value). Timing and path proofs stay with the caller's effect report.
  */
-export function* semanticOpaqueReferenceEffects(
+function* semanticOpaqueReferenceEffects(
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<{
