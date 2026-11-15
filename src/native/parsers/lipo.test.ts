@@ -41,7 +41,14 @@ it("retains native command capture when shared lipo parsing rejects records", ()
     ok: false,
     error: {
       operation: "inspect_macho",
-      cause: new TypeError("lipo output contained no architectures"),
+      cause: expect.objectContaining({
+        _tag: "ParseFailureError",
+        failure: {
+          kind: "malformed",
+          format: "lipo-output",
+          detail: "lipo output contained no architectures",
+        },
+      }),
       capturedOutput: {
         stdout: capture.stdout,
         stderr: capture.stderr,

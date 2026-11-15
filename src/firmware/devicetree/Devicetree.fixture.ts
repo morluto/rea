@@ -2,6 +2,8 @@
 export interface FixtureNode {
   name: string;
   properties?: Record<string, Buffer>;
+  /** Written after `properties`, in order, so a name may repeat. */
+  repeatedProperties?: readonly (readonly [string, Buffer])[];
   children?: FixtureNode[];
 }
 export const cells = (...values: number[]): Buffer => {
@@ -49,7 +51,10 @@ export const devicetreeFixture = (
     Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)]);
   const walk = (node: FixtureNode) => {
     structure.push(cells(1), padded(dtString(node.name)));
-    for (const [name, value] of Object.entries(node.properties ?? {})) {
+    for (const [name, value] of [
+      ...Object.entries(node.properties ?? {}),
+      ...(node.repeatedProperties ?? []),
+    ]) {
       let offset = names.get(name);
       if (offset === undefined) {
         offset = stringBytes;

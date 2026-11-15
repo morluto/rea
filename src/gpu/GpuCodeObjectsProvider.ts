@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
@@ -18,11 +19,11 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -35,10 +36,7 @@ import {
   artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,
@@ -87,7 +85,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           "capacity",
           "One GPU inspection is already active",
           { concurrent_inspections: 1 },
-          { retryable: true },
+          { retryable: true, measuredExhaustion: true },
         ),
       );
     this.#busy = true;
@@ -108,6 +106,13 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // bytes are an unsupported target, as for every other format parser.
+      const formatFailure = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        primary,
+      );
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
@@ -126,38 +131,24 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             remediationAction: `${primary.message} This release has no runtime override for that GPU byte allowance. The object allowance is ${String(GPU_OBJECT_BYTES)} bytes and the report allowance is ${String(GPU_REPORT_BYTES)} bytes. Additional host memory does not raise them. Repeating the unchanged request fails the same way.`,
           },
         );
-      else if (primary instanceof BinaryFormatFailure) {
-        error =
-          primary.kind === "unsupported"
-            ? new AnalysisUnsupportedTargetError(
-                OPERATION,
-                input.path,
-                primary.message,
-                { cause },
-              )
-            : new BinaryTargetError(input.path, primary.message, {
-                cause,
-                constraint: "file_format_rejected",
-              });
-      } else if (
+      else if (formatFailure !== undefined) error = formatFailure;
+      else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&
@@ -285,7 +276,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected GPU path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -294,6 +285,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "GPU source changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const leaves = inventory.objects.filter(
       (row) =>

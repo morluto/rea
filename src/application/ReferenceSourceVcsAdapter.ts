@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
 import { join } from "node:path";
 import {
@@ -282,5 +283,3 @@ const errorCode = (cause: unknown): string | undefined =>
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

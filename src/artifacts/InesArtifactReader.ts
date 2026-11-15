@@ -17,9 +17,10 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
@@ -43,7 +44,10 @@ export class InesArtifactReader implements ArtifactReader {
     private readonly ownedSource?: OwnedFileHandle,
   ) {}
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     abortIfNeeded(signal);
     await this.#verifySource(signal);
     const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
@@ -75,21 +79,29 @@ export class InesArtifactReader implements ArtifactReader {
       yield entry;
     }
     this.#assertOpen(signal);
+    // The regions tile the file: header, trainer, units and any trailing bytes.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     abortIfNeeded(signal);
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "iNES region does not match this reader's inventory",
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "iNES region does not match this reader's inventory",
+    );
     await this.#verifySource(signal);
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
-      throw new ArtifactReaderFailure("integrity", "Invalid iNES region range");
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Invalid iNES region range",
+        {
+          integrityCheck: "layout-consistency",
+        },
+      );
     const stream = readArtifactFileChunks(this.source.handle, {
       start: offset,
       end: offset + size - 1,
@@ -110,6 +122,7 @@ export class InesArtifactReader implements ArtifactReader {
             throw new ArtifactReaderFailure(
               "integrity",
               "Truncated iNES region",
+              { integrityCheck: "read-coverage" },
             );
           await verify();
         } catch (cause: unknown) {
@@ -132,7 +145,13 @@ export class InesArtifactReader implements ArtifactReader {
     abortIfNeeded(signal);
     const layout = this.#layout;
     if (layout === undefined || this.#entries.size !== layout.regions.length)
-      throw new ArtifactReaderFailure("integrity", "Incomplete iNES inventory");
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Incomplete iNES inventory",
+        {
+          integrityCheck: "reconstruction",
+        },
+      );
     await this.#verifySource(signal);
     if (
       observed.region_order.length !== layout.regions.length ||
@@ -145,6 +164,7 @@ export class InesArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "iNES reconstruction differs from the source",
+        { integrityCheck: "reconstruction" },
       );
     return {
       header: layout.header,
@@ -180,7 +200,7 @@ export class InesArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES source changed during reading",
-          { cause: cause.cause ?? cause },
+          { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
         );
       throw artifactOperationCause(cause);
     }

@@ -16,9 +16,10 @@ import {
   nativeUiResultSchema,
 } from "../domain/native/nativeUiObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -278,7 +279,7 @@ const observeWithHelper = async (
           ? ((signal.aborted && cause.cause === signal.reason
               ? interruption.error(operation)
               : undefined) ??
-              new AnalysisCancelledError(operation, { cause: cause.cause }))
+              cancelledBy(operation, carriedReason(cause.cause)))
           : new ProviderAdapterError("native-macos", operation, {
               cause,
               diagnostics: {

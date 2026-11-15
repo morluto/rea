@@ -21,7 +21,7 @@ import {
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -120,11 +120,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       );
       await this.#source.readSelectedPath(signal);
     });
-    if (this.#header?.vfs_listing === "unsupported")
-      options?.onCoverage?.({
-        status: "unknown",
-        limitations: [UNLISTED_VFS_LIMITATION],
-      });
+    options?.onCoverage?.(
+      this.#header?.vfs_listing === "unsupported"
+        ? { status: "unknown", limitations: [UNLISTED_VFS_LIMITATION] }
+        : { status: "complete", limitations: [] },
+    );
     let index = 0;
     for (const entry of this.#entries.values()) {
       if (index++ % 256 === 0) await setImmediate();
@@ -138,11 +138,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Deno compile entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "Deno compile entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.readSelectedPath(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)

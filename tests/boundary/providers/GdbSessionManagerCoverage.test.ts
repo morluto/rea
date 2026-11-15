@@ -33,8 +33,11 @@ import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOp
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
+  answerFakeGdbStartup,
   createGdbFixtureOwner,
+  fakeGdbVersionStream,
   expectGdbSessionStarted,
+  fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
@@ -337,7 +340,10 @@ const createFakeSpawner = (
       child.stdin?.on("data", (chunk: string | Buffer) => {
         for (const line of String(chunk).split("\n")) {
           const match = /^(\d+)(.*)$/u.exec(line);
-          if (match !== null) respond(child, match[1] ?? "", match[2] ?? "");
+          if (match === null) continue;
+          const [, token = "", command = ""] = match;
+          if (!answerFakeGdbStartup(child.stdout, token, command))
+            respond(child, token, command);
         }
       });
       if (options.exitAfterPrompt) queueMicrotask(() => child.exit(0, null));
@@ -986,7 +992,13 @@ it("reports invalid UTF-8 in retained GDB MI status", async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   expect(manager.status(started.value.session_id)).toMatchObject({
-    recent_mi_records: ["(gdb)", "1^done", "�"],
+    recent_mi_records: [
+      "(gdb)",
+      fakeGdbVersionStream.trimEnd(),
+      "1^done",
+      "2^done",
+      "�",
+    ],
     mi_invalid_utf8: true,
   });
 });
@@ -1663,7 +1675,10 @@ const startWithVerifiedInferiorTty = async (
 const createProvider = async (body: string): Promise<string> => {
   directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));
   const provider = join(directory, `fake-gdb-${managers.length}.mjs`);
-  await writeFile(provider, `#!${process.execPath}\n${body}`);
+  await writeFile(
+    provider,
+    `#!${process.execPath}\n${fakeGdbStartupPreamble}\n${body}`,
+  );
   await chmod(provider, 0o700);
   return provider;
 };
@@ -3360,6 +3375,38 @@ it("retains caller cancellation and cleanup authority after active-command stop 
   expect(stopCalls).toBe(2);
 });
 
+it("keeps a cancelled startup a cancellation when a cleanup retry reports it again", async () => {
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const fake = createFakeSpawner(undefined, {
+    deferPrompt: true,
+    afterPrompt: () => controller.abort(reason),
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "stop unconfirmed",
+    }),
+  });
+
+  const started = await manager.start(controller.signal);
+  expect(started).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cleanupIncomplete: true },
+  });
+
+  const retried = await manager.retryCleanupFailures();
+  expect(retried).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "start_gdb_session",
+      cause: reason,
+      cleanup: { reason: "stop unconfirmed" },
+    },
+  });
+});
+
 it.each(["tagged", "unexpected"] as const)(
   "retains %s stop failures while closing and resolves them after retry",
   async (failureKind) => {
@@ -3654,7 +3701,7 @@ process.stdin.on('data', (chunk) => {
 
   const retained = manager
     .status(started.value.session_id)
-    ?.recent_mi_records.find((record) => record.startsWith("~"));
+    ?.recent_mi_records.find((record) => record.startsWith("~💩"));
   expect(retained).toBeDefined();
   if (retained !== undefined) {
     expect(Buffer.byteLength(retained, "utf8")).toBeLessThanOrEqual(64 * 1024);

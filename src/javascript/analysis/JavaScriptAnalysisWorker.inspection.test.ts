@@ -13,6 +13,7 @@ import {
   ProcessOwnershipIdentityBatchFailure,
 } from "../../process/ProcessInspectionCancellation.js";
 import * as ownership from "../../process/ProcessOwnershipObservation.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const text = "export const observed = 1;";
 const file: JavaScriptArtifactFile = {
@@ -101,7 +102,7 @@ it("retries the exact failed inspection owner before releasing its error", async
   const owner = {
     close: vi.fn(async () => {
       if (denied) throw cleanup;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -236,16 +237,20 @@ it.each(["cancelled", "physical"] as const)(
       const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
       if (result.ok) throw new Error("Expected startup failure");
       const error = primaryAnalysisError(result.error.error);
-      if (origin === "cancelled")
-        expect(error._tag).toBe("AnalysisTimeoutError");
+      const deadline = {
+        _tag: "AnalysisTimeoutError",
+        limit: expect.objectContaining({
+          setting: "javascript.analysis_timeout_ms",
+          effective_value: 20,
+        }),
+      };
+      if (origin === "cancelled") expect(error).toMatchObject(deadline);
       else {
         expect(error.userCategory).not.toBe("cancelled");
         expect(error.cause).toBe(physical);
-        expect(
-          error.secondaryFailures.some(
-            (failure) => failure._tag === "AnalysisTimeoutError",
-          ),
-        ).toBe(true);
+        expect(error.secondaryFailures).toContainEqual(
+          expect.objectContaining(deadline),
+        );
       }
       expect(launcher).toHaveBeenCalledOnce();
     } finally {
@@ -283,7 +288,7 @@ it("joins a late inspection cleanup handoff before worker close completes", asyn
     close: vi.fn(async () => {
       acknowledgeRetry();
       await release;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi

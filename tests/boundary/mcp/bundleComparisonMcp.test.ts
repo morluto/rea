@@ -319,10 +319,8 @@ describe("bundle comparison MCP integration", () => {
         error: {
           code: "invalid_request",
           category: "invalid_input",
-          details: { path: recordPath },
-          message: expect.stringContaining(
-            `this JSON is one Evidence record (${record.evidence_id})`,
-          ),
+          details: { path: recordPath, detected_kind: "evidence-record" },
+          message: expect.stringContaining(record.evidence_id),
         },
       });
     } finally {

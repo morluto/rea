@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -14,6 +15,7 @@ import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPa
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const observation: FileOffsetPartialObservation = {
   operation: "address_to_file_offset",
@@ -33,7 +35,7 @@ it.each([false, true])(
       { reason: "descriptor close failed" },
       { operation: "provider_mapping", completedObservation: observation },
     );
-    if (resolved) source.resolveCleanup();
+    if (resolved) releaseOwnedCleanup(source);
 
     const attributed = analysisClientFailureForOperation(
       source,
@@ -49,7 +51,7 @@ it.each([false, true])(
     expect(attributed.cleanupResources).toEqual(["snapshot descriptor"]);
 
     // Attribution must keep the source owner's later cleanup confirmation live.
-    source.resolveCleanup();
+    releaseOwnedCleanup(source);
     expect(attributed.cleanupIncomplete).toBe(false);
     if (!resolved) expect(attributed.cleanupResources).toEqual([]);
     expect(attributed.completedObservation).toBe(observation);
@@ -211,4 +213,21 @@ it.each([
   expect(projectAnalysisError(again).details?.secondary_failures).toHaveLength(
     2,
   );
+});
+
+it("keeps the named integrity check when an artifact change changes operation", () => {
+  const attributed = analysisClientFailureForOperation(
+    new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target.app",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    ),
+    "ghidra",
+    "binary_overview",
+  );
+  expect(projectAnalysisError(attributed)).toMatchObject({
+    code: "artifact_changed",
+    details: { integrity_check: "member-identity" },
+  });
 });

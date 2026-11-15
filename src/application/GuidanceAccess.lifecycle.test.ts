@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  controlledCleanup,
+  phaseGate,
+  settledCause,
+} from "../../tests/support/lifecycleHarness.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { RetainedRegularFileCleanupFailure } from "./RegularFileRead.js";
@@ -9,13 +13,6 @@ import {
   searchGuidanceWithReader,
 } from "./GuidanceAccess.js";
 
-const gate = () => {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 const content = (path: string) =>
   path === MANAGED_SKILL_FILES[0] ? "# needle\nInstructions\n" : "# Other\n";
 
@@ -24,16 +21,12 @@ it.each(["search", "read"] as const)(
   async (action) => {
     const resources = new ArtifactResourceScope();
 
-    const reached = gate();
-    const resume = gate();
+    const secondRead = phaseGate();
     const paths: string[] = [];
     const reader = (path: string, admitted = resources) =>
       admitted.run(async () => {
         paths.push(path);
-        if (path === MANAGED_SKILL_FILES[1]) {
-          reached.release();
-          await resume.promise;
-        }
+        if (path === MANAGED_SKILL_FILES[1]) await secondRead.hold();
         return content(path);
       });
     const launched: Promise<unknown>[] = [];
@@ -54,11 +47,7 @@ it.each(["search", "read"] as const)(
               resources,
             );
       launched.push(operation);
-      await awaitAcknowledgement(
-        reached.promise,
-        operation,
-        "second guidance read",
-      );
+      await secondRead.reached(operation, "second guidance read");
       let closed = false;
       const closing = resources.close().then(() => {
         closed = true;
@@ -66,7 +55,7 @@ it.each(["search", "read"] as const)(
       launched.push(closing);
       await Promise.resolve();
       expect(closed).toBe(false);
-      resume.release();
+      secondRead.release();
       expect(await operation).toMatchObject({
         ok: true,
         value: { status: action === "search" ? "matches" : "section" },
@@ -76,7 +65,7 @@ it.each(["search", "read"] as const)(
       expect(closed).toBe(true);
       expect(resources.hasPending).toBe(false);
     } finally {
-      resume.release();
+      secondRead.release();
       await Promise.allSettled(launched);
       await resources.close();
     }
@@ -85,18 +74,16 @@ it.each(["search", "read"] as const)(
 
 it("retains a failed child while another admitted request reaches later reads", async () => {
   const resources = new ArtifactResourceScope();
-  const reached = gate();
-  const resume = gate();
+  const overlappingRead = phaseGate();
+  const descriptor = controlledCleanup({
+    refused: true,
+    failure: new Error("close denied"),
+  });
   const paths: string[] = [];
-  let blocked = true;
   const failure = new RetainedRegularFileCleanupFailure(
     new RegularFileCleanupFailure({
       path: "owned guidance descriptor",
-      owner: {
-        close: async () => {
-          if (blocked) throw new Error("close denied");
-        },
-      } as never,
+      owner: { close: () => descriptor.close() } as never,
       outcome: { kind: "failed", cause: new Error("read failed") },
       cleanupCause: new Error("close denied"),
     }),
@@ -108,20 +95,13 @@ it("retains a failed child while another admitted request reaches later reads", 
       (path, child) =>
         child.run(async () => {
           paths.push(path);
-          if (path === MANAGED_SKILL_FILES[1]) {
-            reached.release();
-            await resume.promise;
-          }
+          if (path === MANAGED_SKILL_FILES[1]) await overlappingRead.hold();
           return content(path);
         }),
       resources,
     );
     launched.push(active);
-    await awaitAcknowledgement(
-      reached.promise,
-      active,
-      "overlapping guidance read",
-    );
+    await overlappingRead.reached(active, "overlapping guidance read");
     const failing = searchGuidanceWithReader(
       { query: "needle" },
       async (_path, child) => {
@@ -137,12 +117,9 @@ it("retains a failed child while another admitted request reaches later reads", 
       "owned guidance descriptor",
     ]);
     expect(failed.error.cleanupIncomplete).toBe(true);
-    const closing = resources.close().then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
+    const closing = settledCause(resources.close());
     launched.push(closing);
-    resume.release();
+    overlappingRead.release();
     expect(await active).toMatchObject({
       ok: true,
       value: { status: "matches" },
@@ -153,13 +130,13 @@ it("retains a failed child while another admitted request reaches later reads", 
     });
     expect(resources.hasPending).toBe(true);
     expect(failed.error.cleanupIncomplete).toBe(true);
-    blocked = false;
+    descriptor.allow();
     await resources.close();
     expect(resources.hasPending).toBe(false);
     expect(failed.error.cleanupIncomplete).toBe(false);
   } finally {
-    resume.release();
-    blocked = false;
+    overlappingRead.release();
+    descriptor.allow();
     await Promise.allSettled(launched);
     await resources.close();
   }

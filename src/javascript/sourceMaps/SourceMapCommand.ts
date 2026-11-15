@@ -10,13 +10,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -148,7 +150,7 @@ export const runSourceMapCommand = async (
     const primary = signal?.aborted
       ? analysisErrorWithCancellation(
           knownPhysical ? physical : undefined,
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+          cancelledBy(OPERATION, signal),
         )
       : physical;
     if (preparation?.cleanupFailure === undefined) return err(primary);
@@ -194,8 +196,7 @@ export const runSourceMapCommand = async (
     ? err(
         analysisErrorWithCancellation(
           result.ok ? undefined : result.error,
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
+          cancelledBy(OPERATION, options.signal, {
             partialObservation: observation,
           }),
         ),
@@ -253,7 +254,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
-  #cleanupAnchor: SourceMapCleanupFailure | undefined;
+  /** Reported by every close failure until a later close releases the codec. */
+  #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
   readonly #onInterruption: () => void;
@@ -394,9 +396,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       throw this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      throw cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       throw new AnalysisTimeoutError(
         OPERATION,
@@ -411,9 +411,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       return this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      return cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       return new AnalysisTimeoutError(
         OPERATION,
@@ -608,8 +606,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       }
     }
     if (failures.length === 0) {
-      this.#cleanupAnchor?.resolveCleanup();
-      this.#cleanupAnchor = undefined;
+      this.#cleanupRelease?.confirm();
+      this.#cleanupRelease = undefined;
       return undefined;
     }
     const failure = new SourceMapCleanupFailure(this.cleanupResources, {
@@ -617,9 +615,9 @@ class OwnedCodec implements SourceMapCleanupOwner {
       cleanup_failures: failures,
       codec_pid: this.#supervisor?.launch.process.pid ?? null,
     }).bindCleanupResourceOwner(this);
-    if (this.#cleanupAnchor === undefined) this.#cleanupAnchor = failure;
-    else failure.bindCleanupDependencies([this.#cleanupAnchor], this);
-    return failure;
+    return (this.#cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+      failure,
+    );
   }
 }
 const message = (cause: unknown): string =>

@@ -70,6 +70,23 @@ it("resolves an aggregate only after every bound owner releases", async () => {
   expect(error.cleanupIncomplete).toBe(false);
 });
 
+it("lets errors read a group's release instead of having it pushed to them", async () => {
+  const error = new ProviderCleanupError("fixture", ["owned resource"], {});
+  const lease = new AnalysisCleanupLease(
+    async () => undefined,
+    ["owned resource"],
+  );
+  const group = new AnalysisCleanupLeaseGroup(error, [lease]);
+  expect(group.cleanupReleased).toBe(false);
+  await lease.release();
+  expect(group.cleanupReleased).toBe(true);
+  // A dependency bound after the release, before any read, cannot reopen it.
+  error.bindCleanupDependencies([
+    new ProviderCleanupError("fixture", ["later"], {}),
+  ]);
+  expect(error.cleanupIncomplete).toBe(false);
+});
+
 it("deduplicates owners and accounts for owners already released at binding time", async () => {
   const error = new ProviderCleanupError("fixture", ["owned resource"], {});
   const alreadyReleased = new AnalysisCleanupLease(async () => undefined);

@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -18,11 +19,7 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -31,11 +28,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import {
-  ElfNoteSectionNameBudgetFailure,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -100,48 +93,36 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_ELF_NOTE_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected note entry budget.`;
 
-const sectionNameBudgetRemediation = (
-  cause: ElfNoteSectionNameBudgetFailure,
-): string =>
-  cause.minimumMaxFileBytes <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(cause.minimumMaxFileBytes)} bytes to admit the source and decoded ELF section names.`
-    : `The source and decoded ELF section names require ${String(cause.minimumMaxFileBytes)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
+const sectionNameBudgetRemediation = (required: bigint): string =>
+  required <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
+    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the source and decoded ELF section names.`
+    : `The source and decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
 
 const elfNotesFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectElfNotesInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof ElfNoteSectionNameBudgetFailure)
+  const sectionNameBudget = elfNoteSectionNameBudget(cause);
+  if (sectionNameBudget !== undefined)
     return new AnalysisResourceConstraintError(
       OPERATION,
       "memory",
-      cause.message,
+      sectionNameBudget.detail,
       {
-        max_file_bytes: cause.selectedMaxFileBytes,
-        minimum_required_bytes: cause.minimumMaxFileBytes.toString(),
+        max_file_bytes: sectionNameBudget.selected,
+        minimum_required_bytes: sectionNameBudget.required.toString(),
       },
       {
         cause,
         retryable: false,
-        remediationAction: sectionNameBudgetRemediation(cause),
+        remediationAction: sectionNameBudgetRemediation(
+          sectionNameBudget.required,
+        ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

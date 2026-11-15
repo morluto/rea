@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -17,7 +18,7 @@ import type {
   ProviderProcessSupervisor,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import {
   selectArtifactCommandPath,
@@ -173,7 +174,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
     private readonly launcher?: NativeCommandLauncher,
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   run(
@@ -245,7 +246,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         if (stopped.status === "not-owned") {
           reason = "native command ownership remains unresolved";
         } else if (stopped.status !== "incomplete") {
-          marker.resolveCleanup();
+          // The marker reads the supervisor's release of this stop.
           this.#cleanupMarkers.delete(owner);
           continue;
         } else
@@ -283,6 +284,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         { operation: "native_command", cause: failure },
       );
     }
+    marker.bindCleanupReleaseClaim(owner.cleanupRelease);
     this.#cleanupMarkers.set(owner, marker);
     if (failure.cleanupMarker === marker) return failure;
     return new NativeCommandFailure(
@@ -482,11 +484,11 @@ export const failureCapture = (
   capture: ProcessCapture,
   truncated: boolean,
 ): NativeCommandFailureCapture => {
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     capture.stdout,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     capture.stderr,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );

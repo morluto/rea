@@ -77,7 +77,7 @@ export const projectNativeValueTraceView = (
       truncated: trace.truncated,
       limitation_count: trace.limitations.length,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [...parent.limitations, ...trace.limitations],
       parent.evidenceId,

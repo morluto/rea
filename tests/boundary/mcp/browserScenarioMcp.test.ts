@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
@@ -177,7 +178,7 @@ const scenario = (origin = "https://app.example.test") => ({
   ],
 });
 
-test.each(["full", "compact"] as const)(
+test.each(["compact"] as const)(
   "advertises portable browser action patterns (%s)",
   async (profile) => {
     const provider = new FakeBrowserScenarioProvider();
@@ -215,17 +216,6 @@ test.each(["full", "compact"] as const)(
           patterns.push({ where, pattern: value });
         pending.push({ value, where });
       }
-    }
-    if (profile === "full") {
-      expect(
-        patterns.some(({ where }) => where.endsWith("/path/pattern")),
-      ).toBe(true);
-      expect(
-        patterns.some(
-          ({ where }) =>
-            where.includes("/headers/") && where.endsWith("/name/pattern"),
-        ),
-      ).toBe(true);
     }
     const failures = patterns.flatMap(({ where, pattern }) =>
       ["", "u", "v"].flatMap((flags) => {
@@ -442,13 +432,11 @@ test("delivers a retained summary and pages its exact steps and events", async (
   const advertised = tools.find(
     ({ name }) => name === "capture_browser_scenario",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Missing advertised scenario output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const validateInput = ajv.compile(advertised.inputSchema);
-  const validateOutput = ajv.compile(
-    z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-  );
+  const validateOutput = ajv.compile(canonicalOutputSchema(advertised.name));
   const request = { ...minimalScenario(), detail: "summary" };
   expect(validateInput(request), JSON.stringify(validateInput.errors)).toBe(
     true,

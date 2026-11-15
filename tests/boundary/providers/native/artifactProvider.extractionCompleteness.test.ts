@@ -104,7 +104,8 @@ it.each(["file", "directory"] as const)(
     );
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message: expect.stringMatching(/not materialized.*z\/missing\.txt/iu),
+      integrityCheck: "traversal-coverage",
+      message: expect.stringContaining("z/missing.txt"),
     });
     await expect(access(output)).rejects.toThrow();
     expect(
@@ -129,9 +130,8 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     onTestFinished(() => chmod(child, 0o755));
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message: expect.stringMatching(
-        /not materialized.*child\/selected\.txt/iu,
-      ),
+      integrityCheck: "traversal-coverage",
+      message: expect.stringContaining("child/selected.txt"),
     });
     await expect(access(output)).rejects.toThrow();
     await chmod(child, 0o755);
@@ -151,7 +151,8 @@ it("still refuses a regular file added after inventory and rolls back", async ()
   await writeFile(join(source, "z.txt"), "new\n");
   await expect(materialize()).rejects.toMatchObject({
     reason: "integrity",
-    message: "Regular artifact entry is missing from inventory: z.txt",
+    integrityCheck: "inventory-node",
+    message: expect.stringContaining("z.txt"),
   });
   await expect(access(output)).rejects.toThrow();
 });

@@ -134,6 +134,8 @@ const applicationWithUnknowns = (
         fields: 0,
         pinvoke_imports: 0,
         native_implementations: 0,
+        calls: 0,
+        field_accesses: 0,
       },
       graph,
       coverage: { status: "complete-within-inputs" },

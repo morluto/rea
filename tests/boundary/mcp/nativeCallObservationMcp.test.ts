@@ -89,6 +89,7 @@ const tracer: NativeCallTracer & { calls: number } = {
             stderr_complete: true,
           },
           other_stops: [],
+          unattributed_breakpoint_stops: 0,
         },
         stdout: { text: "", bytes: 0, truncated: false, complete: true },
         stderr: { text: "", bytes: 0, truncated: false, complete: true },

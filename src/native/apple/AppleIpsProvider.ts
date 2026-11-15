@@ -31,17 +31,13 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  AppleIpsFormatFailure,
   AppleIpsResourceFailure,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
@@ -274,21 +270,13 @@ const appleIpsFailurePrimary = (
       { boundary: cause.boundary, maximum: cause.maximum },
       { cause, ...resourceRecovery(input, cause) },
     );
-  if (cause instanceof AppleIpsFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [field],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    input.path,
+    cause,
+    field,
+  );
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

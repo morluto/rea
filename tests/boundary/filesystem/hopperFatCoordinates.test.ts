@@ -16,6 +16,10 @@ import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLeas
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { mapHopperFileOffset } from "../../../src/hopper/HopperFileOffset.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply,
+} from "../../../src/hopper/HopperReplyContracts.js";
 import { resolveHopperMachOImage } from "../../../src/hopper/HopperMachOImage.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -49,7 +53,14 @@ const mapOffset = (target: BinaryTarget, observation: JsonValue) => {
   const scope = new ArtifactResourceScope();
   const leases = new WeakMap<OwnedFileHandle, AnalysisCleanupLease>();
   onTestFinished(() => scope.close());
-  return mapHopperFileOffset(target, observation, {
+  const reply = parseHopperReply(
+    hopperReplySchemas,
+    "address_to_file_offset",
+    observation,
+    "address_to_file_offset",
+  );
+  if (!reply.ok) return Promise.resolve(reply);
+  return mapHopperFileOffset(target, reply.value, {
     retainFailedClose: (owner) => {
       const lease = AnalysisCleanupLease.forCloseOwner(owner, target.path);
       leases.set(owner, lease);

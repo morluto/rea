@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 /** One record's retained response text, as replay and state extraction both read it. */
 export interface RecordedResponseBody {
@@ -53,8 +54,7 @@ export const recordedResponseStatus = (
 };
 
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */
-const strictUtf8 = (): TextDecoder =>
-  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const strictUtf8 = (): TextDecoder => strictUtf8Decoder("preserve");
 
 /** Base64 characters that decode to just over `limitBytes`, so a cut prefix still fills it. */
 export const base64PrefixChars = (limitBytes: number): number =>

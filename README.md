@@ -71,7 +71,7 @@ Setup registers REA with your agent and installs matching workflow instructions.
 ## Quick start
 
 On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
-analysis require a procps-compatible `ps` on REA's `PATH` for process ownership
+analysis require a procps-compatible system `ps` for process ownership
 checks. Recovery steps are in `docs/getting-started/installation.md` under
 "Linux owned-process prerequisite".
 
@@ -96,17 +96,16 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
 plugin.
 
-MCP uses compact input schemas by default to reduce context overhead. Set
-`REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
-complete advertised field guidance and nested validation details. Both profiles
-keep the full tool set and canonical server validation. See
-"Compact input schema profile" in the MCP contracts guide.
+MCP advertises compact input schemas to reduce context overhead; guidance a
+compact schema omits follows the tool description. The full tool set and
+canonical server validation are unchanged. See "Compact input schema profile"
+in the MCP contracts guide.
 
-Complete output schemas are advertised by default. If your client caps the
-complete `tools/list` frame, set `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to
-bound each advertised output schema, or `off` to omit output schemas entirely.
-Both settings keep canonical server-side validation and complete structured
-results. See "Output schemas" in the MCP contracts guide.
+Output schemas are omitted from `tools/list` by default: no model API reads
+them, and REA validates every result itself. Set
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to advertise each output schema within
+a 4,096-byte budget. Both settings keep canonical server-side validation and
+complete structured results. See "Output schemas" in the MCP contracts guide.
 
 ### Ask your agent
 
