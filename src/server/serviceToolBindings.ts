@@ -60,6 +60,7 @@ import {
   buildCallPathEvidence,
   correlateStaticAndRuntimeEvidence,
   findChangedBehaviorEvidence,
+  verifyReconstructionEvidence,
 } from "../application/investigation/InvestigationWorkflows.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
@@ -607,6 +608,12 @@ const SERVICE_TOOL_BINDINGS = {
           { evidenceForAnalysis },
           signal,
         ),
+    },
+    // Verification reads the session's immutable bundle as a whole.
+    verify_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input) => verifyReconstructionEvidence(input, session),
     },
   })) satisfies Bind<BinarySessionPort>,
   sessionStatus: ((options) => ({
