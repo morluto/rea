@@ -22,7 +22,7 @@ import {
   XcrunCommandRunner,
   type NativeCommandLauncher,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoFixture } from "../../../fixtures/lipo.js";
 import {

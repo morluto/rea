@@ -5,7 +5,10 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { NativeCommandFailure, XcrunCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { err } from "../domain/result.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
