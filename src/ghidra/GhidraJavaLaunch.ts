@@ -1,7 +1,8 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -78,16 +79,40 @@ export const ghidraJavaLaunch = async (options: {
   const supportRoot = dirname(options.analyzeHeadlessPath);
   const installRoot = dirname(supportRoot);
   const selectedJavaHome = options.javaHome ?? options.environment.JAVA_HOME;
-  const command =
-    selectedJavaHome === undefined
-      ? options.platform === "win32"
-        ? "java.exe"
-        : "java"
-      : appendCallerPath(
-          selectedJavaHome,
-          `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
-          options.platform,
-        );
+  // The Windows owned-process launcher requires absolute executable paths and
+  // does not resolve bare names against PATH. The documented remediation says
+  // a "JDK on PATH" is enough, so resolve the bare java command explicitly
+  // instead of handing "java.exe" to the launcher and failing with
+  // ERR_REA_WINDOWS_NATIVE (Win32 87).
+  const resolvePathCommand = (command: string): string | undefined => {
+    if (options.platform !== "win32") {
+      return command;
+    }
+    const pathVariable =
+      options.environment.Path ?? options.environment.PATH ?? "";
+    for (const directory of pathVariable.split(";")) {
+      const trimmed = directory.trim();
+      if (trimmed === "") {
+        continue;
+      }
+      const candidate = join(trimmed, command);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+  const command = (() => {
+    if (selectedJavaHome !== undefined) {
+      return appendCallerPath(
+        selectedJavaHome,
+        `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
+        options.platform,
+      );
+    }
+    const bare = options.platform === "win32" ? "java.exe" : "java";
+    return resolvePathCommand(bare) ?? bare;
+  })();
   const isolatedProperties = [
     `-Duser.home=${options.homeRoot}`,
     `-Djava.io.tmpdir=${options.tempRoot}`,
