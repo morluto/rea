@@ -146,19 +146,8 @@ export const createCli = (
     })),
   });
 
-// This module registers the command catalog and exports `createCli`; it does not
-// serve. Running the compiled file directly is not a CLI invocation, so it must
-// not exit 0 silently and look like a successful run.
-//
-// The guard runs when this module is evaluated, which includes an import by
-// `cli/cliLoader.ts` or a test. `isDirectEntrypoint` compares `import.meta.url`
-// against argv[1], so an import never matches and the guard stays silent. Keep
-// the distinction in mind when adding an import of this module: the guard is a
-// property of being the entrypoint, not of being loaded.
-//
-// `process.exitCode` rather than `process.exit(1)`: stderr to a pipe is written
-// asynchronously on POSIX, so an immediate exit can truncate the message that
-// says where to run instead.
+// Direct execution needs a visible failure pointing to the dispatcher. Imports
+// only expose the registry. A normal exit lets piped stderr drain completely.
 if (isDirectEntrypoint(CURRENT_ENTRYPOINT_PATH, import.meta.url)) {
   process.stderr.write(
     "dist/cli.js is the command registry, not the CLI entry point. Run `rea` (scripts/rea.mjs) instead.\n",
