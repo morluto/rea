@@ -316,3 +316,23 @@ it("reports a WABT tool the host refused to start as unavailable", async () => {
     projectAnalysisError(wabtFailure(refused, "producer", "/module.wasm")),
   ).toMatchObject({ code: "capability_unavailable" });
 });
+
+it("keeps setup guidance when a version probe's output cannot be collected", () => {
+  const cause = new OwnedCommandFailure(
+    "process",
+    "stdout stream failed",
+    {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: { text: "", bytes: 0, observedBytes: 0 },
+      exitCode: 0,
+      signal: null,
+    },
+    null,
+    { collectionFailure: true },
+  );
+  const projected = projectAnalysisError(
+    wabtFailure(cause, "configuration", "/module.wasm"),
+  );
+  expect(projected).toMatchObject({ code: "capability_unavailable" });
+  expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
+});

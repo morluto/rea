@@ -225,10 +225,10 @@ const classifyWabtFailure = (
           },
         },
         dialect: (exit, details) =>
-          // A tool that cannot start, or a version probe that fails, leaves
-          // the configured installation unusable for this call.
-          exit.kind === "launch-refused" ||
-          (phase === "configuration" && exit.kind === "exited")
+          // A tool that cannot start, or a version probe that exits or whose
+          // output cannot be collected, leaves the configured installation
+          // unusable for this call.
+          exit.kind === "launch-refused" || phase === "configuration"
             ? new AnalysisCapabilityUnavailableError(
                 WABT_PROVIDER_IDENTITY.id,
                 "inspect_wasm_artifact",
