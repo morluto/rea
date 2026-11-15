@@ -39,7 +39,10 @@ import {
   type NodeHttpExchangeContext,
 } from "./NodeHttpRequestOwner.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisResourceConstraintError,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
 export const MCP_HTTP_PATH = "/mcp";
@@ -281,7 +284,7 @@ class LiveSession {
         } finally {
           // Header/size refusals can leave the SDK body unread. Its forwarding
           // stream belongs to this dispatch, not the remaining session lifetime.
-          bodyAbort.abort();
+          bodyAbort.abort(OwnerCancellation.ownerClosed);
         }
       }),
     );
@@ -289,7 +292,7 @@ class LiveSession {
 
   shutdown(): Promise<void> {
     this.#closed = true;
-    this.#bodyAbort.abort();
+    this.#bodyAbort.abort(OwnerCancellation.ownerClosed);
     return this.#shutdown();
   }
 }

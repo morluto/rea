@@ -16,6 +16,7 @@ import {
   type McpServerOptions,
   type RegisteredTool,
   type RegisteredPrompt,
+  type ServerContext,
   type PromptCallback,
   type RequestId,
   type ScopeChallengeHandler,
@@ -42,6 +43,8 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  CallerAbort,
+  OwnerCancellation,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysisErrorProjection.js";
@@ -282,10 +285,11 @@ export const forgetPendingMcpRequest = (
   pendingToolLists: Set<RequestId>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
+  reason: CallerAbort | OwnerCancellation,
 ): void => {
   pendingTools.delete(id);
   pendingToolLists.delete(id);
-  pendingCompletions.get(id)?.abort();
+  pendingCompletions.get(id)?.abort(reason);
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
@@ -473,9 +477,31 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       const request = currentMcpToolRequest();
       request?.beginHandler();
       try {
+        const normalized = (original: ServerContext): ServerContext =>
+          request === undefined
+            ? original
+            : {
+                ...original,
+                mcpReq: {
+                  ...original.mcpReq,
+                  signal: AbortSignal.any([
+                    request.cancellation.signal,
+                    original.mcpReq.signal,
+                  ]),
+                },
+              };
+        const invoke = () =>
+          config.inputSchema === undefined
+            ? (callback as ToolCallback<undefined>)(
+                normalized(input as ServerContext),
+              )
+            : (callback as ToolCallback<StandardSchemaWithJSON>)(
+                input,
+                normalized(context as ServerContext),
+              );
         return await (this.analysisSettings === undefined
-          ? callback(input, context)
-          : this.analysisSettings.run(() => callback(input, context)));
+          ? invoke()
+          : this.analysisSettings.run(invoke));
       } finally {
         request?.finishHandler();
       }
@@ -544,6 +570,7 @@ class ErrorEvidenceTransport implements Transport {
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
   private readonly pendingToolLists = new Set<RequestId>();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
+  private closing = false;
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
     return this.currentEvidenceWriter();
@@ -617,13 +644,18 @@ class ErrorEvidenceTransport implements Transport {
       ) {
         const id = message.params?.["requestId"];
         if (typeof id === "string" || typeof id === "number") {
-          this.pendingValidation.get(id)?.cancel(message.params?.["reason"]);
+          const cancellation = new CallerAbort(
+            "request-cancelled",
+            message.params?.["reason"],
+          );
+          this.pendingValidation.get(id)?.cancel(cancellation);
           this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
             this.pendingToolLists,
             this.pendingCompletions,
             id,
+            cancellation,
           );
         }
       }
@@ -641,13 +673,16 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
+      const disconnected = this.closing
+        ? OwnerCancellation.ownerClosed
+        : new CallerAbort("client-disconnected");
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
-        validation.cancel();
+        validation.cancel(disconnected);
       this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(disconnected);
       this.pendingCompletions.clear();
       this.onclose?.();
     };
@@ -665,16 +700,17 @@ class ErrorEvidenceTransport implements Transport {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     try {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
-        validation.cancel();
+        validation.cancel(OwnerCancellation.ownerClosed);
       this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.clear();
     }
   }
@@ -758,11 +794,13 @@ class ErrorEvidenceTransport implements Transport {
       request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
         this.pendingValidation.delete(id);
+        // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
           this.pendingToolLists,
           this.pendingCompletions,
           id,
+          OwnerCancellation.ownerClosed,
         );
       }
     }
