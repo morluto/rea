@@ -7,7 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
@@ -657,7 +660,7 @@ export class HopperClient {
     const closed = await this.#cleanup();
     const failure = closed.ok
       ? primary
-      : analysisErrorWithCleanupFailure(primary, closed.error, "open_binary");
+      : analysisErrorWithCloseRejection(primary, closed.error, "open_binary");
     this.#startupFailureResult = failure;
     return err(failure);
   }
@@ -864,7 +867,10 @@ export class HopperClient {
       return closed.ok
         ? launcherClosed
         : err(
-            analysisErrorWithCleanupFailure(closed.error, launcherClosed.error),
+            analysisErrorWithCloseRejections(
+              closed.error,
+              launcherClosed.error,
+            ),
           );
     } finally {
       if (this.#socket?.destroyed === true) this.#socket = undefined;
