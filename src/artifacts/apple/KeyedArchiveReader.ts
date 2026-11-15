@@ -47,7 +47,7 @@ import {
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -227,11 +227,11 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           outcome.cause,
           cleanup,
           "inspect_keyed_archive",
-        ).bindCleanupDependencies([outcome.cause, cleanup]);
+        );
       }
       throw resources.cleanupFailure(outcome, [released]);
     }

@@ -416,8 +416,6 @@
     "src/application/frida/FridaInstrumentationService.ts": 2,
     "src/application/releaseExposure/ReleaseExposureService.ts": 1,
     "src/application/runOwned.ts": 1,
-    "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": 2,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
     "src/browser/BrowserScenarioPartialObservation.ts": 1,
     "src/browser/CdpBrowserProvider.ts": 1,
     "src/browser/CdpElectronProvider.ts": 1,
