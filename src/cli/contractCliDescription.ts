@@ -162,6 +162,53 @@ export type CliOptionValues<CliOptions extends CliOptionShape> = {
 export interface CliSessionTarget {
   /** Help for the target positional. */
   readonly description: string;
+  /**
+   * Fields of the contract an MCP client opens the target with, taken as
+   * options. They are admitted by that contract's input, with the target as
+   * its `path`, before the target is opened.
+   */
+  readonly open?: CliTargetOpening;
+}
+
+/** The opening contract's fields a command takes as options. */
+export interface CliTargetOpening {
+  readonly contract: {
+    readonly name: string;
+    readonly inputSchema: z.ZodObject;
+  };
+  readonly fields: Readonly<Record<string, CliOpeningFieldProjection>>;
+}
+
+/** How one opening field is spelled on the CLI. */
+export interface CliOpeningFieldProjection extends CliFieldProjection {
+  /** The values this command admits: a subset of the field's enum. */
+  readonly values?: readonly [string, ...string[]];
+}
+
+/** An option that supplies one field of the opening contract. */
+export interface ContractCliOpeningOption {
+  readonly field: string;
+  readonly key: string;
+  readonly description: string | undefined;
+  readonly schema: z.ZodType;
+}
+
+/** The described session target of a contract command. */
+export interface ContractCliSessionTarget {
+  /** The positional key, taken before every other positional. */
+  readonly key: string;
+  readonly schema: z.ZodType;
+  /** Options that supply fields of the opening contract. */
+  readonly options: readonly ContractCliOpeningOption[];
+  /**
+   * The opening fields the parsed options select, in contract spelling,
+   * admitted by the opening contract with the target as its `path`.
+   * Issues name CLI keys.
+   */
+  readonly admitOpening: (
+    operation: string,
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<Readonly<Record<string, unknown>>, AnalysisInputError>;
 }
 
 /** The CLI key of a session target, which no contract field supplies. */
@@ -302,9 +349,7 @@ export interface ContractCliDescription {
    * The session target positional, taken before the contract positionals,
    * when the operation runs on a target the CLI opens; undefined otherwise.
    */
-  readonly sessionTarget:
-    | { readonly key: string; readonly schema: z.ZodType }
-    | undefined;
+  readonly sessionTarget: ContractCliSessionTarget | undefined;
   /**
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key.
@@ -631,9 +676,7 @@ export interface ContractCliDocumentDescription {
    */
   readonly documentRefusals: Readonly<Record<string, string>>;
   /** The session target positional, taken before the document, if any. */
-  readonly sessionTarget:
-    | { readonly key: string; readonly schema: z.ZodType }
-    | undefined;
+  readonly sessionTarget: ContractCliSessionTarget | undefined;
   /** Options that select Evidence delivery, for `evidenceDelivery`. */
   readonly deliveryOptions: readonly CliOnlyOption[];
   /**
@@ -718,6 +761,94 @@ const admitDocumentCallerPath = (
 
 /** The CLI key of a JSON input document. */
 const DOCUMENT_KEY = "inputJson";
+
+/**
+ * Describe the target positional and the options that supply fields of its
+ * opening contract. Each option admits its field's own schema, narrowed to
+ * the projected values.
+ */
+const describeSessionTarget = (
+  target: CliSessionTarget | undefined,
+): ContractCliSessionTarget | undefined => {
+  if (target === undefined) return undefined;
+  const opening = target.open;
+  const opener = opening?.contract.name ?? "";
+  const shape = (opening?.contract.inputSchema.shape ?? {}) as Record<
+    string,
+    z.ZodType
+  >;
+  const options: readonly ContractCliOpeningOption[] = Object.entries(
+    opening?.fields ?? {},
+  ).map(([field, projected]) => {
+    const declared = shape[field];
+    if (declared === undefined || field === SESSION_TARGET_KEY)
+      throw new Error(`${opener} has no option field ${field}`);
+    if (!admitsOmission(declared))
+      throw new Error(`${opener}.${field} is required`);
+    let schema: z.ZodType;
+    if (projected.values === undefined) {
+      assertArgvField(opener, field, declared);
+      schema = cliDecimalShape({ field: argvOptional(declared) }).field;
+    } else {
+      for (const value of projected.values)
+        if (!declared.safeParse(value).success)
+          throw new Error(`${opener}.${field} does not admit ${value}`);
+      schema = z.enum(projected.values).optional();
+    }
+    const description = projected.description ?? declared.description;
+    if (description !== undefined) schema = schema.describe(description);
+    return {
+      field,
+      key: projected.name ?? camelCase(field),
+      description,
+      schema,
+    };
+  });
+  const keyOf = new Map(options.map(({ field, key }) => [field, key]));
+  return {
+    key: SESSION_TARGET_KEY,
+    schema: localPathStringSchema.describe(target.description),
+    options,
+    admitOpening: (operation, values) => {
+      if (opening === undefined) return ok({});
+      const selected = Object.fromEntries(
+        options.flatMap(({ field, key }) =>
+          values[key] === undefined ? [] : [[field, values[key]]],
+        ),
+      );
+      // The target itself was admitted as the positional.
+      if (Object.keys(selected).length === 0) return ok({});
+      const candidate = {
+        ...selected,
+        [SESSION_TARGET_KEY]: absoluteCallerPath(
+          values[SESSION_TARGET_KEY] as string,
+        ),
+      };
+      const admitted = opening.contract.inputSchema.safeParse(candidate);
+      if (!admitted.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            admitted.error.issues.map((issue) => {
+              const [field, ...rest] = issue.path;
+              const key =
+                typeof field === "string" ? keyOf.get(field) : undefined;
+              return key === undefined
+                ? issue
+                : { ...issue, path: [key, ...rest] };
+            }),
+            selected,
+          ),
+        );
+      const data = admitted.data as Readonly<Record<string, unknown>>;
+      return ok(
+        Object.fromEntries(
+          Object.keys(selected).map((field) => [field, data[field]]),
+        ),
+      );
+    },
+  };
+};
 
 /**
  * The delivery `--detail`, `--evidence_output` and `--view` select beside a
@@ -869,9 +1000,12 @@ export const describeContractDocumentCommand = <
     description: schema.description,
     schema,
   }));
+  const sessionTarget = describeSessionTarget(projection.sessionTarget);
   const keys = [
     DOCUMENT_KEY,
-    ...(projection.sessionTarget === undefined ? [] : [SESSION_TARGET_KEY]),
+    ...(sessionTarget === undefined
+      ? []
+      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)]),
     ...Object.keys(cliOptions),
     ...deliveryOptions.map(({ key }) => key),
   ];
@@ -913,15 +1047,7 @@ export const describeContractDocumentCommand = <
             values,
           )
         : ok(undefined),
-    sessionTarget:
-      projection.sessionTarget === undefined
-        ? undefined
-        : {
-            key: SESSION_TARGET_KEY,
-            schema: localPathStringSchema.describe(
-              projection.sessionTarget.description,
-            ),
-          },
+    sessionTarget,
     cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
       key,
       description: schema.description,
@@ -1138,8 +1264,11 @@ export const describeContractCommand = <
     description: schema.description,
     schema,
   }));
+  const sessionTarget = describeSessionTarget(projection.sessionTarget);
   const sessionTargetKeys =
-    projection.sessionTarget === undefined ? [] : [SESSION_TARGET_KEY];
+    sessionTarget === undefined
+      ? []
+      : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)];
   const keys = new Set([
     ...sessionTargetKeys,
     ...parameters.map(({ key }) => key),
@@ -1285,15 +1414,7 @@ export const describeContractCommand = <
           values[key] === undefined ? [] : [[key, values[key]]],
         ),
       ),
-    sessionTarget:
-      projection.sessionTarget === undefined
-        ? undefined
-        : {
-            key: SESSION_TARGET_KEY,
-            schema: localPathStringSchema.describe(
-              projection.sessionTarget.description,
-            ),
-          },
+    sessionTarget,
     inputBinding: {
       operation: contract.name,
       fields: Object.fromEntries(
