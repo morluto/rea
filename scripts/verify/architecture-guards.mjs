@@ -51,10 +51,14 @@ const stripComments = (content) =>
 
 const sources = await listFiles(join(root, "src"));
 const files = await Promise.all(
-  sources.map(async (path) => ({
-    path: relative(root, path).split(sep).join("/"),
-    content: stripComments(await readFile(path, "utf8")),
-  })),
+  sources.map(async (path) => {
+    const source = await readFile(path, "utf8");
+    return {
+      path: relative(root, path).split(sep).join("/"),
+      content: stripComments(source),
+      source,
+    };
+  }),
 );
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
@@ -324,7 +328,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     if (owners.includes(file.path)) continue;
     const count =
       typeof pattern === "function"
-        ? pattern(file.content)
+        ? pattern(file.content, file)
         : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
@@ -358,7 +362,8 @@ checkCounted(
   "optional fact defaulted to 0, [] or false in comparison or count code (keep it unknown)",
   "optional-fact-default",
   files.filter(({ path }) => isComparisonOrCountFile(path)),
-  optionalFactDefaultCount,
+  // Exemption markers are comments, so this guard reads the unstripped source.
+  (_content, { source }) => optionalFactDefaultCount(source),
   [],
 );
 
