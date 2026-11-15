@@ -63,12 +63,10 @@ const composeDeepBinarySession = (
 ): BinarySession => {
   const platform = HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(selectedEnvironment, platform);
-  const hopper = new HopperProvider(config, logger, environment);
+  const hopper = new HopperProvider(config, logger, environment, platform);
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment, (registration, selected) =>
-    createIdaMcpConnection(registration, selected, {
-      platform: HOST_PLATFORM.platform,
-    }),
+    createIdaMcpConnection(registration, selected, { platform }),
   );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
@@ -148,7 +146,7 @@ export const createManagedBinarySession = (): BinarySession =>
 /** Compose the artifact operations without candidates for deep analysis engines. */
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -169,7 +167,7 @@ export const createArtifactBinarySession = (
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../native/NativeMacOSProvider.js").then(({ NativeMacOSProvider }) =>
     composeBinarySession(

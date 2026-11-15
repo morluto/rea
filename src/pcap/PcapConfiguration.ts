@@ -112,7 +112,7 @@ export const selectWiresharkTool = (
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {

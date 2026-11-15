@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -86,7 +87,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
     // Bind lookup once; retain config's selected spelling for diagnostics.
@@ -300,39 +301,42 @@ export class HopperProvider implements AnalysisProviderCandidate {
       };
     const executionProvider = profile?.provider ?? HOPPER_PROVIDER_IDENTITY;
     const client = new HopperClient({
-      launcher: new HopperApplicationLauncher({
-        environment: this.environment,
-        launcherPath: this.#launcherPath,
-        targetPath: target.path,
-        targetKind: target.kind,
-        ...(target.kind === "executable"
-          ? { targetSha256: target.sha256 }
-          : {}),
-        ...(preparedImage === undefined
-          ? {}
-          : {
-              preparedImage: {
-                image: preparedImage,
-                sourceSha256: target.sha256,
-              },
-            }),
-        loaderArgs:
-          this.config.hopperLoaderArgs.length > 0
-            ? this.config.hopperLoaderArgs
-            : derivedLoaderArgs.value,
-        bridgeScriptPath: fileURLToPath(
-          new URL("../../bridge/hopper_bridge.py", import.meta.url),
-        ),
-        bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
-        ...(this.platform === "linux"
-          ? {
-              launchMode: "verified_linux_demo" as const,
-              demoHelperPath: fileURLToPath(
-                new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
-              ),
-            }
-          : { launchMode: "native" as const }),
-      }),
+      launcher: new HopperApplicationLauncher(
+        {
+          environment: this.environment,
+          launcherPath: this.#launcherPath,
+          targetPath: target.path,
+          targetKind: target.kind,
+          ...(target.kind === "executable"
+            ? { targetSha256: target.sha256 }
+            : {}),
+          ...(preparedImage === undefined
+            ? {}
+            : {
+                preparedImage: {
+                  image: preparedImage,
+                  sourceSha256: target.sha256,
+                },
+              }),
+          loaderArgs:
+            this.config.hopperLoaderArgs.length > 0
+              ? this.config.hopperLoaderArgs
+              : derivedLoaderArgs.value,
+          bridgeScriptPath: fileURLToPath(
+            new URL("../../bridge/hopper_bridge.py", import.meta.url),
+          ),
+          bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+          ...(this.platform === "linux"
+            ? {
+                launchMode: "verified_linux_demo" as const,
+                demoHelperPath: fileURLToPath(
+                  new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
+                ),
+              }
+            : { launchMode: "native" as const }),
+        },
+        { platform: this.platform },
+      ),
       ...(context === undefined ? {} : { runId: context.runId }),
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
       readStartupTimeoutSource: () => this.config.hopperStartupTimeoutSource,

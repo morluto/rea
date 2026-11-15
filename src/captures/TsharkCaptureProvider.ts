@@ -1,4 +1,5 @@
 import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -106,7 +107,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     readonly launcher?: Launcher,
     readonly createRuntime: () => Promise<ArtifactAnalysisRuntime> = () =>
       PrivateRuntimeRoot.create({ prefix: "rea-tshark-" }),
-    readonly platform: NodeJS.Platform = process.platform,
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
