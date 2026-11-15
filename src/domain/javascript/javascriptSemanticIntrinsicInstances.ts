@@ -26,7 +26,7 @@ interface JavaScriptIntrinsicInstanceMethods {
  * Whether a source-visible write or escape may have replaced a member on the
  * intrinsic prototype, on `Object.prototype`, or the prototype link itself.
  */
-const intrinsicPrototypeMemberMayHaveChanged = (
+export const intrinsicPrototypeMemberMayHaveChanged = (
   state: JavaScriptSemanticAnalysisState,
   constructor: string,
   member: string,

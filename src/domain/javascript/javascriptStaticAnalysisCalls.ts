@@ -3,8 +3,10 @@ import {
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
-import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
-import { ambientPathMayHaveChanged } from "./javascriptSemanticEffectLog.js";
+import {
+  intrinsicPrototypeMemberMayHaveChanged,
+  isIntrinsicMapLookup,
+} from "./javascriptSemanticIntrinsicInstances.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
@@ -885,15 +887,8 @@ const urlObjectRequestTarget = (
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;
   if (
-    ["URL", "Object"].some((owner) =>
-      ["toString", "valueOf"].some((method) =>
-        ambientPathMayHaveChanged(bindings, [
-          "global",
-          owner,
-          "prototype",
-          method,
-        ]),
-      ),
+    ["toString", "valueOf"].some((method) =>
+      intrinsicPrototypeMemberMayHaveChanged(bindings, "URL", method),
     )
   )
     return undefined;
