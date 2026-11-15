@@ -127,7 +127,7 @@ import {
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,

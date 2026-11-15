@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   lstat,
   mkdir,
@@ -73,7 +74,7 @@ vi.mock("node:v8", async (importOriginal) => {
 const bundle = (result = true) =>
   createEvidenceBundle([
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "health", parameters: {}, result },
     ),
@@ -92,7 +93,7 @@ it.each(["normalized_result", "raw_result", "parameters", "profile"] as const)(
     for (const depth of [999, MAX_JSON_DEPTH]) {
       const path = join(root, `bundle-${depth}.json`);
       const value = nested(depth);
-      const evidence = createEvidence(undefined, provider, {
+      const evidence = createEvidence(unknownTarget("not-observed"), provider, {
         operation: "health",
         parameters: field === "parameters" ? value : {},
         result: field === "normalized_result" ? value : "small",
@@ -202,7 +203,7 @@ it("admits the live process-payload validation working set before writing an own
   // This minimal authored process fixture proves the format boundary. It does
   // not claim a real process/provider capture or an actual heap exhaustion.
   const capture = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     PROCESS_PROVIDER,
     {
       predicateType: "rea.process-capture",
@@ -305,7 +306,7 @@ it("merges CLI identities for repeated inspection sources", async () => {
   await writeFile(input, "artifact contents");
   const inventory = await inventoryArtifact(input);
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "inventory_artifact",
@@ -315,7 +316,7 @@ it("merges CLI identities for repeated inspection sources", async () => {
   );
   const inspection = createArtifactInspection(source);
   const complete = withEvidenceCallerInputPath(
-    createEvidence(undefined, source.provider, {
+    createEvidence(unknownTarget("not-observed"), source.provider, {
       operation: "inspect_artifact",
       parameters: {},
       result: {
@@ -350,7 +351,7 @@ it("merges CLI identities for repeated inspection sources", async () => {
 it("retains a malformed artifact parent and refuses its publication", async () => {
   const root = await createTestTempDirectory("rea-malformed-delivery-");
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "inspect_artifact", parameters: {}, result: {} },
   );
@@ -1040,18 +1041,22 @@ describe("evidence bundle process-capture payloads", () => {
       // Authenticate the enclosing Evidence correctly while breaking its
       // capture commitment, so generic bundle authentication still succeeds.
       const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
-      const record = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-capture",
-        operation: "capture_process_scenario",
-        parameters: {},
-        result: {
-          ...capture,
-          manifest: {
-            ...capture.manifest,
-            full_scenario_sha256: "0".repeat(64),
+      const record = createEvidence(
+        unknownTarget("not-observed"),
+        PROCESS_PROVIDER,
+        {
+          predicateType: "rea.process-capture",
+          operation: "capture_process_scenario",
+          parameters: {},
+          result: {
+            ...capture,
+            manifest: {
+              ...capture.manifest,
+              full_scenario_sha256: "0".repeat(64),
+            },
           },
         },
-      });
+      );
       const value = createEvidenceBundle([record]);
       const rejected = await writeBundle(value, path, overwrite);
       if (rejected.ok) throw new Error("Expected invalid capture rejection");
@@ -1117,7 +1122,7 @@ describe("evidence bundle process-capture payloads", () => {
       );
       const path = join(directory, "bundle.json");
       const value = createEvidenceBundle([
-        createEvidence(undefined, provider, {
+        createEvidence(unknownTarget("not-observed"), provider, {
           operation,
           predicateType,
           result,

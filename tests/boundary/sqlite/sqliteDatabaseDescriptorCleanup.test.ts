@@ -464,8 +464,7 @@ nativeInspectionTest.each([
       parameters: input,
       subject: {
         local_path: input.path,
-        format: "file",
-        digest: { sha256: databaseDigest },
+        identity: { format: "file", sha256: databaseDigest },
       },
       normalized_result: {
         artifact: {

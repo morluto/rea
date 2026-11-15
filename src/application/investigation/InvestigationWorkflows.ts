@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   callPathRequestSchema,
   staticRuntimeCorrelationRequestSchema,
@@ -90,22 +91,26 @@ export const buildCallPathEvidence = (
       sources,
     );
     if (!closure.ok) return closure;
-    const evidence = createEvidence(undefined, CALL_PATH_PROVIDER, {
-      predicateType: "rea.call-path",
-      operation: "build_call_path",
-      analysisProfile: createAnalysisProfile(CALL_PATH_PROVIDER, {
-        workflow_revision: 2,
-      }),
-      parameters: {
-        start: selected.value.input.start.address,
-        goal: selected.value.input.goal.address,
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      CALL_PATH_PROVIDER,
+      {
+        predicateType: "rea.call-path",
+        operation: "build_call_path",
+        analysisProfile: createAnalysisProfile(CALL_PATH_PROVIDER, {
+          workflow_revision: 2,
+        }),
+        parameters: {
+          start: selected.value.input.start.address,
+          goal: selected.value.input.goal.address,
+        },
+        result,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: closure.value,
       },
-      result,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: closure.value,
-    });
+    );
     return finish(evidence, sources, result.status === "unknown", {
       question:
         "Can the requested call path be established from complete analysis?",
@@ -155,16 +160,20 @@ export const findChangedBehaviorEvidence = (
       sources,
     );
     if (!closure.ok) return closure;
-    const evidence = createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
-      predicateType: "rea.changed-behavior",
-      operation: "find_changed_behavior",
-      parameters: { comparison_evidence_ids: [...comparisonEvidenceIds] },
-      result,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: closure.value,
-    });
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      CHANGED_BEHAVIOR_PROVIDER,
+      {
+        predicateType: "rea.changed-behavior",
+        operation: "find_changed_behavior",
+        parameters: { comparison_evidence_ids: [...comparisonEvidenceIds] },
+        result,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: closure.value,
+      },
+    );
     return finish(
       evidence,
       sources,
@@ -221,16 +230,20 @@ export const correlateStaticAndRuntimeEvidence = (
       sources,
     );
     if (!closure.ok) return closure;
-    const evidence = createEvidence(undefined, STATIC_RUNTIME_PROVIDER, {
-      predicateType: "rea.static-runtime-correlation",
-      operation: "correlate_static_and_runtime",
-      parameters: { mapping_count: selected.value.input.mappings.length },
-      result,
-      confidence: "inferred",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: closure.value,
-    });
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      STATIC_RUNTIME_PROVIDER,
+      {
+        predicateType: "rea.static-runtime-correlation",
+        operation: "correlate_static_and_runtime",
+        parameters: { mapping_count: selected.value.input.mappings.length },
+        result,
+        confidence: "inferred",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: closure.value,
+      },
+    );
     return finish(
       evidence,
       sources,

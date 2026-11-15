@@ -14,6 +14,7 @@ import {
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
@@ -202,6 +203,22 @@ it("records the complete effective view policy and refuses state without it", as
     expect(desktopApplicationStateSchema.safeParse(refused).success).toBe(
       false,
     );
+});
+
+it("refuses a capture from an earlier format revision with the recreate guidance", async () => {
+  const folder = await writeCaptureFolder(capture());
+  const path = join(folder, "capture.json");
+  const { evidence_format: _current, ...earlier } = JSON.parse(
+    await readFile(path, "utf8"),
+  ) as Record<string, unknown>;
+  await writeFile(path, JSON.stringify(earlier));
+
+  const refused = await inspectDesktopApplicationState(folder, readers);
+
+  expect(refused).toBeInstanceOf(Error);
+  expect(refused instanceof Error ? refused.message : "").toContain(
+    RECREATE_EVIDENCE_GUIDANCE,
+  );
 });
 
 describe("inspectDesktopApplicationState", () => {

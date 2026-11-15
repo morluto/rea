@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -119,7 +120,7 @@ describe("endedCapture", () => {
     };
     const body = Buffer.from(
       JSON.stringify(
-        createEvidence(undefined, DESKTOP_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
           predicateType: "rea.desktop-application-capture",
           operation: DESKTOP_OPERATION,
           parameters: {},

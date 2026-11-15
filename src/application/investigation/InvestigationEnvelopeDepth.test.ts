@@ -145,7 +145,7 @@ it.each(["helper", "records", "session"] as const)(
   },
 );
 
-it("forwards generated source-link and missing-subject accounting with the envelope depth", () => {
+it("accounts for explicit unknown identity and generated source links at the envelope depth", () => {
   let available = 0;
   const records = new InvestigationRecords({
     availableAuthenticationBytes: () => available,
@@ -171,18 +171,31 @@ it("forwards generated source-link and missing-subject accounting with the envel
   const refused = admitted();
   if (refused.ok || !(refused.error instanceof AnalysisResourceConstraintError))
     throw new Error("Expected memory refusal after envelope admission");
-  const actual = estimateJsonStorage(
-    createAnalysisExecutionEvidence("health", {}, execution, "observed"),
+  const evidence = createAnalysisExecutionEvidence(
+    "health",
+    {},
+    execution,
+    "observed",
   );
-  expect(
-    refused.error.reportedLimits?.projected_value_bytes,
-  ).toBeGreaterThanOrEqual(actual.valueBytes);
-  expect(
-    refused.error.reportedLimits?.serialized_json_utf16_bytes,
-  ).toBeGreaterThanOrEqual(actual.serializedUtf16Bytes);
+  expect(execution.subject).toBeNull();
+  expect(evidence.subject).toEqual({
+    identity: { kind: "unknown", reason: "not-observed" },
+    name: null,
+    local_path: null,
+  });
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.evidence_links).toEqual([source.evidence_id]);
+  const actual = estimateJsonStorage(evidence);
+  expect(refused.error.reportedLimits?.projected_value_bytes).toBe(
+    actual.valueBytes,
+  );
+  expect(refused.error.reportedLimits?.serialized_json_utf16_bytes).toBe(
+    actual.serializedUtf16Bytes,
+  );
   const required = refused.error.reportedLimits?.authentication_bytes;
   if (typeof required !== "number")
     throw new Error("Missing authentication cost");
+  expect(required).toBe(2 * (actual.valueBytes + actual.serializedUtf16Bytes));
   available = required - 1;
   expect(admitted()).toMatchObject({
     ok: false,

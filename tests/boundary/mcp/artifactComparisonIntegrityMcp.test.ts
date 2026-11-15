@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
@@ -12,7 +13,7 @@ it("rejects an unchanged artifact comparison that retains a changed row", async 
   const left = ARTIFACT_COMPARISON_EXAMPLE.left;
   const right = ARTIFACT_COMPARISON_EXAMPLE.right;
   const comparison = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-artifact-comparison",
       name: "REA artifact comparison",
@@ -89,7 +90,7 @@ it("does not fail a changed aggregate when source inventories are equal", async 
   expect(equal.status).toBe("unchanged");
   const changed = compareArtifacts(left, ARTIFACT_COMPARISON_EXAMPLE.right);
   const comparison = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-artifact-comparison",
       name: "REA artifact comparison",
@@ -179,7 +180,7 @@ it("does not pass an unchanged aggregate over unavailable source coverage", asyn
   const actual = compareArtifacts(left, right);
   expect(actual.status).toBe("unknown");
   const comparison = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-artifact-comparison",
       name: "REA artifact comparison",

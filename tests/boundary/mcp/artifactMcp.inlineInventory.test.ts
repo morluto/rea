@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { fileSubjectDisplay } from "../../fixtures/evidenceSubject.js";
 import {
   canonicalInputSchema,
   withCanonicalOutputSchema,
@@ -46,17 +48,15 @@ const assertInventorySubjectValidation = async (
           .substeps[0]?.evidence.normalized_result
       : source.normalized_result;
   const inventory = artifactInventoryResultSchema.parse(result);
-  if (source.subject === null)
-    throw new Error("Fixture requires a known subject");
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: "file" as const,
     },
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: "f".repeat(64),
       format: inventory.manifest.root_format,
     },

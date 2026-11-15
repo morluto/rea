@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../../fixtures/evidenceSubject.js";
 import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -220,7 +224,7 @@ describe("HarmonyOS application projection", () => {
       stageHapEntries,
     );
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("hap");
+    expect(fileIdentity(inventory.subject).format).toBe("hap");
     const left = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -286,7 +290,7 @@ describe("HarmonyOS application projection", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("app-pack");
+    expect(fileIdentity(inventory.subject).format).toBe("app-pack");
     const projection = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -322,7 +326,7 @@ describe("HarmonyOS packaging boundaries", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("ipa");
+    expect(fileIdentity(inventory.subject).format).toBe("ipa");
     const occurrences = (
       inventory.normalized_result as {
         occurrences: Array<{
@@ -434,15 +438,14 @@ describe("HarmonyOS partial inventory classification", () => {
       ],
     );
     const inventory = await inventoryApplicationPackage(path);
-    if (inventory.subject === null) throw new Error("Missing fixture subject");
     const result = artifactInventoryResultSchema.parse(
       inventory.normalized_result,
     );
     const partial = createEvidence(
       {
-        path: inventory.subject.local_path,
-        sha256: inventory.subject.digest.sha256,
-        format: inventory.subject.format,
+        path: fileSubjectDisplay(inventory.subject).local_path,
+        sha256: fileIdentity(inventory.subject).sha256,
+        format: fileIdentity(inventory.subject).format,
       },
       inventory.provider,
       {

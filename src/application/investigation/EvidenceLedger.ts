@@ -23,6 +23,7 @@ import {
   isImmutableEvidence,
   MAX_EVIDENCE_JSON_DEPTH,
   evidenceDisplayMetadataAgree,
+  evidenceFileTarget,
   type Evidence,
 } from "../../domain/evidence.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
@@ -321,7 +322,7 @@ export class EvidenceLedger {
       unknown = createResidualUnknown(
         input,
         parsedMutation.evidence_id,
-        parsedMutation.subject?.digest.sha256 ?? null,
+        evidenceFileTarget(parsedMutation)?.sha256 ?? null,
       );
     } catch (cause: unknown) {
       if (!(cause instanceof z.ZodError)) throw cause;
@@ -366,7 +367,7 @@ export class EvidenceLedger {
       unknown = createResidualUnknown(
         input,
         mutation.evidence_id,
-        mutation.subject?.digest.sha256 ?? null,
+        evidenceFileTarget(mutation)?.sha256 ?? null,
       );
     } catch (cause: unknown) {
       if (!(cause instanceof z.ZodError)) throw cause;

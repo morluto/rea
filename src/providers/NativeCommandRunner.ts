@@ -1,6 +1,6 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
+import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -267,14 +268,18 @@ export const writeCaptureFolder = async (
     ...extraContent,
   ])
     await writeFile(join(folder, "content", sha256(text)), text);
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-application-capture",
-    operation,
-    parameters: {},
-    result,
-    confidence: "observed",
-    authority: "controlled-replay",
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-application-capture",
+      operation,
+      parameters: {},
+      result,
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+  );
   await writeFile(join(folder, "capture.json"), JSON.stringify(evidence));
   return folder;
 };
