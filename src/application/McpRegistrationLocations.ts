@@ -3,11 +3,8 @@ import { lstat } from "node:fs/promises";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
-import {
-  clientEvidencePaths,
-  type SetupClient,
-  type SupportedClientName,
-} from "./SupportedClients.js";
+// Type-only: the client table imports project-location owners from here.
+import type { SetupClient } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientInlineConfiguration } from "./ClientConfigurationDocument.js";
 
@@ -28,49 +25,11 @@ export interface McpRegistrationLocation {
   readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
-export interface McpRegistrationGlobalLocation extends McpRegistrationLocation {
-  readonly markers: readonly string[];
-}
-
 export const selectedPath = (
   path: string,
   context: McpRegistrationLocationContext,
 ): string =>
   absoluteCallerPath(path, { cwd: context.cwd, platform: context.platform });
-
-export const fromSetup =
-  (name: SupportedClientName) =>
-  async (
-    context: McpRegistrationLocationContext,
-  ): Promise<McpRegistrationGlobalLocation> => {
-    const client = context.setup.find((candidate) => candidate.name === name);
-    if (client === undefined)
-      throw new ConfigurationError(
-        `The registration catalog has no path owner for ${name}.`,
-      );
-    if (client.configPathError !== undefined)
-      throw (
-        client.configPathFailure ??
-        new ConfigurationError(client.configPathError)
-      );
-    return {
-      configPath: selectedPath(client.configPath, context),
-      ...(client.configPaths === undefined
-        ? {}
-        : {
-            configPaths: client.configPaths.map((path) =>
-              selectedPath(path, context),
-            ),
-          }),
-      ...(client.inlineConfiguration === undefined
-        ? {}
-        : { inlineConfiguration: client.inlineConfiguration }),
-      // Setup's detection evidence, so both commands find the same clients.
-      markers: clientEvidencePaths(client).map((path) =>
-        selectedPath(path, context),
-      ),
-    };
-  };
 
 /** The client-root context of one registration selection. */
 export const rootContext = ({

@@ -9,6 +9,7 @@ import type {
 } from "./ClientConfigurationDocument.js";
 import {
   appDataRedirection,
+  clientEvidencePaths,
   registrationWriteBlocker,
   supportedClientDefinition,
   resolveSupportedClients,
@@ -21,7 +22,6 @@ import type { ClientRegistrationProfile } from "./ClientRegistrationProfile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   selectedPath,
-  fromSetup,
   present,
   fixedProjectLocation,
   type McpRegistrationLocationContext,
@@ -191,39 +191,51 @@ const projectTarget = async (
   };
 };
 
-const globalTarget = async (
+/** The user-scope target is the client's resolved table row. */
+const globalTarget = (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
-): Promise<{ client: McpRegistrationClient; markers: readonly string[] }> => {
+): { client: McpRegistrationClient; markers: readonly string[] } => {
   const descriptor = clientDescriptor(id);
-  const resolved = await fromSetup(descriptor.setupName)(context);
   const setupClient = context.setup.find(
     ({ name }) => name === descriptor.setupName,
   );
+  if (setupClient === undefined)
+    throw new ConfigurationError(
+      `The registration catalog has no path owner for ${descriptor.setupName}.`,
+    );
+  if (setupClient.configPathError !== undefined)
+    throw (
+      setupClient.configPathFailure ??
+      new ConfigurationError(setupClient.configPathError)
+    );
   return {
     client: {
       id,
       displayName: descriptor.displayName,
       registrationProfile: mcpClientRegistrationProfile(id),
-      configPath: selectedPath(resolved.configPath, context),
-      ...(resolved.configPaths === undefined
+      configPath: selectedPath(setupClient.configPath, context),
+      ...(setupClient.configPaths === undefined
         ? {}
         : {
-            configPaths: resolved.configPaths.map((path) =>
+            configPaths: setupClient.configPaths.map((path) =>
               selectedPath(path, context),
             ),
           }),
       scope: "global",
       format: descriptor.format,
-      ...(resolved.inlineConfiguration === undefined
+      ...(setupClient.inlineConfiguration === undefined
         ? {}
-        : { inlineConfiguration: resolved.inlineConfiguration }),
-      ...(setupClient?.privateProfile === undefined
+        : { inlineConfiguration: setupClient.inlineConfiguration }),
+      ...(setupClient.privateProfile === undefined
         ? {}
         : { privateProfile: setupClient.privateProfile }),
-      ...(setupClient === undefined ? {} : { setupClient }),
+      setupClient,
     },
-    markers: resolved.markers.map((marker) => selectedPath(marker, context)),
+    // Setup's detection evidence, so both commands find the same clients.
+    markers: clientEvidencePaths(setupClient).map((path) =>
+      selectedPath(path, context),
+    ),
   };
 };
 
@@ -289,8 +301,7 @@ export const resolveMcpRegistrationClients = async (
       for (const id of ids) {
         // A user-scope target is already resolved with the table, so its
         // failure is reported before a cancellation that followed it.
-        if (selection.global)
-          clients.push((await globalTarget(id, context)).client);
+        if (selection.global) clients.push(globalTarget(id, context).client);
         checkCancellation(selection.signal);
         if (!selection.global) clients.push(await projectTarget(id, context));
       }
@@ -303,14 +314,14 @@ export const resolveMcpRegistrationClients = async (
     for (const id of Object.keys(MCP_REGISTRATION_CLIENTS).filter(isClientId)) {
       checkCancellation(selection.signal);
       if (id === "amp") continue;
-      const { client, markers } = await globalTarget(id, context);
+      const { client, markers } = globalTarget(id, context);
       all.push(client);
       // Examine every marker: unreadability cannot turn a partial observation into absence.
       const statuses: boolean[] = [];
       for (const marker of markers) statuses.push(await present(marker));
       if (statuses.some(Boolean)) detected.push(client);
     }
-    const amp = (await globalTarget("amp", context)).client;
+    const amp = globalTarget("amp", context).client;
     checkCancellation(selection.signal);
     const selected = [...(detected.length === 0 ? all : detected), amp];
     await admitGlobalTargets(selected, context);
