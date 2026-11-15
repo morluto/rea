@@ -14,9 +14,10 @@ import {
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "./domain/result.js";
@@ -44,11 +45,7 @@ export const parseCliJsonInput = async (
     ok: false as const,
     error: {
       error: "Application workflow failed",
-      ...projectAnalysisError(
-        new AnalysisCancelledError(operation, {
-          cause,
-        }),
-      ),
+      ...projectAnalysisError(cancelledBy(operation, carriedReason(cause))),
     },
   });
   if (signal?.aborted) return cancelled(signal.reason);

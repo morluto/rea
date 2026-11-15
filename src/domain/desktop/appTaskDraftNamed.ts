@@ -49,13 +49,9 @@ import {
   valueFormat,
   type CheckTree,
 } from "./appTaskDraftTree.js";
+import { isRecord } from "../isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Pointers without a listed descendant: a container listed with its members is suggested through them. */
 export const innermost = (pointers: readonly string[]): readonly string[] =>
