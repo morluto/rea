@@ -611,7 +611,7 @@ describe.each(managedWorkflows)(
 describe("managed comparison output failure with completed source reads", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("retains the left source and output failure cause after reading real artifacts", async () => {
+  it("retains both sources and the output failure cause after reading real artifacts", async () => {
     const root = await createTestTempDirectory("rea-managed-output-failure-");
     const leftPath = join(root, "left.dll");
     const rightPath = join(root, "right.dll");
@@ -633,13 +633,25 @@ describe("managed comparison output failure with completed source reads", () => 
       {
         code: "unreadable_output",
         details: {
-          partial_observation: {
-            operation: "inspect_managed_members",
-            subject: { local_path: leftPath },
-            normalized_result: {
-              methods: [expect.objectContaining({ token: "0x06000001" })],
+          argument_observations: [
+            {
+              argument: "left",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: leftPath },
+                normalized_result: {
+                  methods: [expect.objectContaining({ token: "0x06000001" })],
+                },
+              },
             },
-          },
+            {
+              argument: "right",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: rightPath },
+              },
+            },
+          ],
         },
       },
     );
