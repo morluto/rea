@@ -9,11 +9,12 @@ import {
   CLI_REGISTRATION_ORDER,
   type CliCommandRegistrationId,
 } from "../../../src/cli/cliCommandRegistrations.js";
-import { selectCliRegistration } from "../../../src/cli/cliLoader.js";
+import { selectCliRegistrations } from "../../../src/cli/cliLoader.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
@@ -101,14 +102,21 @@ describe("lazy CLI registration", () => {
       arguments_: readonly string[],
       environment: NodeJS.ProcessEnv = {},
       record: Readonly<Record<string, string>> | null = recorded,
-    ) => selectCliRegistration(arguments_, environment, record ?? undefined);
+    ) => selectCliRegistrations(arguments_, environment, record ?? undefined);
 
-    expect(select(["inspect-go-binary", "a.out"])).toBe("go");
-    expect(select(["inspect-go-binary", "a.out", "--json"])).toBe("go");
-    expect(select(["--format", "json", "inspect-go-binary", "a.out"])).toBe(
+    expect(select(["inspect-go-binary", "a.out"])).toEqual(["go"]);
+    expect(select(["inspect-go-binary", "a.out", "--json"])).toEqual(["go"]);
+    expect(select(["--format", "json", "inspect-go-binary", "a.out"])).toEqual([
       "go",
-    );
-    expect(select(["--timings", "setup", "--dry-run"])).toBe("setup");
+    ]);
+    expect(select(["--timings", "setup", "--dry-run"])).toEqual(["setup"]);
+    // A standalone version query needs no registrar, recorded or not.
+    expect(select(["--version"])).toEqual([]);
+    expect(select(["--version"], {}, null)).toEqual([]);
+    // Combined with anything else, or completing, it keeps the complete CLI.
+    expect(select(["--version", "--help"])).toBeUndefined();
+    expect(select(["--version", "--timings"])).toBeUndefined();
+    expect(select(["--version"], { COMPLETE: "bash" })).toBeUndefined();
     // Help, schemas, LLM manifests and builtins describe the whole catalog.
     for (const flag of ["--help", "-h", "--schema", "--llms", "--llms-full"])
       expect(select(["inspect-go-binary", flag]), flag).toBeUndefined();
@@ -149,6 +157,10 @@ registerHooks({ resolve(specifier, context, next) {
       expect(lazy.exitCode, lazy.stderr).toBe(0);
       expect(JSON.parse(lazy.stdout)).toMatchObject({ sessions: [] });
       expect(lazy.stderr).not.toContain(marker);
+      const version = await run(["--version"]);
+      expect(version.exitCode, version.stderr).toBe(0);
+      expect(version.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
+      expect(version.stderr).not.toContain(marker);
       const complete = await run(["list-cutter-sessions", "--help"]);
       expect(complete.exitCode, complete.stderr).toBe(0);
       expect(complete.stderr).toContain(marker);

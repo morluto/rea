@@ -364,7 +364,9 @@ it("stops a held drain after late output exceeds budget but keeps the exit prima
   });
   expect(result.error.diagnostics?.stderr).toContain("physical exit 7");
   expect(result.error.capturedOutput?.truncated).toBe(true);
-  expect(elapsedMs).toBeLessThan(5_000);
+  // The descendant holds stderr open forever, and a drain the codec deadline
+  // ends reports the same exit. Only the output-limit stop beats that deadline.
+  expect(elapsedMs).toBeLessThan(WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs);
 });
 
 it("preserves an observed process-memory limit over the codec exit status", async () => {

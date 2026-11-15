@@ -995,8 +995,15 @@ cliTest(
       binary_path: binaryPath,
     });
     expect(parseMcpToolError(missing).error).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringContaining("slice-selection-required"),
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["binary_architecture"],
+            message: expect.stringContaining("select one architecture"),
+          },
+        ],
+      },
     });
     const summarized = await call("inspect_il2cpp_metadata", {
       path,
@@ -1409,7 +1416,8 @@ cliTest(
         issues: [
           {
             path: ["ghidra_seeds"],
-            message: expect.stringContaining("needs --binary"),
+            message:
+              "Ghidra seed output links method addresses in binary_path.",
           },
         ],
       },
@@ -1469,7 +1477,7 @@ cliTest(
     expect(unlinked.exitCode).not.toBe(0);
     expect(unlinked.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["generic_instances"] }] },
+      details: { issues: [{ path: ["genericInstances"] }] },
     });
   },
 );

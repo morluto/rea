@@ -1,5 +1,5 @@
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { build } from "plist";
 import { expect, it, vi } from "vitest";
 import {
@@ -10,7 +10,7 @@ import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ArtifactReaderTraversal } from "./ArtifactReader.js";
+import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 
 it.skipIf(process.platform === "win32").each([false, true])(
@@ -35,9 +35,16 @@ it.skipIf(process.platform === "win32").each([false, true])(
         signal,
         options,
       ) {
-        yield* entries.call(this, signal, options);
-        if (unknownCoverage && typeof options !== "function")
-          options?.onCoverage?.(producerCoverage);
+        yield* entries.call(
+          this,
+          signal,
+          unknownCoverage && typeof options !== "function"
+            ? {
+                ...options,
+                onCoverage: () => options?.onCoverage?.(producerCoverage),
+              }
+            : options,
+        );
       });
     const host: NativeDmgHost = {
       run: async (args) => {
@@ -80,7 +87,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
       }))
         paths.push(entry.path);
       expect(paths).toContain("image.dmg/Volume/readable.txt");
-      expect(coverage).toEqual(unknownCoverage ? [producerCoverage] : []);
+      expect(coverage).toEqual([
+        unknownCoverage
+          ? producerCoverage
+          : { status: "complete", limitations: [] },
+      ]);
       const paused = reader.entries()[Symbol.asyncIterator]();
       expect((await paused.next()).done).toBe(false);
       await reader.close();

@@ -7,13 +7,15 @@ import {
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
-import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactResourceScope,
+} from "../../../resources/index.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
@@ -421,7 +423,7 @@ export const prepareCaptureProtobuf = async (
           Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
-          "limit",
+          { name: "protobuf-body", maximum: captureBudgets().inputBytes },
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");

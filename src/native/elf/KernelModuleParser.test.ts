@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
   MODULE_SIGNATURE_MAGIC,
 } from "../../domain/native/kernelModule.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,

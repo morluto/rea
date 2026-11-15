@@ -101,7 +101,7 @@ export const projectAndroidSymbolSummary = (
       path: parent.subject.local_path,
       sha256: parent.subject.digest.sha256,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,

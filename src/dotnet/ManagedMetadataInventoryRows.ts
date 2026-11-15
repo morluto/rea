@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
@@ -434,9 +435,7 @@ const decodeFixedString = (
     layout.blob?.offset ?? layout.rootOffset,
   );
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      blob.subarray(start, start + length),
-    );
+    return decodeStrictUtf8(blob.subarray(start, start + length), "preserve");
   } catch (cause: unknown) {
     // Invalid UTF-8 blobs decode as null.
     void cause;

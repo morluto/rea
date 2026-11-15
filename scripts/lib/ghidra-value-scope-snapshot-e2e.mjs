@@ -20,17 +20,16 @@ import {
   requireMcpToolError,
 } from "./mcp-verifier-results.mjs";
 
-/** A pre-scope dossier must not be replayed into a newly qualified trace. */
+/** A dossier from an earlier bridge must not be replayed into a newly qualified trace. */
 export async function verifyLegacyValueScopeSnapshot(
   client,
   { target, procedure, observed, env },
 ) {
-  const { value_flow_effect_scope: scope, ...legacyParameters } =
-    observed.analysis_profile.parameters;
-  const legacyProfile = createAnalysisProfile(
-    observed.provider,
-    legacyParameters,
-  );
+  const { producer } = observed.analysis_profile.parameters;
+  const legacyProfile = createAnalysisProfile(observed.provider, {
+    ...observed.analysis_profile.parameters,
+    producer: { ...producer, sources_sha256: "0".repeat(64) },
+  });
   const parsed = await parseBinaryTarget(target.path, {
     cwd: process.cwd(),
     hostArchitecture: process.arch,
@@ -95,7 +94,7 @@ export async function verifyLegacyValueScopeSnapshot(
       },
     });
     assert.equal(reply.isError, true);
-    assert.equal(scope, "pcode-load-store-explicit-v1");
+    assert.match(producer.sources_sha256, /^[0-9a-f]{64}$/u);
     const error = requireMcpToolError(reply);
     assert.equal(error.code, "evidence_integrity_mismatch");
     assert.deepEqual(error.details.binding_mismatch.profile_digest, {

@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import type { ProviderProcessSupervisor } from "./ProviderProcess.js";
 
 type FrameOutcome = "frame" | "failure";
@@ -37,7 +38,7 @@ export class WorkerFrameSignal {
         );
       return await Promise.race([frameAvailable, outputClose]);
     } finally {
-      outputCloseController.abort();
+      outputCloseController.abort(OwnerCancellation.noLongerNeeded);
       signal.removeEventListener("abort", interruptOutputClose);
       this.#waiters.delete(wakeFrame);
     }

@@ -15,7 +15,7 @@ const mocks = {
   "@modelcontextprotocol/client": `import {envelope} from ${JSON.stringify(modelUrl)};export class Client {async connect(){} async close(){} async callTool({name,arguments:input}){return {structuredContent:envelope(name,input)}}}`,
   "@modelcontextprotocol/client/stdio": `export class StdioClientTransport {async close(){}}`,
   "../dist/contracts/toolContracts.js": `export const toolContract=()=>({outputSchema:{parse:value=>value}});`,
-  "../dist/artifacts/ArtifactResourceScope.js": `export class ArtifactResourceScope {async close(){}}`,
+  "../dist/resources/ArtifactResourceScope.js": `export class ArtifactResourceScope {async close(){}}`,
   "./lib/mcp-verifier-results.mjs": `export const requireMcpOutput=response=>response.structuredContent;`,
   "./lib/verifier-file-resources.mjs": `export const hashVerifierFile=async()=>({sha256:'a'.repeat(64),bytes:1});`,
 };

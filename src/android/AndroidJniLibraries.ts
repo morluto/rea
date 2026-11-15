@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  streamChunkToBuffer,
+} from "../resources/index.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
@@ -153,6 +155,7 @@ export const readAndroidJniLibraries = async (input: {
                     throw new ArtifactReaderFailure(
                       "integrity",
                       "Native library exceeds its declared ZIP size",
+                      { integrityCheck: "declared-size" },
                     );
                   data.copy(bytes, offset);
                   offset += data.length;
@@ -164,6 +167,7 @@ export const readAndroidJniLibraries = async (input: {
                 throw new ArtifactReaderFailure(
                   "integrity",
                   "Native library is shorter than its declared ZIP size",
+                  { integrityCheck: "declared-size" },
                 );
               throwIfJadxInterrupted(input.signal);
               const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -205,6 +209,10 @@ export const readAndroidJniLibraries = async (input: {
                       : "io",
                   message:
                     cause instanceof Error ? cause.message : String(cause),
+                  ...(cause instanceof ArtifactReaderFailure &&
+                  cause.integrityCheck !== undefined
+                    ? { integrity_check: cause.integrityCheck }
+                    : {}),
                 },
               };
             }

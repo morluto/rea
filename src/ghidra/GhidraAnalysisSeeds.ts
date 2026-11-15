@@ -4,11 +4,11 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
@@ -16,6 +16,7 @@ import {
 } from "./GhidraFileArtifacts.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Seed file format admitted by this adapter. */
 export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
@@ -170,7 +171,8 @@ const readSeeds = (
     (bytes) => {
       let text: string;
       try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        // A user-authored seed file may start with a BOM signature.
+        text = decodeStrictUtf8(bytes, "strip-signature");
       } catch {
         throw seedLineError(0, "file is not valid UTF-8");
       }

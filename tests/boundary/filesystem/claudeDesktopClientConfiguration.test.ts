@@ -29,9 +29,10 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
+  type UninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -74,6 +75,23 @@ const claudeDesktop = (
   );
   if (client === undefined) throw new Error("claude_desktop is not supported");
   return client;
+};
+
+/**
+ * Uninstall scoped to Claude Desktop. A simulated Windows profile on a POSIX
+ * temp home has no drive letter, so clients that refuse driveless paths (Kilo)
+ * would fail for reasons unrelated to these tests.
+ */
+const claudeDesktopUninstallHost = (
+  home: string,
+  env: Readonly<Record<string, string>>,
+): UninstallHost => {
+  const host = systemUninstallHost(home, undefined, env, "win32");
+  return {
+    ...host,
+    clients: async () =>
+      (await host.clients()).filter(({ name }) => name === "claude_desktop"),
+  };
 };
 
 const writeJson = async (path: string, value: unknown): Promise<void> => {
@@ -228,7 +246,7 @@ describe("Windows Claude Desktop configuration location", () => {
           environment: env,
         })
       ).find(({ client: name }) => name === "claude_desktop");
-      expect(status).toMatchObject({ state: "invalid", config_path: foreign });
+      expect(status).toMatchObject({ state: "unknown", config_path: foreign });
       await expect(
         inspectClientConfiguration(client, {}, command),
       ).resolves.toMatchObject({ status: "invalid" });
@@ -237,7 +255,7 @@ describe("Windows Claude Desktop configuration location", () => {
       ).resolves.toEqual({ status: "failed", reason: "path" });
       const uninstall = await runUninstall(
         false,
-        systemUninstallHost(home, undefined, env, "win32"),
+        claudeDesktopUninstallHost(home, env),
       );
       expect(uninstall.status).toBe("failed");
       expect(uninstall.items).toContainEqual(
@@ -348,7 +366,7 @@ it("preserves explicit AppData root whitespace throughout setup, doctor and unin
   });
   const uninstall = await runUninstall(
     false,
-    systemUninstallHost(home, undefined, selected, "win32"),
+    claudeDesktopUninstallHost(home, selected),
   );
   expect(uninstall.status).toBe("complete");
   expect(await readJson(appDataConfig)).toEqual(original);
@@ -533,7 +551,7 @@ describe("MSIX Claude Desktop uninstall", () => {
 
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
 
     expect(result.status).toBe("failed");
@@ -558,7 +576,7 @@ describe("MSIX Claude Desktop uninstall", () => {
     await writeJson(appDataConfig, unrelated);
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
     expect(result.status).toBe("complete");
     expect(await readJson(appDataConfig)).toEqual(unrelated);
@@ -574,7 +592,7 @@ describe("MSIX Claude Desktop uninstall", () => {
 
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
 
     expect(result.status).toBe("complete");

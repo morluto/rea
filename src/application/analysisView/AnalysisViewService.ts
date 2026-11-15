@@ -1,5 +1,5 @@
 import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { isNativeObservationOperation } from "../../domain/native/nativeObservation.js";
 import { dispatchQueuedInterrupts } from "../../process/queuedInterrupts.js";
@@ -12,9 +12,9 @@ import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
@@ -131,7 +131,7 @@ const inspectBundleView = async (
           path: ["source", "kind"],
           reason: "invalid_value",
           message:
-            "--evidence-bundle requires a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
+            "An Evidence bundle needs a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
         },
       ]),
     );
@@ -173,14 +173,12 @@ const cancelledFileViewResult = <T>(
   completedEvidence?: Evidence,
 ): Result<T, AnalysisError> => {
   if (!signal?.aborted) return result;
-  const cancellation = new AnalysisCancelledError(
+  const cancellation = cancelledBy(
     INSPECT_ANALYSIS_VIEW_OPERATION,
-    {
-      cause: signal.reason,
-      ...(completedEvidence !== undefined
-        ? { partialObservation: completedEvidence }
-        : {}),
-    },
+    signal,
+    completedEvidence !== undefined
+      ? { partialObservation: completedEvidence }
+      : {},
   );
   if (!result.ok)
     cancellation.retainSecondaryFailure(result.error, {
@@ -188,11 +186,11 @@ const cancelledFileViewResult = <T>(
     });
   return err(
     !result.ok && result.error.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
+      ? analysisErrorWithCleanupDependencies(
           cancellation,
           result.error,
           INSPECT_ANALYSIS_VIEW_OPERATION,
-        ).bindCleanupDependencies([result.error])
+        )
       : cancellation,
   );
 };

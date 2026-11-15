@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   ManagedDecodeBudget,
   managedDecodeBudget,
@@ -645,6 +646,7 @@ describe("managed member inspection", () => {
         caller_token: "0x06000001",
         il_offset: 6,
         target_identity_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        target_row_resolved: true,
         caller: "Fixture.Program.Main",
         opcode: "call",
         target_token: "0x0a000001",
@@ -659,6 +661,7 @@ describe("managed member inspection", () => {
         method_token: "0x06000001",
         il_offset: 1,
         target_identity_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        target_row_resolved: true,
         method: "Fixture.Program.Main",
         opcode: "ldfld",
         field_token: "0x04000001",
@@ -915,24 +918,19 @@ describe("managed edge target declaring types", () => {
     ]);
   });
 
-  it("reads Evidence recorded before declaring types were named as unknown", () => {
+  it("refuses member Evidence without declaring-type names", () => {
     const current = inspect({});
-    const parsed = managedMemberInspectionSchema.parse({
+    const parsed = managedMemberInspectionSchema.safeParse({
       ...current,
       member_refs: current.member_refs.map(
-        ({ parent_name: _omitted, ...legacy }) => legacy,
-      ),
-      call_edges: current.call_edges.map(
-        ({ target_declaring_type: _omitted, ...legacy }) => legacy,
-      ),
-      field_accesses: current.field_accesses.map(
-        ({ field_declaring_type: _omitted, ...legacy }) => legacy,
+        ({ parent_name: _omitted, ...withoutName }) => withoutName,
       ),
     });
-
-    expect(parsed.member_refs[0]?.parent_name).toBeNull();
-    expect(parsed.call_edges[0]?.target_declaring_type).toBeNull();
-    expect(parsed.field_accesses[0]?.field_declaring_type).toBeNull();
+    expect(parsed.error?.issues[0]?.path).toEqual([
+      "member_refs",
+      0,
+      "parent_name",
+    ]);
   });
 });
 
@@ -1452,20 +1450,14 @@ describe("managed exported types", () => {
     expect(result.exported_types).toBeNull();
   });
 
-  it("reads member Evidence recorded before exported types as unexamined", () => {
+  it("refuses member Evidence without the exported-type inventory", () => {
     const bytes = buildManagedPeFixture();
-    const { exported_types: _omitted, ...legacy } = inspectManagedMembersBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-    const parsed = managedMemberInspectionSchema.parse(legacy);
-
-    expect(parsed.exported_types).toBeNull();
-    expect(comparisonLimitations(parsed, parsed)).toContainEqual(
-      expect.stringMatching(
-        /did not examine ExportedType.*exported and forwarded types are unknown/iu,
-      ),
-    );
+    const { exported_types: _omitted, ...withoutExported } =
+      inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes));
+    expect(
+      managedMemberInspectionSchema.safeParse(withoutExported).error?.issues[0]
+        ?.path,
+    ).toEqual(["exported_types"]);
   });
 
   it("retains an exported type whose implementation is out of range as partial", () => {
@@ -1500,6 +1492,33 @@ describe("managed exported types", () => {
       ],
     });
   });
+});
+
+it("keeps decoded members when only the loaded literals exceed capacity", () => {
+  const { heap, tokens } = fixtureUserStringHeap(
+    Array.from({ length: 8 }, (_, index) => String(index).repeat(8_000)),
+  );
+  const bytes = buildManagedPeFixture({
+    ilBody: ldstrBody(tokens),
+    userStringHeap: heap,
+  });
+  const target = managedPeFixtureTarget(bytes);
+  // The members fit 40 KB; the eight 8,000-character literals do not.
+  const result = inspectManagedMembersBytes(bytes, target, {
+    maxRepresentationBytes: 40_000,
+  });
+
+  expect(result.methods).toHaveLength(1);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  expect(result.user_strings).toMatchObject({
+    state: "partial",
+    literals: [],
+    issues: [{ code: "resource-limit", scope: "metadata.#US" }],
+  });
+  expect(result.limitations.join(" ")).toMatch(/literals are not examined/);
+  expect(
+    inspectManagedMembersBytes(bytes, target).user_strings?.literals,
+  ).toHaveLength(8);
 });
 
 describe("managed user strings", () => {
@@ -1653,16 +1672,12 @@ describe("managed user strings", () => {
     });
   });
 
-  it("leaves user strings unexamined when CLI metadata is unavailable or predates them", () => {
+  it("leaves user strings unexamined when CLI metadata is unavailable", () => {
     const native = buildNativePeFixture();
     expect(
       inspectManagedMembersBytes(native, managedPeFixtureTarget(native))
         .user_strings,
     ).toBeNull();
-
-    const { user_strings: _omitted, ...legacy } = inspect({});
-    const parsed = managedMemberInspectionSchema.parse(legacy);
-    expect(parsed.user_strings).toBeNull();
   });
 });
 
@@ -3121,14 +3136,17 @@ describe("managed member method paging", () => {
     expect(emptyPage.methods).toEqual([]);
   });
 
-  it("rejects invalid method page bounds", () => {
-    const image = buildManagedPeFixture();
-    expect(() =>
-      inspectManagedMembersBytes(image, managedPeFixtureTarget(image), {
-        methodOffset: -1,
-      }),
-    ).toThrow(RangeError);
-  });
+  // The input schema admits only non-negative integer pages, so any other
+  // page is a REA defect rather than a malformed target.
+  it.each([{ methodOffset: -1 }, { methodLimit: 1.5 }])(
+    "reports a %o method page as a broken internal assumption",
+    (page) => {
+      const image = buildManagedPeFixture();
+      expect(() =>
+        inspectManagedMembersBytes(image, managedPeFixtureTarget(image), page),
+      ).toThrow(InternalInvariantError);
+    },
+  );
 });
 
 it("retains names of unselected fields without admitting their malformed signatures", () => {

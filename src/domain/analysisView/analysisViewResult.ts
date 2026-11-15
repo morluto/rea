@@ -177,6 +177,7 @@ import {
   nativeInventoryOperationSchema,
 } from "../native/nativeInventory.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   browserScenarioSummarySchema,
   browserScenarioViewContextSchema,
@@ -774,11 +775,11 @@ export const androidMethodSummaryViewResultSchema = z.strictObject({
   summary: androidMethodSummarySchema,
 });
 
-/** Legacy manifest views keep their original shape; new facets are explicit. */
+/** One page of the retained manifest text. */
 export const androidManifestViewResultSchema = z.strictObject({
   ...viewResultBase,
   kind: z.literal("android"),
-  facet: z.literal("manifest").optional(),
+  facet: z.literal("manifest"),
   view: androidManifestViewRequestSchema,
   item: androidManifestViewItemSchema,
   parent_operation: z.literal("inspect_android_package"),
@@ -847,7 +848,7 @@ export const webBundleSummaryViewResultSchema = z.strictObject({
   artifact: artifactSchema.nullable(),
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  target_origin: recordedBrowserOriginSchema.nullable(),
   source_unknowns: webBundleAnalysisSchema.shape.unknowns,
   summary: webBundleSummarySchema,
 });
@@ -858,7 +859,7 @@ export const webBundlePageViewResultSchema = z.strictObject({
   kind: z.literal("web-bundle"),
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  target_origin: recordedBrowserOriginSchema.nullable(),
   source_unknowns: webBundleAnalysisSchema.shape.unknowns,
   view: webBundleViewRequestSchema,
   completeness: webBundleAnalysisSchema.shape.completeness,
@@ -1492,7 +1493,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("pcap"),
     view: pcapViewRequestSchema,
     page: pcapViewPageSchema,
-    source_coverage: z.enum(["complete", "partial"]),
+    source_coverage: knownCoverageStatusSchema,
     ...viewResultBase,
     parent_operation: z.literal("inspect_pcap_capture"),
   }),

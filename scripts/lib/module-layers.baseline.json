@@ -1,0 +1,39 @@
+{
+  "upward": {
+    "artifacts -> application": 1,
+    "dotnet -> application": 1
+  },
+  "cycles": [
+    "application <-> artifacts",
+    "artifacts <-> native",
+    "cli <-> cli.ts",
+    "cli <-> cliBrowserScenarioCommands.ts",
+    "cli <-> cliEvidenceCommands.ts",
+    "cli <-> cliOutput.ts",
+    "main <-> server"
+  ],
+  "crossProvider": {
+    "android -> artifacts": 2,
+    "android -> native": 1,
+    "apktool -> artifacts": 2,
+    "artifacts -> dotnet": 3,
+    "artifacts -> native": 1,
+    "browser -> artifacts": 4,
+    "captures -> pcap": 2,
+    "desktop -> browser": 1,
+    "desktop -> electron": 1,
+    "flutter -> artifacts": 1,
+    "gpu -> artifacts": 2,
+    "il2cpp -> ghidra": 1,
+    "inspector -> browser": 2,
+    "model -> artifacts": 1,
+    "native -> artifacts": 2
+  },
+  "entry": {
+    "application -> artifacts": 7,
+    "application -> browser": 2,
+    "application -> desktop": 41,
+    "application -> frida": 2,
+    "application -> reference": 8
+  }
+}

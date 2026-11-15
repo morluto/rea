@@ -102,7 +102,7 @@ it.each([
   ["class C extends Base {}", { ClassDeclaration: ["class-definition"] }],
   [
     "@decorate class C {}",
-    { ClassDeclaration: ["class-definition"], Decorator: ["decorator"] },
+    { ClassDeclaration: ["class-definition", "decorator"] },
   ],
   ["import(value);", { ImportExpression: ["dynamic-import"] }],
   ["with (value) key;", { WithStatement: ["dynamic-scope"] }],

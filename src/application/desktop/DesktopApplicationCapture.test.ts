@@ -42,7 +42,7 @@ import * as captureFailures from "./DesktopCaptureFailure.js";
 import * as providerProcess from "../../process/ProviderProcess.js";
 import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,

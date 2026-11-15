@@ -7,9 +7,9 @@ const mapping = vi.hoisted(() => ({
   scans: vi.fn(),
   indexes: vi.fn(),
 }));
-vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
+vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../metadata/BinaryContainer.js")>();
+    await importOriginal<typeof import("../../domain/binaryContainer.js")>();
   return {
     ...actual,
     mappedFileOffset: (
@@ -32,10 +32,10 @@ vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
  * once instead of running for minutes. Null leaves the tables unwrapped.
  */
 const sectionTable = vi.hoisted(() => ({ readsLeft: null as number | null }));
-vi.mock("../metadata/NativeSectionDirectory.js", async (importOriginal) => {
+vi.mock("../../domain/native/nativeSectionDirectory.js", async (importOriginal) => {
   const actual =
     await importOriginal<
-      typeof import("../metadata/NativeSectionDirectory.js")
+      typeof import("../../domain/native/nativeSectionDirectory.js")
     >();
   return {
     ...actual,
@@ -84,8 +84,8 @@ import {
 } from "../../domain/native/nativeInitializers.js";
 import { buildAddressRangeIndex } from "./addressRangeIndex.js";
 import { InitializerNotes } from "./initializerNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 
 const artifact = (bytes: Buffer) => ({
   path: "/artifacts/image",

@@ -1801,32 +1801,36 @@ describe("web metadata key semantics", () => {
       },
     ]);
   });
+});
 
-  it("keeps missing coverage absent when parsing historical observations", () => {
-    const analyzed = analyzeWebBundleFixture(
-      inspection(
-        `document.modelContext.registerTool({ name: "legacy", inputSchema: { properties: {} } });`,
-      ),
-    );
-    const declaration = analyzed.observations.webmcp_declarations[0];
-    expect(declaration).toBeDefined();
-    if (declaration === undefined) throw new Error("Expected declaration");
-    const { schema_property_names_coverage: _coverage, ...legacyDeclaration } =
-      declaration;
-    const parsed = webBundleAnalysisSchema.parse({
+it("refuses a declaration without its schema property-name coverage", () => {
+  const analyzed = analyzeWebBundleFixture(
+    inspection(
+      `document.modelContext.registerTool({ name: "uncovered", inputSchema: { properties: {} } });`,
+    ),
+  );
+  const declaration = analyzed.observations.webmcp_declarations[0];
+  if (declaration === undefined) throw new Error("Expected declaration");
+  const { schema_property_names_coverage: _coverage, ...withoutCoverage } =
+    declaration;
+  expect(
+    webBundleAnalysisSchema.safeParse({
       ...analyzed,
       observations: {
         ...analyzed.observations,
-        webmcp_declarations: [legacyDeclaration],
+        webmcp_declarations: [withoutCoverage],
       },
-    });
-    expect(
-      Object.hasOwn(
-        parsed.observations.webmcp_declarations[0] ?? {},
+    }).error?.issues,
+  ).toMatchObject([
+    {
+      path: [
+        "observations",
+        "webmcp_declarations",
+        0,
         "schema_property_names_coverage",
-      ),
-    ).toBe(false);
-  });
+      ],
+    },
+  ]);
 });
 
 it("retains WebMCP declarations through optional member and call chaining", () => {
@@ -2222,6 +2226,10 @@ it.each([
   ["XMLHttpRequest.prototype.open = replacement;", false],
   ["const alias = xhr; alias.open = replacement;", false],
   ["mutate(xhr);", false],
+  // Global code between construction and the call may patch the prototype,
+  // so the call, not the constructor reference, bounds its timing.
+  ['eval("XMLHttpRequest.prototype.open = replacement");', false],
+  ['Function("XMLHttpRequest.prototype.open = replacement")();', false],
 ])(
   "preserves XHR receiver proof across visible mutation: %s",
   (mutation, observed) => {

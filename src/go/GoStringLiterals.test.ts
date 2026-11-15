@@ -5,7 +5,7 @@ import type {
   BinaryContainer,
   ImageSection,
   LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
 import { recoverGoStringLiterals } from "./GoStringLiterals.js";

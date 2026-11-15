@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -51,8 +52,6 @@ export const KERNEL_MODULE_MODINFO_ENTRY_REASONS = [
   "unterminated_modinfo_entry",
   "modinfo_missing_separator",
   "modinfo_empty_key",
-  // Accepted when decoding older Evidence; new observations separate omission from validity.
-  "modinfo_field_exceeds_limit",
 ] as const;
 
 export const KERNEL_MODULE_MODINFO_SECTION_REASONS = [
@@ -276,7 +275,11 @@ export const kernelModuleSchema = z.strictObject({
   signature: signatureSchema.nullable(),
   coverage: z.strictObject({
     status: z
-      .enum(["complete", "partial", "not_applicable", "unsupported"])
+      .enum([
+        ...knownCoverageStatusSchema.options,
+        "not_applicable",
+        "unsupported",
+      ])
       .describe(
         "Whether the supported inspection examined the declared facts; omitted or undecodable facts make coverage partial.",
       ),
