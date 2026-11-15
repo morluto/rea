@@ -1,3 +1,10 @@
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  unsupportedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import { readObjcPropertyList } from "./AppleObjcProperties.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { SwiftNominalReaders } from "./AppleSwiftNominalTypes.js";
@@ -42,7 +49,10 @@ export const createObjcProtocolReader = (input: {
       // `count` is plain uintptr_t data, not a pointer fixup.
       const count = read.u64(address);
       if (count > 20000n)
-        throw new RangeError("Protocol list exceeds 20000 entries");
+        throw decodeLimit("macho", "Protocol list exceeds 20000 entries", {
+          name: "objc_protocol_list_entries",
+          maximum: 20_000,
+        });
       for (let index = 0n; index < count; index++) {
         if (!read.admit()) {
           onTruncated?.();
@@ -54,6 +64,7 @@ export const createObjcProtocolReader = (input: {
       }
       return ok(names);
     } catch (cause: unknown) {
+      if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       return err({
         _tag: "ProtocolListUnreadable",
         names,
@@ -76,7 +87,10 @@ export const createObjcProtocolReader = (input: {
     const relative = (flags & 0x80000000) !== 0;
     const stride = flags & 0xfffc;
     if (stride !== (relative ? 12 : 24))
-      throw new TypeError("Unsupported Objective-C protocol method entry size");
+      throw unsupportedInput(
+        "macho",
+        "Unsupported Objective-C protocol method entry size",
+      );
     for (let index = 0; index < count; index++) {
       if (!read.admit()) {
         onTruncated?.();
@@ -113,7 +127,10 @@ export const createObjcProtocolReader = (input: {
     try {
       const protocolSize = read.u32(address + 64n);
       if (protocolSize < 72)
-        throw new RangeError("Truncated Objective-C protocol declaration");
+        throw truncatedInput(
+          "macho",
+          "Truncated Objective-C protocol declaration",
+        );
       const protocolName = name(address);
       // Adopted protocols are independent declarations; decode them before
       // rejecting a parent whose own name is empty.
@@ -127,7 +144,7 @@ export const createObjcProtocolReader = (input: {
           `Protocol 0x${address.toString(16)} adopted protocol list: ${adopted.error.reason}`,
         );
       if (protocolName.length === 0)
-        throw new TypeError("Objective-C protocol has an empty name");
+        throw malformedInput("macho", "Objective-C protocol has an empty name");
       const skipped: string[] = [];
       const required = [
         ...methods(
@@ -183,6 +200,7 @@ export const createObjcProtocolReader = (input: {
         if (protocolSize >= 96 && read.pointer(address + 88n) !== 0n)
           propertyReasons.push("protocol class properties are not decoded");
       } catch (cause) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         propertyReasons.push(
           cause instanceof Error ? cause.message : String(cause),
         );
@@ -219,6 +237,7 @@ export const createObjcProtocolReader = (input: {
         ),
       });
     } catch (cause) {
+      if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       failures.push(
         `Protocol 0x${address.toString(16)}: ${cause instanceof Error ? cause.message : String(cause)}`,
       );

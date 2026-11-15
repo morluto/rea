@@ -111,7 +111,8 @@ function* nameAddresses(
     if (Buffer.byteLength(name) > TOTAL_NAME_OCCURRENCES)
       throw new Il2cppBinaryFormatFailure(
         "native-index-capacity",
-        "module-name trie exceeds its65536-node workspace",
+        `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
+        TOTAL_NAME_OCCURRENCES,
       );
     let node = root;
     const bytes = Buffer.from(name, "utf8");
@@ -122,7 +123,8 @@ function* nameAddresses(
         if (nodes >= TOTAL_NAME_OCCURRENCES)
           throw new Il2cppBinaryFormatFailure(
             "native-index-capacity",
-            "module-name trie exceeds its65536-node workspace",
+            `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
+            TOTAL_NAME_OCCURRENCES,
           );
         next = { next: new Map(), owners: [] };
         node.next.set(bytes[at]!, next);
@@ -162,6 +164,7 @@ function* nameAddresses(
             throw new Il2cppBinaryFormatFailure(
               "native-index-capacity",
               `native name-address index exceeds ${TOTAL_NAME_OCCURRENCES} entries`,
+              TOTAL_NAME_OCCURRENCES,
             );
           found.set(address, node.owners);
         }
@@ -531,6 +534,7 @@ function* findModuleArrayByCode(
           throw new Il2cppBinaryFormatFailure(
             "native-index-capacity",
             `module-array index exceeds ${MODULE_ARRAY_CANDIDATES} entries`,
+            MODULE_ARRAY_CANDIDATES,
           );
       }
     }

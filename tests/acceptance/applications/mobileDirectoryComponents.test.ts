@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -158,9 +159,7 @@ cliTest.for(fixtures)(
             path.endsWith(".dylib")
               ? new Uint8ArrayReader(thinMach(0xfeedfacf, 0x0100000c))
               : path.endsWith(".so")
-                ? new Uint8ArrayReader(
-                    Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
-                  )
+                ? new Uint8ArrayReader(Uint8Array.from(minimalElfImage()))
                 : new TextReader("opaque fixture content"),
           );
       }

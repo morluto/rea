@@ -381,6 +381,29 @@ describe("advertised pattern presentation through pointers", () => {
   );
 });
 
+it.each(PRESENTERS)(
+  "keeps %s pointers valid into unevaluated keywords lost evaluation removes",
+  (_kind, present) => {
+    const schema = {
+      $defs: {
+        guard: {
+          if: { pattern: "^(?!con$)[a-z]+$" },
+          then: { type: "string" },
+          unevaluatedProperties: { type: "string" },
+          unevaluatedItems: { type: "string" },
+        },
+      },
+      type: "object",
+      properties: {
+        props: { $ref: "#/$defs/guard/unevaluatedProperties" },
+        items: { $ref: "#/$defs/guard/unevaluatedItems" },
+      },
+    };
+    const validate = new Ajv2020({ strict: false }).compile(present(schema));
+    expect(validate({ props: "a", items: "b" })).toBe(true);
+  },
+);
+
 describe("advertised pattern presentation through collapsing unions", () => {
   const lookAround = "^(?!con$)[a-z]+$";
 

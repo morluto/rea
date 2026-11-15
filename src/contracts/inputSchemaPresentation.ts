@@ -320,9 +320,18 @@ const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
 /**
  * Keywords normalization may remove or rename: a widened `not` or `if` is
- * dropped with its branches, and a widened `oneOf` becomes `anyOf`.
+ * dropped with its branches, a widened `oneOf` becomes `anyOf`, and lost
+ * evaluation drops `unevaluatedProperties` and `unevaluatedItems`.
  */
-const REMOVABLE_KEYWORDS = new Set(["oneOf", "not", "if", "then", "else"]);
+const REMOVABLE_KEYWORDS = new Set([
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+]);
 
 /**
  * Whether a pointer from `root` passes through a keyword normalization may
