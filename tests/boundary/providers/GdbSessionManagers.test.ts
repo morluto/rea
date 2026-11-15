@@ -6,7 +6,7 @@ import {
 } from "./gdbTestHelpers.js";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -269,9 +269,16 @@ it("leaves the GDB version unknown when its banner is not strict UTF-8", async (
   const owner = createGdbFixtureOwner();
   const directory = await mkdtemp(join(tmpdir(), "rea-gdb-version-utf8-"));
   const provider = join(directory, "fake-gdb.mjs");
+  const unmodeledPath = join(directory, "unmodeled");
   await writeFile(
     provider,
     `#!${process.execPath}
+import { appendFileSync } from "node:fs";
+const modeled = new Set([
+  "-gdb-set auto-load off",
+  '-interpreter-exec console "show version"',
+  "-gdb-exit",
+]);
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -286,9 +293,13 @@ process.stdin.on("data", (chunk) => {
         Buffer.from([0xff]),
         Buffer.from('\\\\n"\\n' + token + "^done\\n"),
       ]));
-    else if (command.includes("list-thread-groups"))
+    else if (command === "-list-thread-groups --recurse 1")
       process.stdout.write(token + "^done,groups=[]\\n");
-    else process.stdout.write(token + "^done\\n");
+    else if (modeled.has(command)) process.stdout.write(token + "^done\\n");
+    else {
+      appendFileSync(${JSON.stringify(unmodeledPath)}, command + "\\n");
+      process.stdout.write(token + '^error,msg="unmodeled request"\\n');
+    }
   }
 });
 `,
@@ -311,6 +322,10 @@ process.stdin.on("data", (chunk) => {
       id: "gnu.gdb",
       name: "GNU GDB",
       version: null,
+    });
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    await expect(readFile(unmodeledPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
     });
   } finally {
     await owner.cleanup([manager], () =>
