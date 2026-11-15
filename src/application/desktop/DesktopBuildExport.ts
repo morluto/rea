@@ -29,7 +29,7 @@ import {
 } from "../../domain/desktop/buildSecrets.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,

@@ -16,7 +16,7 @@ import {
   guestFileAnswerCeiling,
   guestFileAnswerRefusal,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   runRea as runControllerRea,
   type ControlledComputer,

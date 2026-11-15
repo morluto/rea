@@ -6,7 +6,7 @@ import {
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type {
   Answer,
   ControlledComputer,

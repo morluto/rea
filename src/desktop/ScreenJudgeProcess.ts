@@ -15,11 +15,9 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import {
-  AGENTENV_PROVIDER,
-  agentEnvInterpreter,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const JUDGE_TIMEOUT_MS = 10 * 60 * 1000;

@@ -10,10 +10,8 @@ import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
-import type {
-  ComputerHelper,
-  ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import {
   DATA_OBJECTS,
   dataGetSchema,
