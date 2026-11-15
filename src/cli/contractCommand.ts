@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -711,10 +709,35 @@ const commandShape = (description: ContractCliDescription) => ({
     ({ key, schema }) => [key, schema] as const,
   ),
   // Routed descriptions declare no object-level rules, so this is the object.
-  options: (incurOptions(description) as z.ZodObject).shape as Readonly<
-    Record<string, z.ZodType>
-  >,
+  options: Object.fromEntries(
+    Object.entries(
+      (incurOptions(description) as z.ZodObject).shape as Readonly<
+        Record<string, z.ZodType>
+      >,
+    ).map(([key, schema]) => [key, withoutDefault(schema)]),
+  ),
 });
+
+/**
+ * An omitted option must stay omitted, since a given option routes the
+ * input; the chosen route applies its own default on admission. Help and
+ * `--schema` still state the default, in the description and as JSON
+ * Schema `default`.
+ */
+const withoutDefault = (schema: z.ZodType): z.ZodType => {
+  if (!(schema instanceof z.ZodDefault)) return schema;
+  const value: unknown = schema.parse(undefined);
+  const omittable = (schema.removeDefault() as z.ZodType).optional();
+  const shown = typeof value === "string" ? value : JSON.stringify(value);
+  return omittable.meta({
+    ...schema.meta(),
+    description:
+      schema.description === undefined
+        ? `Default: ${shown}`
+        : `${schema.description} (default: ${shown})`,
+    default: value,
+  });
+};
 
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
@@ -782,14 +805,6 @@ export const registerRoutedCommand = (
       owners.set(key, routes[index]!);
     }
   }
-  // Help and `--schema` advertise each option's default, but a given option
-  // routes the input, so an option that holds its default counts as omitted
-  // and the chosen route applies its own default.
-  const defaults = [...options].flatMap(([key, schema]) =>
-    schema instanceof z.ZodDefault
-      ? [[key, schema.parse(undefined)] as const]
-      : [],
-  );
   const owns = (route: CliCommandRoute, key: string): boolean =>
     args.some(([argument]) => argument === key) ||
     Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
@@ -807,8 +822,6 @@ export const registerRoutedCommand = (
       readonly options: Readonly<Record<string, unknown>>;
     }) => {
       const values: Record<string, unknown> = { ...chosen, ...given };
-      for (const [key, value] of defaults)
-        if (isDeepStrictEqual(values[key], value)) delete values[key];
       const supplied = Object.keys(values).filter(
         (key) => values[key] !== undefined,
       );
