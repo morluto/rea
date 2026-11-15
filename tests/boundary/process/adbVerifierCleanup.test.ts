@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
+
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -30,26 +32,9 @@ const runVerifier = async (
 ) => {
   const root = await mkdtemp(join(tmpdir(), "rea-adb-verifier-test-"));
   roots.push(root);
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "dist", "application", "adb"), { recursive: true });
   await mkdir(join(root, "dist", "composition"), { recursive: true });
-  await writeFile(
-    join(root, "scripts", "verify-adb.mjs"),
-    await readFile(new URL("../../../scripts/verify-adb.mjs", import.meta.url)),
-  );
-  // The verifier's cleanup and fixture owners, with the fixture's imports.
-  for (const helper of [
-    "verifier-cleanup.mjs",
-    "verifier-fixture.mjs",
-    "canonical-temporary-directory.mjs",
-    "verifier-source-loader.mjs",
-  ])
-    await writeFile(
-      join(root, "scripts", "lib", helper),
-      await readFile(
-        new URL(`../../../scripts/lib/${helper}`, import.meta.url),
-      ),
-    );
+  await copyScriptsWithImports(["scripts/verify-adb.mjs"], root);
   // The simulated device directory stands in for /data/local/tmp; the fake
   // adb client records its argv and removes only the named probe.
   const device = join(root, "device");

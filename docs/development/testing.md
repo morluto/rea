@@ -186,9 +186,14 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
 module. Files that still construct one directly are listed with their counts in
-`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
-count, and after removing copies run
+`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
+exceed its count, and after removing copies run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+Each counted guard keeps its baseline in its own
+`scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
+changes to different guards never edit the same file. Resolve a conflict in one
+of these files by keeping both sides' entries (the higher count where they
+differ) and rerunning `--shrink-baselines`.
 
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
