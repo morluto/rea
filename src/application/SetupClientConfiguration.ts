@@ -65,6 +65,7 @@ import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,
 } from "./SetupRecoveryBackup.js";
+import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
 import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
@@ -376,11 +377,13 @@ const persistClientConfiguration = async ({
     };
   let recoveryBackupPath: string | undefined;
   if (original !== undefined) {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-    );
+    // A private profile's backup stays owner-only even when it sits beside
+    // a requested link outside the secured target directory.
+    const preserved = await (
+      client.privateProfile === undefined
+        ? preserveCurrentRecoveryBackup
+        : preservePrivateRecoveryBackup
+    )(`${client.configPath}.rea.backup`, transactionPath, original);
     if (!preserved.ok) return { status: "failed", reason: "backup" };
     recoveryBackupPath = preserved.value;
   }
