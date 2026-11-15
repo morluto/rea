@@ -280,6 +280,32 @@ export interface CliSelectorOption {
    * such as a one-shot command that has no current position to fall back on.
    */
   readonly required?: true;
+  /**
+   * A second named option that spells the same selector in another
+   * coordinate system, such as a file offset for a procedure. Its value is
+   * mapped to the selector's text and must agree with the other spellings.
+   */
+  readonly alternative?: CliSelectorAlternative;
+}
+
+/** Another option spelling a selector, mapped to the selector's text. */
+export interface CliSelectorAlternative {
+  /** The option key; its flag is the kebab-case spelling. */
+  readonly name: string;
+  readonly description: string;
+  /** The option's own argv grammar. */
+  readonly schema: z.ZodType<string>;
+  /** The selector text this value selects. */
+  readonly selects: (value: string) => string;
+}
+
+/** The described alternative option of a positional selector. */
+export interface ContractCliSelectorAlternative {
+  readonly key: string;
+  /** The key of the option's parsed value. */
+  readonly valueKey: string;
+  readonly schema: z.ZodType;
+  readonly selects: (value: string) => string;
 }
 
 /** The described named option of a positional selector. */
@@ -295,6 +321,8 @@ export interface ContractCliSelectorOption {
   readonly kind: CliSelectorKind;
   /** Neither spelling may be omitted. */
   readonly required: boolean;
+  /** Another option spelling the same selector, if any. */
+  readonly alternative: ContractCliSelectorAlternative | undefined;
 }
 
 /** One positional argument or option of a contract command. */
@@ -1270,6 +1298,17 @@ export const describeContractCommand = <
         schema: schema.describe(selector.description),
         kind: selector.kind ?? "text",
         required: selector.required === true || !admitsOmission(declared),
+        alternative:
+          selector.alternative === undefined
+            ? undefined
+            : {
+                key: selector.alternative.name,
+                valueKey: `--${selector.alternative.name}`,
+                schema: selector.alternative.schema
+                  .optional()
+                  .describe(selector.alternative.description),
+                selects: selector.alternative.selects,
+              },
       };
     }
     return {
@@ -1376,7 +1415,14 @@ export const describeContractCommand = <
       ? []
       : [sessionTarget.key, ...sessionTarget.options.map(({ key }) => key)];
   const selectorKeys = parameters.flatMap(({ selectorOption }) =>
-    selectorOption === undefined ? [] : [selectorOption.key],
+    selectorOption === undefined
+      ? []
+      : [
+          selectorOption.key,
+          ...(selectorOption.alternative === undefined
+            ? []
+            : [selectorOption.alternative.key]),
+        ],
   );
   // A selector option may share its positional's key: argv keeps them apart.
   const keys = new Set([
@@ -1557,29 +1603,66 @@ export const describeContractCommand = <
     },
     evidenceDelivery,
     admit: (values) => {
+      const selectedValues: Record<string, unknown> = { ...values };
       for (const { key, selectorOption } of parameters) {
         if (selectorOption === undefined) continue;
-        const selected = selectCliAnalysisSelector(
+        const selected = selectSpelledSelector(
+          contract.name,
+          selectorOption,
           values[key] as string | undefined,
-          values[selectorOption.valueKey] as string | undefined,
-          {
-            option: selectorOption.key,
-            operation: contract.name,
-            kind: selectorOption.kind,
-            required: selectorOption.required,
-          },
+          values,
         );
         if (!selected.ok) return selected;
+        selectedValues[selectorOption.valueKey] = selected.value;
       }
       return admitInvocation(
         contract,
         { evidenceDelivery, viewDelivery, parameters, shape },
-        values,
+        selectedValues,
         toContractInput,
         rename,
       );
     },
   };
+};
+
+/**
+ * Select one selector from its positional, its named option and any
+ * alternative option. The named option and the alternative agree only as
+ * text; the positional then agrees with either as the selector's kind, and
+ * a conflict names the option the caller used.
+ */
+const selectSpelledSelector = (
+  operation: string,
+  selector: ContractCliSelectorOption,
+  positional: string | undefined,
+  values: Readonly<Record<string, unknown>>,
+): Result<string | undefined, AnalysisInputError> => {
+  const { alternative } = selector;
+  let named = values[selector.valueKey] as string | undefined;
+  let option = selector.key;
+  const otherSpelling =
+    alternative === undefined
+      ? undefined
+      : (values[alternative.valueKey] as string | undefined);
+  if (alternative !== undefined && otherSpelling !== undefined) {
+    const merged = selectCliAnalysisSelector(
+      named,
+      alternative.selects(otherSpelling),
+      { option: alternative.key, operation, kind: "text", required: false },
+    );
+    if (!merged.ok) return merged;
+    named = merged.value;
+    option = alternative.key;
+  }
+  const selected = selectCliAnalysisSelector(positional, named, {
+    option,
+    operation,
+    kind: selector.kind,
+    required: selector.required,
+  });
+  // The named spelling is preserved when both agree.
+  return selected.ok ? ok(named ?? positional) : selected;
 };
 
 /**
