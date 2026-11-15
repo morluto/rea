@@ -83,3 +83,35 @@ export interface AnalysisInvocationSettingLimit extends Omit<
   /** Launch-environment seed that a new invocation reads, when one exists. */
   readonly environment?: string;
 }
+
+/**
+ * A limit whose control is not a registered analysis setting: a per-call
+ * request parameter, or an environment variable REA reads when it starts. A
+ * limit without `control_kind` is an `AnalysisSettingLimit` named by
+ * `setting`. `update_analysis_settings` changes neither control.
+ */
+export type AnalysisControlLimit = {
+  readonly effective_value: number;
+  readonly unit: AnalysisSettingLimit["unit"];
+  readonly minimum: number;
+  readonly maximum: number;
+  /** Value used when the control is omitted. */
+  readonly default_value: number;
+} & (
+  | {
+      readonly control_kind: "parameter";
+      readonly parameter: string;
+      /** CLI spelling of the same per-call parameter. */
+      readonly cli_flag: string;
+      readonly applies_at: "next_call";
+    }
+  | {
+      readonly control_kind: "environment";
+      readonly environment: string;
+      /** A one-invocation caller's next invocation reads it without a restart. */
+      readonly applies_at: "next_startup" | "next_invocation";
+    }
+);
+
+/** The limit an error binds: a registered setting, or a parameter or environment control. */
+export type AnalysisLimit = AnalysisSettingLimit | AnalysisControlLimit;
