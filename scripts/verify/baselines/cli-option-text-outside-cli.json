@@ -11,6 +11,5 @@
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
   "src/kuna/KunaProjectReader.ts": 1,
   "src/native/NativePlistSource.ts": 1,
-  "src/native/elf/KernelModuleParser.ts": 1,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }
