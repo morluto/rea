@@ -80,6 +80,8 @@ import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCleanupFailure,
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
 } from "../../domain/analysisErrorCleanup.js";
 import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
@@ -119,18 +121,6 @@ interface CleanupFailureTracker {
   readonly error: AnalysisError | undefined;
   readonly onFailure: (failure: AnalysisError) => void;
 }
-
-/** Compose live cleanup facts without treating an unowned rejection as completion. */
-const sessionCleanupFailure = (
-  primary: AnalysisError,
-  cleanup: AnalysisError,
-  operation: string,
-): AnalysisError => {
-  const failure = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  return cleanup.cleanupIncomplete
-    ? failure.bindCleanupDependencies([primary, cleanup])
-    : failure;
-};
 
 /**
  * Let a cleanup failure the client's close reported read that close. A failure
@@ -173,14 +163,20 @@ const trackCleanupFailures = (
       } else {
         // Both operands are cleanup observations here. An earlier rejection
         // without a live lifecycle must not disappear when a later owner resolves.
-        cleanupFailure = cleanupFailure.cleanupIncomplete
-          ? sessionCleanupFailure(cleanupFailure, failure, operation)
-          : analysisErrorWithCleanupFailure(cleanupFailure, failure, operation);
+        cleanupFailure = analysisErrorWithCloseRejections(
+          cleanupFailure,
+          failure,
+          operation,
+        );
       }
       error =
         cancellation === undefined
           ? cleanupFailure
-          : sessionCleanupFailure(cancellation, cleanupFailure, operation);
+          : analysisErrorWithCloseRejection(
+              cancellation,
+              cleanupFailure,
+              operation,
+            );
     },
   };
 };
@@ -320,7 +316,7 @@ export class BinarySession
         return err(
           closed.ok
             ? started.error
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 started.error,
                 closed.error,
                 "open_bundle_resources",
@@ -336,7 +332,7 @@ export class BinarySession
         return err(
           closed.ok
             ? cancelled
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 cancelled,
                 closed.error,
                 "open_bundle_resources",
@@ -359,7 +355,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? primary
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCloseRejections(
                   primary,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -379,7 +375,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? cancelled
-              : sessionCleanupFailure(
+              : analysisErrorWithCloseRejection(
                   cancelled,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -1215,24 +1211,20 @@ export class BinarySession
     let resourceFailure = resourceFailures[0];
     for (const next of resourceFailures.slice(1))
       if (resourceFailure !== undefined) {
-        const previous = resourceFailure;
-        resourceFailure = analysisErrorWithCleanupFailure(
-          previous,
+        resourceFailure = analysisErrorWithCloseRejections(
+          resourceFailure,
           next,
           "close_binary",
         );
-        if (previous.cleanupIncomplete && next.cleanupIncomplete)
-          resourceFailure.bindCleanupDependencies([previous, next]);
       }
     if (!closed.ok && resourceFailure !== undefined) {
-      const combined = analysisErrorWithCleanupFailure(
-        closed.error,
-        resourceFailure,
-        "close_binary",
+      return err(
+        analysisErrorWithCloseRejections(
+          closed.error,
+          resourceFailure,
+          "close_binary",
+        ),
       );
-      if (closed.error.cleanupIncomplete && resourceFailure.cleanupIncomplete)
-        combined.bindCleanupDependencies([closed.error, resourceFailure]);
-      return err(combined);
     }
     if (!closed.ok) return closed;
     return resourceFailure === undefined ? ok(null) : err(resourceFailure);
@@ -1257,20 +1249,14 @@ export class BinarySession
       );
       if (!closed.ok) {
         retained.push(session);
-        const previous = failure;
         failure =
-          previous === undefined
+          failure === undefined
             ? closed.error
-            : analysisErrorWithCleanupFailure(
-                previous,
+            : analysisErrorWithCloseRejections(
+                failure,
                 closed.error,
                 "close_binary",
               );
-        if (
-          previous?.cleanupIncomplete === true &&
-          closed.error.cleanupIncomplete
-        )
-          failure.bindCleanupDependencies([previous, closed.error]);
       }
     }
     this.#pendingBundleResourceCleanup = retained;
@@ -1337,7 +1323,11 @@ export class BinarySession
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
     if (!closed.ok)
-      return sessionCleanupFailure(primary, closed.error, "open_binary");
+      return analysisErrorWithCloseRejection(
+        primary,
+        closed.error,
+        "open_binary",
+      );
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1353,7 +1343,7 @@ export class BinarySession
       ),
     });
     return restored.error.cleanupIncomplete
-      ? sessionCleanupFailure(primary, restored.error, "open_binary")
+      ? analysisErrorWithCloseRejection(primary, restored.error, "open_binary")
       : primary;
   }
 
@@ -1851,7 +1841,13 @@ export class BinarySession
     const closed = await this.#retireClient(run);
     return closed.ok
       ? err(started.error)
-      : err(sessionCleanupFailure(started.error, closed.error, "open_binary"));
+      : err(
+          analysisErrorWithCloseRejection(
+            started.error,
+            closed.error,
+            "open_binary",
+          ),
+        );
   }
 
   async #waitForTransition(
