@@ -6,7 +6,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
-  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -25,6 +24,7 @@ import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
@@ -332,33 +332,38 @@ export const runOnEvidenceTargets =
       sources[field] = source.value;
       first ??= source.value;
     }
-    let result: Result<Evidence, AnalysisError>;
-    try {
-      result = await compose(
-        { ...input, ...sources },
-        { ...context, evidenceTargets },
-      );
-    } catch (cause: unknown) {
-      // The completed source Evidence outlives a defect in the composition.
-      result = {
-        ok: false,
-        error: new AnalysisOutputError(
-          operation,
-          `${operation} produced invalid output`,
-          { cause },
-        ),
-      };
-    }
     // A cancellation that arrives as the composition settles keeps its
-    // most complete Evidence; queued interrupts reach the signal first.
-    await dispatchQueuedInterrupts();
-    if (result.ok && signal.aborted)
-      result = {
-        ok: false,
-        error: cancelledBy(operation, signal, {
-          partialObservation: result.value,
-        }),
-      };
+    // most complete Evidence. The composition owns no resource of its own,
+    // so its close only lets queued interrupts reach the signal first.
+    const result = finalizedResult(
+      await runOwned(
+        async (): Promise<Result<Evidence, AnalysisError>> => {
+          try {
+            return await compose(
+              { ...input, ...sources },
+              { ...context, evidenceTargets },
+            );
+          } catch (cause: unknown) {
+            // The completed source Evidence outlives a defect in the composition.
+            return {
+              ok: false,
+              error: new AnalysisOutputError(
+                operation,
+                `${operation} produced invalid output`,
+                { cause },
+              ),
+            };
+          }
+        },
+        {
+          providerId: evidenceTargets.source,
+          operation,
+          signal,
+          close: dispatchQueuedInterrupts,
+          partial: (value) => value,
+        },
+      ),
+    );
     if (result.ok) return result.value;
     const failure =
       first === undefined
