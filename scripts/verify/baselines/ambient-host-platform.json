@@ -45,10 +45,10 @@
   "src/pcap/PcapConfiguration.ts": 1,
   "src/pcap/PcapNativeBound.ts": 2,
   "src/pcap/PcapProvider.ts": 1,
+  "src/process/ServerIdentity.ts": 1,
   "src/rizin/RizinDebugSessionManager.ts": 1,
   "src/server/createServer.ts": 1,
   "src/server/registerSessionTools.ts": 3,
-  "src/serverIdentity.ts": 1,
   "src/signals/SigrokRecordingProvider.ts": 1,
   "src/wasm/WabtArtifactProvider.ts": 1
 }

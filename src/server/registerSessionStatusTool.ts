@@ -23,7 +23,7 @@ import type {
   ToolAvailability,
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServerIdentity } from "../serverIdentity.js";
+import { createServerIdentity } from "../process/ServerIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
