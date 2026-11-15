@@ -747,9 +747,13 @@ checkCounted(
 // allocation per client, so test clients take the lazy, reference-preserving
 // validation from tests/fixtures/mcpSchemaValidation (directly, or through
 // tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
-const mcpClientTestFiles = testFiles
-  .filter((file) => file.path.startsWith("tests/"))
-  .map((file) => ({ path: file.path, content: stripComments(file.content) }));
+// The counter parses each source, so comments need no stripping here. A
+// client built inside a generated child script is string data, not a call, so
+// it is not read (such scripts run over compiled dist/ modules, which cannot
+// load the TypeScript fixture).
+const mcpClientTestFiles = testFiles.filter((file) =>
+  file.path.startsWith("tests/"),
+);
 checkCounted(
   "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
   "test-mcp-client-default-validation",
@@ -758,9 +762,6 @@ checkCounted(
   [
     // Checks the SDK default validator itself across catalog refreshes.
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
-    // Builds its client in a generated child script over compiled dist/
-    // modules, which cannot load the TypeScript fixture.
-    "tests/boundary/process/nativeValueVerifierComparison.test.ts",
   ],
 );
 
