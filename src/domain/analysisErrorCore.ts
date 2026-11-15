@@ -1,6 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
+import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -530,12 +531,17 @@ export class AnalysisAccessDeniedError extends AnalysisError {
 /** Selected artifact acquisition observed a change, so no stable identity can be reported. */
 export class AnalysisArtifactChangedError extends AnalysisError {
   readonly _tag = "AnalysisArtifactChangedError";
+  /** The consistency check the producing reader named, when it named one. */
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly integrityCheck?: ArtifactIntegrityCheck;
+    },
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
+    this.integrityCheck = options?.integrityCheck;
   }
 }

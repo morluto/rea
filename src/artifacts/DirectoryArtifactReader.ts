@@ -364,6 +364,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `Directory entry changed before open: ${entry.path}`,
+          { integrityCheck: "member-identity" },
         );
       }
       abortIfNeeded(signal);
@@ -450,7 +451,10 @@ export class DirectoryArtifactReader implements ArtifactReader {
             throw new ArtifactReaderFailure(
               "integrity",
               `Directory entry changed during inspection: ${entry.path}${outcome.kind === "failed" ? `; inspection failed: ${failureMessage(outcome.cause)}` : ""}`,
-              outcome.kind === "failed" ? { cause: outcome.cause } : {},
+              {
+                integrityCheck: "member-identity",
+                ...(outcome.kind === "failed" ? { cause: outcome.cause } : {}),
+              },
             );
           if (outcome.kind === "failed") throw outcome.cause;
           abortIfNeeded(signal);
@@ -674,6 +678,7 @@ const mapStableFileRead = async function* (
       throw new ArtifactReaderFailure(
         "integrity",
         `Directory entry has no captured file state: ${entry.path}`,
+        { integrityCheck: "entry-metadata" },
       );
     for await (const chunk of readArtifactFileChunks(handle, {
       // Include one extra byte so a growing file cannot make this read unbounded.
@@ -701,6 +706,7 @@ const mapStableFileRead = async function* (
       throw new ArtifactReaderFailure(
         "integrity",
         `Directory entry changed during read: ${entry.path}`,
+        { integrityCheck: "member-identity" },
       );
   } catch (cause: unknown) {
     if (
@@ -711,7 +717,7 @@ const mapStableFileRead = async function* (
       throw new ArtifactReaderFailure(
         "integrity",
         `Directory entry changed during read: ${entry.path}`,
-        { cause },
+        { cause, integrityCheck: "member-identity" },
       );
     if (!(cause instanceof ArtifactReaderFailure))
       throw directoryIoFailure("validate read entry", entry.adapterKey, cause);
@@ -763,5 +769,8 @@ const assertContainedDirectory = async (
     throw new ArtifactReaderFailure(
       failureReason,
       "Directory traversal escaped or changed its artifact root",
+      failureReason === "integrity"
+        ? { integrityCheck: "container-identity" }
+        : undefined,
     );
 };

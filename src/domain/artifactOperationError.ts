@@ -23,14 +23,18 @@ export interface ArtifactAdmissionLimit {
  * Which consistency check an `integrity` failure tripped, so consumers need
  * not read the message: a member the reader did not produce, member metadata
  * that differs from inventory, a container or unpacked file whose identity
- * changed, short read coverage, bytes disagreeing with the declared size, or a
- * read stream over a handle the reader does not own.
+ * changed, a directory or archive member whose file identity or bytes
+ * changed since inventory, short read coverage, bytes disagreeing with the
+ * declared size, a disk image whose stored checksum does not verify, or a read
+ * stream over a handle the reader does not own.
  */
 export type ArtifactIntegrityCheck =
   | "foreign-entry"
   | "entry-metadata"
   | "container-identity"
   | "unpacked-entry-identity"
+  | "member-identity"
+  | "image-checksum"
   | "read-coverage"
   | "declared-size"
   | "reader-ownership";

@@ -748,6 +748,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {
