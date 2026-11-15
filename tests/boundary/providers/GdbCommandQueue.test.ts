@@ -1,3 +1,4 @@
+import { fakeGdbStartupPreamble } from "./gdbTestHelpers.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ it("bounds active and queued GDB commands, including cancelled placeholders", as
   await writeFile(
     provider,
     `#!${process.execPath}
+${fakeGdbStartupPreamble}
 import { access, writeFile } from "node:fs/promises";
 process.stdout.write("(gdb)\\n");
 let input = "";

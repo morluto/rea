@@ -34,6 +34,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { fakeGdbStartupPreamble } from "../providers/gdbTestHelpers.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
@@ -43,6 +44,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -149,6 +151,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", async (chunk) => {
@@ -274,6 +277,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -360,6 +364,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {

@@ -4,6 +4,7 @@ import {
   gdbMiResultHeader,
   parseGdbMiDoneRecord,
   parseGdbMiResultRecord,
+  parseGdbMiStreamRecord,
 } from "../../../src/gdb/GdbMiRecord.js";
 
 const text = (value: string) => ({
@@ -125,4 +126,23 @@ it("keeps byte order across interleaved runs and escapes", () => {
   expect(gdbMiConstText(valid.value.results[0]!.value)).toBe(
     "abAz\u{1F680}A\n",
   );
+});
+
+it.each([
+  ['~"GNU gdb\\n"', { kind: "console", text: "GNU gdb\n" }],
+  ['@"target"', { kind: "target", text: "target" }],
+  ['&"log"', { kind: "log", text: "log" }],
+  ['~"unterminated', undefined],
+  ['~"a"b', undefined],
+  ['=thread-group-added,id="i1"', undefined],
+  ["~bare", undefined],
+])("reads the stream record %s", (line, expected) => {
+  const parsed = parseGdbMiStreamRecord(line);
+  if (expected === undefined) {
+    expect(parsed.ok).toBe(false);
+    return;
+  }
+  if (!parsed.ok) throw new Error(parsed.error.reason);
+  expect(parsed.value.kind).toBe(expected.kind);
+  expect(gdbMiConstText(parsed.value.value)).toBe(expected.text);
 });
