@@ -21,7 +21,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { opaqueCodeMayRebindBinding } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayRebindBinding } from "./javascriptSemanticEffectLog.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
