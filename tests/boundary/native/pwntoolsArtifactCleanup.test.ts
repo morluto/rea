@@ -1,4 +1,4 @@
-import { SIMULATED_LINUX_X64 } from "../../fixtures/pwntoolsHost.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
