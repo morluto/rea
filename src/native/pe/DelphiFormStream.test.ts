@@ -1,0 +1,1440 @@
+import { describe, expect, it } from "vitest";
+import type {
+  DelphiFormObject,
+  DelphiFormProperty,
+} from "../../domain/native/delphiForm.js";
+import {
+  decodeDelphiFormStream,
+  detectDelphiFormSignature,
+} from "./DelphiFormStream.js";
+
+import {
+  delphiBinary as binary,
+  delphiBytes as bytes,
+  delphiCollection as collection,
+  delphiCollectionItem as collectionItem,
+  delphiComponent as component,
+  delphiFloat32 as float32,
+  delphiFloat64 as float64,
+  delphiForm as form,
+  delphiInt16 as int16,
+  delphiInt32 as int32,
+  delphiInt64 as int64,
+  delphiInt8 as int8,
+  delphiList as list,
+  delphiLString as lString,
+  delphiProperty as property_,
+  delphiQWord as qword,
+  delphiSet as setOf,
+  delphiShortString as shortString,
+  delphiUtf8String as utf8String,
+  delphiWideString as wideString,
+} from "./DelphiForm.fixture.js";
+
+const decode = (payload: Buffer, codePage?: string) =>
+  codePage === undefined
+    ? decodeDelphiFormStream(payload, 0, payload.length)
+    : decodeDelphiFormStream(payload, 0, payload.length, {
+        code_page: codePage,
+      });
+
+const rootOf = (payload: Buffer, codePage?: string): DelphiFormObject => {
+  const decoded = decode(payload, codePage);
+  expect(decoded?.root).toBeDefined();
+  const root = decoded?.root;
+  if (root === null || root === undefined) throw new Error("Missing root");
+  return root;
+};
+
+const propertyOf = (
+  object: DelphiFormObject,
+  name: string,
+): DelphiFormProperty => {
+  const found = object.properties.find(
+    ({ name: label }) => label.text === name,
+  );
+  if (found === undefined) throw new Error(`Missing property ${name}`);
+  return found;
+};
+
+describe("Delphi form signature detection", () => {
+  it("matches TPF0 and TPF1 at the start of a payload", () => {
+    expect(detectDelphiFormSignature(form(bytes(0)), 0, 5)?.version).toBe(
+      "boVersion0",
+    );
+    expect(
+      detectDelphiFormSignature(form(bytes(0), "TPF1"), 0, 5)?.version,
+    ).toBe("boVersion1");
+  });
+
+  it("reports bytes before the signature verbatim without interpreting them", () => {
+    const payload = Buffer.concat([
+      bytes(0xff, 0x0a, 0x00),
+      form(component("TForm1", "Form1")),
+    ]);
+    const signature = detectDelphiFormSignature(payload, 0, payload.length);
+    expect(signature?.prefix).toMatchObject({
+      location: { offset: 0, bytes: 3 },
+      bytes_hex: "ff0a00",
+    });
+    expect(signature?.prefix?.note).toContain("unknown");
+    expect(decode(payload)?.root?.class_name?.text).toBe("TForm1");
+  });
+
+  it("does not claim a form when no signature is present", () => {
+    expect(detectDelphiFormSignature(Buffer.from("Hello"), 0, 5)).toBeNull();
+    expect(decode(Buffer.from("Hello"))).toBeNull();
+  });
+
+  it("recognizes a signature at the probe-window boundary", () => {
+    const payload = Buffer.concat([
+      Buffer.alloc(16, 0x20),
+      form(component("TForm1", "Form1")),
+    ]);
+    expect(detectDelphiFormSignature(payload, 0, payload.length)).toMatchObject(
+      { prefix: { location: { offset: 0, bytes: 16 } } },
+    );
+    expect(decode(payload)?.root.class_name?.text).toBe("TForm1");
+  });
+
+  it("does not search beyond the 16-byte probe window", () => {
+    const payload = Buffer.concat([
+      Buffer.alloc(17, 0x20),
+      Buffer.from("TPF0", "latin1"),
+    ]);
+    expect(detectDelphiFormSignature(payload, 0, payload.length)).toBeNull();
+  });
+});
+
+describe("Delphi form object tree", () => {
+  it("decodes class and component names with byte offsets", () => {
+    const root = rootOf(form(component("TForm1", "Form1")));
+    expect(root.class_name).toMatchObject({
+      text: "TForm1",
+      code_page: "windows-1252",
+      location: { offset: 4, bytes: 7 },
+    });
+    expect(root.component_name).toMatchObject({
+      text: "Form1",
+      location: { offset: 11, bytes: 6 },
+    });
+    expect(root.location).toEqual({ offset: 4, bytes: 15 });
+    expect(root.unknown).toBeNull();
+  });
+
+  it("decodes nested components", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [], {
+          children: [
+            component("TButton", "Button1"),
+            component("TPanel", "Panel1", [], {
+              children: [component("TLabel", "Label1")],
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(root.children.map(({ class_name }) => class_name?.text)).toEqual([
+      "TButton",
+      "TPanel",
+    ]);
+    expect(root.children[1]?.children[0]?.component_name?.text).toBe("Label1");
+  });
+
+  it("decodes filer flags and the child position", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [], {
+          children: [
+            component("TButton", "Button1", [], {
+              prefix: [0xf6, 4, 7, 0, 0, 0],
+            }),
+          ],
+        }),
+      ),
+    );
+    const child = root.children[0];
+    expect(child?.flags).toEqual(["ffChildPos", "ffInline"]);
+    expect(child?.child_position).toMatchObject({
+      kind: "integer",
+      text: "7",
+      bytes_hex: "07000000",
+      width: 32,
+      signed: true,
+    });
+  });
+
+  it("keeps inherited and inline flags distinct", () => {
+    const root = rootOf(
+      form(component("TForm1", "Form1", [], { prefix: [0xf5] })),
+    );
+    expect(root.flags).toEqual(["ffInherited", "ffInline"]);
+  });
+
+  it("stops on a reserved filer flag bit instead of dropping it", () => {
+    // Only bits 0-2 are defined by TFilerFlag. A crafted or newer prefix with
+    // bit 3 set must not be reported as a fully decoded component.
+    const root = rootOf(
+      form(component("TForm1", "Form1", [], { prefix: [0xf8] })),
+    );
+    expect(root.class_name).toBeNull();
+    expect(root.unknown?.reason).toContain("filer flag bit 0x08");
+  });
+});
+
+describe("Delphi form property values", () => {
+  it("decodes scalar value types with their declared widths", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Tag", int8(-5)),
+          property_("Width", int16(-300)),
+          property_("Height", int32(70000)),
+          property_("Big", int64(-9007199254740993n)),
+          property_("Unsigned", qword(18446744073709551615n)),
+          property_("Ratio", float32(1.5)),
+          property_("Scale", float64(2.5)),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Tag").value).toMatchObject({
+      kind: "integer",
+      text: "-5",
+      bytes_hex: "fb",
+      width: 8,
+      signed: true,
+    });
+    expect(propertyOf(root, "Width").value).toMatchObject({
+      kind: "integer",
+      text: "-300",
+      bytes_hex: "d4fe",
+      width: 16,
+    });
+    expect(propertyOf(root, "Height").value).toMatchObject({
+      kind: "integer",
+      text: "70000",
+      bytes_hex: "70110100",
+      width: 32,
+    });
+    expect(propertyOf(root, "Big").value).toMatchObject({
+      kind: "integer",
+      text: "-9007199254740993",
+      width: 64,
+      signed: true,
+    });
+    expect(propertyOf(root, "Unsigned").value).toMatchObject({
+      kind: "integer",
+      text: "18446744073709551615",
+      bytes_hex: "ffffffffffffffff",
+      width: 64,
+      signed: false,
+    });
+    expect(propertyOf(root, "Ratio").value).toMatchObject({
+      kind: "float",
+      text: "1.5",
+      note: "IEEE-754 binary32.",
+    });
+    expect(propertyOf(root, "Scale").value).toMatchObject({
+      kind: "float",
+      text: "2.5",
+    });
+    expect(propertyOf(root, "Height").value_type).toBe("vaInt32");
+  });
+
+  it("decodes the ten-byte x87 extended value and keeps its bytes", () => {
+    const raw = Buffer.concat([
+      bytes(5),
+      Buffer.from("0000000000000080ff3f", "hex"),
+    ]);
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Angle", raw)])),
+    );
+    const value = propertyOf(root, "Angle").value;
+    expect(value).toMatchObject({ kind: "float", text: "1" });
+    expect(value).toMatchObject({
+      bytes_hex: "0000000000000080ff3f",
+      note: expect.stringContaining("extra precision is not retained"),
+    });
+  });
+
+  it("keeps a small extended value that is exactly representable", () => {
+    const raw = Buffer.concat([
+      bytes(5),
+      Buffer.from("0000000000000080013c", "hex"),
+    ]);
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Tiny", raw)])),
+    );
+    const value = propertyOf(root, "Tiny").value;
+    expect(value).toMatchObject({ kind: "float", text: String(2 ** -1022) });
+  });
+
+  it("decodes currency and TDateTime without inventing a calendar date", () => {
+    const currency = Buffer.alloc(8);
+    currency.writeBigInt64LE(12345n, 0);
+    const date = Buffer.alloc(8);
+    date.writeDoubleLE(0.5, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Price", Buffer.concat([bytes(16), currency])),
+          property_("Stamp", Buffer.concat([bytes(17), date])),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Price").value).toMatchObject({
+      kind: "float",
+      text: "1.2345",
+      note: expect.stringContaining("scaled by 10000"),
+    });
+    expect(propertyOf(root, "Stamp").value).toMatchObject({
+      kind: "float",
+      text: "0.5",
+      note: expect.stringContaining("not converted to a calendar date"),
+    });
+  });
+
+  it("formats currency from the integer without rounding the quotient", () => {
+    const currency = Buffer.alloc(8);
+    currency.writeBigInt64LE(9223372036854775807n, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Price", Buffer.concat([bytes(16), currency])),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Price").value).toMatchObject({
+      kind: "float",
+      text: "922337203685477.5807",
+    });
+  });
+});
+
+describe("Delphi value ordinal table", () => {
+  it("decodes ordinals 21-23 with the Delphi value table", () => {
+    // Pins the wire ordinals independently of the fixture helpers: Delphi's
+    // TValueType uses 21 vaDouble, 22 vaUString, 23 vaQWord, while FPC assigns
+    // those ordinals to different types.
+    const double = Buffer.alloc(8);
+    double.writeDoubleLE(2.5, 0);
+    const wide = Buffer.from("宽", "utf16le");
+    const wideLength = Buffer.alloc(4);
+    wideLength.writeUInt32LE(1, 0);
+    const unsigned = Buffer.alloc(8);
+    unsigned.writeBigUInt64LE(18446744073709551615n, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Scale", Buffer.concat([bytes(21), double])),
+          property_("Wide", Buffer.concat([bytes(22), wideLength, wide])),
+          property_("Unsigned", Buffer.concat([bytes(23), unsigned])),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Scale")).toMatchObject({
+      value_type: "vaDouble",
+      value: {
+        kind: "float",
+        text: "2.5",
+        bytes_hex: "0000000000000440",
+      },
+    });
+    expect(propertyOf(root, "Wide")).toMatchObject({
+      value_type: "vaUString",
+      value: { kind: "string", text: "宽", code_page: "utf-16le" },
+    });
+    expect(propertyOf(root, "Unsigned")).toMatchObject({
+      value_type: "vaQWord",
+      value: {
+        kind: "integer",
+        text: "18446744073709551615",
+        width: 64,
+        signed: false,
+      },
+    });
+  });
+});
+
+describe("Delphi form declared code pages", () => {
+  it("decodes a supported declared OEM code page", () => {
+    // WHATWG labels ibm866, and byte 0x80 is U+0410 there; decoding it as
+    // latin1 would turn a Cyrillic caption into a control character.
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [property_("Caption", bytes(6, 1, 0x80))]),
+      ),
+      "ibm866",
+    );
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      text: "\u0410",
+      bytes_hex: "80",
+      code_page: "ibm866",
+    });
+  });
+});
+
+describe("Delphi form string and structural values", () => {
+  it("decodes strings with the recorded code page and retains their bytes", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Caption", bytes(6, 2, 0x43, 0xe9)),
+          property_("Name", bytes(7, 2, 0x53, 0xe9)),
+          property_("Hint", lString("long caption")),
+          property_("Text", utf8String("naïve")),
+          property_("Wide", wideString("宽字符串")),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      text: "Cé",
+      bytes_hex: "43e9",
+      code_page: "windows-1252",
+    });
+    expect(propertyOf(root, "Name").value).toMatchObject({
+      kind: "identifier",
+      text: "Sé",
+      bytes_hex: "53e9",
+    });
+    expect(propertyOf(root, "Hint").value).toMatchObject({
+      kind: "string",
+      text: "long caption",
+      code_page: "windows-1252",
+    });
+    expect(propertyOf(root, "Text").value).toMatchObject({
+      kind: "string",
+      text: "naïve",
+      code_page: "utf-8",
+    });
+    expect(propertyOf(root, "Wide").value).toMatchObject({
+      kind: "string",
+      text: "宽字符串",
+      code_page: "utf-16le",
+    });
+  });
+
+  it("decodes strings with a caller-supplied code page", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Caption", bytes(6, 1, 0xe9))]),
+    );
+    expect(propertyOf(rootOf(payload), "Caption").value).toMatchObject({
+      text: "é",
+      code_page: "windows-1252",
+    });
+    expect(
+      propertyOf(rootOf(payload, "windows-1251"), "Caption").value,
+    ).toMatchObject({ text: "й", code_page: "windows-1251" });
+  });
+
+  it("keeps every byte when the code page cannot be labelled", () => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(1, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Name", Buffer.concat([bytes(12), length, bytes(0x80)])),
+      ]),
+    );
+    expect(propertyOf(rootOf(payload, "latin1"), "Name").value).toMatchObject({
+      kind: "string",
+      text: "\u0080",
+      code_page: "latin1",
+    });
+  });
+
+  it("rejects a declared string larger than the decode budget", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Blob", lString("a".repeat(900_000))),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("string budget exhausted");
+  });
+});
+
+describe("Delphi form truncated length prefixes", () => {
+  it("keeps a completed binary length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(200, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Data",
+          Buffer.concat([bytes(10), declared, bytes(0xaa, 0xbb)]),
+        ),
+      ]),
+    );
+    // Drop the property and child terminators so the declared length runs past
+    // the payload instead of consuming them as binary content.
+    const value = propertyOf(
+      rootOf(payload.subarray(0, payload.length - 2)),
+      "Data",
+    ).value;
+    expect(value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 200,
+      bytes_hex: "aabb",
+      truncated: true,
+      decode_truncated: true,
+    });
+    expect(value.location).toMatchObject({ bytes: 6 });
+  });
+
+  it("keeps a completed long-string length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(100, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Text",
+          Buffer.concat([bytes(12), declared, Buffer.from("abc", "latin1")]),
+        ),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Text").value,
+    ).toMatchObject({
+      kind: "string",
+      text: "abc",
+      declared_bytes: 100,
+      truncated: true,
+    });
+  });
+
+  it("keeps a completed wide-string length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(50, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Text",
+          Buffer.concat([bytes(22), declared, Buffer.from("ab", "utf16le")]),
+        ),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Text").value,
+    ).toMatchObject({
+      kind: "string",
+      text: "ab",
+      code_page: "utf-16le",
+      declared_bytes: 100,
+      truncated: true,
+    });
+  });
+
+  it("keeps a completed short-string length when the payload is truncated", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", bytes(6, 10, 0x41, 0x42)),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Caption")
+        .value,
+    ).toMatchObject({
+      kind: "string",
+      text: "AB",
+      bytes_hex: "4142",
+      declared_bytes: 10,
+      truncated: true,
+    });
+  });
+
+  it("keeps a completed short-string length when the text budget stops decoding", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Caption",
+          Buffer.concat([bytes(6, 255), Buffer.alloc(255, 0x41)]),
+        ),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      declared_bytes: 255,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+});
+
+describe("Delphi form binary and container values", () => {
+  it("decodes binary payloads as binary and caps their hex projection", () => {
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Data", binary(200))])),
+    );
+    expect(propertyOf(root, "Data").value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 200,
+      truncated: true,
+      decode_truncated: false,
+    });
+    const value = propertyOf(root, "Data").value;
+    if (value.kind !== "binary") throw new Error("Expected binary");
+    expect(value.bytes_hex).toHaveLength(256);
+  });
+
+  it("decodes lists, sets and collections", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Items", list(int32(1), bytes(6, 1, 0x41), bytes(9))),
+          property_("Options", setOf("foBold", "foItalic")),
+          property_(
+            "Columns",
+            collection(
+              collectionItem(int8(0), property_("Width", int32(64))),
+              collectionItem(null, property_("Width", int32(128))),
+            ),
+          ),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Items").value).toMatchObject({
+      kind: "list",
+      terminated: true,
+      items: [
+        { value_type: "vaInt32", value: { kind: "integer", text: "1" } },
+        { value_type: "vaString", value: { kind: "string", text: "A" } },
+        { value_type: "vaTrue", value: { kind: "boolean", value: true } },
+      ],
+    });
+    expect(propertyOf(root, "Options").value).toMatchObject({
+      kind: "set",
+      terminated: true,
+      names: [{ text: "foBold" }, { text: "foItalic" }],
+    });
+    const columns = propertyOf(root, "Columns").value;
+    expect(columns).toMatchObject({ kind: "collection", terminated: true });
+    if (columns.kind !== "collection") throw new Error("Expected collection");
+    expect(columns.items).toHaveLength(2);
+    expect(columns.items[0]?.position).toMatchObject({
+      kind: "integer",
+      text: "0",
+      bytes_hex: "00",
+      width: 8,
+      signed: true,
+    });
+    expect(columns.items[0]?.properties[0]).toMatchObject({
+      name: { text: "Width" },
+      value: { kind: "integer", text: "64" },
+    });
+    expect(columns.items[1]?.position).toBeNull();
+  });
+});
+
+describe("Delphi form list item evidence", () => {
+  it("includes the value tag in marker-only source ranges", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Items", list(bytes(9), bytes(8), bytes(13))),
+        ]),
+      ),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.map((item) => item.value.kind)).toEqual([
+      "boolean",
+      "boolean",
+      "nil",
+    ]);
+    expect(value.items.map((item) => item.value_type)).toEqual([
+      "vaTrue",
+      "vaFalse",
+      "vaNil",
+    ]);
+    expect(value.items.map((item) => item.marker_location.bytes)).toEqual([
+      1, 1, 1,
+    ]);
+    expect(value.items.map((item) => item.value.location.bytes)).toEqual([
+      1, 1, 1,
+    ]);
+    expect(value.items[1]?.value.location.offset).toBe(
+      (value.items[0]?.value.location.offset ?? 0) + 1,
+    );
+    expect(value.items[2]?.value.location.offset).toBe(
+      (value.items[1]?.value.location.offset ?? 0) + 1,
+    );
+  });
+
+  it("retains the marker of a list item with an unsupported type", () => {
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Items", list(bytes(24)))])),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items).toHaveLength(1);
+    expect(value.items[0]).toMatchObject({
+      value_type: "unknown_value_type(24)",
+      marker_location: { bytes: 1 },
+      value: { kind: "unknown" },
+    });
+    expect(value.items[0]?.value).toMatchObject({
+      reason: "Unsupported value type unknown_value_type(24) (24).",
+    });
+    expect(root.unknown?.reason).toContain("Unsupported value type");
+  });
+
+  it("keeps list item types that decode to the same string shape", () => {
+    // vaWString (18) and vaUString (22) share the UTF-16LE payload; only the
+    // item's declared type and tag byte distinguish them.
+    const raw = Buffer.from("A", "utf16le");
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(1, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_(
+            "Items",
+            list(
+              Buffer.concat([bytes(18), length, raw]),
+              Buffer.concat([bytes(22), length, raw]),
+            ),
+          ),
+        ]),
+      ),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.map((item) => item.value_type)).toEqual([
+      "vaWString",
+      "vaUString",
+    ]);
+    expect(value.items[1]?.marker_location.offset).toBe(
+      (value.items[0]?.marker_location.offset ?? 0) + 1 + 4 + raw.length,
+    );
+    expect(value.items[0]?.value).toMatchObject({
+      kind: "string",
+      text: "A",
+      code_page: "utf-16le",
+    });
+    expect(value.items[1]?.value).toMatchObject({
+      kind: "string",
+      text: "A",
+      code_page: "utf-16le",
+    });
+  });
+
+  it("keeps an odd UTF-16LE source byte as a replacement", () => {
+    const utf16Name = (text: string) =>
+      Buffer.concat([
+        Buffer.from([text.length * 2]),
+        Buffer.from(text, "utf16le"),
+      ]);
+    const payload = Buffer.concat([
+      Buffer.from("TPF0", "latin1"),
+      utf16Name("TForm1"),
+      utf16Name("Form1"),
+      utf16Name("Caption"),
+      Buffer.from([6, 1, 0x41]),
+      Buffer.from([0, 0]),
+    ]);
+    const root = rootOf(payload, "utf-16le");
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      text: "\ufffd",
+      bytes_hex: "41",
+      code_page: "utf-16le",
+      declared_bytes: 1,
+      truncated: false,
+    });
+  });
+
+  it("records null and nil as distinct value kinds", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Empty", bytes(0)),
+          property_("Pointer", bytes(13)),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Empty").value.kind).toBe("null");
+    expect(propertyOf(root, "Pointer").value.kind).toBe("nil");
+  });
+});
+
+describe("Delphi form retained-value budgets", () => {
+  it("keeps the declared string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", lString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "windows-1252",
+      declared_bytes: 100_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared wide-string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", wideString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "utf-16le",
+      declared_bytes: 200_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared binary length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Data", bytes(10, 3, 0, 0, 0, 1, 2, 3)),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Data").value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 3,
+      truncated: true,
+      decode_truncated: true,
+      bytes_hex: "",
+    });
+  });
+
+  it("charges structural values against the retained-byte budget", () => {
+    const items = Buffer.concat(Array.from({ length: 1000 }, () => bytes(8)));
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Flags", Buffer.concat([bytes(1), items, bytes(0)])),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 2000,
+      max_text_bytes: 1_000_000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.unknown?.reason).toContain("value budget exhausted");
+    const value = propertyOf(root, "Flags").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeGreaterThan(0);
+    expect(value.items.length).toBeLessThan(1000);
+  });
+
+  it("charges floating-point values by their serialized projection", () => {
+    const extended = bytes(5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Points",
+          list(...Array.from({ length: 50 }, () => extended)),
+        ),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 10_000,
+      max_text_bytes: 1_000_000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.unknown?.reason).toContain("value budget exhausted");
+    const value = propertyOf(root, "Points").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeLessThan(50);
+  });
+});
+
+describe("Delphi form failure surface", () => {
+  it("reports an unknown value type and stops instead of guessing a resync", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Good", int32(7)),
+          property_("Future", bytes(24, 1, 2, 3)),
+          property_("After", int32(9)),
+        ]),
+      ),
+    );
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(propertyOf(root, "Good").value).toMatchObject({
+      kind: "integer",
+      text: "7",
+    });
+    const last = root.properties.at(-1);
+    expect(last?.value).toMatchObject({
+      kind: "unknown",
+      reason: "Unsupported value type unknown_value_type(24) (24).",
+    });
+    expect(root.unknown?.reason).toContain("Unsupported value type");
+    // A sibling read after an unsupported type would be invented, not decoded.
+    expect(root.properties.map(({ name }) => name.text)).not.toContain("After");
+  });
+
+  it("keeps the parsed name on a property whose value cannot be decoded", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [property_("Future", bytes(24, 1, 2, 3))]),
+      ),
+    );
+    expect(root.properties[0]).toMatchObject({
+      name: { text: "Future" },
+      value_type: "unknown_value_type(24)",
+    });
+    expect(root.properties[0]?.value).toMatchObject({ kind: "unknown" });
+  });
+
+  it("stops every ancestor when a child property cannot be decoded", () => {
+    // The unsupported type leaves its payload bytes in the stream. Reading them
+    // as further components would invent siblings from unknown bytes.
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [], {
+          children: [
+            component("TButton", "Button1", [
+              property_("Future", bytes(24, 1, 2, 3)),
+            ]),
+            component("TPanel", "Panel1"),
+          ],
+        }),
+      ),
+    );
+    expect(root.children).toHaveLength(1);
+    const [child] = root.children;
+    expect(child?.class_name?.text).toBe("TButton");
+    expect(child?.properties[0]).toMatchObject({ name: { text: "Future" } });
+    expect(child?.unknown?.reason).toContain("Unsupported value type");
+    expect(root.unknown?.reason).toContain("Unsupported value type");
+    // Nothing after the stop is decoded, so no byte pattern becomes a component.
+    expect(
+      root.children.flatMap((item) => item.class_name?.text ?? []),
+    ).not.toContain("TPanel");
+  });
+});
+
+describe("Delphi form truncation and limits", () => {
+  it("bounds value nesting instead of exhausting the call stack", () => {
+    let nested = int32(1);
+    for (let level = 0; level < 64; level += 1) nested = list(nested);
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Deep", nested)])),
+    );
+    expect(root.unknown?.reason).toContain("nesting exceeds");
+  });
+
+  it("bounds component nesting instead of exhausting the call stack", () => {
+    let nested = component("TButton", "Button1");
+    for (let level = 0; level < 40; level += 1)
+      nested = component("TPanel", `Panel${String(level)}`, [], {
+        children: [nested],
+      });
+    const root = rootOf(form(nested));
+    expect(root.unknown?.reason).toContain("object nesting exceeds");
+  });
+
+  it("charges every retained item against the decode budget", () => {
+    // An empty collection item costs two input bytes, so a small payload can
+    // otherwise produce unbounded retained objects. The item that exceeds the
+    // value budget stops the collection without dropping earlier items.
+    const items = Array.from({ length: 40000 }, () => bytes(1, 0));
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Columns", collection(...items)),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("budget exhausted");
+    const column = propertyOf(root, "Columns").value;
+    expect(column.kind).toBe("collection");
+    if (column.kind !== "collection") throw new Error("Expected a collection");
+    expect(column.items).toHaveLength(32767);
+  });
+
+  it("reports a truncated stream as an unknown on the object", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Height", int32(70000))]),
+    );
+    const root = rootOf(payload.subarray(0, payload.length - 4));
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.reason).toContain("Payload ended");
+    expect(root.unknown?.bytes_hex.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw when the payload ends mid value", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("A", int32(1))]),
+    );
+    for (let length = 5; length < payload.length; length++)
+      expect(() => decode(payload.subarray(0, length))).not.toThrow();
+  });
+
+  it("rejects a child position that is not an integer value type", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [], {
+          children: [
+            component("TButton", "Button1", [], {
+              prefix: [0xf2, 6, 1, 0x41],
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(root.children[0]?.unknown?.reason).toContain("vaInt8/16/32");
+  });
+
+  it("keeps the entries decoded before a list stops", () => {
+    // A vaList whose second entry is truncated mid-value: the fixture's two
+    // trailing terminators are cut so the payload genuinely ends inside the
+    // second integer, and the first entry stays decoded evidence.
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Items",
+          Buffer.concat([bytes(1), int32(7), bytes(4, 0x11, 0x22)]),
+        ),
+      ]),
+    );
+    const root = rootOf(payload.subarray(0, payload.length - 2));
+    expect(root.unknown?.reason).toBeDefined();
+    const property = root.properties[0];
+    expect(property?.name.text).toBe("Items");
+    expect(property?.value).toMatchObject({ kind: "list", terminated: false });
+    if (property?.value.kind !== "list") throw new Error("Expected a list");
+    // The first entry is complete evidence; the marker of the truncated second
+    // entry stays in the partial list as an explicit unknown value.
+    expect(property.value.items).toMatchObject([
+      { value: { kind: "integer", text: "7" } },
+      {
+        value_type: "vaInt32",
+        value: {
+          kind: "unknown",
+          reason: "Payload ended before the stream was complete.",
+        },
+      },
+    ]);
+    expect(property.value.items[1]?.marker_location.bytes).toBe(1);
+  });
+
+  it("keeps list entries when the payload ends after a complete item", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Items", Buffer.concat([bytes(1), int32(7)])),
+      ]),
+    );
+    const value = Buffer.from([0x04, 0x07, 0x00, 0x00, 0x00]);
+    const at = payload.indexOf(value);
+    const root = rootOf(payload.subarray(0, at + value.length));
+    const property = root.properties[0];
+    expect(property?.value).toMatchObject({ kind: "list", terminated: false });
+    if (property?.value.kind !== "list") throw new Error("Expected a list");
+    expect(property.value.items).toMatchObject([
+      { value: { kind: "integer", text: "7" } },
+    ]);
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps a complete class name when the component name is truncated", () => {
+    const payload = form(component("TForm1", "Form1"));
+    const classNameEnd = 4 + 1 + "TForm1".length;
+    const root = rootOf(payload.subarray(0, classNameEnd + 1));
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("stops ancestors when a property name is truncated", () => {
+    // The unread name bytes are a valid component; resuming there would report
+    // a TPanel that the form never declared.
+    const fake = component("TPanel", "Panel1");
+    const broken = Buffer.concat([
+      shortString("TButton"),
+      shortString("Button1"),
+      bytes(200),
+      fake,
+    ]);
+    const payload = form(
+      component("TForm1", "Form1", [], { children: [broken] }),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toBeDefined();
+    expect(root.children.map((child) => child.class_name?.text)).not.toContain(
+      "TPanel",
+    );
+  });
+
+  it("keeps a property name when the type marker itself is truncated", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Future", int32(7))]),
+    );
+    const marker = Buffer.from([0x06, ...Buffer.from("Future", "latin1")]);
+    const at = payload.indexOf(marker);
+    const truncated = payload.subarray(0, at + marker.length);
+    const root = rootOf(truncated);
+    expect(root.unknown?.reason).toBeDefined();
+    expect(root.properties.at(-1)?.name.text).toBe("Future");
+    expect(root.properties.at(-1)?.value_type).toBe("unknown");
+  });
+});
+
+describe("Delphi form stopped positional tags", () => {
+  it("keeps a truncated collection position tag in the unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Items", Buffer.concat([bytes(14), bytes(4, 0x11)])),
+      ]),
+    );
+    const tag = Buffer.from([14, 4, 0x11]);
+    const at = payload.indexOf(tag);
+    const root = rootOf(payload.subarray(0, at + tag.length));
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "collection") throw new Error("Expected a collection");
+    expect(value.items).toHaveLength(0);
+    // The vaInt32 tag and the one payload byte are unread source evidence.
+    expect(root.unknown?.bytes_hex).toBe("0411");
+  });
+
+  it("keeps a truncated child position tag in the object unknown", () => {
+    // ffChildPos is set and the position tag is vaInt32, but only one payload
+    // byte follows.
+    const root = rootOf(form(bytes(0xf2, 4, 0x11)));
+    expect(root.unknown?.bytes_hex).toBe("0411");
+  });
+});
+
+describe("Delphi form fallback roots", () => {
+  it("reports a signature-only payload as truncated", () => {
+    const root = rootOf(form(Buffer.alloc(0)));
+    expect(root.location.bytes).toBe(0);
+    expect(root.class_name).toBeNull();
+    expect(root.unknown?.reason).toContain("without a root component");
+    expect(root.unknown?.location.offset).toBe(root.location.offset);
+  });
+
+  it("keeps a fallback root disjoint from its unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Width", int32(1))]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 0,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.location.bytes).toBe(0);
+    expect(root.unknown?.location).toMatchObject({
+      offset: root.location.offset,
+      bytes: payload.length - root.location.offset,
+    });
+  });
+
+  it("reports bytes that follow the root component terminator", () => {
+    const payload = form(component("TForm1", "Form1", []));
+    const withSuffix = Buffer.concat([payload, bytes(0xde, 0xad, 0xbe, 0xef)]);
+    const root = rootOf(withSuffix);
+    expect(root.unknown?.reason).toContain(
+      "bytes follow the root component terminator",
+    );
+    expect(root.unknown?.bytes_hex).toContain("deadbeef");
+  });
+});
+
+describe("Delphi form unread object suffix", () => {
+  it("keeps a truncated short-string declaration in the unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Future", int32(7))]),
+    );
+    const declaration = Buffer.from([0x06, ...Buffer.from("Future", "latin1")]);
+    const at = payload.indexOf(declaration);
+    const root = rootOf(payload.subarray(0, at + 1));
+    expect(root.unknown?.reason).toContain("Payload ended");
+    // The length byte is source evidence even though its body is missing.
+    expect(root.unknown?.location.offset).toBe(at);
+    expect(root.unknown?.bytes_hex).toBe("06");
+  });
+
+  it("keeps the unread suffix in the object unknown", () => {
+    // The class name is decoded. The component-name declaration and the body
+    // it can no longer read stay together in the object unknown.
+    const declared = 200;
+    const unread = Buffer.from("Form", "latin1");
+    const root = rootOf(
+      form(Buffer.concat([shortString("TForm1"), bytes(declared), unread])),
+    );
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.bytes_hex).toBe(
+      Buffer.concat([bytes(declared), unread]).toString("hex"),
+    );
+    expect(root.unknown?.bytes_hex).not.toContain("54466f726d31");
+    expect(root.unknown?.truncated).toBe(false);
+    expect(root.unknown?.location).toMatchObject({
+      bytes: unread.length + 1,
+    });
+  });
+
+  it("reports a capped unread suffix as truncated", () => {
+    const declared = 255;
+    const unread = Buffer.alloc(200, 0x41);
+    const root = rootOf(
+      form(Buffer.concat([shortString("TForm1"), bytes(declared), unread])),
+    );
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.truncated).toBe(true);
+    expect(root.unknown?.bytes_hex).toHaveLength(128 * 2);
+    expect(root.unknown?.location).toMatchObject({
+      bytes: unread.length + 1,
+    });
+  });
+});
+
+describe("Delphi form partial collections", () => {
+  it("keeps a completed collection position when the vaList marker is missing", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Items", Buffer.concat([bytes(14), int8(5)])),
+      ]),
+    );
+    const item = Buffer.from([14, 2, 5]);
+    const at = payload.indexOf(item);
+    const root = rootOf(payload.subarray(0, at + item.length));
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "collection") throw new Error("Expected a collection");
+    expect(value.items).toHaveLength(1);
+    expect(value.items[0]?.position).toMatchObject({
+      kind: "integer",
+      text: "5",
+      width: 8,
+    });
+    expect(value.items[0]?.properties).toEqual([]);
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps collection items when a nested list stops", () => {
+    // A collection whose second item has a list-valued property that ends
+    // mid-value: the item and its partial list must stay on the collection
+    // property, and the earlier item must not disappear.
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Columns",
+          collection(
+            collectionItem(int8(0), property_("Width", int32(64))),
+            collectionItem(
+              int8(1),
+              property_(
+                "Values",
+                Buffer.concat([bytes(1), int32(7), bytes(4, 0x11, 0x22)]),
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+    const root = rootOf(payload.subarray(0, payload.length - 3));
+    const property = root.properties[0];
+    expect(property?.value_type).toBe("vaCollection");
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(2);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    const values = property.value.items[1]?.properties[0];
+    expect(values?.name.text).toBe("Values");
+    expect(values?.value.kind).toBe("list");
+  });
+
+  it("keeps earlier items when a property name is truncated", () => {
+    // The second item stops inside its property name. The first item and the
+    // observed part of the second item must stay on the collection.
+    // The item marker is followed by a property-name length that exceeds the
+    // remaining bytes, so the failure happens before the name is known.
+    const brokenItem = Buffer.concat([bytes(1, 200), bytes(0x41, 0x42)]);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Columns",
+          collection(
+            collectionItem(int8(0), property_("Width", int32(64))),
+            brokenItem,
+          ),
+        ),
+      ]),
+    );
+    const root = rootOf(payload);
+    const property = root.properties[0];
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(2);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+  });
+
+  it("keeps earlier items when the next item position is truncated", () => {
+    const root = rootOf(
+      form(
+        Buffer.concat([
+          shortString("TForm1"),
+          shortString("Form1"),
+          shortString("Columns"),
+          bytes(14),
+          collectionItem(int8(0), property_("Width", int32(64))),
+          // Position marker declares vaInt32 but only one byte follows.
+          bytes(4, 0x11),
+        ]),
+      ),
+    );
+    const property = root.properties[0];
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    // The unread vaInt32 tag and partial payload stay in the unknown suffix.
+    expect(root.unknown?.bytes_hex).toContain("0411");
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps earlier items when the next item vaList marker is truncated", () => {
+    const root = rootOf(
+      form(
+        Buffer.concat([
+          shortString("TForm1"),
+          shortString("Form1"),
+          shortString("Columns"),
+          bytes(14),
+          collectionItem(int8(0), property_("Width", int32(64))),
+          // Complete position, then the payload ends before the vaList marker.
+          bytes(2, 5),
+        ]),
+      ),
+    );
+    const property = root.properties[0];
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(2);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    expect(property.value.items[1]).toMatchObject({
+      position: { kind: "integer", text: "5", width: 8 },
+      properties: [],
+    });
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps an opened item when the property budget expires", () => {
+    // 8,191 scalar properties plus the collection fill the form property
+    // budget; the collection item's own property then exceeds it after the
+    // item has been observed.
+    const properties = Array.from({ length: 8191 }, (_, index) =>
+      property_(`P${String(index)}`, int8(0)),
+    );
+    const item = Buffer.concat([bytes(1), property_("X", int8(0)), bytes(0)]);
+    const payload = form(
+      component("TForm1", "Form1", [
+        ...properties,
+        property_("Columns", Buffer.concat([bytes(14), item, bytes(0)])),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("budget exhausted");
+    const property = propertyOf(root, "Columns");
+    expect(property.value.kind).toBe("collection");
+    if (property.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items[0]?.properties).toEqual([]);
+  });
+});
+
+describe("Delphi form text budgets and partial sets", () => {
+  it("keeps set names decoded before the payload ends", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Options",
+          Buffer.concat([
+            bytes(11),
+            shortString("foo"),
+            shortString("bar"),
+            bytes(200),
+          ]),
+        ),
+      ]),
+    );
+    const root = rootOf(payload);
+    const value = propertyOf(root, "Options").value;
+    expect(value.kind).toBe("set");
+    if (value.kind !== "set") throw new Error("Expected a set");
+    expect(value.names.map((name) => name.text)).toEqual(["foo", "bar"]);
+  });
+
+  it("charges binary hex projections against the text budget", () => {
+    // 32,767 128-byte vaBinary entries fit the value allowance, but their
+    // capped 256-character hex projections exceed the 8 MiB text budget. The
+    // decoder must stop with the entries decoded so far instead of allocating
+    // every projection and failing the post-decode metadata account.
+    const entries = Buffer.concat(
+      Array.from({ length: 32767 }, () => binary(128)),
+    );
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Blob", Buffer.concat([bytes(1), entries, bytes(0)])),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("string budget exhausted");
+    const value = propertyOf(root, "Blob").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeGreaterThan(0);
+    expect(value.items.length).toBeLessThan(32767);
+  });
+
+  it("charges short strings against the text budget", () => {
+    // 3,200 maximum-length names exceed the 8 MiB retained-text budget even
+    // though the payload is under 1 MiB.
+    const name = shortString("a".repeat(255));
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Options",
+          Buffer.concat([
+            bytes(11),
+            ...Array.from({ length: 3200 }, () => name),
+            bytes(0),
+          ]),
+        ),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("string budget exhausted");
+  });
+});

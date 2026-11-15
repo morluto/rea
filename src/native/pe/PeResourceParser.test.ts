@@ -7,13 +7,28 @@ import {
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
 import {
+  delphiBinary,
+  delphiBytes,
+  delphiComponent,
+  delphiForm,
+  delphiFormFixture,
+  delphiLString,
+  delphiProperty,
+  delphiShortString,
+} from "./DelphiForm.fixture.js";
+import {
   hasPeResourceName,
   locatePeResourcePayloads,
 } from "./PeResourceLayout.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
-const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
+const parse = (
+  bytes: Buffer,
+  maxEntries = 4096,
+  signal?: AbortSignal,
+  options?: { readonly decodePayloads?: boolean },
+) =>
   parsePeResources(
     bytes,
     {
@@ -26,6 +41,7 @@ const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
       max_entries: maxEntries,
     }),
     signal,
+    options,
   );
 
 describe("word-aligned PE resource records", () => {
@@ -230,6 +246,260 @@ describe("portable PE resource parsing", () => {
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
     });
+  });
+});
+
+const formFixture = (codePage: number, payload = delphiFormFixture()) => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
+  return fixture;
+};
+
+describe("Delphi forms inside PE resources", () => {
+  it("decodes a TPF0 RT_RCDATA payload against the resource it came from", async () => {
+    const { bytes } = formFixture(1252);
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.delphi_forms).toHaveLength(1);
+    const [form] = result.delphi_forms;
+    expect(form).toMatchObject({
+      resource_index: 0,
+      signature: "TPF0",
+      version: "boVersion0",
+      code_page: "windows-1252",
+      code_page_source: "resource",
+    });
+    expect(form?.root?.class_name?.text).toBe("TForm1");
+    expect(form?.root?.component_name?.text).toBe("Form1");
+    expect(form?.root?.children[0]?.class_name?.text).toBe("TButton");
+    expect(form?.root?.properties[0]).toMatchObject({
+      name: { text: "Caption" },
+      value_type: "vaString",
+      value: { kind: "string", text: "Hello" },
+    });
+    expect(form?.root?.properties[3]).toMatchObject({
+      name: { text: "Options" },
+      value_type: "vaSet",
+    });
+    // Offsets are absolute file offsets, traceable back to the resource.
+    const payload = result.resources[0]?.payload.location;
+    expect(form?.signature_location.offset).toBe(payload?.offset);
+    expect(form?.root?.location.offset).toBe((payload?.offset ?? 0) + 4);
+    expect(result.limitations.some((line) => line.includes("TPF0"))).toBe(true);
+  });
+
+  it("records the code page as a default when the resource declares none", async () => {
+    const result = peResourcesSchema.parse(await parse(formFixture(0).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "windows-1252",
+      code_page_source: "default",
+      declared_code_page: 0,
+    });
+    // The reported limitations must describe the same fallback clients see.
+    expect(
+      result.limitations.some(
+        (line) =>
+          line.includes("declares no code page") &&
+          line.includes("windows-1252") &&
+          line.includes('code_page_source: "default"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("decodes a declared OEM code page the host can label", async () => {
+    const result = peResourcesSchema.parse(await parse(formFixture(866).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "ibm866",
+      code_page_source: "resource",
+      declared_code_page: 866,
+    });
+  });
+
+  it("decodes gb18030 when the resource declares it", async () => {
+    const payload = delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Caption",
+          Buffer.concat([
+            delphiBytes(6),
+            delphiShortString(Buffer.from([0xc4, 0xe3])),
+          ]),
+        ),
+      ]),
+    );
+    const result = peResourcesSchema.parse(
+      await parse(formFixture(54936, payload).bytes),
+    );
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "gb18030",
+      code_page_source: "resource",
+      declared_code_page: 54936,
+    });
+    expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+      kind: "string",
+      text: "\u4f60",
+    });
+  });
+
+  it("reports a declared code page this host cannot label as unsupported", async () => {
+    // 437 is a declared page outside the host's decoder table, so it must not
+    // be decoded as the Delphi 7 default without saying so.
+    const result = peResourcesSchema.parse(await parse(formFixture(437).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      declared_code_page: 437,
+    });
+  });
+
+  it("decodes a form whose binary value dwarfs its decoded output", async () => {
+    // A large vaBinary property emits capped hex and a byte count, so the raw
+    // payload size must not be charged against the metadata budget.
+    const fixture = peResourceFixture(false, [
+      {
+        type: 10,
+        name: 7,
+        language: 1033,
+        payload: delphiForm(
+          delphiComponent("TForm1", "Form1", [
+            delphiProperty("Blob", delphiBinary(262144)),
+          ]),
+        ),
+      },
+    ]);
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.delphi_forms).toHaveLength(1);
+    expect(result.delphi_forms[0]?.root?.properties[0]).toMatchObject({
+      name: { text: "Blob" },
+      value: { kind: "binary", declared_bytes: 262144, truncated: true },
+    });
+  });
+
+  it("leaves RCDATA payloads without a filer signature out of the inventory", async () => {
+    const result = peResourcesSchema.parse(
+      await parse(peResourceFixture().bytes),
+    );
+    expect(result.delphi_forms).toEqual([]);
+  });
+
+  it("skips Delphi form projections in inventory-only mode", async () => {
+    const { bytes } = formFixture(1252);
+    const full = await parse(bytes);
+    expect(full.delphi_forms).toHaveLength(1);
+    const inventory = peResourcesSchema.parse(
+      await parse(bytes, 4096, undefined, { decodePayloads: false }),
+    );
+    expect(inventory.resources).toHaveLength(1);
+    expect(inventory.delphi_forms).toEqual([]);
+    expect(
+      inventory.limitations.some((line) => line.includes("Inventory-only")),
+    ).toBe(true);
+  });
+});
+
+it("passes the remaining metadata allowance to the form decoder", async () => {
+  const names = "n".repeat(200);
+  const resources: {
+    type: number;
+    name: string;
+    language: number;
+    payload: Buffer;
+  }[] = Array.from({ length: 2400 }, (_, index) => ({
+    type: 10,
+    name: `${names}${String(index).padStart(4, "0")}`,
+    language: 1033,
+    payload: Buffer.from("opaque"),
+  }));
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Caption", delphiLString("A".repeat(500_000))),
+    ]),
+  );
+  resources.push({ type: 10, name: "ZFORM", language: 1033, payload });
+  const fixture = peResourceFixture(false, resources, 8 * 1024 * 1024);
+  const result = peResourcesSchema.parse(await parse(fixture.bytes, 10_000));
+  expect(result.delphi_forms).toHaveLength(1);
+  expect(result.delphi_forms[0]?.root.unknown?.reason).toContain(
+    "string budget exhausted",
+  );
+  expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "string",
+    declared_bytes: 500_000,
+    truncated: true,
+    text: "",
+    bytes_hex: "",
+  });
+});
+
+describe("Delphi form resource code pages", () => {
+  it.each([
+    [28600, "iso-8859-10", "\u012a"],
+    [28604, "iso-8859-14", "\u010a"],
+    [28606, "iso-8859-16", "\u20ac"],
+  ] as const)(
+    "decodes declared page %i with its exact host label",
+    async (declared, label, character) => {
+      // Byte 0xA4 distinguishes these ISO pages from latin1 and each other.
+      const payload = delphiForm(
+        delphiComponent("TForm1", "Form1", [
+          delphiProperty("Caption", Buffer.concat([delphiBytes(6, 1, 0xa4)])),
+        ]),
+      );
+      const result = peResourcesSchema.parse(
+        await parse(formFixture(declared, payload).bytes),
+      );
+      expect(result.delphi_forms[0]).toMatchObject({
+        code_page: label,
+        code_page_source: "resource",
+        declared_code_page: declared,
+      });
+      expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+        kind: "string",
+        text: character,
+      });
+    },
+  );
+
+  it("keeps ISO-8859-9 byte-preserving because the host aliases it", async () => {
+    const payload = delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Caption",
+          Buffer.concat([delphiBytes(6, 2, 0x80, 0x91)]),
+        ),
+      ]),
+    );
+    const result = peResourcesSchema.parse(
+      await parse(formFixture(28599, payload).bytes),
+    );
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      declared_code_page: 28599,
+    });
+    expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+      kind: "string",
+      text: "\u0080\u0091",
+    });
+  });
+});
+
+describe("inventory-only PE resource projections", () => {
+  it("keeps the inventory readable when an unrelated payload projection is malformed", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 14, name: 42, language: 1033, payload: Buffer.from([0, 0]) },
+    ]);
+    // Decoding the malformed RT_GROUP_ICON payload is a full-report concern.
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      reason: "format",
+    });
+    // A carrier probe that reads only the inventory must not inherit it.
+    const inventory = peResourcesSchema.parse(
+      await parse(fixture.bytes, 4096, undefined, { decodePayloads: false }),
+    );
+    expect(inventory.resources).toHaveLength(1);
+    expect(inventory.icon_groups).toEqual([]);
   });
 });
 

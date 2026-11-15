@@ -13,11 +13,21 @@ import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactLimitBoundary } from "../../domain/artifactOperationError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
+import {
+  BYTE_PRESERVING_CODE_PAGE,
+  RESOURCE_CODE_PAGES,
+  type DelphiFormResource,
+} from "../../domain/native/delphiForm.js";
 import type {
   InspectPeResourcesInput,
   PeResourceIdentity,
   PeResources,
 } from "../../domain/native/peResources.js";
+import {
+  DELPHI_FORM_LIMITATIONS,
+  decodeDelphiFormStream,
+  detectDelphiFormSignature,
+} from "./DelphiFormStream.js";
 import {
   peFailure,
   readPeResourceLayout,
@@ -48,16 +58,28 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
+/** Options for probes that own their layout policy or read only the inventory. */
+interface PeResourceParseOptions {
+  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
+  readonly admittedLayout?: PeResourceLayout;
+  /**
+   * Decode RT_GROUP_ICON and Delphi/C++Builder form payload projections.
+   * Carrier probes that read only `resources` turn this off so a malformed or
+   * oversized payload cannot abort an unrelated layout decision.
+   */
+  readonly decodePayloads?: boolean;
+}
+
 /** Decode the conventional type/name/language tree; never infer payload meaning or runtime loading. */
 export const parsePeResources = async (
   bytes: Buffer,
   artifact: PeResources["artifact"],
   input: InspectPeResourcesInput,
   signal?: AbortSignal,
-  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
-  admittedLayout?: PeResourceLayout,
+  options: PeResourceParseOptions = {},
 ): Promise<PeResources> => {
   assertArtifactReadActive(signal);
+  const { admittedLayout, decodePayloads = true } = options;
   const layout = admittedLayout ?? readPeResourceLayout(bytes);
   const directories: PeResources["directories"] = [];
   const resources: PeResources["resources"] = [];
@@ -80,6 +102,7 @@ export const parsePeResources = async (
     // Rows are retained in arrays; reserve a separator along with each row.
     accountBytes(jsonBytes(value, METADATA_BYTES - metadataBytes - 1) + 1);
   };
+  const remainingCapacity = (): number => METADATA_BYTES - metadataBytes;
   const reserveDecodedName = (utf16Units: number): void => {
     // A JSON string can need six ASCII bytes per UTF-16 code unit (for example,
     // a control character encoded as `\\u0000`). The original spelling and
@@ -261,7 +284,18 @@ export const parsePeResources = async (
     }
     resource.payload.sha256 = digest;
   }
-  const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
+  const iconGroups = decodePayloads
+    ? readIconGroups(bytes, resources, account, ensureCapacity)
+    : [];
+  const delphiForms = decodePayloads
+    ? readDelphiForms(
+        bytes,
+        resources,
+        account,
+        ensureCapacity,
+        remainingCapacity,
+      )
+    : [];
   const report: PeResources = {
     artifact,
     format: layout.format,
@@ -277,16 +311,23 @@ export const parsePeResources = async (
     directories,
     resources,
     icon_groups: iconGroups,
+    delphi_forms: delphiForms,
     coverage: {
       status: "complete",
       examined_entries: examined,
       resources: resources.length,
     },
-    limitations: [
-      "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
-      "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
-      "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
-    ],
+    limitations: decodePayloads
+      ? [
+          "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON and Delphi/C++Builder forms (TPF0/TPF1 RT_RCDATA) remain opaque.",
+          ...DELPHI_FORM_LIMITATIONS,
+          "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
+          "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
+        ]
+      : [
+          "Inventory-only parse for carrier probes; RT_GROUP_ICON and Delphi/C++Builder form payload projections were not decoded.",
+          "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
+        ],
   };
   assertArtifactReadActive(signal);
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
@@ -381,4 +422,63 @@ const readIconGroups = (
       account({ resource_index: group.index, images: [] });
       return { resource_index: group.index, images };
     });
+};
+
+/**
+ * Decode Delphi/C++Builder binary forms in RT_RCDATA payloads, the way
+ * `readIconGroups` decodes RT_GROUP_ICON. Payloads without a filer signature
+ * are left out rather than reported as failures.
+ */
+const readDelphiForms = (
+  bytes: Buffer,
+  resources: readonly PeResources["resources"][number][],
+  account: (value: unknown) => void,
+  ensureCapacity: (projectedBytes: number) => void,
+  remainingCapacity: () => number,
+): DelphiFormResource[] => {
+  const forms: DelphiFormResource[] = [];
+  for (const resource of resources) {
+    if (resource.type.kind !== "id" || resource.type.id !== 10) continue;
+    const { offset, bytes: size } = resource.payload.location;
+    const signature = detectDelphiFormSignature(bytes, offset, offset + size);
+    if (signature === null) continue;
+    // The declared resource code page decides the decode when it is known. A
+    // declared page this host cannot label is reported as unsupported rather
+    // than silently decoded as the Delphi 7 ANSI default; only an absent page
+    // falls back to that default.
+    const declaredPage = RESOURCE_CODE_PAGES[resource.code_page];
+    const declared =
+      resource.code_page === 0
+        ? undefined
+        : (declaredPage ?? BYTE_PRESERVING_CODE_PAGE);
+    // Leave room for the fixed form envelope and at least one root object so
+    // the decoder can fail with a bounded unknown instead of the parser
+    // rejecting the whole inventory at the metadata budget.
+    ensureCapacity(1024);
+    const decoded = decodeDelphiFormStream(bytes, offset, offset + size, {
+      ...(declared === undefined ? {} : { code_page: declared }),
+      max_text_bytes: Math.max(0, remainingCapacity() - 1024),
+      max_bytes: Math.max(0, remainingCapacity() - 1024),
+    });
+    if (decoded === null) continue;
+    const form: DelphiFormResource = {
+      resource_index: resource.index,
+      signature: signature.signature,
+      version: signature.version,
+      signature_location: signature.location,
+      prefix: signature.prefix,
+      declared_code_page: resource.code_page,
+      code_page: decoded.code_page,
+      code_page_source:
+        resource.code_page === 0
+          ? "default"
+          : declaredPage === undefined
+            ? "unsupported"
+            : "resource",
+      root: decoded.root,
+    };
+    account(form);
+    forms.push(form);
+  }
+  return forms;
 };

@@ -24,6 +24,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [V8 cached-data compilation boundaries](javascript/v8-cached-data/spec.md) ([plan](javascript/v8-cached-data/plan.md), [tasks](javascript/v8-cached-data/tasks.md))
 - [Android `.note.android.ident` ELF note decoding](native/android-elf-ident-note/spec.md) ([plan](native/android-elf-ident-note/plan.md), [tasks](native/android-elf-ident-note/tasks.md))
 - [Native call source coordinates](native/call-source-locations/spec.md) ([plan](native/call-source-locations/plan.md), [tasks](native/call-source-locations/tasks.md), [verification](native/call-source-locations/verification.md))
+- [Delphi/C++Builder binary form payload decoding](native/delphi-form-payloads/spec.md) ([plan](native/delphi-form-payloads/plan.md), [tasks](native/delphi-form-payloads/tasks.md))
 - [Go static string-header literal recovery](native/go-string-literals/spec.md) ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
 - [Windows Shell Link shortcut inspection](native/windows-shortcut/spec.md) ([plan](native/windows-shortcut/plan.md), [tasks](native/windows-shortcut/tasks.md))
 - [NTFS $MFT and USN Journal inspection](native/ntfs-mft/spec.md) ([plan](native/ntfs-mft/plan.md), [tasks](native/ntfs-mft/tasks.md))

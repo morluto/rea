@@ -271,7 +271,30 @@ headers, truncated tables, cycles, duplicate sibling identities, unbacked or
 ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
 shapes fail explicitly, rather than returning partial inventories. Exact shared
 payload ranges are supported. The supported tree has three levels: type, name,
-and language. Other resource payload formats remain opaque.
+and language. Other resource payload formats remain opaque, except RT_RCDATA
+payloads that carry a Delphi/C++Builder filer signature (`TPF0`, or `TPF1`)
+within the first 16 bytes.
+
+Those payloads are decoded statically into `delphi_forms`: the filer signature
+and the byte prefix before it, the root component's class and component name,
+filer flags with the child position, and properties with their declared value
+type and decoded value, each carrying byte offsets into the resource payload
+alongside the original value bytes. List items keep their own declared type and
+tag-byte range, and positional integers keep the encoded width, source bytes and
+range, so equal values encoded differently remain distinguishable. Value type
+ordinals follow Delphi's `System.Classes.TValueType`; the Free Pascal table
+differs at ordinals 21–23. Nested components are decoded recursively.
+Strings keep their raw bytes and are decoded with the resource's declared code
+page, recorded beside the declared code page id; when the resource declares
+none, the Delphi 7 ANSI default is used and recorded as
+`code_page_source: "default"`, and a declared page this host cannot label is
+recorded as `"unsupported"` rather than decoded as that default. Hex previews
+are capped at 128 bytes, so `truncated` also marks a capped preview;
+`decode_truncated` is true only when decoding stopped before the declared bytes
+completed. Undecodable value types and truncated streams are reported as
+explicit unknowns rather than failing the inventory, and decoding stops at the
+first value it cannot position instead of reading the remaining bytes as
+further components.
 
 `max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
 16384, the largest stock Windows resource image measured with headroom
