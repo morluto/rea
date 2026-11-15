@@ -127,6 +127,40 @@ describe("compiled CLI JSON document omissions", () => {
     });
 });
 
+describe("compiled CLI JSON document caller paths", () => {
+  // A `file:` spelling is a URL, never resolved against the working directory
+  // (#2577); a caller names such a file as `./file:ref.json`.
+  cliTest(
+    "compare-source-to-bundle refuses a file URL reference path",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-url-path-");
+      const result = await cli.run({
+        arguments: [
+          "compare-source-to-bundle",
+          JSON.stringify({
+            reference: { kind: "file", path: "file:ref.json" },
+            application: {},
+          }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_source_to_bundle",
+          issues: [{ path: ["reference", "path"], reason: "invalid_format" }],
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
 describe("compiled CLI JSON input diagnostic preservation", () => {
   for (const [format, flags] of [
     ["JSON", ["--json"]],
