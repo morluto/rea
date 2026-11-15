@@ -167,6 +167,16 @@ This operation actively launches and interacts with the selected target. It is
 not a passive CDP observation. The owned process keeps normal host filesystem
 and network privileges, so lifecycle ownership does not make it a sandbox.
 
+The app runs with the operator's real profile. If the app is already running,
+or another capture of the same app is in progress, the launched instance can
+fail to obtain the app's single-instance lock. Electron then hands the launch,
+including its arguments, to the running instance. The active hook stops the
+launched app at that call, and the capture fails with
+`application_already_running` without observing or driving the running
+instance. If the app requests the lock while actions run, the pending actions
+stop and the capture fails the same way, keeping its final snapshot. Close the
+running app, or wait for the other capture, and retry.
+
 The CLI and MCP surfaces accept the same schema. For a JSON request file:
 
 ```bash

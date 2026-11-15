@@ -8,7 +8,7 @@ import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 
 /** Delivery selection leaves the existing provider input and original Evidence unchanged. */
 const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
@@ -20,6 +20,7 @@ const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
 /** Target-free EVM capabilities are independent of archive/Apple artifact providers. */
 export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
+  availability: { host: "evmInterface" },
   ...toolContractMetadata("inspect_evm_interface"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

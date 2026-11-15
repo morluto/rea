@@ -27,11 +27,10 @@ mcpTest(
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
-      const {
-        toolDefinition: advertised,
-        ajv,
-        outputSchema,
-      } = await advertisedMcpToolSchemas(client, "inspect_pe_imports");
+      const { toolDefinition: advertised } = await advertisedMcpToolSchemas(
+        client,
+        "inspect_pe_imports",
+      );
       expect(advertised?.annotations).toMatchObject({
         readOnlyHint: false,
         idempotentHint: true,
@@ -39,15 +38,11 @@ mcpTest(
       const root = await createTestTempDirectory("rea-pe-imports-mcp-");
       const path = join(root, "app.exe");
       await writeFile(path, peImportImage({ bits: 64 }));
-      const response = await client.callTool({
-        name: "inspect_pe_imports",
-        arguments: { path },
-      });
+      const response = await client.callTool(
+        { name: "inspect_pe_imports", arguments: { path } },
+        { toolDefinition: advertised },
+      );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, response.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const evidence = toolContract("inspect_pe_imports").outputSchema.parse(
         response.structuredContent,
       );
@@ -62,15 +57,11 @@ mcpTest(
       ] as const) {
         const partialPath = join(root, `invalid-first-descriptor-${label}.exe`);
         await writeFile(partialPath, bytes);
-        const partial = await client.callTool({
-          name: "inspect_pe_imports",
-          arguments: { path: partialPath },
-        });
+        const partial = await client.callTool(
+          { name: "inspect_pe_imports", arguments: { path: partialPath } },
+          { toolDefinition: advertised },
+        );
         expect(partial.isError, JSON.stringify(partial.content)).not.toBe(true);
-        expect(
-          ajv.validate(outputSchema, partial.structuredContent),
-          JSON.stringify(ajv.errors),
-        ).toBe(true);
         const partialReport = toolContract(
           "inspect_pe_imports",
         ).outputSchema.parse(partial.structuredContent).normalized_result;

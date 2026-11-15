@@ -101,10 +101,15 @@ it("reports all five comparison states, including duplicate ambiguity and explic
 
 it("withholds absence claims for historical or partial inventories and unsupported signatures", async () => {
   const known = facts("f");
+  // A historical inspection without interface facts cannot tell what that
+  // side declares: the comparison is unknown, not a known gap.
   const absent = await compare(evidence(), evidence(known));
   expect(absent).toMatchObject({
-    coverage: "partial",
+    coverage: "unknown",
     changes: [{ state: "unknown" }],
+  });
+  expect(await compare(evidence(known), evidence())).toMatchObject({
+    coverage: "unknown",
   });
   const partial: WasmInterface = {
     state: "partial",
@@ -112,7 +117,12 @@ it("withholds absence claims for historical or partial inventories and unsupport
     entries: [],
   };
   expect(await compare(evidence(partial), evidence(known))).toMatchObject({
+    coverage: "partial",
     changes: [{ state: "unknown" }],
+  });
+  // Unknown wins beside a known gap on the other side.
+  expect(await compare(evidence(), evidence(partial))).toMatchObject({
+    coverage: "unknown",
   });
   const unsupported = facts("f");
   unsupported.entries[0]!.signature = null;

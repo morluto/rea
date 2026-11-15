@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../domain/result.js";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
+import { isRecord } from "../domain/isRecord.js";
 
 /** Reserved control-record marker, not an advertised external JSON Schema. */
 export const JSON_LINES_PROTOCOL = "jsonl/v1";
@@ -55,9 +56,6 @@ export interface JsonLinesPlan extends Collection {
   readonly sourceRecords: number | null;
   readonly filter: string | undefined;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const atPath = (value: unknown, path: readonly string[]): unknown => {
   for (const key of path) {

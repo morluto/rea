@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -57,6 +58,44 @@ export type SafeOutputCleanup =
       readonly residualPaths: readonly [string, ...string[]];
     };
 
+/** Admit an output root's own syntax before any filesystem effect. */
+const admitOutputRootSyntax = (outputRoot: string): string => {
+  if (!isAbsolute(outputRoot))
+    throw new SafeOutputTreeDestinationRefusal("Output root must be absolute");
+  // Path syntax follows the host; `platform` selects only the name policy.
+  const requested = absoluteCallerPath(outputRoot);
+  const name = basename(requested);
+  if (name === "." || name === "..")
+    throw new SafeOutputTreeDestinationRefusal("Invalid output directory");
+  return requested;
+};
+
+/**
+ * Create a root's missing parents only after its syntax is admitted, so a
+ * refused selection leaves no directories behind. A file in the parent path
+ * refuses the selection instead of surfacing as a host write failure.
+ */
+const createOutputParents = async (outputRoot: string): Promise<void> => {
+  const requested = admitOutputRootSyntax(outputRoot);
+  await mkdir(dirname(requested), { recursive: true, mode: 0o700 }).catch(
+    (cause: unknown) => {
+      const code =
+        cause instanceof Error && "code" in cause ? String(cause.code) : "";
+      if (code === "EEXIST" || code === "ENOTDIR")
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent must be a directory",
+          { cause },
+        );
+      if (code === "EACCES" || code === "EPERM")
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is unavailable",
+          { cause },
+        );
+      throw cause;
+    },
+  );
+};
+
 /**
  * Materialize files in a tree created by this operation.
  *
@@ -97,9 +136,14 @@ export class SafeOutputTree {
    */
   static async create(
     outputRoot: string,
-    platform: NodeJS.Platform = process.platform,
-    options: { readonly acceptExistingEmpty?: boolean } = {},
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
+    options: {
+      readonly acceptExistingEmpty?: boolean;
+      /** Create missing parents, after the root's own syntax is admitted. */
+      readonly createParents?: boolean;
+    } = {},
   ): Promise<SafeOutputTree> {
+    if (options.createParents === true) await createOutputParents(outputRoot);
     const { requested, canonicalOutput } =
       await this.resolveDestination(outputRoot);
     let created = true;
@@ -183,15 +227,8 @@ export class SafeOutputTree {
 
   /** Resolve an admissible parent without acquiring output; create rechecks it. */
   static async resolveDestination(outputRoot: string) {
-    if (!isAbsolute(outputRoot))
-      throw new SafeOutputTreeDestinationRefusal(
-        "Output root must be absolute",
-      );
-    // Path syntax follows the host; `platform` selects only the name policy.
-    const requested = absoluteCallerPath(outputRoot);
+    const requested = admitOutputRootSyntax(outputRoot);
     const name = basename(requested);
-    if (name === "." || name === "..")
-      throw new SafeOutputTreeDestinationRefusal("Invalid output directory");
     let parent: string;
     try {
       const selectedParent = dirname(requested);
@@ -302,6 +339,7 @@ export class SafeOutputTree {
           throw new ArtifactReaderFailure(
             "integrity",
             `Extracted content exceeds the inventoried size: ${path}`,
+            { integrityCheck: "declared-size" },
           );
         bytes += chunk.length;
         hash.update(chunk);
@@ -311,12 +349,14 @@ export class SafeOutputTree {
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content size disagrees with inventory: ${path}`,
+          { integrityCheck: "declared-size" },
         );
       const sha256 = hash.digest("hex");
       if (sha256 !== expected.sha256)
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content disagrees with inventory: ${path}`,
+          { integrityCheck: "member-identity" },
         );
       await this.#assertLineage(lineage);
       await assertFilePathIdentity(destination, fileIdentity);
@@ -338,6 +378,7 @@ export class SafeOutputTree {
         throw new ArtifactReaderFailure(
           "integrity",
           `Durable readback verification failed: ${path}`,
+          { integrityCheck: "output-readback" },
         );
       return { relativePath: path, sha256, bytesWritten: bytes };
     } catch (cause: unknown) {
@@ -480,6 +521,7 @@ export class SafeOutputTree {
         "integrity",
         `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
         {
+          integrityCheck: "output-lifecycle",
           cause: removalFailure,
           cleanup: {
             reason:
@@ -649,11 +691,13 @@ export class SafeOutputTree {
       throw new ArtifactReaderFailure(
         "integrity",
         "Extraction tree is already committed",
+        { integrityCheck: "output-lifecycle" },
       );
     if (this.#cleanup.status !== "not-required")
       throw new ArtifactReaderFailure(
         "integrity",
         "Extraction tree cleanup has already started",
+        { integrityCheck: "output-lifecycle" },
       );
   }
 

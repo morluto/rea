@@ -46,7 +46,7 @@ export const decodeHarCapture = (
     !captureObject(raw.log) ||
     !Array.isArray(raw.log.entries)
   )
-    throw new CaptureFormatError("format", "HAR must contain log.entries.");
+    throw new CaptureFormatError("malformed", "HAR must contain log.entries.");
   if (raw.log.version !== "1.2")
     throw new CaptureFormatError(
       "unsupported",
@@ -142,7 +142,7 @@ const projectHar = (
   ): JsonValue => {
     if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
@@ -240,7 +240,7 @@ const projectHar = (
         }),
       );
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR parser returned a non-JSON value.",
       pointer,
     );
@@ -280,7 +280,7 @@ const decodeHarBase64 = (value: string, pointer: string): Buffer => {
   const compact = value.replace(/[\t\n\r ]/g, "");
   if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );

@@ -20,11 +20,13 @@ describe.skipIf(process.platform !== "darwin")(
         const source = join(directory, "qa.c");
         const object = join(directory, "qa.o");
         await writeFile(source, "int qa(void) { return 7; }\n");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          ["clang", "-c", source, "-o", object],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-c",
+          source,
+          "-o",
+          object,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
           arguments: ["inspect-macho", object, "--json"],

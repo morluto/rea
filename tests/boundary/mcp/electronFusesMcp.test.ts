@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { writeFile } from "node:fs/promises";
@@ -64,11 +65,13 @@ fuseMcpTest(
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_electron_fuses",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Electron fuse inspection must publish both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     expect(advertised.annotations).toMatchObject({
@@ -82,15 +85,11 @@ fuseMcpTest(
     const elf = elfFuseImage([ELECTRON_FUSE_STATE_BYTES.removed, 0x99]);
     const path = join(root, "application");
     await writeFile(path, elf.bytes);
-    const response = await client.callTool({
-      name: "inspect_electron_fuses",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_electron_fuses", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = toolContract("inspect_electron_fuses").outputSchema.parse(
       response.structuredContent,
     );

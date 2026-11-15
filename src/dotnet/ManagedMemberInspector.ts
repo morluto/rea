@@ -11,8 +11,10 @@ import {
 } from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
+  type ManagedCliHeader,
   type ManagedPeLayout,
 } from "./ManagedPeReader.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   readManagedResourceDirectory,
   readManagedMetadataInventory,
@@ -85,6 +87,7 @@ const unavailable = (
       },
       types: [],
       signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,
@@ -114,11 +117,9 @@ const unavailable = (
 const readMemberLayout = (
   bytes: Buffer,
   pe: ManagedPeLayout,
+  cli: ManagedCliHeader,
   maxRepresentationBytes?: number,
 ) => {
-  const cli = pe.cli;
-  if (cli === null)
-    throw new TypeError("Managed inventory requires CLI metadata");
   const rootOffset = pe.rvaToOffset(
     cli.metadata.rva,
     cli.metadata.size,
@@ -193,7 +194,7 @@ export const inspectManagedMembersBytes = (
     !Number.isSafeInteger(methodLimit) ||
     methodLimit < 0
   )
-    throw new RangeError(
+    throw invariantViolation(
       "methodOffset and methodLimit must be non-negative safe integers",
     );
   const pe = readManagedPeLayout(bytes);
@@ -205,6 +206,7 @@ export const inspectManagedMembersBytes = (
     const { layout, memberLists } = readMemberLayout(
       bytes,
       pe,
+      pe.cli,
       maxRepresentationBytes,
     );
     const methodTotal = layout.table(6)?.rowCount ?? 0;
@@ -303,15 +305,17 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const { name: resolveTypeName, isResolvedTypeSpec } = typeNameLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      signatureTypeName,
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
       typeName: resolveTypeName,
+      isResolvedTypeSpec,
       signatureTypeName,
       displayTypeName,
       declarationTypeName,

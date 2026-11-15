@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, posix, relative } from "node:path";
 import { installMacHopperBundle } from "./MacHopper.js";
-import { linuxHopperLauncherPath } from "./LinuxHopper.js";
+import { linuxHopperLauncherCandidates } from "./LinuxHopper.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { describe, expect, it } from "vitest";
 
@@ -19,33 +19,16 @@ import {
   localMacHopperRenamedLauncherCandidates,
   macHopperCanonicalLauncherCandidates,
   macHopperUserApplicationPath,
-  macHopperRenamedLauncherCandidates,
   readMacHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
 
 describe("macOS Hopper launcher paths", () => {
   const home = "/fixture/home";
 
-  it("keeps canonical system and user candidates ahead of renamed bundles", () => {
+  it("keeps canonical system and user candidates in order", () => {
     expect(macHopperCanonicalLauncherCandidates(home)).toEqual([
       "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
       "/fixture/home/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
-    ]);
-    expect(
-      macHopperRenamedLauncherCandidates(
-        home,
-        new Map([
-          [
-            "/Applications",
-            ["Hopper z.app", "Hopper a.app", "Hopper Disassembler.app"],
-          ],
-          ["/fixture/home/Applications", ["Hopper User.app"]],
-        ]),
-      ),
-    ).toEqual([
-      "/Applications/Hopper a.app/Contents/MacOS/hopper",
-      "/Applications/Hopper z.app/Contents/MacOS/hopper",
-      "/fixture/home/Applications/Hopper User.app/Contents/MacOS/hopper",
     ]);
   });
 
@@ -84,7 +67,7 @@ describe("macOS Hopper launcher paths", () => {
         expect(macHopperCanonicalLauncherCandidates(home)[1]).toBe(
           `${home}/Applications/Hopper Disassembler.app/Contents/MacOS/hopper`,
         );
-        expect(linuxHopperLauncherPath(home)).toBe(
+        expect(linuxHopperLauncherCandidates(home)[1]).toBe(
           `${home}/.local/share/rea/hopper/bin/Hopper`,
         );
         const source = join(temporary, "source.app");
@@ -154,13 +137,17 @@ describe("macOS Hopper launcher paths", () => {
         recursive: true,
       });
       await mkdir(join(applications, "Hopper Disassembler.app"));
+      await mkdir(join(applications, "Hopper Alpha.app"));
+      await mkdir(join(applications, "Hopper Zeta.app"));
       await writeFile(join(applications, "Hopper File.app"), "");
       const runtime = [...localMacHopperRenamedLauncherCandidates(home)];
       expect(runtime.filter((path) => path.startsWith(home))).toEqual([
+        posix.join(home, "Applications/Hopper Alpha.app/Contents/MacOS/hopper"),
         posix.join(
           home,
           "Applications/Hopper Preview.app/Contents/MacOS/hopper",
         ),
+        posix.join(home, "Applications/Hopper Zeta.app/Contents/MacOS/hopper"),
       ]);
       expect(await readMacHopperRenamedLauncherCandidates(home)).toEqual(
         runtime,

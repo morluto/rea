@@ -709,7 +709,8 @@ linux(
       ).toMatchObject({
         ok: false,
         error: {
-          reason: "integrity",
+          // The signature verified; only the feed's launcher digest differs.
+          reason: "launcher_digest_mismatch",
           message: expect.stringContaining(f.release.main_exe_hash),
         },
       });

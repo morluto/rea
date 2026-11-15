@@ -709,7 +709,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.probe,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -737,7 +736,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.manifest,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({

@@ -180,6 +180,7 @@ it.each(["crc32", "md5", "sha1", "sha256", "sha384", "sha512"])(
       scanCanonicalArtifactInventory(await writeFit("bad.itb", bytes)),
     ).rejects.toMatchObject({
       reason: "integrity",
+      integrityCheck: "declared-digest",
       message: expect.stringMatching(
         new RegExp(
           `^FIT image kernel hash-1 ${algo} does not match: declared [0-9a-f]+, computed [0-9a-f]+$`,

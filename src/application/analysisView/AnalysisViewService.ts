@@ -12,12 +12,12 @@ import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
   createEvidence,
@@ -28,11 +28,11 @@ import {
 } from "../../domain/evidence.js";
 import {
   inspectAnalysisViewInputSchema,
-  prepareAnalysisViewProjection,
-  type AnalysisViewResult,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewRequest.js";
+import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
@@ -173,14 +173,12 @@ const cancelledFileViewResult = <T>(
   completedEvidence?: Evidence,
 ): Result<T, AnalysisError> => {
   if (!signal?.aborted) return result;
-  const cancellation = new AnalysisCancelledError(
+  const cancellation = cancelledBy(
     INSPECT_ANALYSIS_VIEW_OPERATION,
-    {
-      cause: signal.reason,
-      ...(completedEvidence !== undefined
-        ? { partialObservation: completedEvidence }
-        : {}),
-    },
+    signal,
+    completedEvidence !== undefined
+      ? { partialObservation: completedEvidence }
+      : {},
   );
   if (!result.ok)
     cancellation.retainSecondaryFailure(result.error, {
@@ -249,15 +247,11 @@ const projectResolvedAnalysisView = (
           },
   });
   if (!projected.ok) return projected;
-  if (
-    parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
-  )
-    return err(
-      new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
-      ),
-    );
+  const identity = validateAnalysisViewSubject(
+    parent.subject,
+    projected.value.artifact?.sha256,
+  );
+  if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
 };
 

@@ -104,3 +104,36 @@ cliTest.for([
     });
   },
 );
+
+cliTest(
+  "rejects malformed JNI query JSON before provider work",
+  async ({ cli }) => {
+    const result = await cli.run({
+      arguments: [
+        "inspect-android-jni-bindings",
+        "/nonexistent/selected.apk",
+        "--query",
+        "{",
+        "--json",
+      ],
+      environment: {
+        REA_JADX_MCP_JAR: "/nonexistent/engine.jar",
+        REA_LOG_LEVEL: "silent",
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_android_jni_bindings",
+        issues: [
+          {
+            path: ["query"],
+            reason: "invalid_format",
+            message: "query must be a JSON selection object.",
+          },
+        ],
+      },
+    });
+  },
+);

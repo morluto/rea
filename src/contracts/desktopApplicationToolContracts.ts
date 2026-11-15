@@ -3,7 +3,7 @@ import {
   desktopApplicationSchema,
   inspectDesktopApplicationInputSchema,
 } from "../domain/desktopApplication.js";
-import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
@@ -12,6 +12,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 export const DESKTOP_APPLICATION_TOOL_CONTRACTS = [
   {
     name: "inspect_desktop_application",
+    availability: "standalone",
     ...toolContractMetadata("inspect_desktop_application"),
     kind: "artifact-provider",
     requiresActiveTarget: true,
