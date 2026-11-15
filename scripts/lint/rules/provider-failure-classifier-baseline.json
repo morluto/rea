@@ -18,6 +18,7 @@
   "src/application/managed/ManagedMemberComparisonService.ts": 1,
   "src/application/ntfs/NtfsJournalService.ts": 1,
   "src/application/process/ProcessCli.ts": 1,
+  "src/application/runOwned.ts": 1,
   "src/artifacts/ArtifactOperationFailure.ts": 1,
   "src/artifacts/ReleaseExposureReader.ts": 1,
   "src/artifacts/StableArtifactFailure.ts": 2,
