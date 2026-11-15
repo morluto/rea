@@ -822,6 +822,60 @@ it("applies a global PAX record to every later entry", () => {
   expect(uids).toEqual([3_000_000, 3_000_000]);
 });
 
+it("charges a global PAX value repeated into every row to the data byte budget", () => {
+  const owner = "u".repeat(16 * 1024);
+  const bytes = debPackageFixture({
+    dataEntries: [
+      {
+        name: "./pax_global_header",
+        type: "g",
+        content: paxRecord("uname", owner),
+      },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        name: `./usr/share/doc/${String(index)}`,
+      })),
+    ],
+  });
+  const error = expectFailure(
+    () => parse(bytes, { max_data_bytes: 64 * 1024 }),
+    DebPackageCapacityFailure,
+  );
+  expect(error.resource).toBe("max_data_bytes");
+  expect(error.message).toMatch(/global PAX text repeated/u);
+  expect(error.partial?.data_entries.length).toBeLessThan(8);
+  const report = parse(bytes, { max_data_bytes: 256 * 1024 });
+  expect(
+    report.data_entries
+      .filter((entry) => entry.path.startsWith("usr/share/doc/"))
+      .every((entry) => entry.user === owner),
+  ).toBe(true);
+});
+
+it("restores header owners when a later global PAX record clears the override", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        {
+          name: "./pax_global_header",
+          type: "g",
+          content: paxRecord("uname", "alice"),
+        },
+        { name: "./usr/share/doc/one", content: "1", uname: "builder" },
+        {
+          name: "./pax_global_header",
+          type: "g",
+          content: paxRecord("uname", ""),
+        },
+        { name: "./usr/share/doc/two", content: "2", uname: "builder" },
+      ],
+    }),
+  );
+  const users = report.data_entries
+    .filter((entry) => entry.path.startsWith("usr/share/doc/"))
+    .map((entry) => entry.user);
+  expect(users).toEqual(["alice", "builder"]);
+});
+
 it("refuses a PAX extended header whose record cannot be read", () => {
   const error = expectFailure(
     () =>

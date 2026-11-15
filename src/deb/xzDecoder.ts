@@ -74,11 +74,29 @@ const readMbInt = (
   return null;
 };
 
+/**
+ * End of the stream before trailing Stream Padding. The xz format allows zero
+ * padding in 4-byte groups after the footer; a ragged zero tail stays in place
+ * so the footer check rejects it.
+ */
+const xzStreamEnd = (bytes: Uint8Array): number => {
+  let end = bytes.length;
+  while (
+    end >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE + 4 &&
+    bytes[end - 1] === 0 &&
+    bytes[end - 2] === 0 &&
+    bytes[end - 3] === 0 &&
+    bytes[end - 4] === 0
+  )
+    end -= 4;
+  return end;
+};
+
 /** Uncompressed size from a completed single xz stream index, or null when absent. */
 export const xzUncompressedSize = (bytes: Uint8Array): number | null => {
   if (bytes.length < XZ_HEADER_SIZE + XZ_FOOTER_SIZE) return null;
   if (!looksLikeXz(bytes)) return null;
-  const footer = bytes.length - XZ_FOOTER_SIZE;
+  const footer = xzStreamEnd(bytes) - XZ_FOOTER_SIZE;
   if (bytes[footer + 10] !== 0x59 || bytes[footer + 11] !== 0x5a) return null;
   const backwardSize =
     (bytes[footer + 4] ?? 0) |
@@ -106,11 +124,15 @@ export const xzUncompressedSize = (bytes: Uint8Array): number | null => {
   return uncompressed;
 };
 
-const xzFooterPresent = (bytes: Uint8Array): boolean =>
-  bytes.length >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE &&
-  looksLikeXz(bytes) &&
-  bytes[bytes.length - 2] === 0x59 &&
-  bytes[bytes.length - 1] === 0x5a;
+const xzFooterPresent = (bytes: Uint8Array): boolean => {
+  const end = xzStreamEnd(bytes);
+  return (
+    end >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE &&
+    looksLikeXz(bytes) &&
+    bytes[end - 2] === 0x59 &&
+    bytes[end - 1] === 0x5a
+  );
+};
 
 const isTruncatedXzError = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);

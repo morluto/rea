@@ -184,6 +184,12 @@ const PAX_KEYS = [
   "gname",
 ] as const;
 
+/**
+ * PAX text values a global record can repeat into every later row. Numeric
+ * keys are parsed to numbers and do not repeat text.
+ */
+const GLOBAL_PAX_TEXT_KEYS = ["path", "linkpath", "uname", "gname"] as const;
+
 const paxId = (value: string | undefined): number | undefined => {
   if (value === undefined || !/^[0-9]+$/u.test(value)) return undefined;
   const id = Number(value);
@@ -405,6 +411,10 @@ const parseTar = (
   bytes: Uint8Array,
   maxEntries: number,
   memberName: string,
+  byteBudget: {
+    readonly resource: "max_control_bytes" | "max_data_bytes";
+    readonly maximum: number;
+  },
 ): TarParse => {
   const entries: DebTarEntry[] = [];
   const files = new Map<string, Uint8Array>();
@@ -423,6 +433,9 @@ const parseTar = (
   // to the next one, and override global values for it.
   const globalPax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
   const globalUndecodable = new Set<string>();
+  // A global value is stored once but copied into every later row, so each
+  // reuse is charged to the member's byte budget alongside its expanded bytes.
+  let charged = bytes.length;
   while (offset + TAR_BLOCK <= bytes.length) {
     const header = bytes.subarray(offset, offset + TAR_BLOCK);
     if (isZeroBlock(header)) return { entries, files, undecodableNames };
@@ -532,6 +545,13 @@ const parseTar = (
       for (const key of PAX_KEYS) {
         const value = parsed.fields[key];
         if (value === undefined) continue;
+        // An empty global value deletes the earlier global override, so later
+        // entries read their own header fields again.
+        if (typeFlag === 103 && value.length === 0) {
+          delete target[key];
+          targetUndecodable.delete(key);
+          continue;
+        }
         target[key] = value;
         if (parsed.undecodable.has(key)) targetUndecodable.add(key);
         else targetUndecodable.delete(key);
@@ -550,6 +570,21 @@ const parseTar = (
             : "max_data_entries",
           maxEntries,
           `tar entry count in ${memberName} exceeds the selected budget of ${String(maxEntries)}.`,
+        ),
+      };
+    for (const key of GLOBAL_PAX_TEXT_KEYS) {
+      const inherited = pax[key] === undefined ? globalPax[key] : undefined;
+      if (inherited !== undefined) charged += inherited.length;
+    }
+    if (charged > byteBudget.maximum)
+      return {
+        entries,
+        files,
+        undecodableNames,
+        error: new DebPackageCapacityFailure(
+          byteBudget.resource,
+          byteBudget.maximum,
+          `global PAX text repeated into ${memberName} entries exceeds the selected ${byteBudget.resource} budget of ${String(byteBudget.maximum)} at offset ${String(offset)}.`,
         ),
       };
     const fileFields = { ...globalPax, ...pax };
@@ -1033,6 +1068,7 @@ export const parseDebPackage = (
         expanded,
         input.max_control_entries,
         controlMember.name,
+        { resource: "max_control_bytes", maximum: input.max_control_bytes },
       );
       if (controlTar.entries.length > 0 || controlTar.files.size > 0)
         control = parseControl(controlTar, issues);
@@ -1042,7 +1078,10 @@ export const parseDebPackage = (
     if (dataMember !== undefined) {
       const expanded = expandArchive(dataMember, input.max_data_bytes, signal);
       examined_data_bytes = expanded.length;
-      dataTar = parseTar(expanded, input.max_data_entries, dataMember.name);
+      dataTar = parseTar(expanded, input.max_data_entries, dataMember.name, {
+        resource: "max_data_bytes",
+        maximum: input.max_data_bytes,
+      });
       if (dataTar.error !== undefined) attachPartial(dataTar.error, snapshot());
     }
   } catch (cause: unknown) {
