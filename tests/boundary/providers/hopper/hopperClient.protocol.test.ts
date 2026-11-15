@@ -1,27 +1,85 @@
+import {
+  transportReplyContracts,
+  type TransportReplyContracts,
+  HopperFixtureLauncher as FixtureLauncher,
+  startHopperFixtureClient as startClient,
+} from "./hopperClient.fixture.js";
 import { once } from "node:events";
 
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, expectTypeOf, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { HopperReplyContractError } from "../../../../src/hopper/HopperReplyContracts.js";
 import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
-import {
-  HopperFixtureLauncher as FixtureLauncher,
-  startHopperFixtureClient as startClient,
-} from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
 const MIB = 1024 * 1024;
 
 describe("HopperClient protocol", () => {
+  it("refuses a method its installed table has no contract for instead of throwing", async () => {
+    const launcher = new FixtureLauncher();
+    // The type argument names the transport table, but none is installed.
+    const client = new HopperClient<TransportReplyContracts>({
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    expect(await client.callTool("echo", { label: "unread" })).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "echo",
+      },
+    });
+  });
+
+  it("validates each reply against its method contract and keeps a rejected reply", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      replyContracts: { echo: z.strictObject({ label: z.string() }) },
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    const accepted = await client.callTool("echo", { label: "typed" });
+    expect(accepted).toEqual({ ok: true, value: { label: "typed" } });
+    if (accepted.ok) expectTypeOf(accepted.value.label).toBeString();
+
+    const rejected = await client.callTool(
+      "echo",
+      { label: 7 },
+      { operation: "list_names" },
+    );
+    if (rejected.ok) throw new Error("Expected a contract failure");
+    expect(rejected.error).toBeInstanceOf(HopperReplyContractError);
+    expect(rejected.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "list_names",
+      method: "echo",
+      reply: { label: 7 },
+    });
+  });
+
   it("does not start cold and preserves normal dispatch once ready", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
     onTestFinished(async () => {
       await client.close();
     });
@@ -53,6 +111,7 @@ describe("HopperClient protocol", () => {
   it("uses the caller-assigned provider run identity", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       runId: "11111111-1111-4111-8111-111111111111",
       startupTimeoutMs: 1_000,
@@ -67,7 +126,11 @@ describe("HopperClient protocol", () => {
 
   it("keeps the native socket path below macOS sockaddr_un limits", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
     onTestFinished(async () => {
       await client.close();
     });
@@ -173,6 +236,7 @@ describe("HopperClient response lifecycle", () => {
 
   it("rejects a bridge session with the wrong capability token", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new FixtureLauncher("wrong-token"),
       startupTimeoutMs: 1_000,
     });
@@ -225,6 +289,7 @@ describe("HopperClient response lifecycle", () => {
     const launcher = new FixtureLauncher();
     const diagnostics: HopperDiagnostic[] = [];
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 1_000,
       onDiagnostic: (event) => diagnostics.push(event),
@@ -300,6 +365,7 @@ describe("HopperClient reply framing", () => {
     const invalid = new ConfigurationError("invalid bridge.max_reply_bytes");
     const launcher = new FixtureLauncher();
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxReplyBytes: {
