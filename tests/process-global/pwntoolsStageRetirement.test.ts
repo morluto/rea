@@ -9,15 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
@@ -52,9 +44,6 @@ const worker = fileURLToPath(
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-beforeEach(() => {
-  // Use the actual host inspector; simulate only the decoder availability gate.
-});
 afterEach(() => {
   vi.restoreAllMocks();
 });

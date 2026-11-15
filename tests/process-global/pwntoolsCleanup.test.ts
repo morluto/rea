@@ -1,14 +1,7 @@
 import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-} from "vitest";
+import { beforeAll, expect, it, onTestFinished } from "vitest";
 
 import { PwntoolsLayoutProvider } from "../../src/native/pwntools/PwntoolsLayoutProvider.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
@@ -28,13 +21,6 @@ const supportedHost = process.platform !== "win32";
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-
-// Only the decoder's availability gate is simulated. The module-owned process
-// inspector was created and prepared for the real host before these overrides;
-// every fixture launch, output stream, cleanup signal and filesystem is real.
-beforeEach(() => {});
-
-afterEach(() => {});
 
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-pwntools-cleanup-");

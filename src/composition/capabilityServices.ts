@@ -187,7 +187,7 @@ export interface CapabilityHostContext {
   readonly settings: AnalysisSettingsReader;
   readonly options: CapabilityServiceOptions;
   readonly platform: NodeJS.Platform;
-  readonly arch: string;
+  readonly arch: NodeJS.Architecture;
 }
 
 interface CapabilityInstance<Value> {
@@ -287,8 +287,9 @@ const modules = {
       options.sqliteDatabase ?? createSqliteDatabaseService(environment),
   ),
   binaryLayout: service(
-    ({ environment, options }) =>
-      options.binaryLayout ?? createBinaryLayoutService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.binaryLayout ??
+      createBinaryLayoutService(environment, { platform, architecture: arch }),
     (context) => ({
       hostUnsupported: {
         binaryLayout: outsideHost(
@@ -304,8 +305,12 @@ const modules = {
     }),
   ),
   recordedCrash: service(
-    ({ environment, options }) =>
-      options.recordedCrash ?? createRecordedCrashService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.recordedCrash ??
+      createRecordedCrashService(environment, {
+        platform,
+        architecture: arch,
+      }),
     (context) => ({
       hostUnsupported: {
         recordedCrash: outsideHost(

@@ -2,15 +2,7 @@ import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import { z } from "zod";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCli } from "../../src/cli.js";
@@ -40,9 +32,6 @@ const exitCode = process.exitCode;
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-beforeEach(() => {
-  // Prepare the real host inspector first; only decoder availability is simulated.
-});
 afterEach(() => {
   process.exitCode = exitCode;
   vi.restoreAllMocks();
